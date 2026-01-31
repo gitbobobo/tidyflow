@@ -1,0 +1,226 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-01-31",
+  "tasks": [
+    {
+      "id": "T001",
+      "title": "设计文档评审与冻结",
+      "goal": "团队评审所有设计文档，确认无重大遗漏，正式冻结设计",
+      "inputs": ["design/*.md"],
+      "expected_output": "评审记录，设计文档标记为 Frozen",
+      "depends_on": [],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T002",
+      "title": "Rust Core 项目初始化",
+      "goal": "创建 Rust 项目结构，配置 Cargo.toml，添加基础依赖",
+      "inputs": ["design/02-architecture.md"],
+      "expected_output": "可编译的 Rust 项目骨架，包含 tokio, serde, portable-pty 等依赖",
+      "depends_on": ["T001"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T003",
+      "title": "macOS App 项目初始化",
+      "goal": "创建 Xcode 项目，配置 SwiftUI 应用骨架",
+      "inputs": ["design/02-architecture.md"],
+      "expected_output": "可运行的空白 macOS 应用",
+      "depends_on": ["T001"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T004",
+      "title": "WebView 集成骨架",
+      "goal": "在 macOS App 中嵌入 WKWebView，加载本地 HTML",
+      "inputs": ["design/02-architecture.md", "design/04-terminal-design.md"],
+      "expected_output": "WKWebView 显示 Hello World 页面",
+      "depends_on": ["T003"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T005",
+      "title": "xterm.js 前端项目初始化",
+      "goal": "创建前端项目，集成 xterm.js 及必需 addons",
+      "inputs": ["design/04-terminal-design.md"],
+      "expected_output": "可构建的前端项目，xterm.js 在页面中渲染",
+      "depends_on": ["T001"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T006",
+      "title": "WebSocket 服务端实现",
+      "goal": "在 Rust Core 中实现 WebSocket 服务端，支持 JSON-RPC",
+      "inputs": ["design/02-architecture.md"],
+      "expected_output": "WebSocket 服务端可接受连接，响应 ping/pong",
+      "depends_on": ["T002"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T007",
+      "title": "WebSocket 客户端实现",
+      "goal": "在前端实现 WebSocket 客户端，支持 JSON-RPC",
+      "inputs": ["design/02-architecture.md"],
+      "expected_output": "前端可连接 Rust Core，发送/接收消息",
+      "depends_on": ["T005", "T006"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T008",
+      "title": "PTY 基础实现",
+      "goal": "使用 portable-pty 创建 PTY，启动 shell，实现基本 I/O",
+      "inputs": ["design/04-terminal-design.md"],
+      "expected_output": "可以创建 PTY，运行 shell，读写数据",
+      "depends_on": ["T002"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T009",
+      "title": "终端 I/O 转发",
+      "goal": "将 PTY 输出转发到 WebSocket，将 WebSocket 输入转发到 PTY",
+      "inputs": ["design/04-terminal-design.md"],
+      "expected_output": "xterm.js 显示 shell 输出，键盘输入发送到 shell",
+      "depends_on": ["T007", "T008"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T010",
+      "title": "Rust Core 进程管理",
+      "goal": "macOS App 启动时启动 Rust Core，退出时终止",
+      "inputs": ["design/02-architecture.md"],
+      "expected_output": "App 启动后 Rust Core 自动运行，App 退出后进程清理",
+      "depends_on": ["T003", "T006"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T011",
+      "title": "M0 集成测试",
+      "goal": "验证 M0 所有验收标准",
+      "inputs": ["design/06-milestones.md"],
+      "expected_output": "M0 验收标准全部通过",
+      "depends_on": ["T004", "T009", "T010"],
+      "status": "pending",
+      "milestone": "M0"
+    },
+    {
+      "id": "T012",
+      "title": "SQLite 数据库设计与实现",
+      "goal": "设计数据库 schema，实现 CRUD 操作",
+      "inputs": ["design/01-domain-model.md"],
+      "expected_output": "数据库初始化、迁移、基本 CRUD 功能",
+      "depends_on": ["T011"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T013",
+      "title": "项目管理服务",
+      "goal": "实现项目的创建、导入、删除、列表功能",
+      "inputs": ["design/01-domain-model.md", "design/02-architecture.md"],
+      "expected_output": "Project Service API 完整实现",
+      "depends_on": ["T012"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T014",
+      "title": "Git Worktree 管理",
+      "goal": "实现 worktree 的创建、删除、列表功能",
+      "inputs": ["design/03-workspace-lifecycle.md"],
+      "expected_output": "可以创建和删除 git worktree",
+      "depends_on": ["T013"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T015",
+      "title": "Workspace 生命周期管理",
+      "goal": "实现 workspace 状态机，包括创建、初始化、就绪、销毁",
+      "inputs": ["design/01-domain-model.md", "design/03-workspace-lifecycle.md"],
+      "expected_output": "Workspace Service API 完整实现",
+      "depends_on": ["T014"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T016",
+      "title": "配置文件解析",
+      "goal": "实现 .tidyflow.toml 配置文件的解析和验证",
+      "inputs": ["design/05-project-config-schema.md"],
+      "expected_output": "配置文件解析器，支持所有定义的字段",
+      "depends_on": ["T011"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T017",
+      "title": "Setup Script 执行引擎",
+      "goal": "实现 setup script 的执行、进度报告、错误处理",
+      "inputs": ["design/03-workspace-lifecycle.md", "design/05-project-config-schema.md"],
+      "expected_output": "Setup 执行器，支持多步骤、条件、超时",
+      "depends_on": ["T015", "T016"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T018",
+      "title": "多终端管理",
+      "goal": "支持单个 workspace 内创建多个终端 session",
+      "inputs": ["design/04-terminal-design.md"],
+      "expected_output": "Terminal Service 支持多 session 管理",
+      "depends_on": ["T015"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T019",
+      "title": "终端 Resize 实现",
+      "goal": "实现终端 resize 功能，确保 vim/tmux 正常工作",
+      "inputs": ["design/04-terminal-design.md"],
+      "expected_output": "Resize 后终端内容正确显示",
+      "depends_on": ["T018"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T020",
+      "title": "Git 状态服务",
+      "goal": "实现 git 状态查询，包括 branch、dirty 状态",
+      "inputs": ["design/01-domain-model.md"],
+      "expected_output": "Git Service 返回基本状态信息",
+      "depends_on": ["T015"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T021",
+      "title": "M1 UI 基础",
+      "goal": "实现基础 UI：项目列表、workspace 列表、终端视图",
+      "inputs": ["design/06-milestones.md"],
+      "expected_output": "可用的基础 UI",
+      "depends_on": ["T013", "T015", "T018"],
+      "status": "pending",
+      "milestone": "M1"
+    },
+    {
+      "id": "T022",
+      "title": "M1 集成测试",
+      "goal": "验证 M1 所有验收标准",
+      "inputs": ["design/06-milestones.md"],
+      "expected_output": "M1 验收标准全部通过",
+      "depends_on": ["T017", "T019", "T020", "T021"],
+      "status": "pending",
+      "milestone": "M1"
+    }
+  ]
+}

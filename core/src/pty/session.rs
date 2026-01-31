@@ -1,0 +1,194 @@
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize};
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use tracing::{debug, error, info, instrument, warn};
+use uuid::Uuid;
+
+use super::resize::resize_pty;
+
+pub struct PtySession {
+    session_id: String,
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn Child + Send + Sync>,
+    reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+    shell_name: String,
+}
+
+impl PtySession {
+    #[instrument]
+    pub fn new(cwd: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let session_id = Uuid::new_v4().to_string();
+        info!(session_id = %session_id, "Creating new PTY session");
+
+        // Try zsh first, fall back to bash
+        let shell_path = if std::path::Path::new("/bin/zsh").exists() {
+            "/bin/zsh"
+        } else {
+            "/bin/bash"
+        };
+        let shell_name = shell_path.split('/').last().unwrap_or("shell").to_string();
+
+        debug!(session_id = %session_id, shell = %shell_path, "Selected shell");
+
+        // Create PTY system
+        let pty_system = portable_pty::native_pty_system();
+
+        // Create PTY with default size
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let pair = pty_system.openpty(size)?;
+        let master = pair.master;
+
+        // Set working directory
+        let working_dir = cwd.unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
+        });
+
+        debug!(session_id = %session_id, cwd = ?working_dir, "Setting working directory");
+
+        // Build command
+        let mut cmd = CommandBuilder::new(shell_path);
+        cmd.cwd(working_dir);
+
+        // Spawn child process
+        let child = pair.slave.spawn_command(cmd)?;
+
+        info!(
+            session_id = %session_id,
+            shell = %shell_name,
+            "PTY session created successfully"
+        );
+
+        // Get reader and writer
+        let reader = master.try_clone_reader()?;
+        let writer = master.take_writer()?;
+
+        Ok(PtySession {
+            session_id,
+            master,
+            child,
+            reader,
+            writer,
+            shell_name,
+        })
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn shell_name(&self) -> &str {
+        &self.shell_name
+    }
+
+    #[instrument(skip(self, buf), fields(session_id = %self.session_id))]
+    pub fn read_output(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let bytes_read = self.reader.read(buf)?;
+        debug!(
+            session_id = %self.session_id,
+            bytes = bytes_read,
+            "Read output from PTY"
+        );
+        Ok(bytes_read)
+    }
+
+    #[instrument(skip(self, data), fields(session_id = %self.session_id, bytes = data.len()))]
+    pub fn write_input(&mut self, data: &[u8]) -> io::Result<()> {
+        self.writer.write_all(data)?;
+        self.writer.flush()?;
+        debug!(
+            session_id = %self.session_id,
+            bytes = data.len(),
+            "Wrote input to PTY"
+        );
+        Ok(())
+    }
+
+    #[instrument(skip(self), fields(session_id = %self.session_id, cols, rows))]
+    pub fn resize(
+        &self,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        resize_pty(self.master.as_ref(), cols, rows)?;
+        info!(
+            session_id = %self.session_id,
+            cols,
+            rows,
+            "PTY session resized"
+        );
+        Ok(())
+    }
+
+    #[instrument(skip(self), fields(session_id = %self.session_id))]
+    pub fn wait(&mut self) -> Option<i32> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => {
+                let exit_code = status.exit_code() as i32;
+                info!(
+                    session_id = %self.session_id,
+                    exit_code,
+                    "Child process exited"
+                );
+                Some(exit_code)
+            }
+            Ok(None) => {
+                debug!(session_id = %self.session_id, "Child process still running");
+                None
+            }
+            Err(e) => {
+                error!(
+                    session_id = %self.session_id,
+                    error = %e,
+                    "Error checking child process status"
+                );
+                None
+            }
+        }
+    }
+
+    #[instrument(skip(self), fields(session_id = %self.session_id))]
+    pub fn kill(&mut self) {
+        info!(session_id = %self.session_id, "Killing PTY session");
+
+        // Send SIGHUP to the child process
+        if let Err(e) = self.child.kill() {
+            warn!(
+                session_id = %self.session_id,
+                error = %e,
+                "Error sending kill signal to child process"
+            );
+        }
+
+        // Wait for the child to exit
+        match self.child.wait() {
+            Ok(status) => {
+                info!(
+                    session_id = %self.session_id,
+                    exit_code = status.exit_code(),
+                    "Child process terminated"
+                );
+            }
+            Err(e) => {
+                error!(
+                    session_id = %self.session_id,
+                    error = %e,
+                    "Error waiting for child process to exit"
+                );
+            }
+        }
+    }
+}
+
+impl Drop for PtySession {
+    fn drop(&mut self) {
+        debug!(session_id = %self.session_id, "Dropping PTY session");
+        self.kill();
+    }
+}
