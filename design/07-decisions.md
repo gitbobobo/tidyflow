@@ -137,30 +137,27 @@
 
 ---
 
-### D10: 错误处理策略
+### D11: M1 Git 操作实现调整
 
 | 项目 | 内容 |
 |------|------|
-| **Decision** | 使用 thiserror + anyhow，API 返回结构化错误 |
-| **Status** | ✅ Frozen |
-| **Rationale** | <ul><li>thiserror 用于定义错误类型</li><li>anyhow 用于错误传播</li><li>API 返回结构化错误便于前端处理</li></ul> |
-| **Alternatives Considered** | <ul><li>**纯 std::error**: 样板代码多</li><li>**eyre**: 功能类似 anyhow，社区较小</li></ul> |
-| **Consequences** | <ul><li>✅ 错误信息清晰</li><li>✅ 前端可以根据错误类型显示不同 UI</li><li>⚠️ 需要定义完整的错误类型层次</li></ul> |
+| **Decision** | M1 Workspace Engine 使用系统 git 命令而非 git2-rs |
+| **Status** | ✅ Implemented |
+| **Date** | 2026-01-31 |
+| **Rationale** | <ul><li>git worktree 操作在 git2-rs 中支持有限</li><li>系统 git 命令更贴近用户真实环境</li><li>减少 libgit2 与系统 git 的行为差异</li><li>简化实现，加快 M1 交付</li></ul> |
+| **Deviation from D7** | D7 建议优先使用 git2-rs，但 M1 实现选择全部使用系统 git 命令 |
+| **Consequences** | <ul><li>✅ 实现简单，行为一致</li><li>✅ 支持用户自定义 git 配置</li><li>⚠️ 需要系统安装 git</li><li>⚠️ 后续可能需要解析 git 输出</li></ul> |
 
-**错误响应格式**:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "...",
-  "error": {
-    "code": -32000,
-    "message": "Workspace creation failed",
-    "data": {
-      "type": "WorkspaceError::GitOperationFailed",
-      "details": "Branch 'feature/foo' does not exist",
-      "recoverable": true,
-      "suggestion": "Run 'git fetch' to update remote branches"
-    }
-  }
-}
-```
+---
+
+### D12: M1 状态持久化调整
+
+| 项目 | 内容 |
+|------|------|
+| **Decision** | M1 使用 JSON 文件而非 SQLite 持久化状态 |
+| **Status** | ✅ Implemented |
+| **Date** | 2026-01-31 |
+| **Rationale** | <ul><li>M1 数据量小，JSON 足够</li><li>避免引入 SQLite 依赖</li><li>便于调试和手动编辑</li><li>符合任务约束（不引入数据库）</li></ul> |
+| **Location** | `~/.tidyflow/state.json` |
+| **Consequences** | <ul><li>✅ 实现简单</li><li>✅ 人类可读</li><li>⚠️ 并发写入需要注意</li><li>⚠️ 大量数据时性能可能下降</li></ul> |
+

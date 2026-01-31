@@ -15,7 +15,18 @@ tidyflow/
 │   ├── 05-project-config-schema.md  # 配置文件 Schema
 │   ├── 06-milestones.md      # 里程碑规划与验收标准
 │   ├── 07-decisions.md       # 关键决策记录 (ADR)
-│   └── 08-open-questions.md  # 开放问题清单
+│   ├── 08-open-questions.md  # 开放问题清单
+│   └── 12-ws-control-protocol.md  # WebSocket 协议规范 (v1.1 多终端)
+├── docs/
+│   └── M1_IMPLEMENTATION.md  # M1 实现指南
+├── scripts/
+│   ├── run-core.sh           # 启动 Rust Core
+│   ├── run-app.sh            # 启动 macOS App
+│   ├── smoke-test.sh         # 基础冒烟测试
+│   ├── verify_protocol.py    # 协议验证测试
+│   ├── workspace-demo.sh     # Workspace 功能演示
+│   ├── term-multi-smoke.sh   # 多终端冒烟测试
+│   └── multi-workspace-smoke.sh  # 多 Workspace 并行测试 (M2-2)
 ├── tasks/
 │   └── tasks.json            # 可执行任务池
 └── README.md                 # 本文件
@@ -71,6 +82,8 @@ T004 + T009 + T010 → T011 (M0 集成测试)
 | **M0** | 可运行骨架 | App 启动、单终端、基本 I/O |
 | **M1** | 单项目 + Workspace | 完整生命周期、多终端、Setup |
 | **M2** | 多 Workspace 并行 | 多项目、并行开发、完整体验 |
+
+> **M2-2 已实现**: 支持多 Workspace 并行运行，每个 Tab 绑定独立 Workspace，PTY cwd 严格隔离。
 
 ## 关键技术栈
 

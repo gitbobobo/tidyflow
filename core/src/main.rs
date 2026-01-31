@@ -1,20 +1,236 @@
+use clap::{Parser, Subcommand};
 use std::env;
+use std::path::PathBuf;
+use tidyflow_core::workspace::{AppState, ProjectManager, WorkspaceManager};
 use tracing::info;
+
+#[derive(Parser)]
+#[command(name = "tidyflow-core")]
+#[command(about = "TidyFlow Core - Terminal and Workspace Engine")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start the WebSocket server (default)
+    Serve {
+        #[arg(short, long, default_value = "47999")]
+        port: u16,
+    },
+    /// Import a project
+    Import {
+        /// Project name
+        #[arg(long)]
+        name: String,
+        /// Local path to import
+        #[arg(long, conflicts_with = "git")]
+        path: Option<PathBuf>,
+        /// Git URL to clone
+        #[arg(long, conflicts_with = "path")]
+        git: Option<String>,
+        /// Branch to clone (for git import)
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Workspace operations
+    Ws {
+        #[command(subcommand)]
+        action: WsCommands,
+    },
+    /// List projects or workspaces
+    List {
+        #[command(subcommand)]
+        what: ListCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum WsCommands {
+    /// Create a new workspace
+    Create {
+        /// Project name
+        #[arg(long)]
+        project: String,
+        /// Workspace name
+        #[arg(long)]
+        workspace: String,
+        /// Source branch
+        #[arg(long)]
+        from_branch: Option<String>,
+        /// Skip setup
+        #[arg(long)]
+        no_setup: bool,
+    },
+    /// Show workspace details
+    Show {
+        /// Project name
+        #[arg(long)]
+        project: String,
+        /// Workspace name
+        #[arg(long)]
+        workspace: String,
+    },
+    /// Run setup for a workspace
+    Setup {
+        /// Project name
+        #[arg(long)]
+        project: String,
+        /// Workspace name
+        #[arg(long)]
+        workspace: String,
+    },
+    /// Remove a workspace
+    Remove {
+        /// Project name
+        #[arg(long)]
+        project: String,
+        /// Workspace name
+        #[arg(long)]
+        workspace: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ListCommands {
+    /// List all projects
+    Projects,
+    /// List workspaces for a project
+    Workspaces {
+        /// Project name
+        #[arg(long)]
+        project: String,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
     tidyflow_core::util::init_logging();
 
-    // Read port from environment variable, default to 47999
-    let port = env::var("TIDYFLOW_PORT")
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(47999);
+    let cli = Cli::parse();
 
-    // Log startup message
-    info!("Starting TidyFlow Core server on port {}", port);
+    match cli.command {
+        None | Some(Commands::Serve { .. }) => {
+            // Default: start server
+            let port = match &cli.command {
+                Some(Commands::Serve { port }) => *port,
+                _ => env::var("TIDYFLOW_PORT")
+                    .ok()
+                    .and_then(|p| p.parse::<u16>().ok())
+                    .unwrap_or(47999),
+            };
+            info!("Starting TidyFlow Core server on port {}", port);
+            tidyflow_core::server::run_server(port).await?;
+        }
+        Some(Commands::Import { name, path, git, branch }) => {
+            let mut state = AppState::load()?;
 
-    // Run the server
-    tidyflow_core::server::run_server(port).await
+            if let Some(local_path) = path {
+                let project = ProjectManager::import_local(&mut state, &name, &local_path)?;
+                println!("Project imported: {}", project.name);
+                println!("  Path: {}", project.root_path.display());
+                println!("  Branch: {}", project.default_branch);
+            } else if let Some(url) = git {
+                let project = ProjectManager::import_git(
+                    &mut state,
+                    &name,
+                    &url,
+                    branch.as_deref(),
+                    None,
+                )?;
+                println!("Project cloned and imported: {}", project.name);
+                println!("  Path: {}", project.root_path.display());
+                println!("  Branch: {}", project.default_branch);
+            } else {
+                eprintln!("Error: Either --path or --git must be specified");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Ws { action }) => match action {
+            WsCommands::Create { project, workspace, from_branch, no_setup } => {
+                let mut state = AppState::load()?;
+                let ws = WorkspaceManager::create(
+                    &mut state,
+                    &project,
+                    &workspace,
+                    from_branch.as_deref(),
+                    !no_setup,
+                )?;
+                println!("Workspace created: {}", ws.name);
+                println!("  Path: {}", ws.worktree_path.display());
+                println!("  Branch: {}", ws.branch);
+                println!("  Status: {:?}", ws.status);
+            }
+            WsCommands::Show { project, workspace } => {
+                let state = AppState::load()?;
+                let path = WorkspaceManager::get_root_path(&state, &project, &workspace)?;
+
+                let proj = state.get_project(&project).unwrap();
+                let ws = proj.get_workspace(&workspace).unwrap();
+
+                println!("{}", path.display());
+                // Additional info to stderr so stdout is just the path
+                eprintln!("---");
+                eprintln!("Project: {}", project);
+                eprintln!("Workspace: {}", workspace);
+                eprintln!("Branch: {}", ws.branch);
+                eprintln!("Status: {:?}", ws.status);
+                if let Some(ref result) = ws.setup_result {
+                    eprintln!("Setup: {}/{} steps completed", result.steps_completed, result.steps_total);
+                }
+            }
+            WsCommands::Setup { project, workspace } => {
+                let mut state = AppState::load()?;
+                let ws = WorkspaceManager::run_setup(&mut state, &project, &workspace)?;
+                println!("Setup completed for workspace: {}", ws.name);
+                println!("  Status: {:?}", ws.status);
+                if let Some(ref result) = ws.setup_result {
+                    println!("  Steps: {}/{}", result.steps_completed, result.steps_total);
+                    if let Some(ref err) = result.last_error {
+                        println!("  Last error: {}", err);
+                    }
+                }
+            }
+            WsCommands::Remove { project, workspace } => {
+                let mut state = AppState::load()?;
+                WorkspaceManager::remove(&mut state, &project, &workspace)?;
+                println!("Workspace removed: {}", workspace);
+            }
+        },
+        Some(Commands::List { what }) => match what {
+            ListCommands::Projects => {
+                let state = AppState::load()?;
+                let projects = state.list_projects();
+                if projects.is_empty() {
+                    println!("No projects imported");
+                } else {
+                    println!("Projects:");
+                    for name in projects {
+                        let proj = state.get_project(name).unwrap();
+                        println!("  {} ({})", name, proj.root_path.display());
+                    }
+                }
+            }
+            ListCommands::Workspaces { project } => {
+                let state = AppState::load()?;
+                let proj = state
+                    .get_project(&project)
+                    .ok_or_else(|| format!("Project not found: {}", project))?;
+
+                let workspaces = proj.list_workspaces();
+                if workspaces.is_empty() {
+                    println!("No workspaces for project: {}", project);
+                } else {
+                    println!("Workspaces for {}:", project);
+                    for name in workspaces {
+                        let ws = proj.get_workspace(name).unwrap();
+                        println!("  {} [{:?}] -> {}", name, ws.status, ws.worktree_path.display());
+                    }
+                }
+            }
+        },
+    }
+
+    Ok(())
 }
