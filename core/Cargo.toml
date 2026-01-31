@@ -26,6 +26,7 @@ dirs = "5"
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+tempfile = "3"
 
 [profile.release]
 opt-level = 3

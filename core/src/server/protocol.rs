@@ -45,6 +45,25 @@ pub enum ClientMessage {
     TermFocus {
         term_id: String,
     },
+
+    // v1.3: File operations
+    FileList {
+        project: String,
+        workspace: String,
+        #[serde(default)]
+        path: String,
+    },
+    FileRead {
+        project: String,
+        workspace: String,
+        path: String,
+    },
+    FileWrite {
+        project: String,
+        workspace: String,
+        path: String,
+        content_b64: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +121,28 @@ pub enum ServerMessage {
         term_id: String,
     },
 
+    // v1.3: File operation responses
+    FileListResult {
+        project: String,
+        workspace: String,
+        path: String,
+        items: Vec<FileEntryInfo>,
+    },
+    FileReadResult {
+        project: String,
+        workspace: String,
+        path: String,
+        content_b64: String,
+        size: u64,
+    },
+    FileWriteResult {
+        project: String,
+        workspace: String,
+        path: String,
+        success: bool,
+        size: u64,
+    },
+
     // v1: Error handling
     Error { code: String, message: String },
 }
@@ -134,6 +175,13 @@ pub struct TerminalInfo {
     pub status: String, // "running" or "exited"
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntryInfo {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -144,5 +192,6 @@ pub fn v1_capabilities() -> Vec<String> {
         "multi_terminal".to_string(),
         "multi_workspace".to_string(),
         "cwd_spawn".to_string(),
+        "file_operations".to_string(),
     ]
 }

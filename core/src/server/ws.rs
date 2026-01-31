@@ -15,8 +15,9 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::pty::PtySession;
+use crate::server::file_api::{self, FileApiError};
 use crate::server::protocol::{
-    ClientMessage, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
+    ClientMessage, FileEntryInfo, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
     v1_capabilities,
 };
 use crate::workspace::state::{AppState, WorkspaceStatus};
@@ -347,6 +348,18 @@ async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// Convert FileApiError to error response tuple
+fn file_error_to_response(e: &FileApiError) -> (String, String) {
+    match e {
+        FileApiError::PathEscape => ("path_escape".to_string(), e.to_string()),
+        FileApiError::PathTooLong => ("path_too_long".to_string(), e.to_string()),
+        FileApiError::FileNotFound => ("file_not_found".to_string(), e.to_string()),
+        FileApiError::FileTooLarge => ("file_too_large".to_string(), e.to_string()),
+        FileApiError::InvalidUtf8 => ("invalid_utf8".to_string(), e.to_string()),
+        FileApiError::IoError(_) => ("io_error".to_string(), e.to_string()),
+    }
+}
+
 /// Handle a client message
 async fn handle_client_message(
     text: &str,
@@ -675,6 +688,157 @@ async fn handle_client_message(
         ClientMessage::TermFocus { term_id } => {
             // Optional: server can use this for optimization
             debug!(term_id = %term_id, "Client focused terminal");
+        }
+
+        // v1.3: File operations
+        ClientMessage::FileList { project, workspace, path } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        let path_str = if path.is_empty() { ".".to_string() } else { path };
+                        match file_api::list_files(&root, &path_str) {
+                            Ok(entries) => {
+                                let items: Vec<FileEntryInfo> = entries
+                                    .into_iter()
+                                    .map(|e| FileEntryInfo {
+                                        name: e.name,
+                                        is_dir: e.is_dir,
+                                        size: e.size,
+                                    })
+                                    .collect();
+                                send_message(socket, &ServerMessage::FileListResult {
+                                    project,
+                                    workspace,
+                                    path: path_str,
+                                    items,
+                                }).await?;
+                            }
+                            Err(e) => {
+                                let (code, message) = file_error_to_response(&e);
+                                send_message(socket, &ServerMessage::Error { code, message }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        ClientMessage::FileRead { project, workspace, path } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        match file_api::read_file(&root, &path) {
+                            Ok((content, size)) => {
+                                let content_b64 = BASE64.encode(content.as_bytes());
+                                send_message(socket, &ServerMessage::FileReadResult {
+                                    project,
+                                    workspace,
+                                    path,
+                                    content_b64,
+                                    size,
+                                }).await?;
+                            }
+                            Err(e) => {
+                                let (code, message) = file_error_to_response(&e);
+                                send_message(socket, &ServerMessage::Error { code, message }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        ClientMessage::FileWrite { project, workspace, path, content_b64 } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        // Decode base64 content
+                        match BASE64.decode(&content_b64) {
+                            Ok(bytes) => {
+                                match String::from_utf8(bytes) {
+                                    Ok(content) => {
+                                        match file_api::write_file(&root, &path, &content) {
+                                            Ok(size) => {
+                                                send_message(socket, &ServerMessage::FileWriteResult {
+                                                    project,
+                                                    workspace,
+                                                    path,
+                                                    success: true,
+                                                    size,
+                                                }).await?;
+                                            }
+                                            Err(e) => {
+                                                let (code, message) = file_error_to_response(&e);
+                                                send_message(socket, &ServerMessage::Error { code, message }).await?;
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        send_message(socket, &ServerMessage::Error {
+                                            code: "invalid_utf8".to_string(),
+                                            message: "Content is not valid UTF-8".to_string(),
+                                        }).await?;
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "invalid_base64".to_string(),
+                                    message: "Invalid base64 encoding".to_string(),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
         }
     }
 

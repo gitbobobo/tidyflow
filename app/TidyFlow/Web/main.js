@@ -319,6 +319,19 @@
         sendControlMessage({ type: 'term_list' });
     }
 
+    // v1.3 File Operations API
+    function sendFileList(project, workspace, path) {
+        sendControlMessage({ type: 'file_list', project, workspace, path: path || '.' });
+    }
+
+    function sendFileRead(project, workspace, path) {
+        sendControlMessage({ type: 'file_read', project, workspace, path });
+    }
+
+    function sendFileWrite(project, workspace, path, content_b64) {
+        sendControlMessage({ type: 'file_write', project, workspace, path, content_b64 });
+    }
+
     function updateWorkspaceInfo() {
         if (workspaceInfo) {
             if (currentProject && currentWorkspace) {
@@ -402,6 +415,11 @@
                     currentProject = msg.project;
                     currentWorkspace = msg.workspace;
                     updateWorkspaceInfo();
+
+                    // Notify editor of workspace change
+                    if (window.tidyflowEditor) {
+                        window.tidyflowEditor.setWorkspace(msg.project, msg.workspace, msg.root);
+                    }
 
                     // v1.2: Do NOT clear existing tabs - support parallel workspaces
                     // Create new tab for this workspace
@@ -491,6 +509,28 @@
                     notifySwift('term_closed', { term_id: msg.term_id });
                     break;
 
+                // v1.3: File operation responses
+                case 'file_list_result':
+                    if (window.tidyflowEditor) {
+                        window.tidyflowEditor.handleFileList(msg.project, msg.workspace, msg.path, msg.items);
+                    }
+                    notifySwift('file_list', { project: msg.project, workspace: msg.workspace, items: msg.items });
+                    break;
+
+                case 'file_read_result':
+                    if (window.tidyflowEditor) {
+                        window.tidyflowEditor.handleFileRead(msg.project, msg.workspace, msg.path, msg.content_b64, msg.size);
+                    }
+                    notifySwift('file_read', { project: msg.project, workspace: msg.workspace, path: msg.path, size: msg.size });
+                    break;
+
+                case 'file_write_result':
+                    if (window.tidyflowEditor) {
+                        window.tidyflowEditor.handleFileWrite(msg.project, msg.workspace, msg.path, msg.success, msg.size);
+                    }
+                    notifySwift('file_write', { project: msg.project, workspace: msg.workspace, path: msg.path, success: msg.success });
+                    break;
+
                 case 'error':
                     if (activeTermId && tabs.has(activeTermId)) {
                         const tab = tabs.get(activeTermId);
@@ -567,6 +607,11 @@
         listTerminals,
         closeTerminal,
         switchToTab,
+
+        // v1.3 File Operations API
+        sendFileList,
+        sendFileRead,
+        sendFileWrite,
 
         // State getters
         getProjects: () => projects,
