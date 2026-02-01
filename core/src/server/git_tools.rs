@@ -68,6 +68,42 @@ pub struct GitCommitResult {
     pub sha: Option<String>,
 }
 
+/// Git operation state (for rebase/merge)
+#[derive(Debug, Clone, PartialEq)]
+pub enum GitOpState {
+    Normal,
+    Rebasing,
+    Merging,
+}
+
+impl GitOpState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GitOpState::Normal => "normal",
+            GitOpState::Rebasing => "rebasing",
+            GitOpState::Merging => "merging",
+        }
+    }
+}
+
+/// Git rebase result
+#[derive(Debug)]
+pub struct GitRebaseResult {
+    pub ok: bool,
+    pub state: String,  // "completed", "conflict", "aborted", "error"
+    pub message: Option<String>,
+    pub conflicts: Vec<String>,
+}
+
+/// Git operation status result
+#[derive(Debug)]
+pub struct GitOpStatusResult {
+    pub state: GitOpState,
+    pub conflicts: Vec<String>,
+    pub head: Option<String>,
+    pub onto: Option<String>,
+}
+
 /// Error type for git operations
 #[derive(Debug)]
 pub enum GitError {
@@ -906,6 +942,756 @@ fn get_short_head_sha(workspace_root: &Path) -> Option<String> {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         None
+    }
+}
+
+/// Fetch from remote
+///
+/// Uses `git fetch` to update remote tracking branches.
+pub fn git_fetch(workspace_root: &Path) -> Result<GitOpResult, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    let output = Command::new("git")
+        .args(["fetch"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        Ok(GitOpResult {
+            op: "fetch".to_string(),
+            ok: true,
+            message: Some("Fetched from remote".to_string()),
+            path: None,
+            scope: "all".to_string(),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(GitOpResult {
+            op: "fetch".to_string(),
+            ok: false,
+            message: Some(if stderr.is_empty() { "Fetch failed".to_string() } else { stderr }),
+            path: None,
+            scope: "all".to_string(),
+        })
+    }
+}
+
+/// Check if currently in a rebase state
+fn is_rebasing(workspace_root: &Path) -> bool {
+    // Check for rebase-merge directory (interactive rebase)
+    let rebase_merge = workspace_root.join(".git/rebase-merge");
+    if rebase_merge.exists() {
+        return true;
+    }
+
+    // Check for rebase-apply directory (am-style rebase)
+    let rebase_apply = workspace_root.join(".git/rebase-apply");
+    if rebase_apply.exists() {
+        return true;
+    }
+
+    // Also check via git command for worktrees
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-path", "rebase-merge"])
+        .current_dir(workspace_root)
+        .output();
+
+    if let Ok(out) = output {
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if currently in a merge state
+fn is_merging(workspace_root: &Path) -> bool {
+    let merge_head = workspace_root.join(".git/MERGE_HEAD");
+    if merge_head.exists() {
+        return true;
+    }
+
+    // Check via git command for worktrees
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-path", "MERGE_HEAD"])
+        .current_dir(workspace_root)
+        .output();
+
+    if let Ok(out) = output {
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Get list of conflicted files
+fn get_conflict_files(workspace_root: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(workspace_root)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// Get current git operation state
+pub fn git_op_status(workspace_root: &Path) -> Result<GitOpStatusResult, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    let state = if is_rebasing(workspace_root) {
+        GitOpState::Rebasing
+    } else if is_merging(workspace_root) {
+        GitOpState::Merging
+    } else {
+        GitOpState::Normal
+    };
+
+    let conflicts = if state != GitOpState::Normal {
+        get_conflict_files(workspace_root)
+    } else {
+        vec![]
+    };
+
+    let head = get_short_head_sha(workspace_root);
+
+    // Get onto branch for rebase
+    let onto = if state == GitOpState::Rebasing {
+        // Try to read the onto ref
+        let output = Command::new("git")
+            .args(["rev-parse", "--git-path", "rebase-merge/onto"])
+            .current_dir(workspace_root)
+            .output();
+
+        if let Ok(out) = output {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(GitOpStatusResult {
+        state,
+        conflicts,
+        head,
+        onto,
+    })
+}
+
+/// Rebase current branch onto another branch
+///
+/// Uses `git rebase <onto_branch>`. Returns conflict info if rebase pauses.
+pub fn git_rebase(workspace_root: &Path, onto_branch: &str) -> Result<GitRebaseResult, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // Check if already in a rebase
+    if is_rebasing(workspace_root) {
+        return Ok(GitRebaseResult {
+            ok: false,
+            state: "error".to_string(),
+            message: Some("Already in a rebase. Use continue or abort.".to_string()),
+            conflicts: get_conflict_files(workspace_root),
+        });
+    }
+
+    let output = Command::new("git")
+        .args(["rebase", onto_branch])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        Ok(GitRebaseResult {
+            ok: true,
+            state: "completed".to_string(),
+            message: Some(format!("Rebased onto {}", onto_branch)),
+            conflicts: vec![],
+        })
+    } else {
+        // Check if we're now in a conflict state
+        if is_rebasing(workspace_root) {
+            let conflicts = get_conflict_files(workspace_root);
+            Ok(GitRebaseResult {
+                ok: false,
+                state: "conflict".to_string(),
+                message: Some("Rebase paused due to conflicts".to_string()),
+                conflicts,
+            })
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Ok(GitRebaseResult {
+                ok: false,
+                state: "error".to_string(),
+                message: Some(if stderr.is_empty() { "Rebase failed".to_string() } else { stderr }),
+                conflicts: vec![],
+            })
+        }
+    }
+}
+
+/// Continue a paused rebase
+pub fn git_rebase_continue(workspace_root: &Path) -> Result<GitRebaseResult, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    if !is_rebasing(workspace_root) {
+        return Ok(GitRebaseResult {
+            ok: false,
+            state: "error".to_string(),
+            message: Some("No rebase in progress".to_string()),
+            conflicts: vec![],
+        });
+    }
+
+    let output = Command::new("git")
+        .args(["rebase", "--continue"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        // Check if rebase is complete
+        if is_rebasing(workspace_root) {
+            // Still rebasing, might have more conflicts
+            let conflicts = get_conflict_files(workspace_root);
+            if conflicts.is_empty() {
+                Ok(GitRebaseResult {
+                    ok: true,
+                    state: "completed".to_string(),
+                    message: Some("Rebase completed".to_string()),
+                    conflicts: vec![],
+                })
+            } else {
+                Ok(GitRebaseResult {
+                    ok: false,
+                    state: "conflict".to_string(),
+                    message: Some("More conflicts to resolve".to_string()),
+                    conflicts,
+                })
+            }
+        } else {
+            Ok(GitRebaseResult {
+                ok: true,
+                state: "completed".to_string(),
+                message: Some("Rebase completed".to_string()),
+                conflicts: vec![],
+            })
+        }
+    } else {
+        // Check if still in conflict
+        let conflicts = get_conflict_files(workspace_root);
+        if !conflicts.is_empty() {
+            Ok(GitRebaseResult {
+                ok: false,
+                state: "conflict".to_string(),
+                message: Some("Conflicts remain. Resolve and stage files before continuing.".to_string()),
+                conflicts,
+            })
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Ok(GitRebaseResult {
+                ok: false,
+                state: "error".to_string(),
+                message: Some(if stderr.is_empty() { "Continue failed".to_string() } else { stderr }),
+                conflicts: vec![],
+            })
+        }
+    }
+}
+
+/// Git rebase abort (workspace_root: &Path) -> Result<GitRebaseResult, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    if !is_rebasing(workspace_root) {
+        return Ok(GitRebaseResult {
+            ok: false,
+            state: "error".to_string(),
+            message: Some("No rebase in progress".to_string()),
+            conflicts: vec![],
+        });
+    }
+
+    let output = Command::new("git")
+        .args(["rebase", "--abort"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        Ok(GitRebaseResult {
+            ok: true,
+            state: "aborted".to_string(),
+            message: Some("Rebase aborted".to_string()),
+            conflicts: vec![],
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(GitRebaseResult {
+            ok: false,
+            state: "error".to_string(),
+            message: Some(if stderr.is_empty() { "Abort failed".to_string() } else { stderr }),
+            conflicts: vec![],
+        })
+    }
+}
+
+// ============================================================================
+// v1.12: Integration Worktree for Safe Merge to Default (UX-3b)
+// ============================================================================
+
+/// Integration worktree state
+#[derive(Debug, Clone, PartialEq)]
+pub enum IntegrationState {
+    Idle,
+    Merging,
+    Conflict,
+}
+
+impl IntegrationState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            IntegrationState::Idle => "idle",
+            IntegrationState::Merging => "merging",
+            IntegrationState::Conflict => "conflict",
+        }
+    }
+}
+
+/// Integration worktree status result
+#[derive(Debug)]
+pub struct IntegrationStatusResult {
+    pub state: IntegrationState,
+    pub conflicts: Vec<String>,
+    pub head: Option<String>,
+    pub default_branch: String,
+    pub path: String,
+    pub is_clean: bool,
+}
+
+/// Merge to default result
+#[derive(Debug)]
+pub struct MergeToDefaultResult {
+    pub ok: bool,
+    pub state: String,  // "idle", "merging", "conflict", "completed", "failed"
+    pub message: Option<String>,
+    pub conflicts: Vec<String>,
+    pub head_sha: Option<String>,
+    pub integration_path: Option<String>,
+}
+
+/// Get the integration worktree path for a project
+fn get_integration_worktree_path(project_name: &str) -> PathBuf {
+    // Sanitize project name (alphanumeric + hyphen only)
+    let sanitized: String = project_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .collect();
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home)
+        .join(".tidyflow")
+        .join("worktrees")
+        .join(sanitized)
+        .join("__integration")
+}
+
+/// Check if integration worktree exists
+fn integration_worktree_exists(path: &Path) -> bool {
+    path.exists() && path.join(".git").exists()
+}
+
+/// Check if integration worktree is clean (no uncommitted changes, no merge in progress)
+fn is_integration_clean(path: &Path) -> bool {
+    // Check for uncommitted changes
+    let status_output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(path)
+        .output();
+
+    let has_changes = match status_output {
+        Ok(out) => !String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+        Err(_) => true,
+    };
+
+    if has_changes {
+        return false;
+    }
+
+    // Check for merge in progress
+    !is_merging(path)
+}
+
+/// Ensure integration worktree exists and is ready
+///
+/// Creates the worktree if it doesn't exist, or validates it's clean if it does.
+pub fn ensure_integration_worktree(
+    repo_root: &Path,
+    project_name: &str,
+    default_branch: &str,
+) -> Result<String, GitError> {
+    let integration_path = get_integration_worktree_path(project_name);
+
+    if integration_worktree_exists(&integration_path) {
+        // Worktree exists, check if clean
+        if !is_integration_clean(&integration_path) {
+            return Err(GitError::CommandFailed(
+                "Integration worktree is not clean. Abort or clean up first.".to_string()
+            ));
+        }
+
+        // Ensure we're on the default branch
+        let checkout_output = Command::new("git")
+            .args(["checkout", default_branch])
+            .current_dir(&integration_path)
+            .output()
+            .map_err(GitError::IoError)?;
+
+        if !checkout_output.status.success() {
+            let stderr = String::from_utf8_lossy(&checkout_output.stderr);
+            return Err(GitError::CommandFailed(format!(
+                "Failed to checkout {}: {}",
+                default_branch, stderr
+            )));
+        }
+
+        return Ok(integration_path.to_string_lossy().to_string());
+    }
+
+    // Create parent directories
+    if let Some(parent) = integration_path.parent() {
+        std::fs::create_dir_all(parent).map_err(GitError::IoError)?;
+    }
+
+    // Create the worktree
+    let output = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            integration_path.to_string_lossy().as_ref(),
+            default_branch,
+        ])
+        .current_dir(repo_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        Ok(integration_path.to_string_lossy().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(GitError::CommandFailed(format!(
+            "Failed to create integration worktree: {}",
+            if stderr.is_empty() { "Unknown error" } else { &stderr }
+        )))
+    }
+}
+
+/// Get integration worktree status
+pub fn integration_status(
+    project_name: &str,
+    default_branch: &str,
+) -> Result<IntegrationStatusResult, GitError> {
+    let integration_path = get_integration_worktree_path(project_name);
+
+    if !integration_worktree_exists(&integration_path) {
+        return Ok(IntegrationStatusResult {
+            state: IntegrationState::Idle,
+            conflicts: vec![],
+            head: None,
+            default_branch: default_branch.to_string(),
+            path: integration_path.to_string_lossy().to_string(),
+            is_clean: true,
+        });
+    }
+
+    let state = if is_merging(&integration_path) {
+        let conflicts = get_conflict_files(&integration_path);
+        if conflicts.is_empty() {
+            IntegrationState::Merging
+        } else {
+            IntegrationState::Conflict
+        }
+    } else {
+        IntegrationState::Idle
+    };
+
+    let conflicts = if state != IntegrationState::Idle {
+        get_conflict_files(&integration_path)
+    } else {
+        vec![]
+    };
+
+    let head = get_short_head_sha(&integration_path);
+    let is_clean = is_integration_clean(&integration_path);
+
+    Ok(IntegrationStatusResult {
+        state,
+        conflicts,
+        head,
+        default_branch: default_branch.to_string(),
+        path: integration_path.to_string_lossy().to_string(),
+        is_clean,
+    })
+}
+
+/// Merge a source branch into the default branch via integration worktree
+///
+/// This performs the merge in the integration worktree, not the user's workspace.
+pub fn merge_to_default(
+    repo_root: &Path,
+    project_name: &str,
+    source_branch: &str,
+    default_branch: &str,
+) -> Result<MergeToDefaultResult, GitError> {
+    // Ensure integration worktree exists and is clean
+    let integration_path_str = ensure_integration_worktree(repo_root, project_name, default_branch)?;
+    let integration_path = PathBuf::from(&integration_path_str);
+
+    // Verify source branch exists
+    let show_ref_output = Command::new("git")
+        .args(["show-ref", "--verify", &format!("refs/heads/{}", source_branch)])
+        .current_dir(repo_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !show_ref_output.status.success() {
+        return Ok(MergeToDefaultResult {
+            ok: false,
+            state: "failed".to_string(),
+            message: Some(format!("Branch '{}' not found", source_branch)),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: Some(integration_path_str),
+        });
+    }
+
+    // Perform the merge
+    let merge_output = Command::new("git")
+        .args(["merge", source_branch, "--no-edit"])
+        .current_dir(&integration_path)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if merge_output.status.success() {
+        // Merge completed successfully
+        let head_sha = get_short_head_sha(&integration_path);
+        Ok(MergeToDefaultResult {
+            ok: true,
+            state: "completed".to_string(),
+            message: Some(format!("Merged {} into {}", source_branch, default_branch)),
+            conflicts: vec![],
+            head_sha,
+            integration_path: Some(integration_path_str),
+        })
+    } else {
+        // Check if we're in a conflict state
+        if is_merging(&integration_path) {
+            let conflicts = get_conflict_files(&integration_path);
+            Ok(MergeToDefaultResult {
+                ok: false,
+                state: "conflict".to_string(),
+                message: Some("Merge has conflicts".to_string()),
+                conflicts,
+                head_sha: None,
+                integration_path: Some(integration_path_str),
+            })
+        } else {
+            let stderr = String::from_utf8_lossy(&merge_output.stderr).trim().to_string();
+            Ok(MergeToDefaultResult {
+                ok: false,
+                state: "failed".to_string(),
+                message: Some(if stderr.is_empty() { "Merge failed".to_string() } else { stderr }),
+                conflicts: vec![],
+                head_sha: None,
+                integration_path: Some(integration_path_str),
+            })
+        }
+    }
+}
+
+/// Continue a merge after conflict resolution
+pub fn merge_continue(project_name: &str) -> Result<MergeToDefaultResult, GitError> {
+    let integration_path = get_integration_worktree_path(project_name);
+
+    if !integration_worktree_exists(&integration_path) {
+        return Ok(MergeToDefaultResult {
+            ok: false,
+            state: "failed".to_string(),
+            message: Some("Integration worktree does not exist".to_string()),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: None,
+        });
+    }
+
+    if !is_merging(&integration_path) {
+        return Ok(MergeToDefaultResult {
+            ok: false,
+            state: "idle".to_string(),
+            message: Some("No merge in progress".to_string()),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        });
+    }
+
+    // Check if there are still conflicts
+    let conflicts = get_conflict_files(&integration_path);
+    if !conflicts.is_empty() {
+        return Ok(MergeToDefaultResult {
+            ok: false,
+            state: "conflict".to_string(),
+            message: Some("Conflicts remain. Resolve and stage files before continuing.".to_string()),
+            conflicts,
+            head_sha: None,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        });
+    }
+
+    // Stage all changes
+    let add_output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(&integration_path)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr).trim().to_string();
+        return Ok(MergeToDefaultResult {
+            ok: false,
+            state: "failed".to_string(),
+            message: Some(format!("Failed to stage changes: {}", stderr)),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        });
+    }
+
+    // Complete the merge with commit
+    let commit_output = Command::new("git")
+        .args(["commit", "--no-edit"])
+        .current_dir(&integration_path)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if commit_output.status.success() {
+        let head_sha = get_short_head_sha(&integration_path);
+        Ok(MergeToDefaultResult {
+            ok: true,
+            state: "completed".to_string(),
+            message: Some("Merge completed".to_string()),
+            conflicts: vec![],
+            head_sha,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr).trim().to_string();
+        // Check if still in merge state (might have more conflicts)
+        if is_merging(&integration_path) {
+            let conflicts = get_conflict_files(&integration_path);
+            Ok(MergeToDefaultResult {
+                ok: false,
+                state: "conflict".to_string(),
+                message: Some(if stderr.is_empty() { "More conflicts to resolve".to_string() } else { stderr }),
+                conflicts,
+                head_sha: None,
+                integration_path: Some(integration_path.to_string_lossy().to_string()),
+            })
+        } else {
+            Ok(MergeToDefaultResult {
+                ok: false,
+                state: "failed".to_string(),
+                message: Some(if stderr.is_empty() { "Commit failed".to_string() } else { stderr }),
+                conflicts: vec![],
+                head_sha: None,
+                integration_path: Some(integration_path.to_string_lossy().to_string()),
+            })
+        }
+    }
+}
+
+/// Abort a merge in progress
+pub fn merge_abort(project_name: &str) -> Result<MergeToDefaultResult, GitError> {
+    let integration_path = get_integration_worktree_path(project_name);
+
+    if !integration_worktree_exists(&integration_path) {
+        return Ok(MergeToDefaultResult {
+            ok: false,
+            state: "failed".to_string(),
+            message: Some("Integration worktree does not exist".to_string()),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: None,
+        });
+    }
+
+    if !is_merging(&integration_path) {
+        return Ok(MergeToDefaultResult {
+            ok: true,
+            state: "idle".to_string(),
+            message: Some("No merge in progress".to_string()),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        });
+    }
+
+    let output = Command::new("git")
+        .args(["merge", "--abort"])
+        .current_dir(&integration_path)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        Ok(MergeToDefaultResult {
+            ok: true,
+            state: "idle".to_string(),
+            message: Some("Merge aborted".to_string()),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(MergeToDefaultResult {
+            ok: false,
+            state: "failed".to_string(),
+            message: Some(if stderr.is_empty() { "Abort failed".to_string() } else { stderr }),
+            conflicts: vec![],
+            head_sha: None,
+            integration_path: Some(integration_path.to_string_lossy().to_string()),
+        })
     }
 }
 

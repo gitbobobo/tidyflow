@@ -649,3 +649,204 @@ struct GitCommitResult {
         )
     }
 }
+
+// MARK: - Phase UX-3a: Git Rebase Protocol Models
+
+/// Git operation state enum
+enum GitOpState: String {
+    case normal = "normal"
+    case rebasing = "rebasing"
+    case merging = "merging"
+
+    var displayName: String {
+        switch self {
+        case .normal: return "Normal"
+        case .rebasing: return "Rebasing"
+        case .merging: return "Merging"
+        }
+    }
+}
+
+/// Result from git_rebase request
+struct GitRebaseResult {
+    let project: String
+    let workspace: String
+    let ok: Bool
+    let state: String  // "completed", "conflict", "aborted", "error"
+    let message: String?
+    let conflicts: [String]
+
+    static func from(json: [String: Any]) -> GitRebaseResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let ok = json["ok"] as? Bool,
+              let state = json["state"] as? String else {
+            return nil
+        }
+        let message = json["message"] as? String
+        let conflicts = json["conflicts"] as? [String] ?? []
+        return GitRebaseResult(
+            project: project,
+            workspace: workspace,
+            ok: ok,
+            state: state,
+            message: message,
+            conflicts: conflicts
+        )
+    }
+}
+
+/// Result from git_op_status request
+struct GitOpStatusResult {
+    let project: String
+    let workspace: String
+    let state: GitOpState
+    let conflicts: [String]
+    let head: String?
+    let onto: String?
+
+    static func from(json: [String: Any]) -> GitOpStatusResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let stateStr = json["state"] as? String else {
+            return nil
+        }
+        let state = GitOpState(rawValue: stateStr) ?? .normal
+        let conflicts = json["conflicts"] as? [String] ?? []
+        let head = json["head"] as? String
+        let onto = json["onto"] as? String
+        return GitOpStatusResult(
+            project: project,
+            workspace: workspace,
+            state: state,
+            conflicts: conflicts,
+            head: head,
+            onto: onto
+        )
+    }
+}
+
+/// Cached git operation status for a workspace
+struct GitOpStatusCache {
+    var state: GitOpState
+    var conflicts: [String]
+    var isLoading: Bool
+    var updatedAt: Date
+
+    static func empty() -> GitOpStatusCache {
+        GitOpStatusCache(
+            state: .normal,
+            conflicts: [],
+            isLoading: false,
+            updatedAt: .distantPast
+        )
+    }
+}
+
+// MARK: - Phase UX-3b: Git Merge Integration Protocol Models
+
+/// Integration worktree state enum
+enum IntegrationState: String {
+    case idle = "idle"
+    case merging = "merging"
+    case conflict = "conflict"
+    case completed = "completed"
+    case failed = "failed"
+
+    var displayName: String {
+        switch self {
+        case .idle: return "Ready"
+        case .merging: return "Merging"
+        case .conflict: return "Conflict"
+        case .completed: return "Completed"
+        case .failed: return "Failed"
+        }
+    }
+}
+
+/// Result from git_merge_to_default request
+struct GitMergeToDefaultResult {
+    let project: String
+    let ok: Bool
+    let state: IntegrationState
+    let message: String?
+    let conflicts: [String]
+    let headSha: String?
+    let integrationPath: String?
+
+    static func from(json: [String: Any]) -> GitMergeToDefaultResult? {
+        guard let project = json["project"] as? String,
+              let ok = json["ok"] as? Bool,
+              let stateStr = json["state"] as? String else {
+            return nil
+        }
+        let state = IntegrationState(rawValue: stateStr) ?? .failed
+        let message = json["message"] as? String
+        let conflicts = json["conflicts"] as? [String] ?? []
+        let headSha = json["head_sha"] as? String
+        let integrationPath = json["integration_path"] as? String
+        return GitMergeToDefaultResult(
+            project: project,
+            ok: ok,
+            state: state,
+            message: message,
+            conflicts: conflicts,
+            headSha: headSha,
+            integrationPath: integrationPath
+        )
+    }
+}
+
+/// Result from git_integration_status request
+struct GitIntegrationStatusResult {
+    let project: String
+    let state: IntegrationState
+    let conflicts: [String]
+    let head: String?
+    let defaultBranch: String
+    let path: String
+    let isClean: Bool
+
+    static func from(json: [String: Any]) -> GitIntegrationStatusResult? {
+        guard let project = json["project"] as? String,
+              let stateStr = json["state"] as? String,
+              let defaultBranch = json["default_branch"] as? String,
+              let path = json["path"] as? String,
+              let isClean = json["is_clean"] as? Bool else {
+            return nil
+        }
+        let state = IntegrationState(rawValue: stateStr) ?? .idle
+        let conflicts = json["conflicts"] as? [String] ?? []
+        let head = json["head"] as? String
+        return GitIntegrationStatusResult(
+            project: project,
+            state: state,
+            conflicts: conflicts,
+            head: head,
+            defaultBranch: defaultBranch,
+            path: path,
+            isClean: isClean
+        )
+    }
+}
+
+/// Cached integration status for a project
+struct GitIntegrationStatusCache {
+    var state: IntegrationState
+    var conflicts: [String]
+    var isLoading: Bool
+    var updatedAt: Date
+    var integrationPath: String?
+    var defaultBranch: String
+
+    static func empty() -> GitIntegrationStatusCache {
+        GitIntegrationStatusCache(
+            state: .idle,
+            conflicts: [],
+            isLoading: false,
+            updatedAt: .distantPast,
+            integrationPath: nil,
+            defaultBranch: "main"
+        )
+    }
+}

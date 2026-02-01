@@ -289,6 +289,12 @@ struct GitPanelToolbar: View {
                 GitCommitSection()
                     .environmentObject(appState)
             }
+
+            // Workspace Actions section (only show if git repo) - UX-3a
+            if isGitRepo {
+                GitWorkspaceActionsSection()
+                    .environmentObject(appState)
+            }
         }
         .background(Color(NSColor.controlBackgroundColor))
     }
@@ -847,6 +853,410 @@ struct GitCommitSection: View {
     private func performCommit() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         appState.gitCommit(workspaceKey: ws, message: currentMessage)
+    }
+}
+
+// MARK: - Workspace Actions Section (UX-3a + UX-3b)
+
+struct GitWorkspaceActionsSection: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Divider()
+
+            // Rebase status indicator (UX-3a)
+            if let opStatus = currentOpStatus {
+                if opStatus.state != .normal {
+                    HStack(spacing: 6) {
+                        Image(systemName: opStatus.state == .rebasing ? "arrow.triangle.2.circlepath" : "arrow.triangle.merge")
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                        Text(opStatus.state.displayName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.orange)
+                        if !opStatus.conflicts.isEmpty {
+                            Text("(\(opStatus.conflicts.count) conflicts)")
+                                .font(.system(size: 10))
+                                .foregroundColor(.red)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.1))
+                }
+            }
+
+            // Integration merge status indicator (UX-3b)
+            if let integrationStatus = currentIntegrationStatus {
+                if integrationStatus.state != .idle {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.merge")
+                            .font(.system(size: 11))
+                            .foregroundColor(.purple)
+                        Text("Merging to Default")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.purple)
+                        if !integrationStatus.conflicts.isEmpty {
+                            Text("(\(integrationStatus.conflicts.count) conflicts)")
+                                .font(.system(size: 10))
+                                .foregroundColor(.red)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color.purple.opacity(0.1))
+                }
+            }
+
+            // Conflict files list (if any - rebase)
+            if let conflicts = currentOpStatus?.conflicts, !conflicts.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Rebase Conflicts:")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    ForEach(conflicts, id: \.self) { path in
+                        Button(action: { openConflictFile(path) }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.red)
+                                Text(path.split(separator: "/").last.map(String.init) ?? path)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            }
+
+            // Conflict files list (if any - merge)
+            if let conflicts = currentIntegrationStatus?.conflicts, !conflicts.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Merge Conflicts:")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    ForEach(conflicts, id: \.self) { path in
+                        Button(action: { openConflictFile(path) }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.red)
+                                Text(path.split(separator: "/").last.map(String.init) ?? path)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            }
+
+            // Action buttons
+            HStack(spacing: 8) {
+                // Fetch button
+                Button(action: performFetch) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 11))
+                        Text("Fetch")
+                            .font(.system(size: 11))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.15))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isRebaseInFlight || isMergeInFlight)
+                .help("Fetch from remote")
+
+                // Rebase button (only show if not in rebase or merge)
+                if !isInRebase && !isInMerge {
+                    Button(action: performRebase) {
+                        HStack(spacing: 4) {
+                            if isRebaseInFlight {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 11))
+                            }
+                            Text("Rebase")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.purple.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isRebaseInFlight || isMergeInFlight)
+                    .help("Rebase onto default branch (main)")
+                }
+
+                // Merge to Default button (UX-3b) - only show if not in rebase or merge
+                if !isInRebase && !isInMerge {
+                    Button(action: performMergeToDefault) {
+                        HStack(spacing: 4) {
+                            if isMergeInFlight {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "arrow.triangle.merge")
+                                    .font(.system(size: 11))
+                            }
+                            Text("Merge to Default")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.green.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isRebaseInFlight || isMergeInFlight)
+                    .help("Merge workspace branch into default branch (main)")
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+
+            // Continue/Abort buttons for rebase (only show if in rebase)
+            if isInRebase {
+                HStack(spacing: 8) {
+                    Button(action: performContinue) {
+                        HStack(spacing: 4) {
+                            if isRebaseInFlight {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 11))
+                            }
+                            Text("Continue")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.green.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isRebaseInFlight)
+                    .help("Continue rebase after resolving conflicts")
+
+                    Button(action: performAbort) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 11))
+                            Text("Abort")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.red.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isRebaseInFlight)
+                    .help("Abort rebase and return to original state")
+
+                    Button(action: runAIResolve) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                            Text("AI Resolve")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.cyan.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Open terminal with opencode to resolve conflicts")
+
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+            }
+
+            // Continue/Abort buttons for merge (UX-3b) - only show if in merge
+            if isInMerge {
+                HStack(spacing: 8) {
+                    Button(action: performMergeContinue) {
+                        HStack(spacing: 4) {
+                            if isMergeInFlight {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 11))
+                            }
+                            Text("Continue Merge")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.green.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isMergeInFlight)
+                    .help("Continue merge after resolving conflicts")
+
+                    Button(action: performMergeAbort) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 11))
+                            Text("Abort Merge")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.red.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isMergeInFlight)
+                    .help("Abort merge and return to original state")
+
+                    Button(action: runAIResolve) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                            Text("AI Resolve")
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.cyan.opacity(0.15))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Open terminal with opencode to resolve conflicts")
+
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear {
+            loadOpStatusIfNeeded()
+            loadIntegrationStatusIfNeeded()
+        }
+        .onChange(of: appState.selectedWorkspaceKey) { _ in
+            loadOpStatusIfNeeded()
+            loadIntegrationStatusIfNeeded()
+        }
+    }
+
+    private var currentOpStatus: GitOpStatusCache? {
+        guard let ws = appState.selectedWorkspaceKey else { return nil }
+        return appState.getGitOpStatusCache(workspaceKey: ws)
+    }
+
+    private var currentIntegrationStatus: GitIntegrationStatusCache? {
+        guard let ws = appState.selectedWorkspaceKey else { return nil }
+        return appState.getGitIntegrationStatusCache(workspaceKey: ws)
+    }
+
+    private var isInRebase: Bool {
+        currentOpStatus?.state == .rebasing
+    }
+
+    private var isInMerge: Bool {
+        currentIntegrationStatus?.state == .merging
+    }
+
+    private var isRebaseInFlight: Bool {
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return appState.isRebaseInFlight(workspaceKey: ws)
+    }
+
+    private var isMergeInFlight: Bool {
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return appState.isMergeInFlight(workspaceKey: ws)
+    }
+
+    private func loadOpStatusIfNeeded() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.fetchGitOpStatus(workspaceKey: ws)
+    }
+
+    private func loadIntegrationStatusIfNeeded() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.fetchGitIntegrationStatus(workspaceKey: ws)
+    }
+
+    private func performFetch() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitFetch(workspaceKey: ws)
+    }
+
+    private func performRebase() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        // Default to rebasing onto "main" - could be made configurable
+        appState.gitRebase(workspaceKey: ws, ontoBranch: "origin/main")
+    }
+
+    private func performContinue() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitRebaseContinue(workspaceKey: ws)
+    }
+
+    private func performAbort() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitRebaseAbort(workspaceKey: ws)
+    }
+
+    private func performMergeToDefault() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitMergeToDefault(workspaceKey: ws)
+    }
+
+    private func performMergeContinue() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitMergeContinue(workspaceKey: ws)
+    }
+
+    private func performMergeAbort() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitMergeAbort(workspaceKey: ws)
+    }
+
+    private func openConflictFile(_ path: String) {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        // Open the file in editor
+        appState.addEditorTab(workspaceKey: ws, path: path)
+    }
+
+    private func runAIResolve() {
+        // Spawn a terminal tab with opencode
+        // This will be handled by the terminal system
+        guard let ws = appState.selectedWorkspaceKey else { return }
+
+        // Create a new terminal tab for this workspace and run opencode
+        // The terminal will be created in the workspace's cwd
+        appState.spawnTerminalWithCommand(workspaceKey: ws, command: "opencode")
     }
 }
 

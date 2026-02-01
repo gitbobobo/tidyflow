@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Protocol version: 1 (backward compatible with v0, with multi-workspace extension v1.2)
+/// v1.11: Git rebase/fetch operations for UX-3a
+/// v1.12: Git merge to default via integration worktree for UX-3b
 pub const PROTOCOL_VERSION: u32 = 1;
 
 // ============================================================================
@@ -135,6 +137,48 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
         message: String,
+    },
+
+    // v1.11: Git rebase/fetch operations (UX-3a)
+    GitFetch {
+        project: String,
+        workspace: String,
+    },
+    GitRebase {
+        project: String,
+        workspace: String,
+        onto_branch: String,
+    },
+    GitRebaseContinue {
+        project: String,
+        workspace: String,
+    },
+    GitRebaseAbort {
+        project: String,
+        workspace: String,
+    },
+    GitOpStatus {
+        project: String,
+        workspace: String,
+    },
+
+    // v1.12: Git merge to default via integration worktree (UX-3b)
+    GitEnsureIntegrationWorktree {
+        project: String,
+    },
+    GitMergeToDefault {
+        project: String,
+        workspace: String,
+        default_branch: String,
+    },
+    GitMergeContinue {
+        project: String,
+    },
+    GitMergeAbort {
+        project: String,
+    },
+    GitIntegrationStatus {
+        project: String,
     },
 }
 
@@ -286,6 +330,59 @@ pub enum ServerMessage {
         sha: Option<String>,
     },
 
+    // v1.11: Git rebase result (UX-3a)
+    GitRebaseResult {
+        project: String,
+        workspace: String,
+        ok: bool,
+        state: String,  // "completed", "conflict", "aborted", "error"
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
+    },
+
+    // v1.11: Git operation status result (UX-3a)
+    GitOpStatusResult {
+        project: String,
+        workspace: String,
+        state: String,  // "normal", "rebasing", "merging"
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        head: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        onto: Option<String>,
+    },
+
+    // v1.12: Git merge to default result (UX-3b)
+    GitMergeToDefaultResult {
+        project: String,
+        ok: bool,
+        state: String,  // "idle", "merging", "conflict", "completed", "failed"
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        head_sha: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        integration_path: Option<String>,
+    },
+
+    // v1.12: Git integration worktree status result (UX-3b)
+    GitIntegrationStatusResult {
+        project: String,
+        state: String,  // "idle", "merging", "conflict"
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        head: Option<String>,
+        default_branch: String,
+        path: String,
+        is_clean: bool,
+    },
+
     // v1: Error handling
     Error { code: String, message: String },
 }
@@ -356,5 +453,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_branches".to_string(),
         "git_create_branch".to_string(),
         "git_commit".to_string(),
+        "git_rebase".to_string(),
+        "git_merge_integration".to_string(),
     ]
 }

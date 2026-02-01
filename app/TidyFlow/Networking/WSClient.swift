@@ -22,6 +22,10 @@ class WSClient: NSObject, ObservableObject {
     var onGitOpResult: ((GitOpResult) -> Void)?
     var onGitBranchesResult: ((GitBranchesResult) -> Void)?
     var onGitCommitResult: ((GitCommitResult) -> Void)?
+    var onGitRebaseResult: ((GitRebaseResult) -> Void)?
+    var onGitOpStatusResult: ((GitOpStatusResult) -> Void)?
+    var onGitMergeToDefaultResult: ((GitMergeToDefaultResult) -> Void)?
+    var onGitIntegrationStatusResult: ((GitIntegrationStatusResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -223,6 +227,86 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // Phase UX-3a: Request git fetch
+    func requestGitFetch(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_fetch",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    // Phase UX-3a: Request git rebase
+    func requestGitRebase(project: String, workspace: String, ontoBranch: String) {
+        sendJSON([
+            "type": "git_rebase",
+            "project": project,
+            "workspace": workspace,
+            "onto_branch": ontoBranch
+        ])
+    }
+
+    // Phase UX-3a: Request git rebase continue
+    func requestGitRebaseContinue(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_rebase_continue",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    // Phase UX-3a: Request git rebase abort
+    func requestGitRebaseAbort(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_rebase_abort",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    // Phase UX-3a: Request git operation status
+    func requestGitOpStatus(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_op_status",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    // Phase UX-3b: Request git merge to default
+    func requestGitMergeToDefault(project: String, workspace: String, defaultBranch: String) {
+        sendJSON([
+            "type": "git_merge_to_default",
+            "project": project,
+            "workspace": workspace,
+            "default_branch": defaultBranch
+        ])
+    }
+
+    // Phase UX-3b: Request git merge continue
+    func requestGitMergeContinue(project: String) {
+        sendJSON([
+            "type": "git_merge_continue",
+            "project": project
+        ])
+    }
+
+    // Phase UX-3b: Request git merge abort
+    func requestGitMergeAbort(project: String) {
+        sendJSON([
+            "type": "git_merge_abort",
+            "project": project
+        ])
+    }
+
+    // Phase UX-3b: Request git integration status
+    func requestGitIntegrationStatus(project: String) {
+        sendJSON([
+            "type": "git_integration_status",
+            "project": project
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -294,6 +378,26 @@ class WSClient: NSObject, ObservableObject {
         case "git_commit_result":
             if let result = GitCommitResult.from(json: json) {
                 onGitCommitResult?(result)
+            }
+
+        case "git_rebase_result":
+            if let result = GitRebaseResult.from(json: json) {
+                onGitRebaseResult?(result)
+            }
+
+        case "git_op_status_result":
+            if let result = GitOpStatusResult.from(json: json) {
+                onGitOpStatusResult?(result)
+            }
+
+        case "git_merge_to_default_result":
+            if let result = GitMergeToDefaultResult.from(json: json) {
+                onGitMergeToDefaultResult?(result)
+            }
+
+        case "git_integration_status_result":
+            if let result = GitIntegrationStatusResult.from(json: json) {
+                onGitIntegrationStatusResult?(result)
             }
 
         case "error":
