@@ -21,14 +21,50 @@
 - 自动刷新（60秒缓存）和手动刷新
 - 空态显示（非 git 仓库、无变更、断开连接）
 
-## Build DMG (Unsigned)
+## Build DMG
 
-构建内部分发用的 DMG（未签名）：
+### Unsigned Build (Internal Testing)
 
 ```bash
 ./scripts/release/build_dmg.sh
 ```
 
+首次运行需右键 > 打开绕过 Gatekeeper。
+
+### Signed Build (Distribution)
+
+```bash
+# 查看可用签名身份
+security find-identity -v -p codesigning
+
+# 使用 Developer ID Application 签名
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/release/build_dmg.sh --sign
+```
+
+签名后仍需公证（D5-3）才能完全绕过 Gatekeeper。
+
 产物位置：`dist/TidyFlow-<version>.dmg`
 
-首次运行需右键 > 打开绕过 Gatekeeper。详见 `design/44-dmg-packaging-d5-1.md`。
+详见 `design/45-codesign-d5-2.md`。
+
+### Notarize (D5-3)
+
+公证让用户无需手动绕过 Gatekeeper。
+
+```bash
+# 1. 创建 Keychain profile（一次性）
+xcrun notarytool store-credentials tidyflow-notary \
+  --apple-id your@email.com \
+  --team-id YOURTEAMID \
+  --password <app-specific-password>
+
+# 2. 公证已签名的 DMG
+./scripts/release/notarize.sh --profile tidyflow-notary
+
+# 3. 验证
+xcrun stapler validate dist/TidyFlow-*.dmg
+hdiutil attach dist/TidyFlow-*.dmg
+spctl --assess --type execute --verbose /Volumes/TidyFlow/TidyFlow.app
+```
+
+详见 `design/46-notarization-d5-3a.md`。
