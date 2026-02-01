@@ -14,7 +14,11 @@ struct TabContentHostView: View {
 
                 switch activeTab.kind {
                 case .terminal:
-                    TerminalPlaceholderView()
+                    // Phase C1-1: Show WebView for terminal tabs
+                    TerminalContentView(
+                        webBridge: webBridge,
+                        webViewVisible: $webViewVisible
+                    )
                 case .editor:
                     EditorContentView(
                         path: activeTab.payload,
@@ -34,6 +38,182 @@ struct TabContentHostView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Phase C1-2: Terminal Content View (WebView + Status Bar, Multi-Session)
+
+struct TerminalContentView: View {
+    let webBridge: WebBridge
+    @Binding var webViewVisible: Bool
+    @EnvironmentObject var appState: AppState
+
+    // Track the current tab to detect tab switches
+    @State private var currentTabId: UUID?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // WebView container (managed by parent CenterContentView)
+            ZStack {
+                // Show loading or error state
+                if !appState.editorWebReady {
+                    VStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading terminal...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                } else if case .error(let message) = appState.terminalState {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundColor(.orange)
+                        Text("Terminal Error")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        Text(message)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        Button("Reconnect") {
+                            appState.wsClient.reconnect()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                } else {
+                    // WebView is visible and ready - show transparent overlay
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Status bar
+            TerminalStatusBar()
+        }
+        .onAppear {
+            webViewVisible = true
+            // Send enter_mode and terminal commands when terminal tab becomes active
+            if appState.editorWebReady {
+                sendTerminalMode()
+            }
+        }
+        .onDisappear {
+            webViewVisible = false
+            // Switch back to editor mode when leaving terminal
+            if appState.editorWebReady {
+                webBridge.enterMode("editor")
+            }
+        }
+        .onChange(of: appState.editorWebReady) { ready in
+            if ready {
+                sendTerminalMode()
+            }
+        }
+        .onChange(of: appState.activeTabIdByWorkspace) { _ in
+            // Detect tab switch within terminal tabs
+            if let tab = appState.getActiveTab(), tab.kind == .terminal {
+                if currentTabId != tab.id {
+                    currentTabId = tab.id
+                    handleTabSwitch(tab)
+                }
+            }
+        }
+    }
+
+    private func sendTerminalMode() {
+        guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
+        guard let ws = appState.selectedWorkspaceKey else { return }
+
+        currentTabId = tab.id
+        webBridge.enterMode("terminal")
+
+        // Phase C1-2: Check if this tab has a session
+        if let sessionId = appState.getTerminalSessionId(for: tab.id) {
+            // Attach to existing session
+            webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
+        } else if appState.terminalNeedsRespawn(tab.id) {
+            // Respawn session (was stale or never had one)
+            appState.staleTerminalTabs.remove(tab.id)
+            webBridge.terminalSpawn(
+                project: appState.selectedProjectName,
+                workspace: ws,
+                tabId: tab.id.uuidString
+            )
+        } else {
+            // New tab, spawn session
+            webBridge.terminalSpawn(
+                project: appState.selectedProjectName,
+                workspace: ws,
+                tabId: tab.id.uuidString
+            )
+        }
+        appState.requestTerminal()
+    }
+
+    private func handleTabSwitch(_ tab: TabModel) {
+        guard appState.editorWebReady else { return }
+        guard let ws = appState.selectedWorkspaceKey else { return }
+
+        // Phase C1-2: Switch to this tab's session
+        if let sessionId = appState.getTerminalSessionId(for: tab.id) {
+            webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
+        } else {
+            // No session, spawn new one
+            webBridge.terminalSpawn(
+                project: appState.selectedProjectName,
+                workspace: ws,
+                tabId: tab.id.uuidString
+            )
+        }
+    }
+}
+
+// MARK: - Terminal Status Bar
+
+struct TerminalStatusBar: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        HStack {
+            // Terminal indicator
+            Image(systemName: "terminal")
+                .font(.system(size: 11))
+                .foregroundColor(.green)
+
+            // Session info
+            switch appState.terminalState {
+            case .idle:
+                Text("Terminal")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            case .connecting:
+                Text("Connecting...")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.orange)
+            case .ready(let sessionId):
+                Text("Session: \(sessionId.prefix(8))...")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            case .error(let message):
+                Text("Error: \(message)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.red)
+            }
+
+            Spacer()
+
+            // Connection status
+            Circle()
+                .fill(appState.connectionState == .connected ? Color.green : Color.red)
+                .frame(width: 8, height: 8)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(NSColor.controlBackgroundColor))
     }
 }
 
@@ -144,7 +324,7 @@ struct TerminalPlaceholderView: View {
                 Text("Terminal Placeholder")
                     .font(.monospaced(.body)())
                     .foregroundColor(.green)
-                Text("(WebView will be embedded here in Phase B-3)")
+                Text("(Legacy - should not appear)")
                     .font(.caption)
                     .foregroundColor(.gray)
             }

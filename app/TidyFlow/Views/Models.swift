@@ -19,6 +19,24 @@ enum ConnectionState {
     case disconnected
 }
 
+// Phase C1-1: Terminal state for native binding
+enum TerminalState: Equatable {
+    case idle
+    case connecting
+    case ready(sessionId: String)
+    case error(message: String)
+
+    var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+
+    var errorMessage: String? {
+        if case .error(let msg) = self { return msg }
+        return nil
+    }
+}
+
 enum TabKind: String, Codable {
     case terminal
     case editor
@@ -39,6 +57,10 @@ struct TabModel: Identifiable, Codable, Equatable {
     let kind: TabKind
     let workspaceKey: String
     let payload: String
+
+    // Phase C1-2: Terminal session ID (only for terminal tabs)
+    // Stored separately from payload to maintain Codable compatibility
+    var terminalSessionId: String?
 }
 
 typealias TabSet = [TabModel]
@@ -86,6 +108,17 @@ class AppState: ObservableObject {
     @Published var lastEditorPath: String?
     @Published var editorStatus: String = ""
     @Published var editorStatusIsError: Bool = false
+
+    // Phase C1-1: Terminal Bridge State (global, for status display)
+    @Published var terminalState: TerminalState = .idle
+
+    // Phase C1-2: Per-tab terminal session mapping
+    // Maps tabId -> sessionId for terminal tabs
+    @Published var terminalSessionByTabId: [UUID: String] = [:]
+    // Track stale sessions (disconnected but tab still exists)
+    @Published var staleTerminalTabs: Set<UUID> = []
+    // Callback for terminal kill (set by CenterContentView)
+    var onTerminalKill: ((String, String) -> Void)?
 
     // WebSocket Client
     let wsClient = WSClient()
@@ -258,11 +291,22 @@ class AppState: ObservableObject {
     func closeTab(workspaceKey: String, tabId: UUID) {
         guard var tabs = workspaceTabs[workspaceKey] else { return }
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
-        
+
+        let tab = tabs[index]
         let isActive = activeTabIdByWorkspace[workspaceKey] == tabId
+
+        // Phase C1-2: Send terminal kill and clean up session mapping
+        if tab.kind == .terminal {
+            if let sessionId = terminalSessionByTabId[tabId] {
+                onTerminalKill?(tabId.uuidString, sessionId)
+            }
+            terminalSessionByTabId.removeValue(forKey: tabId)
+            staleTerminalTabs.remove(tabId)
+        }
+
         tabs.remove(at: index)
         workspaceTabs[workspaceKey] = tabs
-        
+
         if isActive {
             if tabs.isEmpty {
                 activeTabIdByWorkspace[workspaceKey] = nil
@@ -373,5 +417,99 @@ class AppState: ObservableObject {
     func handleEditorSaveError(path: String, message: String) {
         editorStatus = "Error: \(message)"
         editorStatusIsError = true
+    }
+
+    // MARK: - Phase C1-2: Terminal State Helpers (Multi-Session)
+
+    /// Check if active tab is a terminal tab
+    var isActiveTabTerminal: Bool {
+        getActiveTab()?.kind == .terminal
+    }
+
+    /// Get the session ID for a specific terminal tab
+    func getTerminalSessionId(for tabId: UUID) -> String? {
+        return terminalSessionByTabId[tabId]
+    }
+
+    /// Get the session ID for the active terminal tab
+    var activeTerminalSessionId: String? {
+        guard let tab = getActiveTab(), tab.kind == .terminal else { return nil }
+        return terminalSessionByTabId[tab.id]
+    }
+
+    /// Handle terminal ready event from WebBridge (with tabId)
+    func handleTerminalReady(tabId: String, sessionId: String, project: String, workspace: String) {
+        guard let uuid = UUID(uuidString: tabId) else {
+            print("[AppState] Invalid tabId: \(tabId)")
+            return
+        }
+
+        // Update session mapping
+        terminalSessionByTabId[uuid] = sessionId
+        staleTerminalTabs.remove(uuid)
+
+        // Update tab's terminalSessionId
+        if let ws = selectedWorkspaceKey,
+           var tabs = workspaceTabs[ws],
+           let index = tabs.firstIndex(where: { $0.id == uuid }) {
+            tabs[index].terminalSessionId = sessionId
+            workspaceTabs[ws] = tabs
+        }
+
+        // Update global terminal state for status bar
+        terminalState = .ready(sessionId: sessionId)
+        print("[AppState] Terminal ready: tabId=\(tabId), sessionId=\(sessionId)")
+    }
+
+    /// Handle terminal closed event from WebBridge
+    func handleTerminalClosed(tabId: String, sessionId: String, code: Int?) {
+        guard let uuid = UUID(uuidString: tabId) else { return }
+
+        // Remove session mapping
+        terminalSessionByTabId.removeValue(forKey: uuid)
+
+        // Update tab's terminalSessionId
+        if let ws = selectedWorkspaceKey,
+           var tabs = workspaceTabs[ws],
+           let index = tabs.firstIndex(where: { $0.id == uuid }) {
+            tabs[index].terminalSessionId = nil
+            workspaceTabs[ws] = tabs
+        }
+
+        print("[AppState] Terminal closed: tabId=\(tabId), code=\(code ?? -1)")
+    }
+
+    /// Handle terminal error event from WebBridge
+    func handleTerminalError(tabId: String?, message: String) {
+        terminalState = .error(message: message)
+        print("[AppState] Terminal error: \(message)")
+    }
+
+    /// Handle terminal connected event
+    func handleTerminalConnected() {
+        // Clear error state when reconnected
+        if case .error = terminalState {
+            terminalState = .idle
+        }
+    }
+
+    /// Mark all terminal sessions as stale (on disconnect)
+    func markAllTerminalSessionsStale() {
+        for tabId in terminalSessionByTabId.keys {
+            staleTerminalTabs.insert(tabId)
+        }
+        terminalSessionByTabId.removeAll()
+        terminalState = .idle
+        print("[AppState] All terminal sessions marked as stale")
+    }
+
+    /// Check if a terminal tab needs respawn
+    func terminalNeedsRespawn(_ tabId: UUID) -> Bool {
+        return staleTerminalTabs.contains(tabId) || terminalSessionByTabId[tabId] == nil
+    }
+
+    /// Request terminal for current workspace (legacy, for status)
+    func requestTerminal() {
+        terminalState = .connecting
     }
 }

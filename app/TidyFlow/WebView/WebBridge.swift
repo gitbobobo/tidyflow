@@ -3,8 +3,8 @@ import WebKit
 import Combine
 
 /// Bridge protocol for Native <-> Web communication
-/// Native -> Web: tidyflow:open_file, tidyflow:save_file
-/// Web -> Native: tidyflow:ready, tidyflow:saved, tidyflow:save_error
+/// Native -> Web: tidyflow:open_file, tidyflow:save_file, tidyflow:enter_mode, tidyflow:terminal_ensure
+/// Web -> Native: tidyflow:ready, tidyflow:saved, tidyflow:save_error, tidyflow:terminal_ready, tidyflow:terminal_error
 class WebBridge: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
 
@@ -12,6 +12,12 @@ class WebBridge: NSObject, WKScriptMessageHandler {
     var onReady: (([String: Any]) -> Void)?
     var onSaved: ((String) -> Void)?
     var onSaveError: ((String, String) -> Void)?
+
+    // Phase C1-2: Terminal callbacks (with tabId)
+    var onTerminalReady: ((String, String, String, String) -> Void)?  // tabId, session_id, project, workspace
+    var onTerminalClosed: ((String, String, Int?) -> Void)?  // tabId, session_id, code
+    var onTerminalError: ((String?, String) -> Void)?  // tabId (optional), error message
+    var onTerminalConnected: (() -> Void)?
 
     // State
     private(set) var isWebReady = false
@@ -55,6 +61,28 @@ class WebBridge: NSObject, WKScriptMessageHandler {
             let path = body["path"] as? String ?? ""
             let errorMsg = body["message"] as? String ?? "Unknown error"
             onSaveError?(path, errorMsg)
+
+        // Phase C1-2: Terminal events (with tabId)
+        case "terminal_ready":
+            let tabId = body["tab_id"] as? String ?? ""
+            let sessionId = body["session_id"] as? String ?? ""
+            let project = body["project"] as? String ?? ""
+            let workspace = body["workspace"] as? String ?? ""
+            onTerminalReady?(tabId, sessionId, project, workspace)
+
+        case "terminal_closed":
+            let tabId = body["tab_id"] as? String ?? ""
+            let sessionId = body["session_id"] as? String ?? ""
+            let code = body["code"] as? Int
+            onTerminalClosed?(tabId, sessionId, code)
+
+        case "terminal_error":
+            let tabId = body["tab_id"] as? String
+            let errorMsg = body["message"] as? String ?? "Unknown error"
+            onTerminalError?(tabId, errorMsg)
+
+        case "terminal_connected":
+            onTerminalConnected?()
 
         default:
             print("[WebBridge] Unknown message type: \(type)")
@@ -123,6 +151,46 @@ class WebBridge: NSObject, WKScriptMessageHandler {
             "project": project,
             "workspace": workspace,
             "path": path
+        ])
+    }
+
+    // MARK: - Phase C1-2: Terminal Methods (Multi-Session)
+
+    /// Enter a specific mode (editor or terminal)
+    func enterMode(_ mode: String) {
+        send(type: "enter_mode", payload: ["mode": mode])
+    }
+
+    /// Spawn a new terminal session for a tab
+    func terminalSpawn(project: String, workspace: String, tabId: String) {
+        send(type: "terminal_spawn", payload: [
+            "project": project,
+            "workspace": workspace,
+            "tab_id": tabId
+        ])
+    }
+
+    /// Attach to an existing terminal session
+    func terminalAttach(tabId: String, sessionId: String) {
+        send(type: "terminal_attach", payload: [
+            "tab_id": tabId,
+            "session_id": sessionId
+        ])
+    }
+
+    /// Kill a terminal session
+    func terminalKill(tabId: String, sessionId: String) {
+        send(type: "terminal_kill", payload: [
+            "tab_id": tabId,
+            "session_id": sessionId
+        ])
+    }
+
+    /// Legacy: Ensure a terminal exists for the given workspace (for backward compatibility)
+    func terminalEnsure(project: String, workspace: String) {
+        send(type: "terminal_ensure", payload: [
+            "project": project,
+            "workspace": workspace
         ])
     }
 

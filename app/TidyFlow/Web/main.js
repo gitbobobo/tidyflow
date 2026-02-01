@@ -74,6 +74,18 @@
     let protocolVersion = 0;
     let capabilities = [];
 
+    // Native mode state (Phase C1-2: Multi-Session)
+    // 'editor' | 'terminal' - controls which UI is visible
+    let nativeMode = 'editor';
+    let nativeTerminalReady = false;
+
+    // Phase C1-2: Multi-session management
+    // Maps sessionId -> { buffer: string[], tabId: string, project: string, workspace: string }
+    let terminalSessions = new Map();
+    let activeSessionId = null;
+    let pendingTerminalSpawn = null; // { tabId, project, workspace }
+    const MAX_BUFFER_LINES = 2000;
+
     // Projects/Workspaces state
     let projects = [];
     let workspacesMap = new Map(); // project -> workspace[]
@@ -1896,18 +1908,34 @@
                 }
 
                 case 'output': {
-                    // Find the terminal tab and write output
+                    // Phase C1-2: Route output to correct session buffer
                     const termId = msg.term_id;
                     if (termId) {
-                        // Search all workspace tabs for this terminal
-                        for (const [wsKey, tabSet] of workspaceTabs) {
-                            if (tabSet.tabs.has(termId)) {
-                                const tab = tabSet.tabs.get(termId);
-                                if (tab.term) {
-                                    const bytes = decodeBase64(msg.data_b64);
-                                    tab.term.write(bytes);
+                        const bytes = decodeBase64(msg.data_b64);
+
+                        // Store in session buffer
+                        if (terminalSessions.has(termId)) {
+                            const session = terminalSessions.get(termId);
+                            // Convert bytes to string for buffer
+                            const text = new TextDecoder().decode(bytes);
+                            session.buffer.push(text);
+                            // Limit buffer size
+                            while (session.buffer.length > MAX_BUFFER_LINES) {
+                                session.buffer.shift();
+                            }
+                        }
+
+                        // Write to xterm if this is the active session
+                        if (termId === activeSessionId) {
+                            // Search all workspace tabs for this terminal
+                            for (const [wsKey, tabSet] of workspaceTabs) {
+                                if (tabSet.tabs.has(termId)) {
+                                    const tab = tabSet.tabs.get(termId);
+                                    if (tab.term) {
+                                        tab.term.write(bytes);
+                                    }
+                                    break;
                                 }
-                                break;
                             }
                         }
                     }
@@ -1964,6 +1992,24 @@
                         sendResize(msg.session_id, tabInfo.term.cols, tabInfo.term.rows);
                     }
 
+                    // Phase C1-2: Register session (for legacy workspace selection)
+                    terminalSessions.set(msg.session_id, {
+                        buffer: [],
+                        tabId: msg.session_id, // Legacy: tabId same as sessionId
+                        project: msg.project,
+                        workspace: msg.workspace
+                    });
+                    activeSessionId = msg.session_id;
+                    nativeTerminalReady = true;
+
+                    // Notify Native (legacy format for backward compatibility)
+                    postToNative('terminal_ready', {
+                        tab_id: msg.session_id,
+                        session_id: msg.session_id,
+                        project: msg.project,
+                        workspace: msg.workspace
+                    });
+
                     notifySwift('workspace_selected', {
                         project: msg.project,
                         workspace: msg.workspace,
@@ -1974,8 +2020,12 @@
                 }
 
                 case 'term_created': {
-                    const tabInfo = createTerminalTab(msg.term_id, msg.cwd, msg.project, msg.workspace);
-                    switchToTab(msg.term_id);
+                    // Phase C1-2: Check if this was spawned by Native (has pending tabId)
+                    const sessionId = msg.term_id;
+                    const pendingTabId = pendingTerminalSpawn ? pendingTerminalSpawn.tabId : null;
+
+                    const tabInfo = createTerminalTab(sessionId, msg.cwd, msg.project, msg.workspace);
+                    switchToTab(sessionId);
 
                     if (tabInfo.term) {
                         tabInfo.term.writeln('\x1b[32m[New Terminal: ' + (msg.workspace || 'default') + ']\x1b[0m');
@@ -1984,11 +2034,32 @@
                         tabInfo.term.writeln('');
 
                         tabInfo.fitAddon.fit();
-                        sendResize(msg.term_id, tabInfo.term.cols, tabInfo.term.rows);
+                        sendResize(sessionId, tabInfo.term.cols, tabInfo.term.rows);
                     }
 
+                    // Phase C1-2: Register session
+                    terminalSessions.set(sessionId, {
+                        buffer: [],
+                        tabId: pendingTabId || sessionId,
+                        project: msg.project,
+                        workspace: msg.workspace
+                    });
+                    activeSessionId = sessionId;
+                    nativeTerminalReady = true;
+
+                    // Notify Native with tabId
+                    postToNative('terminal_ready', {
+                        tab_id: pendingTabId || sessionId,
+                        session_id: sessionId,
+                        project: msg.project,
+                        workspace: msg.workspace
+                    });
+
+                    // Clear pending spawn
+                    pendingTerminalSpawn = null;
+
                     notifySwift('term_created', {
-                        term_id: msg.term_id,
+                        term_id: sessionId,
                         project: msg.project,
                         workspace: msg.workspace,
                         cwd: msg.cwd
@@ -2135,12 +2206,22 @@
         transport = new WebSocketTransport(wsURL, {
             onOpen: () => {
                 notifySwift('connected');
+                // Phase C1-2: Clear terminal error state
+                postToNative('terminal_connected', {});
             },
             onClose: () => {
                 notifySwift('disconnected');
+                // Phase C1-2: Mark all sessions as stale
+                nativeTerminalReady = false;
+                activeSessionId = null;
+                terminalSessions.clear();
+                postToNative('terminal_error', { message: 'Disconnected from core' });
             },
             onError: (e) => {
                 notifySwift('error', { message: e.message || 'Connection failed' });
+                // Phase C1-2: Notify Native of error
+                nativeTerminalReady = false;
+                postToNative('terminal_error', { message: e.message || 'Connection failed' });
             },
             onMessage: handleMessage
         });
@@ -2201,6 +2282,129 @@
                 break;
             }
 
+            // Phase C1-2: Mode switching
+            case 'enter_mode': {
+                const { mode } = payload;
+                if (mode === 'terminal' || mode === 'editor') {
+                    setNativeMode(mode);
+                } else {
+                    console.warn('[NativeBridge] Unknown mode:', mode);
+                }
+                break;
+            }
+
+            // Phase C1-2: Spawn new terminal session for a tab
+            case 'terminal_spawn': {
+                const { project, workspace, tab_id } = payload;
+                console.log('[NativeBridge] terminal_spawn:', tab_id, project, workspace);
+
+                if (!transport || !transport.isConnected) {
+                    postToNative('terminal_error', {
+                        tab_id: tab_id,
+                        message: 'Not connected to core'
+                    });
+                    return;
+                }
+
+                // Store pending spawn info to associate with term_created response
+                pendingTerminalSpawn = { tabId: tab_id, project, workspace };
+
+                // Request terminal creation from core
+                createTerminal(project, workspace);
+                break;
+            }
+
+            // Phase C1-2: Attach to existing terminal session
+            case 'terminal_attach': {
+                const { tab_id, session_id } = payload;
+                console.log('[NativeBridge] terminal_attach:', tab_id, session_id);
+
+                if (!terminalSessions.has(session_id)) {
+                    // Session doesn't exist, need to respawn
+                    postToNative('terminal_error', {
+                        tab_id: tab_id,
+                        message: 'Session not found, respawn needed'
+                    });
+                    return;
+                }
+
+                // Switch active session
+                activeSessionId = session_id;
+                nativeTerminalReady = true;
+
+                // Find the terminal tab and replay buffer
+                for (const [wsKey, tabSet] of workspaceTabs) {
+                    if (tabSet.tabs.has(session_id)) {
+                        const tab = tabSet.tabs.get(session_id);
+                        if (tab.term) {
+                            // Clear and replay buffer
+                            tab.term.clear();
+                            const session = terminalSessions.get(session_id);
+                            if (session && session.buffer.length > 0) {
+                                for (const line of session.buffer) {
+                                    tab.term.write(line);
+                                }
+                            }
+                            // Focus and fit
+                            tab.term.focus();
+                            if (tab.fitAddon) {
+                                tab.fitAddon.fit();
+                                sendResize(session_id, tab.term.cols, tab.term.rows);
+                            }
+                        }
+                        switchToTab(session_id);
+                        break;
+                    }
+                }
+
+                // Notify Native
+                const session = terminalSessions.get(session_id);
+                postToNative('terminal_ready', {
+                    tab_id: tab_id,
+                    session_id: session_id,
+                    project: session ? session.project : '',
+                    workspace: session ? session.workspace : ''
+                });
+                break;
+            }
+
+            // Phase C1-2: Kill terminal session
+            case 'terminal_kill': {
+                const { tab_id, session_id } = payload;
+                console.log('[NativeBridge] terminal_kill:', tab_id, session_id);
+
+                // Remove session from tracking
+                terminalSessions.delete(session_id);
+
+                // If this was the active session, clear it
+                if (activeSessionId === session_id) {
+                    activeSessionId = null;
+                }
+
+                // Send kill to core
+                if (transport && transport.isConnected) {
+                    transport.send(JSON.stringify({
+                        type: 'term_kill',
+                        term_id: session_id
+                    }));
+                }
+
+                // Notify Native
+                postToNative('terminal_closed', {
+                    tab_id: tab_id,
+                    session_id: session_id,
+                    code: 0
+                });
+                break;
+            }
+
+            // Phase C1-2: Legacy ensure terminal (backward compatibility)
+            case 'terminal_ensure': {
+                const { project, workspace } = payload;
+                ensureTerminalForNative(project, workspace);
+                break;
+            }
+
             default:
                 console.warn('[NativeBridge] Unknown event type:', type);
         }
@@ -2223,6 +2427,197 @@
     // Notify Native when save fails
     function notifyNativeSaveError(path, message) {
         postToNative('save_error', { path, message });
+    }
+
+    // ============================================
+    // Phase C1-1: Native Mode Switching
+    // ============================================
+
+    /**
+     * Set the native mode (editor or terminal)
+     * This controls which UI elements are visible
+     */
+    function setNativeMode(mode) {
+        if (nativeMode === mode) return;
+
+        nativeMode = mode;
+        console.log('[NativeMode] Switching to:', mode);
+
+        // Update UI visibility
+        const mainArea = document.getElementById('main-area');
+        const leftSidebar = document.getElementById('left-sidebar');
+        const rightPanel = document.getElementById('right-panel');
+
+        if (mode === 'terminal') {
+            // Terminal mode: hide sidebars, show only terminal
+            if (leftSidebar) leftSidebar.style.display = 'none';
+            if (rightPanel) rightPanel.style.display = 'none';
+            // Hide all non-terminal tabs
+            hideNonTerminalTabs();
+            // Show terminal container
+            showTerminalMode();
+        } else {
+            // Editor mode: show sidebars
+            if (leftSidebar) leftSidebar.style.display = 'flex';
+            if (rightPanel) rightPanel.style.display = 'flex';
+            // Show editor mode
+            showEditorMode();
+        }
+    }
+
+    /**
+     * Hide non-terminal tabs when in terminal mode
+     */
+    function hideNonTerminalTabs() {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey || !workspaceTabs.has(wsKey)) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        tabSet.tabs.forEach((tab, tabId) => {
+            if (tab.type !== 'terminal') {
+                tab.pane.classList.remove('active');
+                tab.tabEl.style.display = 'none';
+            }
+        });
+    }
+
+    /**
+     * Show terminal mode UI
+     */
+    function showTerminalMode() {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey || !workspaceTabs.has(wsKey)) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+
+        // Find first terminal tab
+        let terminalTab = null;
+        for (const [tabId, tab] of tabSet.tabs) {
+            if (tab.type === 'terminal') {
+                terminalTab = tab;
+                break;
+            }
+        }
+
+        if (terminalTab) {
+            // Show and activate terminal tab
+            terminalTab.tabEl.style.display = '';
+            terminalTab.pane.classList.add('active');
+            activeTabId = terminalTab.id;
+            tabSet.activeTabId = terminalTab.id;
+
+            // Fit and focus terminal
+            setTimeout(() => {
+                if (terminalTab.fitAddon) {
+                    terminalTab.fitAddon.fit();
+                }
+                if (terminalTab.term) {
+                    terminalTab.term.focus();
+                    sendResize(terminalTab.termId, terminalTab.term.cols, terminalTab.term.rows);
+                }
+            }, 50);
+        }
+
+        // Hide placeholder
+        if (placeholder) placeholder.style.display = 'none';
+    }
+
+    /**
+     * Show editor mode UI
+     */
+    function showEditorMode() {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey || !workspaceTabs.has(wsKey)) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+
+        // Show all tabs
+        tabSet.tabs.forEach((tab) => {
+            tab.tabEl.style.display = '';
+        });
+
+        // Restore active tab
+        if (tabSet.activeTabId && tabSet.tabs.has(tabSet.activeTabId)) {
+            switchToTab(tabSet.activeTabId);
+        }
+    }
+
+    /**
+     * Ensure a terminal exists for native mode (legacy compatibility)
+     * Called when Native switches to terminal tab without specifying tabId
+     */
+    function ensureTerminalForNative(project, workspace) {
+        console.log('[NativeMode] Ensuring terminal for:', project, workspace);
+
+        // Ensure WebSocket is connected
+        if (!transport || !transport.isConnected) {
+            console.log('[NativeMode] WebSocket not connected, connecting...');
+            connect();
+            // Queue the terminal ensure for after connection
+            setTimeout(() => ensureTerminalForNative(project, workspace), 500);
+            return;
+        }
+
+        const wsKey = getWorkspaceKey(project, workspace);
+
+        // Check if we already have a terminal for this workspace
+        if (workspaceTabs.has(wsKey)) {
+            const tabSet = workspaceTabs.get(wsKey);
+            for (const [tabId, tab] of tabSet.tabs) {
+                if (tab.type === 'terminal') {
+                    // Terminal exists, activate it
+                    activeSessionId = tab.termId;
+                    nativeTerminalReady = true;
+                    postToNative('terminal_ready', {
+                        tab_id: tab.termId,
+                        session_id: tab.termId,
+                        project: project,
+                        workspace: workspace
+                    });
+                    console.log('[NativeMode] Existing terminal found:', tab.termId);
+                    return;
+                }
+            }
+        }
+
+        // No terminal exists, need to select workspace or create terminal
+        if (currentProject !== project || currentWorkspace !== workspace) {
+            // Select workspace first (this will create initial terminal)
+            console.log('[NativeMode] Selecting workspace:', project, workspace);
+            selectWorkspace(project, workspace);
+        } else {
+            // Same workspace, create new terminal
+            console.log('[NativeMode] Creating new terminal');
+            createTerminal(project, workspace);
+        }
+    }
+
+    /**
+     * Get current native mode
+     */
+    function getNativeMode() {
+        return nativeMode;
+    }
+
+    /**
+     * Check if terminal is ready for native
+     */
+    function isNativeTerminalReady() {
+        return nativeTerminalReady;
+    }
+
+    /**
+     * Get active session ID (Phase C1-2)
+     */
+    function getActiveSessionId() {
+        return activeSessionId;
+    }
+
+    /**
+     * Get all terminal sessions (Phase C1-2)
+     */
+    function getTerminalSessions() {
+        return terminalSessions;
     }
 
     // Initialize native bridge event handler
@@ -2311,5 +2706,11 @@
 
         // File index for palette
         getAllFilePaths: () => allFilePaths,
+
+        // Phase C1-1: Native mode API
+        setNativeMode,
+        getNativeMode,
+        ensureTerminalForNative,
+        isNativeTerminalReady,
     };
 })();

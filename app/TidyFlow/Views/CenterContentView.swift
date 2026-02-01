@@ -7,7 +7,7 @@ struct CenterContentView: View {
 
     var body: some View {
         ZStack {
-            // WebView layer - visible when editor tab is active
+            // WebView layer - visible when editor or terminal tab is active
             WebViewContainer(bridge: webBridge, isVisible: $webViewVisible)
                 .opacity(shouldShowWebView ? 1 : 0)
                 .allowsHitTesting(shouldShowWebView)
@@ -39,9 +39,9 @@ struct CenterContentView: View {
         }
     }
 
-    /// Whether to show WebView (editor tab is active and web is ready)
+    /// Whether to show WebView (editor or terminal tab is active and web is ready)
     private var shouldShowWebView: Bool {
-        webViewVisible && appState.isActiveTabEditor && appState.editorWebReady
+        webViewVisible && (appState.isActiveTabEditor || appState.isActiveTabTerminal) && appState.editorWebReady
     }
 
     /// Setup WebBridge callbacks
@@ -63,6 +63,36 @@ struct CenterContentView: View {
             DispatchQueue.main.async {
                 appState?.handleEditorSaveError(path: path, message: message)
             }
+        }
+
+        // Phase C1-2: Terminal callbacks (with tabId)
+        webBridge.onTerminalReady = { [weak appState] tabId, sessionId, project, workspace in
+            DispatchQueue.main.async {
+                appState?.handleTerminalReady(tabId: tabId, sessionId: sessionId, project: project, workspace: workspace)
+            }
+        }
+
+        webBridge.onTerminalClosed = { [weak appState] tabId, sessionId, code in
+            DispatchQueue.main.async {
+                appState?.handleTerminalClosed(tabId: tabId, sessionId: sessionId, code: code)
+            }
+        }
+
+        webBridge.onTerminalError = { [weak appState] tabId, message in
+            DispatchQueue.main.async {
+                appState?.handleTerminalError(tabId: tabId, message: message)
+            }
+        }
+
+        webBridge.onTerminalConnected = { [weak appState] in
+            DispatchQueue.main.async {
+                appState?.handleTerminalConnected()
+            }
+        }
+
+        // Phase C1-2: Set terminal kill callback
+        appState.onTerminalKill = { [weak webBridge] tabId, sessionId in
+            webBridge?.terminalKill(tabId: tabId, sessionId: sessionId)
         }
     }
 
