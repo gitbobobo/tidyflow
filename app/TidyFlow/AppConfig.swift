@@ -6,6 +6,11 @@ enum AppConfig {
     /// Host for Core server (localhost only)
     static let coreHost: String = "127.0.0.1"
 
+    // MARK: - Logging Configuration
+
+    /// Log directory path for display in UI
+    static let logPathDisplay: String = "~/Library/Logs/TidyFlow/core.log"
+
     /// Core binary name in bundle
     static let coreBinaryName: String = "tidyflow-core"
 

@@ -114,6 +114,9 @@ class AppState: ObservableObject {
     @Published var commandQuery: String = ""
     @Published var paletteSelectionIndex: Int = 0
 
+    // Debug Panel State (Cmd+Shift+D)
+    @Published var debugPanelPresented: Bool = false
+
     // File Index Cache (workspace key -> cache)
     @Published var fileIndexCache: [String: FileIndexCache] = [:]
 

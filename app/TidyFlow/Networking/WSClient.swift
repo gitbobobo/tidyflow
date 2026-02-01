@@ -10,6 +10,11 @@ class WSClient: NSObject, ObservableObject {
     /// Current WebSocket URL (can be updated at runtime)
     private var currentURL: URL?
 
+    /// Get current URL string for debug display
+    var currentURLString: String? {
+        currentURL?.absoluteString
+    }
+
     // Message handlers
     var onFileIndexResult: ((FileIndexResult) -> Void)?
     var onGitDiffResult: ((GitDiffResult) -> Void)?

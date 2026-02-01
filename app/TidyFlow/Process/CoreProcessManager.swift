@@ -103,6 +103,9 @@ class CoreProcessManager: ObservableObject {
             return
         }
 
+        // Initialize log writer for file logging
+        LogWriter.shared.initialize()
+
         isStarting = true
         currentAttempt = 0
         startWithRetry()
@@ -181,6 +184,12 @@ class CoreProcessManager: ObservableObject {
     /// Get recent log lines for debugging
     func getRecentLogs() -> [String] {
         return recentLogs
+    }
+
+    /// Get last exit info for debug panel (combines reason and code)
+    var lastExitInfo: String? {
+        guard let reason = lastTerminationReason else { return nil }
+        return reason
     }
 
     /// Manual run instructions for when auto-start fails
@@ -268,19 +277,29 @@ class CoreProcessManager: ObservableObject {
         self.stdoutPipe = stdout
         self.stderrPipe = stderr
 
-        // Handle stdout
+        // Handle stdout - write to both memory buffer and file
         stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
-                self?.appendLog("[stdout] \(str)")
+            if !data.isEmpty {
+                // Write to file log
+                LogWriter.shared.append(data)
+                // Write to memory buffer for UI
+                if let str = String(data: data, encoding: .utf8) {
+                    self?.appendLog("[stdout] \(str)")
+                }
             }
         }
 
-        // Handle stderr
+        // Handle stderr - write to both memory buffer and file
         stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
-                self?.appendLog("[stderr] \(str)")
+            if !data.isEmpty {
+                // Write to file log
+                LogWriter.shared.append(data)
+                // Write to memory buffer for UI
+                if let str = String(data: data, encoding: .utf8) {
+                    self?.appendLog("[stderr] \(str)")
+                }
             }
         }
 
@@ -437,6 +456,8 @@ class CoreProcessManager: ObservableObject {
         stdoutPipe = nil
         stderrPipe = nil
         process = nil
+        // Close log file when process stops
+        LogWriter.shared.close()
     }
 
     deinit {

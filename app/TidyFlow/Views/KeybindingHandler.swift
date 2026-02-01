@@ -41,6 +41,10 @@ struct GlobalKeybindingHandler: ViewModifier {
                         
                     Button("Save") { runCommand("workspace.save") }
                         .keyboardShortcut("s", modifiers: .command)
+
+                    // Debug Panel (hidden, developer only)
+                    Button("Debug Panel") { appState.debugPanelPresented.toggle() }
+                        .keyboardShortcut("d", modifiers: [.command, .shift])
                 }
                 .hidden()
             )

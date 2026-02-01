@@ -44,6 +44,13 @@ struct ContentView: View {
                     .environmentObject(appState)
                     .zIndex(100)
             }
+
+            // Debug Panel Overlay (Cmd+Shift+D)
+            if appState.debugPanelPresented {
+                DebugPanelView()
+                    .environmentObject(appState)
+                    .zIndex(99)
+            }
         }
         .handleGlobalKeybindings()
         .environmentObject(appState)

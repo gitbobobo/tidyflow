@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
+		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
 		2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */; };
 		2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */; };
 		2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */; };
@@ -29,9 +31,12 @@
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
 		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
+		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		F5D00011 /* DebugPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPanelView.swift; sourceTree = "<group>"; };
+		F5D00012 /* LogTailReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTailReader.swift; sourceTree = "<group>"; };
 		2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CenterContentView.swift; sourceTree = "<group>"; };
 		2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeftSidebarView.swift; sourceTree = "<group>"; };
 		2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -57,6 +62,7 @@
 		D3900011 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		D3900012 /* CoreProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProcessManager.swift; sourceTree = "<group>"; };
 		D3900013 /* PortAllocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortAllocator.swift; sourceTree = "<group>"; };
+		E4200011 /* LogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogWriter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +122,23 @@
 			path = Process;
 			sourceTree = "<group>";
 		};
+		E4200020 /* Logging */ = {
+			isa = PBXGroup;
+			children = (
+				E4200011 /* LogWriter.swift */,
+			);
+			path = Logging;
+			sourceTree = "<group>";
+		};
+		F5D00020 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				F5D00011 /* DebugPanelView.swift */,
+				F5D00012 /* LogTailReader.swift */,
+			);
+			path = Debug;
+			sourceTree = "<group>";
+		};
 		A1000007 = {
 			isa = PBXGroup;
 			children = (
@@ -135,6 +158,8 @@
 		A1000020 /* TidyFlow */ = {
 			isa = PBXGroup;
 			children = (
+				F5D00020 /* Debug */,
+				E4200020 /* Logging */,
 				B3A00020 /* Networking */,
 				D3900020 /* Process */,
 				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
@@ -222,6 +247,8 @@
 			files = (
 				A1000001 /* TidyFlowApp.swift in Sources */,
 				A1000002 /* ContentView.swift in Sources */,
+				F5D00001 /* DebugPanelView.swift in Sources */,
+				F5D00002 /* LogTailReader.swift in Sources */,
 				2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */,
 				2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */,
 				2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */,
@@ -241,6 +268,7 @@
 				D3900001 /* AppConfig.swift in Sources */,
 				D3900002 /* CoreProcessManager.swift in Sources */,
 				D3900003 /* PortAllocator.swift in Sources */,
+				E4200001 /* LogWriter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
