@@ -21,8 +21,8 @@ if ! check_core; then
     "$PROJECT_ROOT/scripts/run-core.sh" &
     CORE_PID=$!
 
-    # Wait for core to be ready (max 5 seconds)
-    for i in {1..10}; do
+    # Wait for core to be ready (max 15 seconds - includes build time)
+    for i in {1..30}; do
         if check_core; then
             echo "[run-app] Core server ready"
             break
