@@ -21,20 +21,17 @@ struct ContentView: View {
                     .navigationSplitViewColumnWidth(min: 200, ideal: 300)
             }
             .toolbar {
-                // UX-1: Removed ProjectPickerView, added AddProjectButtonView
-                ToolbarItem(placement: .automatic) {
-                    AddProjectButtonView()
-                        .environmentObject(appState)
-                }
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 12) {
+                        AddProjectButtonView()
+                            .environmentObject(appState)
 
-                ToolbarItem(placement: .automatic) {
-                    CoreStatusView(coreManager: appState.coreProcessManager)
-                        .environmentObject(appState)
-                }
+                        CoreStatusView(coreManager: appState.coreProcessManager)
+                            .environmentObject(appState)
 
-                ToolbarItem(placement: .automatic) {
-                    ConnectionStatusView()
-                        .environmentObject(appState)
+                        ConnectionStatusView()
+                            .environmentObject(appState)
+                    }
                 }
             }
 

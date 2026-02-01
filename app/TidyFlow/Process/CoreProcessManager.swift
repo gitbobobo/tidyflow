@@ -103,12 +103,58 @@ class CoreProcessManager: ObservableObject {
             return
         }
 
+        // Clean up any orphaned processes from previous runs (e.g., Xcode force stop)
+        Self.cleanupOrphanedProcesses()
+
         // Initialize log writer for file logging
         LogWriter.shared.initialize()
 
         isStarting = true
         currentAttempt = 0
         startWithRetry()
+    }
+
+    /// Kill any orphaned tidyflow-core processes from previous runs
+    /// This handles the case where Xcode force-stops the app without calling termination handlers
+    static func cleanupOrphanedProcesses() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        task.arguments = ["-x", AppConfig.coreBinaryName]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8), !output.isEmpty else {
+                return
+            }
+
+            // Get current process's child PID (if any) to avoid killing our own child
+            let currentChildPID = ProcessInfo.processInfo.processIdentifier
+
+            let pids = output.split(separator: "\n").compactMap { Int32($0) }
+            for pid in pids {
+                // Don't kill if it's somehow our own process
+                if pid == currentChildPID { continue }
+
+                print("[CoreProcessManager] Killing orphaned tidyflow-core process: \(pid)")
+                kill(pid, SIGTERM)
+
+                // Give it a moment to terminate gracefully
+                usleep(100_000) // 100ms
+
+                // Force kill if still running
+                if kill(pid, 0) == 0 {
+                    kill(pid, SIGKILL)
+                }
+            }
+        } catch {
+            print("[CoreProcessManager] Failed to check for orphaned processes: \(error)")
+        }
     }
 
     /// Stop the Core process gracefully

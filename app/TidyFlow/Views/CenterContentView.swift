@@ -24,12 +24,21 @@ struct CenterContentView: View {
                 }
                 .background(shouldShowWebView ? Color.clear : Color(NSColor.windowBackgroundColor))
             } else {
-                VStack {
+                VStack(spacing: 12) {
                     Spacer()
-                    Text("No Workspace Selected")
+                    Image(systemName: "folder")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text("Select a workspace to start")
+                        .font(.headline)
                         .foregroundColor(.secondary)
+                    Text("Click a workspace in the left sidebar")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary.opacity(0.7))
                     Spacer()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, 60)
                 .background(Color(NSColor.windowBackgroundColor))
             }
         }

@@ -95,8 +95,6 @@ struct TerminalContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Status bar
-            TerminalStatusBar()
         }
         .onAppear {
             webViewVisible = true

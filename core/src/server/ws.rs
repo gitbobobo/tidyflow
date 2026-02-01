@@ -14,6 +14,9 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+#[cfg(unix)]
+use std::os::unix::process::parent_id;
+
 use crate::pty::PtySession;
 use crate::server::file_api::{self, FileApiError};
 use crate::server::file_index;
@@ -31,6 +34,10 @@ pub type SharedAppState = Arc<Mutex<AppState>>;
 pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting WebSocket server on port {}", port);
 
+    // Start parent process monitor to auto-exit when parent dies (e.g., Xcode force stop)
+    #[cfg(unix)]
+    spawn_parent_monitor();
+
     // Load application state
     let app_state = AppState::load().unwrap_or_default();
     let shared_state: SharedAppState = Arc::new(Mutex::new(app_state));
@@ -47,6 +54,37 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Monitor parent process and exit if it dies (becomes orphaned)
+/// This handles the case where the Swift app is force-killed by Xcode
+#[cfg(unix)]
+fn spawn_parent_monitor() {
+    let initial_ppid = parent_id();
+    info!("Parent process monitor started, PPID: {}", initial_ppid);
+
+    // If already orphaned (PPID is 1/launchd), don't start monitor
+    if initial_ppid <= 1 {
+        info!("Running without parent process, skipping monitor");
+        return;
+    }
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+
+            let current_ppid = parent_id();
+            // On macOS/Unix, when parent dies, PPID becomes 1 (init/launchd)
+            if current_ppid != initial_ppid {
+                warn!(
+                    "Parent process died (PPID changed from {} to {}), shutting down",
+                    initial_ppid, current_ppid
+                );
+                std::process::exit(0);
+            }
+        }
+    });
 }
 
 /// WebSocket upgrade handler
