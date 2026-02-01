@@ -1,5 +1,46 @@
 import SwiftUI
 
+/// Shows Core process status (Starting/Running/Failed)
+struct CoreStatusView: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject var coreManager: CoreProcessManager
+
+    init(coreManager: CoreProcessManager) {
+        self.coreManager = coreManager
+    }
+
+    private var statusColor: Color {
+        switch coreManager.status {
+        case .stopped: return .gray
+        case .starting: return .orange
+        case .running: return .green
+        case .failed: return .red
+        }
+    }
+
+    private var statusIcon: String {
+        switch coreManager.status {
+        case .stopped: return "stop.circle"
+        case .starting: return "hourglass"
+        case .running: return "checkmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: statusIcon)
+                .foregroundColor(statusColor)
+                .font(.caption)
+
+            Text("Core: \(coreManager.status.displayText)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .help(coreManager.status.isRunning ? "Core is running" : CoreProcessManager.manualRunInstructions)
+    }
+}
+
 struct ConnectionStatusView: View {
     @EnvironmentObject var appState: AppState
     

@@ -2,9 +2,6 @@ import Foundation
 
 /// Minimal WebSocket client for Core communication
 class WSClient: NSObject, ObservableObject {
-    static let defaultPort: Int = 47999
-    static let defaultHost: String = "127.0.0.1"
-
     @Published private(set) var isConnected: Bool = false
 
     private var webSocketTask: URLSessionWebSocketTask?
@@ -30,7 +27,7 @@ class WSClient: NSObject, ObservableObject {
     func connect() {
         guard webSocketTask == nil else { return }
 
-        let urlString = "ws://\(Self.defaultHost):\(Self.defaultPort)/ws"
+        let urlString = AppConfig.coreWsURL
         guard let url = URL(string: urlString) else {
             onError?("Invalid WebSocket URL")
             return

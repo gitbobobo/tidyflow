@@ -26,6 +26,8 @@
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
 		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
 		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
+		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
+		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,6 +53,8 @@
 		A1000013 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Web; sourceTree = "<group>"; };
 		A1000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1000015 /* TidyFlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TidyFlow.entitlements; sourceTree = "<group>"; };
+		D3900011 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		D3900012 /* CoreProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProcessManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +105,14 @@
 			path = Networking;
 			sourceTree = "<group>";
 		};
+		D3900020 /* Process */ = {
+			isa = PBXGroup;
+			children = (
+				D3900012 /* CoreProcessManager.swift */,
+			);
+			path = Process;
+			sourceTree = "<group>";
+		};
 		A1000007 = {
 			isa = PBXGroup;
 			children = (
@@ -121,8 +133,10 @@
 			isa = PBXGroup;
 			children = (
 				B3A00020 /* Networking */,
+				D3900020 /* Process */,
 				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
 				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
+				D3900011 /* AppConfig.swift */,
 				A1000011 /* TidyFlowApp.swift */,
 				A1000012 /* ContentView.swift */,
 				A1000013 /* Web */,
@@ -139,9 +153,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000019 /* Build configuration list for PBXNativeTarget "TidyFlow" */;
 			buildPhases = (
+				D3900030 /* Build Core (Run Script) */,
 				A100000B /* Sources */,
 				A100000D /* Frameworks */,
 				A100000E /* Resources */,
+				D3900031 /* Copy Core Binary */,
 			);
 			buildRules = (
 			);
@@ -219,10 +235,46 @@
 				B3A00009 /* BranchPickerView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
+				D3900001 /* AppConfig.swift in Sources */,
+				D3900002 /* CoreProcessManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		D3900030 /* Build Core (Run Script) */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Core (Run Script)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "# Build tidyflow-core in release mode\n# Skip if SKIP_CORE_BUILD=1 (for faster dev iterations)\nif [ \"$SKIP_CORE_BUILD\" = \"1\" ]; then\n    echo \"Skipping core build (SKIP_CORE_BUILD=1)\"\n    exit 0\nfi\n\nCORE_DIR=\"$SRCROOT/../core\"\nif [ -d \"$CORE_DIR\" ]; then\n    echo \"Building tidyflow-core...\"\n    cd \"$CORE_DIR\"\n    cargo build --release 2>&1 | head -20\n    if [ ${PIPESTATUS[0]} -ne 0 ]; then\n        echo \"warning: Core build failed, app may not work correctly\"\n    fi\n    \n    # Copy binary to Resources/Core\n    CORE_BINARY=\"$CORE_DIR/target/release/tidyflow-core\"\n    DEST_DIR=\"$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Resources/Core\"\n    if [ -f \"$CORE_BINARY\" ]; then\n        mkdir -p \"$DEST_DIR\"\n        cp \"$CORE_BINARY\" \"$DEST_DIR/\"\n        echo \"Copied tidyflow-core to $DEST_DIR\"\n    else\n        echo \"warning: Core binary not found at $CORE_BINARY\"\n    fi\nelse\n    echo \"warning: Core directory not found at $CORE_DIR\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D3900031 /* Copy Core Binary */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Core;
+			dstSubfolderSpec = 7;
+			files = (
+			);
+			name = "Copy Core Binary";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		A1000017 /* Debug */ = {
@@ -262,7 +314,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -325,7 +377,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

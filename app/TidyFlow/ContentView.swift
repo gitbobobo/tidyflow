@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject var appState = AppState()
+    @EnvironmentObject var appState: AppState
     let webBridge = WebBridge()
-    
+
     var body: some View {
         ZStack {
             // Using NavigationSplitView for 3-column layout (macOS 13+)
@@ -26,13 +26,18 @@ struct ContentView: View {
                     ProjectPickerView()
                         .environmentObject(appState)
                 }
-                
+
+                ToolbarItem(placement: .automatic) {
+                    CoreStatusView(coreManager: appState.coreProcessManager)
+                        .environmentObject(appState)
+                }
+
                 ToolbarItem(placement: .automatic) {
                     ConnectionStatusView()
                         .environmentObject(appState)
                 }
             }
-            
+
             // Command Palette Overlay
             if appState.commandPalettePresented {
                 CommandPaletteView()

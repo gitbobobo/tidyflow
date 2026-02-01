@@ -168,6 +168,9 @@ class AppState: ObservableObject {
     // WebSocket Client
     let wsClient = WSClient()
 
+    // Core Process Manager
+    let coreProcessManager = CoreProcessManager()
+
     // Project name (for WS protocol)
     var selectedProjectName: String = "default"
 
@@ -192,7 +195,26 @@ class AppState: ObservableObject {
         self.selectedWorkspaceKey = "default"
         ensureDefaultTab(for: "default")
         setupCommands()
+
+        // Start Core process first, then setup WS client
+        startCoreIfNeeded()
         setupWSClient()
+    }
+
+    // MARK: - Core Process Management
+
+    /// Start Core process if not already running
+    func startCoreIfNeeded() {
+        guard !coreProcessManager.isRunning else {
+            print("[AppState] Core already running")
+            return
+        }
+        coreProcessManager.start()
+    }
+
+    /// Stop Core process (called on app termination)
+    func stopCore() {
+        coreProcessManager.stop()
     }
 
     // MARK: - WebSocket Setup
