@@ -26,7 +26,11 @@ struct TabContentHostView: View {
                         webViewVisible: $webViewVisible
                     )
                 case .diff:
-                    DiffPlaceholderView(path: activeTab.payload)
+                    DiffContentView(
+                        path: activeTab.payload,
+                        webBridge: webBridge,
+                        webViewVisible: $webViewVisible
+                    )
                 }
 
             } else {
@@ -281,6 +285,18 @@ struct EditorContentView: View {
             path: path
         )
         appState.lastEditorPath = path
+
+        // Phase C2-1.5: Check for pending line reveal
+        if let reveal = appState.pendingEditorReveal, reveal.path == path {
+            // Delay slightly to ensure file is loaded
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak appState, weak webBridge] in
+                guard let appState = appState, let webBridge = webBridge else { return }
+                if let reveal = appState.pendingEditorReveal, reveal.path == path {
+                    webBridge.editorRevealLine(path: reveal.path, line: reveal.line, highlightMs: reveal.highlightMs)
+                    appState.pendingEditorReveal = nil
+                }
+            }
+        }
     }
 }
 
@@ -307,6 +323,154 @@ struct EditorStatusBar: View {
                     .font(.system(size: 11))
                     .foregroundColor(appState.editorStatusIsError ? .red : .green)
             }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
+// MARK: - Phase C2-1: Diff Content View (WebView + Mode Toggle)
+
+struct DiffContentView: View {
+    let path: String
+    let webBridge: WebBridge
+    @Binding var webViewVisible: Bool
+    @EnvironmentObject var appState: AppState
+
+    @State private var currentMode: DiffMode = .working
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Diff toolbar with mode toggle
+            DiffToolbar(currentMode: $currentMode, onModeChange: handleModeChange)
+
+            // WebView container
+            ZStack {
+                if !appState.editorWebReady {
+                    VStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading diff viewer...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(NSColor.textBackgroundColor))
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Status bar
+            DiffStatusBar(path: path, mode: currentMode)
+        }
+        .onAppear {
+            webViewVisible = true
+            // Initialize mode from tab
+            currentMode = appState.activeDiffMode
+            if appState.editorWebReady {
+                sendDiffOpen()
+            }
+        }
+        .onDisappear {
+            webViewVisible = false
+        }
+        .onChange(of: appState.editorWebReady) { ready in
+            if ready {
+                sendDiffOpen()
+            }
+        }
+        .onChange(of: path) { _ in
+            if appState.editorWebReady {
+                sendDiffOpen()
+            }
+        }
+    }
+
+    private func sendDiffOpen() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        webBridge.enterMode("diff")
+        webBridge.diffOpen(
+            project: appState.selectedProjectName,
+            workspace: ws,
+            path: path,
+            mode: currentMode.rawValue
+        )
+    }
+
+    private func handleModeChange(_ newMode: DiffMode) {
+        guard newMode != currentMode else { return }
+        currentMode = newMode
+        appState.setActiveDiffMode(newMode)
+
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        webBridge.diffOpen(
+            project: appState.selectedProjectName,
+            workspace: ws,
+            path: path,
+            mode: newMode.rawValue
+        )
+    }
+}
+
+// MARK: - Diff Toolbar
+
+struct DiffToolbar: View {
+    @Binding var currentMode: DiffMode
+    let onModeChange: (DiffMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Mode toggle (Working / Staged)
+            Picker("", selection: Binding(
+                get: { currentMode },
+                set: { onModeChange($0) }
+            )) {
+                Text("Working").tag(DiffMode.working)
+                Text("Staged").tag(DiffMode.staged)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 160)
+            .help("Working: unstaged changes (git diff)\nStaged: staged changes (git diff --cached)")
+
+            Spacer()
+
+            // Info text
+            Text("Click a line to open in editor")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
+// MARK: - Diff Status Bar
+
+struct DiffStatusBar: View {
+    let path: String
+    let mode: DiffMode
+
+    var body: some View {
+        HStack {
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.system(size: 11))
+                .foregroundColor(.orange)
+
+            Text(path)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer()
+
+            Text(mode == .working ? "Working Changes" : "Staged Changes")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

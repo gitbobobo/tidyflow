@@ -1549,6 +1549,12 @@
     function openFileAtLine(filePath, lineNumber) {
         if (!currentProject || !currentWorkspace) return;
 
+        // Phase C2-1: If in native diff mode, delegate to Native to open editor tab
+        if (nativeMode === 'diff') {
+            openFileAtLineViaNative(filePath, lineNumber);
+            return;
+        }
+
         const wsKey = getCurrentWorkspaceKey();
         const tabId = 'editor-' + filePath.replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -1568,7 +1574,7 @@
         sendFileRead(currentProject, currentWorkspace, filePath);
     }
 
-    function scrollToLineAndHighlight(tab, lineNumber) {
+    function scrollToLineAndHighlight(tab, lineNumber, highlightMs = 2000) {
         if (!tab || !tab.editorView || !window.CodeMirror) return;
 
         const { EditorView } = window.CodeMirror;
@@ -1590,7 +1596,7 @@
         });
 
         // Highlight the line temporarily
-        highlightLine(view, targetLine);
+        highlightLine(view, targetLine, highlightMs);
 
         // Update status bar
         if (tab.statusBar) {
@@ -1598,7 +1604,7 @@
         }
     }
 
-    function highlightLine(view, lineNumber) {
+    function highlightLine(view, lineNumber, highlightMs = 2000) {
         if (!window.CodeMirror) return;
 
         const { EditorView, Decoration, StateEffect, StateField } = window.CodeMirror;
@@ -1638,12 +1644,12 @@
             effects: view._highlightEffect.of(decorations)
         });
 
-        // Remove highlight after 2 seconds
+        // Remove highlight after specified duration
         setTimeout(() => {
             view.dispatch({
                 effects: view._highlightEffect.of(Decoration.none)
             });
-        }, 2000);
+        }, highlightMs);
     }
 
     function switchToTab(tabId) {
@@ -2282,10 +2288,10 @@
                 break;
             }
 
-            // Phase C1-2: Mode switching
+            // Phase C1-2: Mode switching (extended for diff in C2-1)
             case 'enter_mode': {
                 const { mode } = payload;
-                if (mode === 'terminal' || mode === 'editor') {
+                if (mode === 'terminal' || mode === 'editor' || mode === 'diff') {
                     setNativeMode(mode);
                 } else {
                     console.warn('[NativeBridge] Unknown mode:', mode);
@@ -2405,6 +2411,74 @@
                 break;
             }
 
+            // Phase C2-1: Diff mode and open
+            case 'diff_open': {
+                const { project, workspace, path, mode } = payload;
+                console.log('[NativeBridge] diff_open:', path, mode);
+
+                if (!project || !workspace || !path) {
+                    console.error('[NativeBridge] diff_open missing required fields');
+                    postToNative('diff_error', { message: 'Missing required fields' });
+                    return;
+                }
+
+                // Switch to workspace if needed
+                if (currentProject !== project || currentWorkspace !== workspace) {
+                    currentProject = project;
+                    currentWorkspace = workspace;
+                }
+
+                // Open diff tab with specified mode
+                openDiffTabFromNative(path, mode || 'working');
+                break;
+            }
+
+            case 'diff_set_mode': {
+                const { mode } = payload;
+                console.log('[NativeBridge] diff_set_mode:', mode);
+
+                // Update current diff tab's mode
+                const wsKey = getCurrentWorkspaceKey();
+                if (wsKey && workspaceTabs.has(wsKey)) {
+                    const tabSet = workspaceTabs.get(wsKey);
+                    const activeTab = tabSet.tabs.get(tabSet.activeTabId);
+                    if (activeTab && activeTab.type === 'diff') {
+                        activeTab.diffMode = mode;
+                        sendGitDiff(activeTab.project, activeTab.workspace, activeTab.filePath, mode);
+                    }
+                }
+                break;
+            }
+
+            // Phase C2-1.5: Reveal line in editor with highlight
+            case 'editor_reveal_line': {
+                const { path, line, highlightMs } = payload;
+                console.log('[NativeBridge] editor_reveal_line:', path, line, highlightMs);
+
+                if (!path || !line) {
+                    console.error('[NativeBridge] editor_reveal_line missing required fields');
+                    return;
+                }
+
+                // Find the editor tab for this path
+                const wsKey = getCurrentWorkspaceKey();
+                if (!wsKey || !workspaceTabs.has(wsKey)) {
+                    console.warn('[NativeBridge] No workspace for editor_reveal_line');
+                    return;
+                }
+
+                const tabId = 'editor-' + path.replace(/[^a-zA-Z0-9]/g, '-');
+                const tabSet = workspaceTabs.get(wsKey);
+
+                if (tabSet.tabs.has(tabId)) {
+                    const tab = tabSet.tabs.get(tabId);
+                    scrollToLineAndHighlight(tab, line, highlightMs || 2000);
+                } else {
+                    console.warn('[NativeBridge] Editor tab not found for:', path);
+                }
+                break;
+            }
+
             default:
                 console.warn('[NativeBridge] Unknown event type:', type);
         }
@@ -2430,11 +2504,11 @@
     }
 
     // ============================================
-    // Phase C1-1: Native Mode Switching
+    // Phase C1-1: Native Mode Switching (extended C2-1)
     // ============================================
 
     /**
-     * Set the native mode (editor or terminal)
+     * Set the native mode (editor, terminal, or diff)
      * This controls which UI elements are visible
      */
     function setNativeMode(mode) {
@@ -2456,6 +2530,12 @@
             hideNonTerminalTabs();
             // Show terminal container
             showTerminalMode();
+        } else if (mode === 'diff') {
+            // Diff mode: hide sidebars, show only diff
+            if (leftSidebar) leftSidebar.style.display = 'none';
+            if (rightPanel) rightPanel.style.display = 'none';
+            // Show diff mode
+            showDiffMode();
         } else {
             // Editor mode: show sidebars
             if (leftSidebar) leftSidebar.style.display = 'flex';
@@ -2540,6 +2620,81 @@
         if (tabSet.activeTabId && tabSet.tabs.has(tabSet.activeTabId)) {
             switchToTab(tabSet.activeTabId);
         }
+    }
+
+    // ============================================
+    // Phase C2-1: Diff Mode Functions
+    // ============================================
+
+    /**
+     * Show diff mode UI
+     */
+    function showDiffMode() {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey || !workspaceTabs.has(wsKey)) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+
+        // Hide non-diff tabs
+        tabSet.tabs.forEach((tab, tabId) => {
+            if (tab.type !== 'diff') {
+                tab.pane.classList.remove('active');
+                tab.tabEl.style.display = 'none';
+            } else {
+                tab.tabEl.style.display = '';
+            }
+        });
+
+        // Find and activate first diff tab
+        for (const [tabId, tab] of tabSet.tabs) {
+            if (tab.type === 'diff') {
+                switchToTab(tabId);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Open diff tab from Native bridge
+     * @param {string} path - File path to diff
+     * @param {string} mode - 'working' or 'staged'
+     */
+    function openDiffTabFromNative(path, mode) {
+        if (!currentProject || !currentWorkspace) {
+            postToNative('diff_error', { message: 'No workspace selected' });
+            return;
+        }
+
+        // Create or activate diff tab
+        const tabInfo = createDiffTab(path, 'M');  // Default to 'M' (modified) code
+        if (tabInfo) {
+            // Set the diff mode
+            tabInfo.diffMode = mode;
+
+            // Update mode toggle UI
+            const modeToggle = tabInfo.pane.querySelector('.diff-mode-toggle');
+            if (modeToggle) {
+                modeToggle.querySelectorAll('.diff-mode-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.mode === mode);
+                });
+            }
+
+            switchToTab(tabInfo.id);
+            sendGitDiff(currentProject, currentWorkspace, path, mode);
+        }
+    }
+
+    /**
+     * Handle diff line click - open file in editor via Native
+     * @param {string} path - File path
+     * @param {number} line - Line number (optional)
+     */
+    function openFileAtLineViaNative(path, line) {
+        postToNative('open_file_request', {
+            workspace: currentWorkspace,
+            path: path,
+            line: line || null
+        });
     }
 
     /**

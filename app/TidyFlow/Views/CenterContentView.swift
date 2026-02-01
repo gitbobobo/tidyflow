@@ -39,9 +39,9 @@ struct CenterContentView: View {
         }
     }
 
-    /// Whether to show WebView (editor or terminal tab is active and web is ready)
+    /// Whether to show WebView (editor, terminal, or diff tab is active and web is ready)
     private var shouldShowWebView: Bool {
-        webViewVisible && (appState.isActiveTabEditor || appState.isActiveTabTerminal) && appState.editorWebReady
+        webViewVisible && (appState.isActiveTabEditor || appState.isActiveTabTerminal || appState.isActiveTabDiff) && appState.editorWebReady
     }
 
     /// Setup WebBridge callbacks
@@ -93,6 +93,23 @@ struct CenterContentView: View {
         // Phase C1-2: Set terminal kill callback
         appState.onTerminalKill = { [weak webBridge] tabId, sessionId in
             webBridge?.terminalKill(tabId: tabId, sessionId: sessionId)
+        }
+
+        // Phase C2-1: Diff callbacks (extended C2-1.5 for line navigation)
+        webBridge.onOpenFile = { [weak appState, weak webBridge] workspace, path, line in
+            DispatchQueue.main.async {
+                guard let appState = appState else { return }
+                // Open file in editor tab with optional line
+                appState.addEditorTab(workspaceKey: workspace, path: path, line: line)
+                print("[CenterContentView] Opening file from diff: \(path), line: \(line ?? 0)")
+            }
+        }
+
+        webBridge.onDiffError = { [weak appState] message in
+            DispatchQueue.main.async {
+                print("[CenterContentView] Diff error: \(message)")
+                // Could show an alert or update status
+            }
         }
     }
 

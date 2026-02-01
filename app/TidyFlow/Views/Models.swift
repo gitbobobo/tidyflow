@@ -61,6 +61,16 @@ struct TabModel: Identifiable, Codable, Equatable {
     // Phase C1-2: Terminal session ID (only for terminal tabs)
     // Stored separately from payload to maintain Codable compatibility
     var terminalSessionId: String?
+
+    // Phase C2-1: Diff mode (only for diff tabs)
+    // "working" = unstaged changes, "staged" = staged changes
+    var diffMode: String?
+}
+
+// Phase C2-1: Diff mode enum for type safety
+enum DiffMode: String, Codable {
+    case working
+    case staged
 }
 
 typealias TabSet = [TabModel]
@@ -108,6 +118,10 @@ class AppState: ObservableObject {
     @Published var lastEditorPath: String?
     @Published var editorStatus: String = ""
     @Published var editorStatusIsError: Bool = false
+
+    // Phase C2-1.5: Pending editor line reveal (path, line, highlightMs)
+    // Set when diff click requests line navigation before editor is ready
+    @Published var pendingEditorReveal: (path: String, line: Int, highlightMs: Int)?
 
     // Phase C1-1: Terminal Bridge State (global, for status display)
     @Published var terminalState: TerminalState = .idle
@@ -339,12 +353,59 @@ class AppState: ObservableObject {
         addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Terminal", payload: "")
     }
     
-    func addEditorTab(workspaceKey: String, path: String) {
+    func addEditorTab(workspaceKey: String, path: String, line: Int? = nil) {
+        // Check if editor tab for this path already exists
+        if let tabs = workspaceTabs[workspaceKey],
+           let existingTab = tabs.first(where: { $0.kind == .editor && $0.payload == path }) {
+            // Activate existing tab
+            activeTabIdByWorkspace[workspaceKey] = existingTab.id
+            // Set pending reveal if line specified
+            if let line = line {
+                pendingEditorReveal = (path: path, line: line, highlightMs: 2000)
+            }
+            return
+        }
+        // Create new tab
         addTab(workspaceKey: workspaceKey, kind: .editor, title: path, payload: path)
+        // Set pending reveal if line specified
+        if let line = line {
+            pendingEditorReveal = (path: path, line: line, highlightMs: 2000)
+        }
     }
     
-    func addDiffTab(workspaceKey: String, path: String) {
-        addTab(workspaceKey: workspaceKey, kind: .diff, title: "Diff: \(path)", payload: path)
+    func addDiffTab(workspaceKey: String, path: String, mode: DiffMode = .working) {
+        // Check if diff tab for this path already exists
+        if let tabs = workspaceTabs[workspaceKey],
+           let existingTab = tabs.first(where: { $0.kind == .diff && $0.payload == path }) {
+            // Activate existing tab and update mode
+            activeTabIdByWorkspace[workspaceKey] = existingTab.id
+            // Update diff mode if different
+            if existingTab.diffMode != mode.rawValue {
+                if var tabs = workspaceTabs[workspaceKey],
+                   let index = tabs.firstIndex(where: { $0.id == existingTab.id }) {
+                    tabs[index].diffMode = mode.rawValue
+                    workspaceTabs[workspaceKey] = tabs
+                }
+            }
+            return
+        }
+
+        // Create new diff tab
+        var newTab = TabModel(
+            id: UUID(),
+            title: "Diff: \(path.split(separator: "/").last ?? Substring(path))",
+            kind: .diff,
+            workspaceKey: workspaceKey,
+            payload: path
+        )
+        newTab.diffMode = mode.rawValue
+
+        if workspaceTabs[workspaceKey] == nil {
+            workspaceTabs[workspaceKey] = []
+        }
+
+        workspaceTabs[workspaceKey]?.append(newTab)
+        activeTabIdByWorkspace[workspaceKey] = newTab.id
     }
     
     func nextTab() {
@@ -417,6 +478,36 @@ class AppState: ObservableObject {
     func handleEditorSaveError(path: String, message: String) {
         editorStatus = "Error: \(message)"
         editorStatusIsError = true
+    }
+
+    /// Check if active tab is a diff tab
+    var isActiveTabDiff: Bool {
+        getActiveTab()?.kind == .diff
+    }
+
+    /// Get the file path of the active diff tab
+    var activeDiffPath: String? {
+        guard let tab = getActiveTab(), tab.kind == .diff else { return nil }
+        return tab.payload
+    }
+
+    /// Get the diff mode of the active diff tab
+    var activeDiffMode: DiffMode {
+        guard let tab = getActiveTab(), tab.kind == .diff,
+              let modeStr = tab.diffMode,
+              let mode = DiffMode(rawValue: modeStr) else { return .working }
+        return mode
+    }
+
+    /// Update diff mode for active diff tab
+    func setActiveDiffMode(_ mode: DiffMode) {
+        guard let ws = selectedWorkspaceKey,
+              var tabs = workspaceTabs[ws],
+              let activeId = activeTabIdByWorkspace[ws],
+              let index = tabs.firstIndex(where: { $0.id == activeId && $0.kind == .diff }) else { return }
+
+        tabs[index].diffMode = mode.rawValue
+        workspaceTabs[ws] = tabs
     }
 
     // MARK: - Phase C1-2: Terminal State Helpers (Multi-Session)

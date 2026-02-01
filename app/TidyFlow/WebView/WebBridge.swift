@@ -19,6 +19,10 @@ class WebBridge: NSObject, WKScriptMessageHandler {
     var onTerminalError: ((String?, String) -> Void)?  // tabId (optional), error message
     var onTerminalConnected: (() -> Void)?
 
+    // Phase C2-1: Diff callbacks
+    var onOpenFile: ((String, String, Int?) -> Void)?  // workspace, path, line (optional)
+    var onDiffError: ((String) -> Void)?  // error message
+
     // State
     private(set) var isWebReady = false
     private var pendingEvents: [(type: String, payload: [String: Any])] = []
@@ -84,6 +88,17 @@ class WebBridge: NSObject, WKScriptMessageHandler {
         case "terminal_connected":
             onTerminalConnected?()
 
+        // Phase C2-1: Diff callbacks
+        case "open_file_request":
+            let workspace = body["workspace"] as? String ?? ""
+            let path = body["path"] as? String ?? ""
+            let line = body["line"] as? Int
+            onOpenFile?(workspace, path, line)
+
+        case "diff_error":
+            let errorMsg = body["message"] as? String ?? "Unknown diff error"
+            onDiffError?(errorMsg)
+
         default:
             print("[WebBridge] Unknown message type: \(type)")
         }
@@ -146,6 +161,15 @@ class WebBridge: NSObject, WKScriptMessageHandler {
         ])
     }
 
+    // Phase C2-1.5: Reveal line in editor with highlight
+    func editorRevealLine(path: String, line: Int, highlightMs: Int = 2000) {
+        send(type: "editor_reveal_line", payload: [
+            "path": path,
+            "line": line,
+            "highlightMs": highlightMs
+        ])
+    }
+
     func saveFile(project: String, workspace: String, path: String) {
         send(type: "save_file", payload: [
             "project": project,
@@ -191,6 +215,25 @@ class WebBridge: NSObject, WKScriptMessageHandler {
         send(type: "terminal_ensure", payload: [
             "project": project,
             "workspace": workspace
+        ])
+    }
+
+    // MARK: - Phase C2-1: Diff Methods
+
+    /// Open a diff view for a file
+    func diffOpen(project: String, workspace: String, path: String, mode: String) {
+        send(type: "diff_open", payload: [
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "mode": mode
+        ])
+    }
+
+    /// Set diff mode (working/staged) for current diff
+    func diffSetMode(mode: String) {
+        send(type: "diff_set_mode", payload: [
+            "mode": mode
         ])
     }
 
