@@ -7,12 +7,26 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */; };
+		2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */; };
+		2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */; };
+		2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */; };
+		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
+		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
+		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
 		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
 		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CenterContentView.swift; sourceTree = "<group>"; };
+		2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeftSidebarView.swift; sourceTree = "<group>"; };
+		2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
+		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
+		2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebBridge.swift; sourceTree = "<group>"; };
+		2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TidyFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -22,10 +36,37 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A100000D /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A100000D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2AEE0BAE2F2F0BAA009B67A9 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
+				2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */,
+				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
+				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
+				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		2AEE0BB12F2F0BAA009B67A9 /* WebView */ = {
+			isa = PBXGroup;
+			children = (
+				2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */,
+				2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */,
+			);
+			path = WebView;
+			sourceTree = "<group>";
+		};
 		A1000007 = {
 			isa = PBXGroup;
 			children = (
@@ -45,6 +86,8 @@
 		A1000020 /* TidyFlow */ = {
 			isa = PBXGroup;
 			children = (
+				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
+				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
 				A1000011 /* TidyFlowApp.swift */,
 				A1000012 /* ContentView.swift */,
 				A1000013 /* Web */,
@@ -65,8 +108,10 @@
 				A100000D /* Frameworks */,
 				A100000E /* Resources */,
 			);
-			buildRules = ();
-			dependencies = ();
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = TidyFlow;
 			productName = TidyFlow;
 			productReference = A1000010 /* TidyFlow.app */;
@@ -123,6 +168,13 @@
 			files = (
 				A1000001 /* TidyFlowApp.swift in Sources */,
 				A1000002 /* ContentView.swift in Sources */,
+				2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */,
+				2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */,
+				2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */,
+				2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
+				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
+				2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
+				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
