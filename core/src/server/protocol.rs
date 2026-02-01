@@ -64,6 +64,12 @@ pub enum ClientMessage {
         path: String,
         content_b64: String,
     },
+
+    // v1.4: File index for Quick Open
+    FileIndex {
+        project: String,
+        workspace: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +149,14 @@ pub enum ServerMessage {
         size: u64,
     },
 
+    // v1.4: File index result for Quick Open
+    FileIndexResult {
+        project: String,
+        workspace: String,
+        items: Vec<String>,
+        truncated: bool,
+    },
+
     // v1: Error handling
     Error { code: String, message: String },
 }
@@ -193,5 +207,6 @@ pub fn v1_capabilities() -> Vec<String> {
         "multi_workspace".to_string(),
         "cwd_spawn".to_string(),
         "file_operations".to_string(),
+        "file_index".to_string(),
     ]
 }

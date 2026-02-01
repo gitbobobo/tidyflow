@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::pty::PtySession;
 use crate::server::file_api::{self, FileApiError};
+use crate::server::file_index;
 use crate::server::protocol::{
     ClientMessage, FileEntryInfo, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
     v1_capabilities,
@@ -821,6 +822,59 @@ async fn handle_client_message(
                                 send_message(socket, &ServerMessage::Error {
                                     code: "invalid_base64".to_string(),
                                     message: "Invalid base64 encoding".to_string(),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.4: File index for Quick Open
+        ClientMessage::FileIndex { project, workspace } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        // Run indexing in blocking task to avoid blocking async runtime
+                        let result = tokio::task::spawn_blocking(move || {
+                            file_index::index_files(&root)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(index_result)) => {
+                                send_message(socket, &ServerMessage::FileIndexResult {
+                                    project,
+                                    workspace,
+                                    items: index_result.items,
+                                    truncated: index_result.truncated,
+                                }).await?;
+                            }
+                            Ok(Err(e)) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "io_error".to_string(),
+                                    message: format!("Failed to index files: {}", e),
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Index task failed: {}", e),
                                 }).await?;
                             }
                         }
