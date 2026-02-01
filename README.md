@@ -68,3 +68,43 @@ spctl --assess --type execute --verbose /Volumes/TidyFlow/TidyFlow.app
 ```
 
 详见 `design/46-notarization-d5-3a.md`。
+
+### CI Build (GitHub Actions)
+
+手动触发 workflow 构建 DMG：
+
+1. 进入 Actions > "Build Release DMG"
+2. 点击 "Run workflow"
+3. 可选：勾选 "Sign the app" 进行签名构建
+4. 可选：勾选 "Notarize the signed app" 进行公证（需先勾选签名）
+
+签名构建需要配置 GitHub Secrets：
+- `MACOS_CERT_P12_BASE64` - Developer ID 证书（p12 base64）
+- `MACOS_CERT_PASSWORD` - p12 密码
+- `SIGN_IDENTITY` - 签名身份字符串
+
+公证构建需要额外配置：
+- `ASC_API_KEY_ID` - App Store Connect API Key ID
+- `ASC_API_ISSUER_ID` - App Store Connect Issuer ID
+- `ASC_API_KEY_P8_BASE64` - AuthKey_XXXX.p8（base64）
+
+详见 `design/48-ci-codesign-d5-3b-2.md` 和 `design/49-ci-notarize-d5-3b-3.md`。
+
+### Release via Tag (D5-3c)
+
+推送 `v*` 格式的 tag 自动触发发布：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+自动执行：
+1. 构建签名 DMG
+2. 提交 Apple 公证
+3. 创建 GitHub Release
+4. 上传 notarized DMG 作为 Asset
+
+发布后用户可直接从 GitHub Releases 下载，双击运行无 Gatekeeper 警告。
+
+详见 `design/50-github-release-d5-3c.md`。
