@@ -450,6 +450,8 @@ struct GitStatusResult {
     let items: [GitStatusItem]
     let isGitRepo: Bool
     let error: String?
+    let hasStagedChanges: Bool
+    let stagedCount: Int
 
     static func from(json: [String: Any]) -> GitStatusResult? {
         guard let project = json["project"] as? String,
@@ -459,6 +461,8 @@ struct GitStatusResult {
 
         let isGitRepo = json["is_git_repo"] as? Bool ?? true
         let errorMsg = json["error"] as? String
+        let hasStagedChanges = json["has_staged_changes"] as? Bool ?? false
+        let stagedCount = json["staged_count"] as? Int ?? 0
 
         var items: [GitStatusItem] = []
         if let itemsArray = json["items"] as? [[String: Any]] {
@@ -483,7 +487,9 @@ struct GitStatusResult {
             workspace: workspace,
             items: items,
             isGitRepo: isGitRepo,
-            error: errorMsg
+            error: errorMsg,
+            hasStagedChanges: hasStagedChanges,
+            stagedCount: stagedCount
         )
     }
 }
@@ -495,6 +501,8 @@ struct GitStatusCache {
     var error: String?
     var isGitRepo: Bool
     var updatedAt: Date
+    var hasStagedChanges: Bool
+    var stagedCount: Int
 
     static func empty() -> GitStatusCache {
         GitStatusCache(
@@ -502,7 +510,9 @@ struct GitStatusCache {
             isLoading: false,
             error: nil,
             isGitRepo: true,
-            updatedAt: .distantPast
+            updatedAt: .distantPast,
+            hasStagedChanges: false,
+            stagedCount: 0
         )
     }
 
@@ -548,7 +558,94 @@ struct GitOpResult {
 
 /// Track in-flight git operations
 struct GitOpInFlight: Equatable, Hashable {
-    let op: String       // "stage" or "unstage"
+    let op: String       // "stage", "unstage", "discard", or "switch_branch"
     let path: String?    // nil for "all" scope
-    let scope: String    // "file" or "all"
+    let scope: String    // "file", "all", or "branch"
+}
+
+// MARK: - Phase C3-3a: Git Branch Protocol Models
+
+/// Single branch info
+struct GitBranchItem: Identifiable {
+    let id: String  // Use name as unique ID
+    let name: String
+}
+
+/// Result from git_branches request
+struct GitBranchesResult {
+    let project: String
+    let workspace: String
+    let current: String
+    let branches: [GitBranchItem]
+
+    static func from(json: [String: Any]) -> GitBranchesResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let current = json["current"] as? String else {
+            return nil
+        }
+
+        var branches: [GitBranchItem] = []
+        if let branchesArray = json["branches"] as? [[String: Any]] {
+            for branchJson in branchesArray {
+                if let name = branchJson["name"] as? String {
+                    branches.append(GitBranchItem(id: name, name: name))
+                }
+            }
+        }
+
+        return GitBranchesResult(
+            project: project,
+            workspace: workspace,
+            current: current,
+            branches: branches
+        )
+    }
+}
+
+/// Cached git branches for a workspace
+struct GitBranchCache {
+    var current: String
+    var branches: [GitBranchItem]
+    var isLoading: Bool
+    var error: String?
+    var updatedAt: Date
+
+    static func empty() -> GitBranchCache {
+        GitBranchCache(
+            current: "",
+            branches: [],
+            isLoading: false,
+            error: nil,
+            updatedAt: .distantPast
+        )
+    }
+}
+
+// MARK: - Phase C3-4a: Git Commit Protocol Models
+
+/// Result from git_commit request
+struct GitCommitResult {
+    let project: String
+    let workspace: String
+    let ok: Bool
+    let message: String?
+    let sha: String?
+
+    static func from(json: [String: Any]) -> GitCommitResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        let sha = json["sha"] as? String
+        return GitCommitResult(
+            project: project,
+            workspace: workspace,
+            ok: ok,
+            message: message,
+            sha: sha
+        )
+    }
 }
