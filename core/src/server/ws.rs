@@ -17,8 +17,9 @@ use uuid::Uuid;
 use crate::pty::PtySession;
 use crate::server::file_api::{self, FileApiError};
 use crate::server::file_index;
+use crate::server::git_tools;
 use crate::server::protocol::{
-    ClientMessage, FileEntryInfo, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
+    ClientMessage, FileEntryInfo, GitStatusEntry, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
     v1_capabilities,
 };
 use crate::workspace::state::{AppState, WorkspaceStatus};
@@ -875,6 +876,126 @@ async fn handle_client_message(
                                 send_message(socket, &ServerMessage::Error {
                                     code: "internal_error".to_string(),
                                     message: format!("Index task failed: {}", e),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.5: Git status
+        ClientMessage::GitStatus { project, workspace } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        // Run git status in blocking task
+                        let result = tokio::task::spawn_blocking(move || {
+                            git_tools::git_status(&root)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(status_result)) => {
+                                let items: Vec<GitStatusEntry> = status_result.items
+                                    .into_iter()
+                                    .map(|e| GitStatusEntry {
+                                        path: e.path,
+                                        code: e.code,
+                                        orig_path: e.orig_path,
+                                    })
+                                    .collect();
+
+                                send_message(socket, &ServerMessage::GitStatusResult {
+                                    project,
+                                    workspace,
+                                    repo_root: status_result.repo_root,
+                                    items,
+                                }).await?;
+                            }
+                            Ok(Err(e)) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "git_error".to_string(),
+                                    message: format!("Git status failed: {}", e),
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Git status task failed: {}", e),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.5: Git diff
+        ClientMessage::GitDiff { project, workspace, path, base } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        // Run git diff in blocking task
+                        let path_clone = path.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            git_tools::git_diff(&root, &path_clone, base.as_deref())
+                        }).await;
+
+                        match result {
+                            Ok(Ok(diff_result)) => {
+                                send_message(socket, &ServerMessage::GitDiffResult {
+                                    project,
+                                    workspace,
+                                    path,
+                                    code: diff_result.code,
+                                    format: diff_result.format,
+                                    text: diff_result.text,
+                                    is_binary: diff_result.is_binary,
+                                    truncated: diff_result.truncated,
+                                }).await?;
+                            }
+                            Ok(Err(e)) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "git_error".to_string(),
+                                    message: format!("Git diff failed: {}", e),
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Git diff task failed: {}", e),
                                 }).await?;
                             }
                         }

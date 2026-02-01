@@ -4,6 +4,8 @@
 
 The right panel provides three tool views: Explorer, Search, and Git. All views are scoped to the currently selected workspace.
 
+**Related**: [19-git-tools.md](./19-git-tools.md) - Git Tools API (git_status, git_diff, Diff Tab)
+
 ## Tool Views
 
 ### 1. Explorer View

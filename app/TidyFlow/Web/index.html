@@ -220,6 +220,99 @@
         }
         .editor-status.error { color: #f48771; }
 
+        /* Diff Tab Pane */
+        .diff-pane { background: #1e1e1e; }
+        .diff-toolbar {
+            display: flex;
+            align-items: center;
+            padding: 4px 8px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #3c3c3c;
+            gap: 8px;
+        }
+        .diff-path {
+            flex: 1;
+            font-size: 12px;
+            color: #808080;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .diff-code {
+            font-size: 11px;
+            color: #e8ab53;
+            font-weight: 600;
+        }
+        .diff-open-btn, .diff-refresh-btn {
+            padding: 4px 8px;
+            background: #3c3c3c;
+            border: none;
+            border-radius: 3px;
+            color: #cccccc;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .diff-open-btn:hover, .diff-refresh-btn:hover { background: #4c4c4c; }
+        .diff-open-btn:disabled, .diff-refresh-btn:disabled {
+            background: #2d2d2d;
+            color: #606060;
+            cursor: not-allowed;
+        }
+        .diff-content {
+            flex: 1;
+            overflow: auto;
+            padding: 8px;
+        }
+        .diff-status {
+            padding: 2px 8px;
+            font-size: 11px;
+            color: #808080;
+            background: #252526;
+            min-height: 18px;
+        }
+        .diff-text {
+            font-family: Menlo, Monaco, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            margin: 0;
+        }
+        .diff-line {
+            padding: 0 8px;
+            white-space: pre;
+        }
+        .diff-line[data-clickable="true"] {
+            cursor: pointer;
+        }
+        .diff-line[data-clickable="true"]:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .diff-header { color: #808080; }
+        .diff-hunk {
+            color: #569cd6;
+            background: rgba(86, 156, 214, 0.1);
+            margin: 8px 0 4px 0;
+        }
+        .diff-add {
+            color: #89d185;
+            background: rgba(137, 209, 133, 0.15);
+        }
+        .diff-remove {
+            color: #f48771;
+            background: rgba(244, 135, 113, 0.15);
+        }
+        .diff-meta { color: #808080; font-style: italic; }
+        .diff-binary, .diff-empty, .diff-loading {
+            padding: 24px;
+            text-align: center;
+            color: #808080;
+            font-size: 13px;
+        }
+
+        /* CodeMirror line highlight for diff navigation */
+        .cm-highlight-line {
+            background: rgba(255, 213, 0, 0.25) !important;
+        }
+
         /* Terminal Tab Pane */
         .terminal-pane { background: #1e1e1e; }
         .terminal-container { flex: 1; }

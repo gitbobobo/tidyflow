@@ -401,17 +401,27 @@
             return;
         }
 
-        // For now, show placeholder - git_status API not yet implemented
-        listEl.innerHTML = '<div class="git-empty">Git status not available</div>';
-        // TODO: When git_status API is added:
-        // sendControlMessage({ type: 'git_status', project: currentProject, workspace: currentWorkspace });
+        listEl.innerHTML = '<div class="git-empty">Loading...</div>';
+        sendControlMessage({ type: 'git_status', project: currentProject, workspace: currentWorkspace });
     }
 
-    function renderGitStatus(items, branch, isGitRepo) {
+    function renderGitStatus(repoRoot, items) {
         const listEl = document.getElementById('git-status-list');
+        const headerEl = document.getElementById('git-repo-header');
         if (!listEl) return;
 
-        if (!isGitRepo) {
+        // Update header with repo root
+        if (headerEl) {
+            if (repoRoot) {
+                headerEl.textContent = repoRoot.split('/').pop() || 'Repository';
+                headerEl.title = repoRoot;
+            } else {
+                headerEl.textContent = 'Not a git repo';
+                headerEl.title = '';
+            }
+        }
+
+        if (!repoRoot) {
             listEl.innerHTML = '<div class="git-empty">Not a git repository</div>';
             return;
         }
@@ -428,21 +438,306 @@
 
             const status = document.createElement('span');
             status.className = 'git-status';
-            status.textContent = item.status;
-            if (item.status === 'M') status.classList.add('modified');
-            else if (item.status === 'A') status.classList.add('added');
-            else if (item.status === 'D') status.classList.add('deleted');
-            else if (item.status === '?') status.classList.add('untracked');
+            status.textContent = item.code;
+            if (item.code === 'M') status.classList.add('modified');
+            else if (item.code === 'A') status.classList.add('added');
+            else if (item.code === 'D') status.classList.add('deleted');
+            else if (item.code === '??' || item.code === '?') status.classList.add('untracked');
+            else if (item.code === 'R' || item.code === 'C') status.classList.add('renamed');
             el.appendChild(status);
 
             const file = document.createElement('span');
             file.className = 'git-file';
             file.textContent = item.path;
+            if (item.orig_path) {
+                file.title = `Renamed from: ${item.orig_path}`;
+            }
             el.appendChild(file);
 
-            el.addEventListener('click', () => openFileInEditor(item.path));
+            // Click opens Diff Tab instead of Editor
+            el.addEventListener('click', () => openDiffTab(item.path, item.code));
             listEl.appendChild(el);
         });
+    }
+
+    // ============================================
+    // Diff Tab Functions
+    // ============================================
+
+    function createDiffTab(filePath, code) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return null;
+
+        const tabSet = getOrCreateTabSet(wsKey);
+        const tabId = 'diff-' + filePath.replace(/[^a-zA-Z0-9]/g, '-');
+
+        // Check if tab already exists
+        if (tabSet.tabs.has(tabId)) {
+            switchToTab(tabId);
+            // Refresh diff content
+            sendGitDiff(currentProject, currentWorkspace, filePath);
+            return tabSet.tabs.get(tabId);
+        }
+
+        // Create pane
+        const pane = document.createElement('div');
+        pane.className = 'tab-pane diff-pane';
+        pane.id = 'pane-' + tabId;
+
+        // Diff toolbar
+        const toolbar = document.createElement('div');
+        toolbar.className = 'diff-toolbar';
+
+        const pathEl = document.createElement('span');
+        pathEl.className = 'diff-path';
+        pathEl.textContent = filePath;
+        toolbar.appendChild(pathEl);
+
+        const codeEl = document.createElement('span');
+        codeEl.className = 'diff-code';
+        codeEl.textContent = `[${code}]`;
+        toolbar.appendChild(codeEl);
+
+        // Open file button
+        const openFileBtn = document.createElement('button');
+        openFileBtn.className = 'diff-open-btn';
+        openFileBtn.textContent = '📄 Open file';
+        openFileBtn.title = 'Open file in editor';
+        // Disable for deleted files
+        if (code === 'D') {
+            openFileBtn.disabled = true;
+            openFileBtn.title = 'File has been deleted';
+        }
+        openFileBtn.addEventListener('click', () => {
+            const tab = tabSet.tabs.get(tabId);
+            if (tab && tab.code !== 'D') {
+                openFileInEditor(tab.filePath);
+            }
+        });
+        toolbar.appendChild(openFileBtn);
+
+        const refreshBtn = document.createElement('button');
+        refreshBtn.className = 'diff-refresh-btn';
+        refreshBtn.textContent = '↻ Refresh';
+        refreshBtn.addEventListener('click', () => {
+            const tab = tabSet.tabs.get(tabId);
+            if (tab) {
+                tab.contentEl.innerHTML = '<div class="diff-loading">Loading diff...</div>';
+                sendGitDiff(tab.project, tab.workspace, tab.filePath);
+            }
+        });
+        toolbar.appendChild(refreshBtn);
+
+        pane.appendChild(toolbar);
+
+        // Diff content container
+        const contentEl = document.createElement('div');
+        contentEl.className = 'diff-content';
+        contentEl.innerHTML = '<div class="diff-loading">Loading diff...</div>';
+        pane.appendChild(contentEl);
+
+        // Status bar
+        const statusBar = document.createElement('div');
+        statusBar.className = 'diff-status';
+        pane.appendChild(statusBar);
+
+        tabContent.appendChild(pane);
+
+        // Create tab element
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.dataset.tabId = tabId;
+
+        const icon = document.createElement('span');
+        icon.className = 'tab-icon diff';
+        icon.textContent = '±';
+        tabEl.appendChild(icon);
+
+        const title = document.createElement('span');
+        title.className = 'tab-title';
+        title.textContent = filePath.split('/').pop() + ' (diff)';
+        title.title = filePath;
+        tabEl.appendChild(title);
+
+        const closeBtn = document.createElement('span');
+        closeBtn.className = 'tab-close';
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeTab(tabId);
+        });
+        tabEl.appendChild(closeBtn);
+
+        tabEl.addEventListener('click', () => switchToTab(tabId));
+
+        const tabActions = document.getElementById('tab-actions');
+        tabBar.insertBefore(tabEl, tabActions);
+
+        // Store tab info
+        const tabInfo = {
+            id: tabId,
+            type: 'diff',
+            title: filePath.split('/').pop() + ' (diff)',
+            filePath,
+            code,
+            pane,
+            tabEl,
+            contentEl,
+            statusBar,
+            project: currentProject,
+            workspace: currentWorkspace
+        };
+
+        tabSet.tabs.set(tabId, tabInfo);
+        tabSet.tabOrder.push(tabId);
+
+        return tabInfo;
+    }
+
+    function openDiffTab(filePath, code) {
+        if (!currentProject || !currentWorkspace) return;
+
+        const tabInfo = createDiffTab(filePath, code);
+        if (tabInfo) {
+            switchToTab(tabInfo.id);
+            sendGitDiff(currentProject, currentWorkspace, filePath);
+        }
+    }
+
+    function renderDiffContent(path, code, text, isBinary, truncated) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet) return;
+
+        const tabId = 'diff-' + path.replace(/[^a-zA-Z0-9]/g, '-');
+        const tab = tabSet.tabs.get(tabId);
+        if (!tab || !tab.contentEl) return;
+
+        // Update open button state based on code
+        const openBtn = tab.pane.querySelector('.diff-open-btn');
+        if (openBtn) {
+            if (code === 'D') {
+                openBtn.disabled = true;
+                openBtn.title = 'File has been deleted';
+            } else {
+                openBtn.disabled = false;
+                openBtn.title = 'Open file in editor';
+            }
+        }
+
+        if (isBinary) {
+            tab.contentEl.innerHTML = '<div class="diff-binary">Binary file diff not supported</div>';
+            return;
+        }
+
+        if (!text || text.trim() === '') {
+            tab.contentEl.innerHTML = '<div class="diff-empty">No changes</div>';
+            return;
+        }
+
+        // Parse unified diff and render with line navigation
+        const pre = document.createElement('pre');
+        pre.className = 'diff-text';
+
+        const lines = text.split('\n');
+        let currentNewLine = 0;
+        let currentOldLine = 0;
+        let inHunk = false;
+
+        lines.forEach((line, idx) => {
+            const lineEl = document.createElement('div');
+            lineEl.className = 'diff-line';
+
+            // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+            const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+            if (hunkMatch) {
+                currentOldLine = parseInt(hunkMatch[1], 10);
+                currentNewLine = parseInt(hunkMatch[2], 10);
+                inHunk = true;
+                lineEl.classList.add('diff-hunk');
+                lineEl.textContent = line;
+                pre.appendChild(lineEl);
+                return;
+            }
+
+            // Header lines (not clickable)
+            if (line.startsWith('diff --git') || line.startsWith('index ') ||
+                line.startsWith('---') || line.startsWith('+++') ||
+                line.startsWith('new file') || line.startsWith('deleted file') ||
+                line.startsWith('Binary files')) {
+                lineEl.classList.add('diff-header');
+                lineEl.textContent = line;
+                pre.appendChild(lineEl);
+                return;
+            }
+
+            // Content lines within a hunk
+            if (inHunk) {
+                const firstChar = line.charAt(0);
+
+                if (firstChar === '+') {
+                    lineEl.classList.add('diff-add');
+                    lineEl.dataset.lineNew = currentNewLine;
+                    lineEl.dataset.path = path;
+                    lineEl.dataset.clickable = 'true';
+                    currentNewLine++;
+                } else if (firstChar === '-') {
+                    lineEl.classList.add('diff-remove');
+                    // For deleted lines, jump to the nearest new line position
+                    lineEl.dataset.lineNew = currentNewLine;
+                    lineEl.dataset.path = path;
+                    lineEl.dataset.clickable = 'true';
+                    currentOldLine++;
+                } else if (firstChar === ' ') {
+                    // Context line
+                    lineEl.dataset.lineNew = currentNewLine;
+                    lineEl.dataset.path = path;
+                    lineEl.dataset.clickable = 'true';
+                    currentNewLine++;
+                    currentOldLine++;
+                } else if (line === '\\ No newline at end of file') {
+                    // Special marker, not clickable
+                    lineEl.classList.add('diff-meta');
+                }
+            }
+
+            lineEl.textContent = line;
+            pre.appendChild(lineEl);
+        });
+
+        // Add click handler for line navigation
+        pre.addEventListener('click', (e) => {
+            const lineEl = e.target.closest('.diff-line');
+            if (!lineEl || lineEl.dataset.clickable !== 'true') return;
+
+            const targetLine = parseInt(lineEl.dataset.lineNew, 10);
+            const targetPath = lineEl.dataset.path;
+
+            if (targetPath && !isNaN(targetLine) && code !== 'D') {
+                openFileAtLine(targetPath, targetLine);
+            }
+        });
+
+        tab.contentEl.innerHTML = '';
+        tab.contentEl.appendChild(pre);
+
+        // Update status bar
+        if (tab.statusBar) {
+            let status = 'Click any line to jump to that location in the file';
+            if (truncated) {
+                status = '⚠️ Diff too large, truncated to 1MB | ' + status;
+            }
+            if (code === 'D') {
+                status = 'File deleted - navigation disabled';
+            }
+            tab.statusBar.textContent = status;
+        }
+    }
+
+    function sendGitDiff(project, workspace, path) {
+        sendControlMessage({ type: 'git_diff', project, workspace, path });
     }
 
     // ============================================
@@ -800,6 +1095,109 @@
     function openFileInEditor(filePath) {
         if (!currentProject || !currentWorkspace) return;
         sendFileRead(currentProject, currentWorkspace, filePath);
+    }
+
+    // Pending line navigation (set before file read, consumed after tab creation)
+    let pendingLineNavigation = null;
+
+    function openFileAtLine(filePath, lineNumber) {
+        if (!currentProject || !currentWorkspace) return;
+
+        const wsKey = getCurrentWorkspaceKey();
+        const tabId = 'editor-' + filePath.replace(/[^a-zA-Z0-9]/g, '-');
+
+        // Check if editor tab already exists
+        if (wsKey && workspaceTabs.has(wsKey)) {
+            const tabSet = workspaceTabs.get(wsKey);
+            if (tabSet.tabs.has(tabId)) {
+                const tab = tabSet.tabs.get(tabId);
+                switchToTab(tabId);
+                scrollToLineAndHighlight(tab, lineNumber);
+                return;
+            }
+        }
+
+        // Tab doesn't exist, set pending navigation and open file
+        pendingLineNavigation = { filePath, lineNumber };
+        sendFileRead(currentProject, currentWorkspace, filePath);
+    }
+
+    function scrollToLineAndHighlight(tab, lineNumber) {
+        if (!tab || !tab.editorView || !window.CodeMirror) return;
+
+        const { EditorView } = window.CodeMirror;
+        const view = tab.editorView;
+        const doc = view.state.doc;
+
+        // Clamp line number to valid range
+        const totalLines = doc.lines;
+        const targetLine = Math.max(1, Math.min(lineNumber, totalLines));
+
+        // Get line position
+        const lineInfo = doc.line(targetLine);
+        const lineStart = lineInfo.from;
+
+        // Scroll to line and set cursor
+        view.dispatch({
+            selection: { anchor: lineStart },
+            scrollIntoView: true
+        });
+
+        // Highlight the line temporarily
+        highlightLine(view, targetLine);
+
+        // Update status bar
+        if (tab.statusBar) {
+            tab.statusBar.textContent = `Line ${targetLine}`;
+        }
+    }
+
+    function highlightLine(view, lineNumber) {
+        if (!window.CodeMirror) return;
+
+        const { EditorView, Decoration, StateEffect, StateField } = window.CodeMirror;
+
+        // Create highlight decoration
+        const doc = view.state.doc;
+        const lineInfo = doc.line(lineNumber);
+
+        // Use a simple approach: add a temporary class to the line
+        const highlightMark = Decoration.line({ class: 'cm-highlight-line' });
+        const decorations = Decoration.set([highlightMark.range(lineInfo.from)]);
+
+        // Define effect and field if not already defined
+        if (!view._highlightEffect) {
+            view._highlightEffect = StateEffect.define();
+            view._highlightField = StateField.define({
+                create: () => Decoration.none,
+                update: (value, tr) => {
+                    for (const e of tr.effects) {
+                        if (e.is(view._highlightEffect)) {
+                            return e.value;
+                        }
+                    }
+                    return value;
+                },
+                provide: f => EditorView.decorations.from(f)
+            });
+
+            // Add the field to the editor
+            view.dispatch({
+                effects: StateEffect.appendConfig.of(view._highlightField)
+            });
+        }
+
+        // Apply highlight
+        view.dispatch({
+            effects: view._highlightEffect.of(decorations)
+        });
+
+        // Remove highlight after 2 seconds
+        setTimeout(() => {
+            view.dispatch({
+                effects: view._highlightEffect.of(Decoration.none)
+            });
+        }, 2000);
     }
 
     function switchToTab(tabId) {
@@ -1202,6 +1600,16 @@
                             const tabInfo = createEditorTab(msg.path, content);
                             if (tabInfo) {
                                 switchToTab(tabInfo.id);
+
+                                // Handle pending line navigation
+                                if (pendingLineNavigation && pendingLineNavigation.filePath === msg.path) {
+                                    const lineNumber = pendingLineNavigation.lineNumber;
+                                    pendingLineNavigation = null;
+                                    // Delay to ensure editor is fully initialized
+                                    setTimeout(() => {
+                                        scrollToLineAndHighlight(tabInfo, lineNumber);
+                                    }, 50);
+                                }
                             }
                         } catch (e) {
                             console.error('Failed to decode file content:', e);
@@ -1247,8 +1655,16 @@
 
                 case 'git_status_result':
                     if (msg.project === currentProject && msg.workspace === currentWorkspace) {
-                        renderGitStatus(msg.items, msg.branch, msg.is_git_repo);
+                        renderGitStatus(msg.repo_root, msg.items || []);
                     }
+                    notifySwift('git_status', { project: msg.project, workspace: msg.workspace, count: msg.items?.length || 0 });
+                    break;
+
+                case 'git_diff_result':
+                    if (msg.project === currentProject && msg.workspace === currentWorkspace) {
+                        renderDiffContent(msg.path, msg.code, msg.text, msg.is_binary, msg.truncated);
+                    }
+                    notifySwift('git_diff', { project: msg.project, workspace: msg.workspace, path: msg.path });
                     break;
 
                 case 'error':

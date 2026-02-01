@@ -70,6 +70,19 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
     },
+
+    // v1.5: Git tools
+    GitStatus {
+        project: String,
+        workspace: String,
+    },
+    GitDiff {
+        project: String,
+        workspace: String,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +170,24 @@ pub enum ServerMessage {
         truncated: bool,
     },
 
+    // v1.5: Git tools results
+    GitStatusResult {
+        project: String,
+        workspace: String,
+        repo_root: String,
+        items: Vec<GitStatusEntry>,
+    },
+    GitDiffResult {
+        project: String,
+        workspace: String,
+        path: String,
+        code: String,
+        format: String,
+        text: String,
+        is_binary: bool,
+        truncated: bool,
+    },
+
     // v1: Error handling
     Error { code: String, message: String },
 }
@@ -196,6 +227,14 @@ pub struct FileEntryInfo {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatusEntry {
+    pub path: String,
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orig_path: Option<String>,
+}
+
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -208,5 +247,6 @@ pub fn v1_capabilities() -> Vec<String> {
         "cwd_spawn".to_string(),
         "file_operations".to_string(),
         "file_index".to_string(),
+        "git_tools".to_string(),
     ]
 }
