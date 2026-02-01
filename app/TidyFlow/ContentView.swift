@@ -6,20 +6,27 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            // Using NavigationSplitView for 3-column layout (macOS 13+)
-            NavigationSplitView {
-                // UX-1: Replace LeftSidebarView with ProjectsSidebarView
-                ProjectsSidebarView()
-                    .environmentObject(appState)
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 250)
-            } content: {
-                CenterContentView(webBridge: webBridge)
-                    .environmentObject(appState)
-            } detail: {
-                RightToolPanelView()
-                    .environmentObject(appState)
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 300)
+            // Main layout with conditional right panel
+            HStack(spacing: 0) {
+                // Left sidebar + Center content using NavigationSplitView
+                NavigationSplitView {
+                    ProjectsSidebarView()
+                        .environmentObject(appState)
+                        .navigationSplitViewColumnWidth(min: 200, ideal: 250)
+                } detail: {
+                    CenterContentView(webBridge: webBridge)
+                        .environmentObject(appState)
+                }
+
+                // Right panel (conditionally shown)
+                if !appState.rightSidebarCollapsed {
+                    RightToolPanelView()
+                        .environmentObject(appState)
+                        .frame(width: 300)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
+            .animation(.easeInOut(duration: 0.25), value: appState.rightSidebarCollapsed)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 12) {
@@ -32,6 +39,15 @@ struct ContentView: View {
                         ConnectionStatusView()
                             .environmentObject(appState)
                     }
+                }
+                // Right panel toggle button
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: {
+                        appState.rightSidebarCollapsed.toggle()
+                    }) {
+                        Image(systemName: "sidebar.right")
+                    }
+                    .help(appState.rightSidebarCollapsed ? "Show Right Panel" : "Hide Right Panel")
                 }
             }
 

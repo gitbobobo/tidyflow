@@ -135,6 +135,9 @@ class AppState: ObservableObject {
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false
 
+    // Right Sidebar State
+    @Published var rightSidebarCollapsed: Bool = false
+
     // UX-1: Project Tree State
     @Published var projects: [ProjectModel] = []
     @Published var selectedProjectId: UUID?

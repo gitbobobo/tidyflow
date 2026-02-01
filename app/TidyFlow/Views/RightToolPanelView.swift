@@ -4,35 +4,40 @@ struct RightToolPanelView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header / Tab bar
-            HStack(spacing: 16) {
-                ToolButton(tool: .explorer, icon: "folder", current: $appState.activeRightTool)
-                ToolButton(tool: .search, icon: "magnifyingglass", current: $appState.activeRightTool)
-                ToolButton(tool: .git, icon: "arrow.triangle.branch", current: $appState.activeRightTool)
-                Spacer()
-            }
-            .padding(8)
-            .background(Color(NSColor.controlBackgroundColor))
-
+        HStack(spacing: 0) {
+            // Left border divider
             Divider()
 
-            // Content Area
-            Group {
-                switch appState.activeRightTool {
-                case .explorer:
-                    ExplorerPlaceholderView()
-                case .search:
-                    SearchPlaceholderView()
-                case .git:
-                    NativeGitPanelView()
-                        .environmentObject(appState)
-                case .none:
-                    NoToolSelectedView()
+            VStack(spacing: 0) {
+                // Header / Tab bar
+                HStack(spacing: 16) {
+                    ToolButton(tool: .explorer, icon: "folder", current: $appState.activeRightTool)
+                    ToolButton(tool: .search, icon: "magnifyingglass", current: $appState.activeRightTool)
+                    ToolButton(tool: .git, icon: "arrow.triangle.branch", current: $appState.activeRightTool)
+                    Spacer()
                 }
+                .padding(8)
+                .background(Color(NSColor.controlBackgroundColor))
+
+                Divider()
+
+                // Content Area
+                Group {
+                    switch appState.activeRightTool {
+                    case .explorer:
+                        ExplorerPlaceholderView()
+                    case .search:
+                        SearchPlaceholderView()
+                    case .git:
+                        NativeGitPanelView()
+                            .environmentObject(appState)
+                    case .none:
+                        NoToolSelectedView()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(NSColor.windowBackgroundColor))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(NSColor.windowBackgroundColor))
         }
         .frame(minWidth: 200)
     }

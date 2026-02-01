@@ -43,7 +43,8 @@ struct TidyFlowApp: App {
                     appDelegate.appState = appState
                 }
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 900, height: 600)
     }
 }
