@@ -2,10 +2,30 @@
  * TidyFlow Terminal - Main JavaScript
  * Workspace-scoped tabs with unified Editor + Terminal tabs
  * Protocol v1.3 - Multi-Terminal + File Operations
+ * UX-1: Added renderer-only mode for Native Shell integration
  */
 
 (function() {
     'use strict';
+
+    // UX-1: Renderer-only mode flag
+    // When true, Web only renders terminal/editor/diff, Native Shell handles all UI
+    window.TIDYFLOW_RENDERER_ONLY = false;
+
+    /**
+     * UX-1: Enable renderer-only mode
+     * Called by Native Shell to hide Web's sidebar/tabbar/tools
+     */
+    window.setRendererOnly = function(enabled) {
+        window.TIDYFLOW_RENDERER_ONLY = enabled;
+        if (enabled) {
+            document.body.classList.add('renderer-only');
+            console.log('[TidyFlow] Renderer-only mode enabled');
+        } else {
+            document.body.classList.remove('renderer-only');
+            console.log('[TidyFlow] Renderer-only mode disabled');
+        }
+    };
 
     // Transport interface
     class WebSocketTransport {

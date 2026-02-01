@@ -100,6 +100,24 @@ struct Command: Identifiable {
     let action: (AppState) -> Void
 }
 
+// MARK: - UX-1: Project/Workspace Models
+
+/// Represents a workspace within a project
+struct WorkspaceModel: Identifiable, Equatable {
+    var id: String { name }
+    let name: String
+    var status: String?
+}
+
+/// Represents a project containing multiple workspaces
+struct ProjectModel: Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var path: String?
+    var workspaces: [WorkspaceModel]
+    var isExpanded: Bool = true
+}
+
 class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
@@ -116,6 +134,11 @@ class AppState: ObservableObject {
 
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false
+
+    // UX-1: Project Tree State
+    @Published var projects: [ProjectModel] = []
+    @Published var selectedProjectId: UUID?
+    @Published var addProjectSheetPresented: Bool = false
 
     // File Index Cache (workspace key -> cache)
     @Published var fileIndexCache: [String: FileIndexCache] = [:]
@@ -194,6 +217,22 @@ class AppState: ObservableObject {
     var commands: [Command] = []
 
     init() {
+        // UX-1: Create default project with mock workspaces
+        let defaultWorkspaces = [
+            WorkspaceModel(name: "default", status: nil),
+            WorkspaceModel(name: "project-alpha", status: nil),
+            WorkspaceModel(name: "project-beta", status: nil)
+        ]
+        let defaultProject = ProjectModel(
+            id: UUID(),
+            name: "Default Project",
+            path: nil,
+            workspaces: defaultWorkspaces,
+            isExpanded: true
+        )
+        self.projects = [defaultProject]
+        self.selectedProjectId = defaultProject.id
+
         // Set default workspace
         self.selectedWorkspaceKey = "default"
         ensureDefaultTab(for: "default")
@@ -204,6 +243,26 @@ class AppState: ObservableObject {
 
         // Start Core process first (WS will connect when Core is ready)
         startCoreIfNeeded()
+    }
+
+    // MARK: - UX-1: Project/Workspace Selection
+
+    /// Select a workspace within a project
+    func selectWorkspace(projectId: UUID, workspaceName: String) {
+        selectedProjectId = projectId
+        selectedWorkspaceKey = workspaceName
+        ensureDefaultTab(for: workspaceName)
+
+        // Update selectedProjectName for WS protocol
+        if let project = projects.first(where: { $0.id == projectId }) {
+            selectedProjectName = project.name.lowercased().replacingOccurrences(of: " ", with: "-")
+        }
+    }
+
+    /// Refresh projects and workspaces from Core
+    func refreshProjectsAndWorkspaces() {
+        // TODO: UX-2 - Call core list_projects/list_workspaces via WS
+        print("[AppState] refreshProjectsAndWorkspaces - not yet implemented")
     }
 
     // MARK: - Core Process Management

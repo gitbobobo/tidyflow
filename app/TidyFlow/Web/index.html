@@ -10,6 +10,20 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 
+        /* UX-1: Renderer-only mode - hide sidebar/toolbar when Native Shell controls UI */
+        body.renderer-only #left-sidebar,
+        body.renderer-only #right-panel,
+        body.renderer-only #tab-bar,
+        body.renderer-only .resize-handle-v {
+            display: none !important;
+        }
+        body.renderer-only #main-area {
+            flex: 1;
+        }
+        body.renderer-only #tab-content {
+            height: 100%;
+        }
+
         /* Three-column layout: Left Sidebar + Main + Right Panel */
         #app-container {
             display: flex;

@@ -84,17 +84,19 @@ struct ConnectionStatusView: View {
     }
 }
 
-struct ProjectPickerView: View {
+/// UX-1: Add Project button for toolbar
+struct AddProjectButtonView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        Picker("Project", selection: $appState.selectedWorkspaceKey) {
-            Text("Select Project...").tag(String?.none)
-            Divider()
-            ForEach(appState.workspaces.sorted(by: { $0.key < $1.key }), id: \.key) { key, name in
-                Text(name).tag(String?.some(key))
-            }
+        Button(action: {
+            appState.addProjectSheetPresented = true
+        }) {
+            Image(systemName: "plus")
         }
-        .frame(width: 200)
+        .help("Add Project")
     }
 }
+
+// MARK: - Deprecated: ProjectPickerView (removed in UX-1)
+// Workspace selection now happens in the sidebar via ProjectsSidebarView

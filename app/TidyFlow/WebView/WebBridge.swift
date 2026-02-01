@@ -153,6 +153,17 @@ class WebBridge: NSObject, WKScriptMessageHandler {
 
     // MARK: - Convenience Methods
 
+    /// UX-1: Enable renderer-only mode (hide Web's sidebar/tabbar/tools)
+    func setRendererOnly(_ enabled: Bool) {
+        guard let webView = webView else { return }
+        let js = "window.setRendererOnly && window.setRendererOnly(\(enabled))"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                print("[WebBridge] setRendererOnly error: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func openFile(project: String, workspace: String, path: String) {
         send(type: "open_file", payload: [
             "project": project,

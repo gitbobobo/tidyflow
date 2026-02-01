@@ -46,9 +46,11 @@ struct CenterContentView: View {
 
     /// Setup WebBridge callbacks
     private func setupBridgeCallbacks() {
-        webBridge.onReady = { [weak appState] info in
+        webBridge.onReady = { [weak appState, weak webBridge] info in
             DispatchQueue.main.async {
                 appState?.editorWebReady = true
+                // UX-1: Enable renderer-only mode when Web is ready
+                webBridge?.setRendererOnly(true)
                 print("[CenterContentView] Web ready with capabilities: \(info)")
             }
         }

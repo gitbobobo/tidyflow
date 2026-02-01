@@ -7,10 +7,9 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             // Using NavigationSplitView for 3-column layout (macOS 13+)
-            // If targeting older macOS, we might need NavigationView or HSplitView wrapper.
-            // For Phase A, we assume modern macOS target.
             NavigationSplitView {
-                LeftSidebarView()
+                // UX-1: Replace LeftSidebarView with ProjectsSidebarView
+                ProjectsSidebarView()
                     .environmentObject(appState)
                     .navigationSplitViewColumnWidth(min: 200, ideal: 250)
             } content: {
@@ -22,8 +21,9 @@ struct ContentView: View {
                     .navigationSplitViewColumnWidth(min: 200, ideal: 300)
             }
             .toolbar {
+                // UX-1: Removed ProjectPickerView, added AddProjectButtonView
                 ToolbarItem(placement: .automatic) {
-                    ProjectPickerView()
+                    AddProjectButtonView()
                         .environmentObject(appState)
                 }
 
@@ -54,5 +54,10 @@ struct ContentView: View {
         }
         .handleGlobalKeybindings()
         .environmentObject(appState)
+        // UX-1: Add Project Sheet
+        .sheet(isPresented: $appState.addProjectSheetPresented) {
+            AddProjectSheet()
+                .environmentObject(appState)
+        }
     }
 }
