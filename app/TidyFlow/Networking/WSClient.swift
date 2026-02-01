@@ -13,6 +13,8 @@ class WSClient: NSObject, ObservableObject {
     // Message handlers
     var onFileIndexResult: ((FileIndexResult) -> Void)?
     var onGitDiffResult: ((GitDiffResult) -> Void)?
+    var onGitStatusResult: ((GitStatusResult) -> Void)?
+    var onGitOpResult: ((GitOpResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -93,6 +95,57 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // Phase C3-1: Request git status
+    func requestGitStatus(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_status",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    // Phase C3-2a: Request git stage
+    func requestGitStage(project: String, workspace: String, path: String?, scope: String) {
+        var msg: [String: Any] = [
+            "type": "git_stage",
+            "project": project,
+            "workspace": workspace,
+            "scope": scope
+        ]
+        if let path = path {
+            msg["path"] = path
+        }
+        sendJSON(msg)
+    }
+
+    // Phase C3-2a: Request git unstage
+    func requestGitUnstage(project: String, workspace: String, path: String?, scope: String) {
+        var msg: [String: Any] = [
+            "type": "git_unstage",
+            "project": project,
+            "workspace": workspace,
+            "scope": scope
+        ]
+        if let path = path {
+            msg["path"] = path
+        }
+        sendJSON(msg)
+    }
+
+    // Phase C3-2b: Request git discard
+    func requestGitDiscard(project: String, workspace: String, path: String?, scope: String) {
+        var msg: [String: Any] = [
+            "type": "git_discard",
+            "project": project,
+            "workspace": workspace,
+            "scope": scope
+        ]
+        if let path = path {
+            msg["path"] = path
+        }
+        sendJSON(msg)
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -144,6 +197,16 @@ class WSClient: NSObject, ObservableObject {
         case "git_diff_result":
             if let result = GitDiffResult.from(json: json) {
                 onGitDiffResult?(result)
+            }
+
+        case "git_status_result":
+            if let result = GitStatusResult.from(json: json) {
+                onGitStatusResult?(result)
+            }
+
+        case "git_op_result":
+            if let result = GitOpResult.from(json: json) {
+                onGitOpResult?(result)
             }
 
         case "error":

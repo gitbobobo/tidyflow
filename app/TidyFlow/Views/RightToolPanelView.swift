@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RightToolPanelView: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header / Tab bar
@@ -14,21 +14,22 @@ struct RightToolPanelView: View {
             }
             .padding(8)
             .background(Color(NSColor.controlBackgroundColor))
-            
+
             Divider()
-            
-            // Content Area (Empty for now)
-            VStack {
-                Spacer()
-                if let tool = appState.activeRightTool {
-                    Text("\(tool.rawValue.capitalized) Panel")
-                        .font(.title)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("No Tool Selected")
-                        .foregroundColor(.secondary)
+
+            // Content Area
+            Group {
+                switch appState.activeRightTool {
+                case .explorer:
+                    ExplorerPlaceholderView()
+                case .search:
+                    SearchPlaceholderView()
+                case .git:
+                    NativeGitPanelView()
+                        .environmentObject(appState)
+                case .none:
+                    NoToolSelectedView()
                 }
-                Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(NSColor.windowBackgroundColor))
@@ -37,11 +38,50 @@ struct RightToolPanelView: View {
     }
 }
 
+// MARK: - Placeholder Views
+
+struct ExplorerPlaceholderView: View {
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("Explorer Panel")
+                .font(.title)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+}
+
+struct SearchPlaceholderView: View {
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("Search Panel")
+                .font(.title)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+}
+
+struct NoToolSelectedView: View {
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("No Tool Selected")
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Tool Button
+
 struct ToolButton: View {
     let tool: RightTool
     let icon: String
     @Binding var current: RightTool?
-    
+
     var body: some View {
         Button(action: {
             if current == tool {

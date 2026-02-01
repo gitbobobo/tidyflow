@@ -85,10 +85,42 @@ pub enum ClientMessage {
         #[serde(default = "default_diff_mode")]
         mode: String,  // "working" or "staged"
     },
+
+    // v1.6: Git stage/unstage operations
+    GitStage {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,  // None = stage all
+        #[serde(default = "default_git_scope")]
+        scope: String,  // "file" or "all"
+    },
+    GitUnstage {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,  // None = unstage all
+        #[serde(default = "default_git_scope")]
+        scope: String,  // "file" or "all"
+    },
+
+    // v1.7: Git discard (working tree changes)
+    GitDiscard {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,  // None = discard all
+        #[serde(default = "default_git_scope")]
+        scope: String,  // "file" or "all"
+    },
 }
 
 fn default_diff_mode() -> String {
     "working".to_string()
+}
+
+fn default_git_scope() -> String {
+    "file".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +227,19 @@ pub enum ServerMessage {
         mode: String,  // Echo back the mode
     },
 
+    // v1.6: Git operation result
+    GitOpResult {
+        project: String,
+        workspace: String,
+        op: String,  // "stage", "unstage", or "discard"
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        scope: String,  // "file" or "all"
+    },
+
     // v1: Error handling
     Error { code: String, message: String },
 }
@@ -255,5 +300,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "file_operations".to_string(),
         "file_index".to_string(),
         "git_tools".to_string(),
+        "git_stage_unstage".to_string(),
+        "git_discard".to_string(),
     ]
 }

@@ -120,6 +120,15 @@ class AppState: ObservableObject {
     // Phase C2-2a: Diff Cache (key: "workspace:path:mode" -> DiffCache)
     @Published var diffCache: [String: DiffCache] = [:]
 
+    // Phase C3-1: Git Status Cache (workspace key -> GitStatusCache)
+    @Published var gitStatusCache: [String: GitStatusCache] = [:]
+
+    // Phase C3-2a: Git operation in-flight tracking (workspace key -> Set<GitOpInFlight>)
+    @Published var gitOpsInFlight: [String: Set<GitOpInFlight>] = [:]
+    // Phase C3-2a: Git operation toast message
+    @Published var gitOpToast: String?
+    @Published var gitOpToastIsError: Bool = false
+
     // Phase C2-2a: Flag to use native diff (set to false to fallback to Web diff)
     var useNativeDiff: Bool = true
 
@@ -188,6 +197,16 @@ class AppState: ObservableObject {
         // Phase C2-2a: Handle git diff results
         wsClient.onGitDiffResult = { [weak self] result in
             self?.handleGitDiffResult(result)
+        }
+
+        // Phase C3-1: Handle git status results
+        wsClient.onGitStatusResult = { [weak self] result in
+            self?.handleGitStatusResult(result)
+        }
+
+        // Phase C3-2a: Handle git operation results
+        wsClient.onGitOpResult = { [weak self] result in
+            self?.handleGitOpResult(result)
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -320,7 +339,189 @@ class AppState: ObservableObject {
         }
         return cache.code.hasPrefix("D")
     }
-    
+
+    // MARK: - Phase C3-1: Git Status API
+
+    /// Handle git status result from WebSocket
+    private func handleGitStatusResult(_ result: GitStatusResult) {
+        let cache = GitStatusCache(
+            items: result.items,
+            isLoading: false,
+            error: result.error,
+            isGitRepo: result.isGitRepo,
+            updatedAt: Date()
+        )
+        gitStatusCache[result.workspace] = cache
+    }
+
+    /// Fetch git status for a workspace
+    func fetchGitStatus(workspaceKey: String) {
+        guard connectionState == .connected else {
+            var cache = gitStatusCache[workspaceKey] ?? GitStatusCache.empty()
+            cache.error = "Disconnected"
+            cache.isLoading = false
+            gitStatusCache[workspaceKey] = cache
+            return
+        }
+
+        // Set loading state
+        var cache = gitStatusCache[workspaceKey] ?? GitStatusCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        gitStatusCache[workspaceKey] = cache
+
+        // Send request
+        wsClient.requestGitStatus(project: selectedProjectName, workspace: workspaceKey)
+    }
+
+    /// Refresh git status for current workspace
+    func refreshGitStatus() {
+        guard let ws = selectedWorkspaceKey else { return }
+        fetchGitStatus(workspaceKey: ws)
+    }
+
+    /// Get cached git status for a workspace
+    func getGitStatusCache(workspaceKey: String) -> GitStatusCache? {
+        return gitStatusCache[workspaceKey]
+    }
+
+    /// Check if git status cache is empty or expired
+    func shouldFetchGitStatus(workspaceKey: String) -> Bool {
+        guard let cache = gitStatusCache[workspaceKey] else { return true }
+        return cache.isExpired && !cache.isLoading
+    }
+
+    // MARK: - Phase C3-2a: Git Stage/Unstage API
+
+    /// Handle git operation result from WebSocket
+    private func handleGitOpResult(_ result: GitOpResult) {
+        // Remove from in-flight
+        let opKey = GitOpInFlight(op: result.op, path: result.path, scope: result.scope)
+        gitOpsInFlight[result.workspace]?.remove(opKey)
+
+        if result.ok {
+            // Show success toast
+            let pathDesc = result.path ?? "all files"
+            if result.op == "discard" {
+                // Special message for discard
+                if result.message == "File deleted" {
+                    gitOpToast = "Deleted \(pathDesc)"
+                } else {
+                    gitOpToast = "Discarded changes in \(pathDesc)"
+                }
+            } else {
+                gitOpToast = "\(result.op.capitalized)d \(pathDesc)"
+            }
+            gitOpToastIsError = false
+
+            // Refresh git status
+            fetchGitStatus(workspaceKey: result.workspace)
+
+            // If active diff is for this path, handle it
+            if let path = result.path,
+               selectedWorkspaceKey == result.workspace,
+               activeDiffPath == path {
+                if result.op == "discard" {
+                    // Close the diff tab since file is restored/deleted
+                    closeDiffTab(workspaceKey: result.workspace, path: path)
+                } else {
+                    refreshActiveDiff()
+                }
+            }
+        } else {
+            // Show error toast
+            gitOpToast = result.message ?? "\(result.op.capitalized) failed"
+            gitOpToastIsError = true
+        }
+
+        // Auto-dismiss toast after 2 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
+    /// Stage a file or all files
+    func gitStage(workspaceKey: String, path: String?, scope: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Track in-flight
+        let opKey = GitOpInFlight(op: "stage", path: path, scope: scope)
+        if gitOpsInFlight[workspaceKey] == nil {
+            gitOpsInFlight[workspaceKey] = []
+        }
+        gitOpsInFlight[workspaceKey]?.insert(opKey)
+
+        wsClient.requestGitStage(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            path: path,
+            scope: scope
+        )
+    }
+
+    /// Unstage a file or all files
+    func gitUnstage(workspaceKey: String, path: String?, scope: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Track in-flight
+        let opKey = GitOpInFlight(op: "unstage", path: path, scope: scope)
+        if gitOpsInFlight[workspaceKey] == nil {
+            gitOpsInFlight[workspaceKey] = []
+        }
+        gitOpsInFlight[workspaceKey]?.insert(opKey)
+
+        wsClient.requestGitUnstage(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            path: path,
+            scope: scope
+        )
+    }
+
+    /// Discard working tree changes for a file or all files
+    /// WARNING: This is destructive and cannot be undone!
+    func gitDiscard(workspaceKey: String, path: String?, scope: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Track in-flight
+        let opKey = GitOpInFlight(op: "discard", path: path, scope: scope)
+        if gitOpsInFlight[workspaceKey] == nil {
+            gitOpsInFlight[workspaceKey] = []
+        }
+        gitOpsInFlight[workspaceKey]?.insert(opKey)
+
+        wsClient.requestGitDiscard(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            path: path,
+            scope: scope
+        )
+    }
+
+    /// Check if a git operation is in-flight for a path
+    func isGitOpInFlight(workspaceKey: String, path: String?, op: String) -> Bool {
+        guard let ops = gitOpsInFlight[workspaceKey] else { return false }
+        return ops.contains { $0.op == op && $0.path == path }
+    }
+
+    /// Check if any git operation is in-flight for a workspace
+    func hasAnyGitOpInFlight(workspaceKey: String) -> Bool {
+        guard let ops = gitOpsInFlight[workspaceKey] else { return false }
+        return !ops.isEmpty
+    }
+
     private func setupCommands() {
         self.commands = [
             Command(id: "global.palette", title: "Show Command Palette", subtitle: nil, scope: .global, keyHint: "Cmd+Shift+P") { app in
@@ -496,7 +697,16 @@ class AppState: ObservableObject {
         workspaceTabs[workspaceKey]?.append(newTab)
         activeTabIdByWorkspace[workspaceKey] = newTab.id
     }
-    
+
+    /// Close diff tab for a specific path (used when file is discarded)
+    func closeDiffTab(workspaceKey: String, path: String) {
+        guard let tabs = workspaceTabs[workspaceKey],
+              let tab = tabs.first(where: { $0.kind == .diff && $0.payload == path }) else {
+            return
+        }
+        closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+    }
+
     func nextTab() {
         guard let ws = selectedWorkspaceKey,
               let tabs = workspaceTabs[ws], !tabs.isEmpty,

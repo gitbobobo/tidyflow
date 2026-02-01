@@ -35,6 +35,16 @@ pub struct GitDiffResult {
     pub mode: String,
 }
 
+/// Git operation result (stage/unstage)
+#[derive(Debug)]
+pub struct GitOpResult {
+    pub op: String,
+    pub ok: bool,
+    pub message: Option<String>,
+    pub path: Option<String>,
+    pub scope: String,
+}
+
 /// Error type for git operations
 #[derive(Debug)]
 pub enum GitError {
@@ -330,6 +340,252 @@ fn truncate_if_needed(text: &str) -> (String, bool) {
         }
     } else {
         (text.to_string(), false)
+    }
+}
+
+/// Stage a file or all files
+///
+/// - scope "file": git add -- <path>
+/// - scope "all": git add -A
+pub fn git_stage(
+    workspace_root: &Path,
+    path: Option<&str>,
+    scope: &str,
+) -> Result<GitOpResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    let (args, path_str): (Vec<&str>, Option<String>) = if scope == "all" {
+        (vec!["add", "-A"], None)
+    } else {
+        let p = path.ok_or_else(|| GitError::CommandFailed("Path required for file scope".to_string()))?;
+        // Validate path
+        validate_path(workspace_root, p)?;
+        (vec!["add", "--", p], Some(p.to_string()))
+    };
+
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        Ok(GitOpResult {
+            op: "stage".to_string(),
+            ok: true,
+            message: None,
+            path: path_str,
+            scope: scope.to_string(),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(GitOpResult {
+            op: "stage".to_string(),
+            ok: false,
+            message: Some(if stderr.is_empty() { "Stage failed".to_string() } else { stderr }),
+            path: path_str,
+            scope: scope.to_string(),
+        })
+    }
+}
+
+/// Unstage a file or all files
+///
+/// - scope "file": git restore --staged -- <path> (fallback: git reset -- <path>)
+/// - scope "all": git restore --staged . (fallback: git reset)
+pub fn git_unstage(
+    workspace_root: &Path,
+    path: Option<&str>,
+    scope: &str,
+) -> Result<GitOpResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    let path_str: Option<String> = if scope == "all" {
+        None
+    } else {
+        let p = path.ok_or_else(|| GitError::CommandFailed("Path required for file scope".to_string()))?;
+        // Validate path
+        validate_path(workspace_root, p)?;
+        Some(p.to_string())
+    };
+
+    // Try git restore --staged first (Git 2.23+)
+    let restore_result = if scope == "all" {
+        Command::new("git")
+            .args(["restore", "--staged", "."])
+            .current_dir(workspace_root)
+            .output()
+    } else {
+        Command::new("git")
+            .args(["restore", "--staged", "--", path.unwrap()])
+            .current_dir(workspace_root)
+            .output()
+    };
+
+    match restore_result {
+        Ok(output) if output.status.success() => {
+            return Ok(GitOpResult {
+                op: "unstage".to_string(),
+                ok: true,
+                message: None,
+                path: path_str,
+                scope: scope.to_string(),
+            });
+        }
+        _ => {
+            // Fallback to git reset
+            let reset_output = if scope == "all" {
+                Command::new("git")
+                    .args(["reset"])
+                    .current_dir(workspace_root)
+                    .output()
+            } else {
+                Command::new("git")
+                    .args(["reset", "--", path.unwrap()])
+                    .current_dir(workspace_root)
+                    .output()
+            };
+
+            match reset_output {
+                Ok(output) if output.status.success() => {
+                    Ok(GitOpResult {
+                        op: "unstage".to_string(),
+                        ok: true,
+                        message: None,
+                        path: path_str,
+                        scope: scope.to_string(),
+                    })
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    Ok(GitOpResult {
+                        op: "unstage".to_string(),
+                        ok: false,
+                        message: Some(if stderr.is_empty() { "Unstage failed".to_string() } else { stderr }),
+                        path: path_str,
+                        scope: scope.to_string(),
+                    })
+                }
+                Err(e) => Err(GitError::IoError(e)),
+            }
+        }
+    }
+}
+
+/// Discard working tree changes for a file or all files
+///
+/// - For tracked files: git restore -- <path>
+/// - For untracked files: git clean -f -- <path> (deletes the file)
+/// - scope "all": git restore . (only tracked files, does NOT clean untracked)
+///
+/// SAFETY: This operation is destructive and cannot be undone.
+/// The UI must show a confirmation dialog before calling this.
+pub fn git_discard(
+    workspace_root: &Path,
+    path: Option<&str>,
+    scope: &str,
+) -> Result<GitOpResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    if scope == "all" {
+        // Discard all tracked changes (does NOT delete untracked files for safety)
+        let output = Command::new("git")
+            .args(["restore", "."])
+            .current_dir(workspace_root)
+            .output()
+            .map_err(GitError::IoError)?;
+
+        if output.status.success() {
+            Ok(GitOpResult {
+                op: "discard".to_string(),
+                ok: true,
+                message: None,
+                path: None,
+                scope: scope.to_string(),
+            })
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Ok(GitOpResult {
+                op: "discard".to_string(),
+                ok: false,
+                message: Some(if stderr.is_empty() { "Discard failed".to_string() } else { stderr }),
+                path: None,
+                scope: scope.to_string(),
+            })
+        }
+    } else {
+        // Single file discard
+        let p = path.ok_or_else(|| GitError::CommandFailed("Path required for file scope".to_string()))?;
+        validate_path(workspace_root, p)?;
+
+        // Check if file is untracked
+        let status_result = git_status(workspace_root)?;
+        let file_status = status_result.items.iter().find(|item| item.path == p);
+
+        let is_untracked = file_status.map(|s| s.code == "??").unwrap_or(false);
+
+        if is_untracked {
+            // Untracked file: use git clean -f to delete
+            let output = Command::new("git")
+                .args(["clean", "-f", "--", p])
+                .current_dir(workspace_root)
+                .output()
+                .map_err(GitError::IoError)?;
+
+            if output.status.success() {
+                Ok(GitOpResult {
+                    op: "discard".to_string(),
+                    ok: true,
+                    message: Some("File deleted".to_string()),
+                    path: Some(p.to_string()),
+                    scope: scope.to_string(),
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                Ok(GitOpResult {
+                    op: "discard".to_string(),
+                    ok: false,
+                    message: Some(if stderr.is_empty() { "Failed to delete file".to_string() } else { stderr }),
+                    path: Some(p.to_string()),
+                    scope: scope.to_string(),
+                })
+            }
+        } else {
+            // Tracked file: use git restore
+            let output = Command::new("git")
+                .args(["restore", "--", p])
+                .current_dir(workspace_root)
+                .output()
+                .map_err(GitError::IoError)?;
+
+            if output.status.success() {
+                Ok(GitOpResult {
+                    op: "discard".to_string(),
+                    ok: true,
+                    message: None,
+                    path: Some(p.to_string()),
+                    scope: scope.to_string(),
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                Ok(GitOpResult {
+                    op: "discard".to_string(),
+                    ok: false,
+                    message: Some(if stderr.is_empty() { "Discard failed".to_string() } else { stderr }),
+                    path: Some(p.to_string()),
+                    scope: scope.to_string(),
+                })
+            }
+        }
     }
 }
 

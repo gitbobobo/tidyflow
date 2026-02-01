@@ -402,3 +402,153 @@ struct DiffParser {
         return (oldStart, newStart)
     }
 }
+
+// MARK: - Phase C3-1: Git Status Protocol Models
+
+/// Single item in git status list
+struct GitStatusItem: Identifiable {
+    let id: String  // Use path as unique ID
+    let path: String
+    let status: String  // M, A, D, ??, R, C, etc.
+    let staged: Bool?   // If core provides staged info
+    let renameFrom: String?  // For renamed files
+
+    /// Human-readable status description
+    var statusDescription: String {
+        switch status {
+        case "M": return "Modified"
+        case "A": return "Added"
+        case "D": return "Deleted"
+        case "??": return "Untracked"
+        case "R": return "Renamed"
+        case "C": return "Copied"
+        case "U": return "Unmerged"
+        case "!": return "Ignored"
+        default: return status
+        }
+    }
+
+    /// Color for status badge
+    var statusColor: String {
+        switch status {
+        case "M": return "orange"
+        case "A": return "green"
+        case "D": return "red"
+        case "??": return "gray"
+        case "R": return "blue"
+        case "C": return "cyan"
+        case "U": return "purple"
+        default: return "secondary"
+        }
+    }
+}
+
+/// Result from git_status request
+struct GitStatusResult {
+    let project: String
+    let workspace: String
+    let items: [GitStatusItem]
+    let isGitRepo: Bool
+    let error: String?
+
+    static func from(json: [String: Any]) -> GitStatusResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+
+        let isGitRepo = json["is_git_repo"] as? Bool ?? true
+        let errorMsg = json["error"] as? String
+
+        var items: [GitStatusItem] = []
+        if let itemsArray = json["items"] as? [[String: Any]] {
+            for itemJson in itemsArray {
+                if let path = itemJson["path"] as? String,
+                   let status = itemJson["status"] as? String {
+                    let staged = itemJson["staged"] as? Bool
+                    let renameFrom = itemJson["rename_from"] as? String
+                    items.append(GitStatusItem(
+                        id: path,
+                        path: path,
+                        status: status,
+                        staged: staged,
+                        renameFrom: renameFrom
+                    ))
+                }
+            }
+        }
+
+        return GitStatusResult(
+            project: project,
+            workspace: workspace,
+            items: items,
+            isGitRepo: isGitRepo,
+            error: errorMsg
+        )
+    }
+}
+
+/// Cached git status for a workspace
+struct GitStatusCache {
+    var items: [GitStatusItem]
+    var isLoading: Bool
+    var error: String?
+    var isGitRepo: Bool
+    var updatedAt: Date
+
+    static func empty() -> GitStatusCache {
+        GitStatusCache(
+            items: [],
+            isLoading: false,
+            error: nil,
+            isGitRepo: true,
+            updatedAt: .distantPast
+        )
+    }
+
+    var isExpired: Bool {
+        // Git status cache expires after 60 seconds
+        Date().timeIntervalSince(updatedAt) > 60
+    }
+}
+
+// MARK: - Phase C3-2a: Git Stage/Unstage Protocol Models
+
+/// Result from git_stage or git_unstage request
+struct GitOpResult {
+    let project: String
+    let workspace: String
+    let op: String       // "stage" or "unstage"
+    let ok: Bool
+    let message: String?
+    let path: String?
+    let scope: String    // "file" or "all"
+
+    static func from(json: [String: Any]) -> GitOpResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let op = json["op"] as? String,
+              let ok = json["ok"] as? Bool,
+              let scope = json["scope"] as? String else {
+            return nil
+        }
+        let message = json["message"] as? String
+        let path = json["path"] as? String
+        return GitOpResult(
+            project: project,
+            workspace: workspace,
+            op: op,
+            ok: ok,
+            message: message,
+            path: path,
+            scope: scope
+        )
+    }
+}
+
+/// Track in-flight git operations
+struct GitOpInFlight: Equatable, Hashable {
+    let op: String       // "stage" or "unstage"
+    let path: String?    // nil for "all" scope
+    let scope: String    // "file" or "all"
+}
