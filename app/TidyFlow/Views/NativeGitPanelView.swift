@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Native Git Status Panel for Phase C3-1 + C3-2a + C3-2b
-/// Displays git status list with filtering, stage/unstage/discard, and opens diff tabs on click
+/// Native Git Status Panel for Phase C3-1 + C3-2a + C3-2b + C3-3a + C3-4a
+/// Displays git status list with filtering, stage/unstage/discard, branch switching, commit, and opens diff tabs on click
 struct NativeGitPanelView: View {
     @EnvironmentObject var appState: AppState
     @State private var filterText: String = ""
     @State private var showFilter: Bool = false
     @State private var showDiscardAllConfirm: Bool = false
+    @State private var showBranchPicker: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,6 +21,7 @@ struct NativeGitPanelView: View {
                 filterText: $filterText,
                 showFilter: $showFilter,
                 showDiscardAllConfirm: $showDiscardAllConfirm,
+                showBranchPicker: $showBranchPicker,
                 onRefresh: { refreshStatus() }
             )
             .environmentObject(appState)
@@ -32,9 +34,11 @@ struct NativeGitPanelView: View {
         }
         .onAppear {
             loadStatusIfNeeded()
+            loadBranchesIfNeeded()
         }
         .onChange(of: appState.selectedWorkspaceKey) { _ in
             loadStatusIfNeeded()
+            loadBranchesIfNeeded()
         }
         .alert("Discard All Changes?", isPresented: $showDiscardAllConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -50,6 +54,13 @@ struct NativeGitPanelView: View {
         guard let ws = appState.selectedWorkspaceKey else { return }
         if appState.shouldFetchGitStatus(workspaceKey: ws) {
             appState.fetchGitStatus(workspaceKey: ws)
+        }
+    }
+
+    private func loadBranchesIfNeeded() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        if appState.getGitBranchCache(workspaceKey: ws) == nil {
+            appState.fetchGitBranches(workspaceKey: ws)
         }
     }
 
@@ -95,6 +106,7 @@ struct GitPanelToolbar: View {
     @Binding var filterText: String
     @Binding var showFilter: Bool
     @Binding var showDiscardAllConfirm: Bool
+    @Binding var showBranchPicker: Bool
     let onRefresh: () -> Void
 
     var body: some View {
@@ -153,6 +165,48 @@ struct GitPanelToolbar: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+
+            // Branch selector row (only show if git repo)
+            if isGitRepo {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+
+                    Button(action: { showBranchPicker = true }) {
+                        HStack(spacing: 4) {
+                            Text(currentBranch)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+
+                            if isBranchSwitching {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isBranchSwitching)
+                    .popover(isPresented: $showBranchPicker, arrowEdge: .bottom) {
+                        BranchPickerView(isPresented: $showBranchPicker)
+                            .environmentObject(appState)
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            }
 
             // Stage All / Unstage All buttons (only show if git repo with changes)
             if isGitRepoWithChanges {
@@ -229,6 +283,12 @@ struct GitPanelToolbar: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
             }
+
+            // Commit section (only show if git repo)
+            if isGitRepo {
+                GitCommitSection()
+                    .environmentObject(appState)
+            }
         }
         .background(Color(NSColor.controlBackgroundColor))
     }
@@ -236,6 +296,25 @@ struct GitPanelToolbar: View {
     private var currentCache: GitStatusCache? {
         guard let ws = appState.selectedWorkspaceKey else { return nil }
         return appState.getGitStatusCache(workspaceKey: ws)
+    }
+
+    private var currentBranchCache: GitBranchCache? {
+        guard let ws = appState.selectedWorkspaceKey else { return nil }
+        return appState.getGitBranchCache(workspaceKey: ws)
+    }
+
+    private var isGitRepo: Bool {
+        guard let cache = currentCache else { return false }
+        return cache.isGitRepo
+    }
+
+    private var currentBranch: String {
+        currentBranchCache?.current ?? "..."
+    }
+
+    private var isBranchSwitching: Bool {
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return appState.isBranchSwitchInFlight(workspaceKey: ws)
     }
 
     private var isGitRepoWithChanges: Bool {
@@ -632,6 +711,142 @@ struct LoadingView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Commit Section (Phase C3-4a)
+
+struct GitCommitSection: View {
+    @EnvironmentObject var appState: AppState
+    @FocusState private var isMessageFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Divider()
+
+            // Commit message input
+            HStack(spacing: 8) {
+                TextField("Commit message", text: commitMessageBinding)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(4)
+                    .focused($isMessageFocused)
+                    .onSubmit {
+                        if canCommit {
+                            performCommit()
+                        }
+                    }
+                    .disabled(isCommitInFlight)
+
+                // Commit button
+                Button(action: performCommit) {
+                    HStack(spacing: 4) {
+                        if isCommitInFlight {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12))
+                        }
+                        Text("Commit")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(canCommit ? Color.accentColor : Color.gray.opacity(0.3))
+                    .foregroundColor(canCommit ? .white : .secondary)
+                    .cornerRadius(4)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(!canCommit || isCommitInFlight)
+                .help(commitButtonHelp)
+            }
+            .padding(.horizontal, 12)
+
+            // Status hint
+            if !hasStagedChanges {
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                    Text("No staged changes")
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+            } else if stagedCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 10))
+                        .foregroundColor(.green)
+                    Text("\(stagedCount) file\(stagedCount == 1 ? "" : "s") staged")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var commitMessageBinding: Binding<String> {
+        Binding(
+            get: {
+                guard let ws = appState.selectedWorkspaceKey else { return "" }
+                return appState.commitMessage[ws] ?? ""
+            },
+            set: { newValue in
+                guard let ws = appState.selectedWorkspaceKey else { return }
+                appState.commitMessage[ws] = newValue
+            }
+        )
+    }
+
+    private var currentMessage: String {
+        guard let ws = appState.selectedWorkspaceKey else { return "" }
+        return appState.commitMessage[ws] ?? ""
+    }
+
+    private var hasStagedChanges: Bool {
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return appState.hasStagedChanges(workspaceKey: ws)
+    }
+
+    private var stagedCount: Int {
+        guard let ws = appState.selectedWorkspaceKey else { return 0 }
+        return appState.stagedCount(workspaceKey: ws)
+    }
+
+    private var isCommitInFlight: Bool {
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return appState.isCommitInFlight(workspaceKey: ws)
+    }
+
+    private var canCommit: Bool {
+        let trimmedMessage = currentMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return hasStagedChanges && !trimmedMessage.isEmpty && !isCommitInFlight
+    }
+
+    private var commitButtonHelp: String {
+        if !hasStagedChanges {
+            return "Stage changes before committing"
+        } else if currentMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter a commit message"
+        } else if isCommitInFlight {
+            return "Committing..."
+        } else {
+            return "Commit staged changes"
+        }
+    }
+
+    private func performCommit() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitCommit(workspaceKey: ws, message: currentMessage)
     }
 }
 

@@ -129,6 +129,18 @@ class AppState: ObservableObject {
     @Published var gitOpToast: String?
     @Published var gitOpToastIsError: Bool = false
 
+    // Phase C3-3a: Git Branch Cache (workspace key -> GitBranchCache)
+    @Published var gitBranchCache: [String: GitBranchCache] = [:]
+    // Phase C3-3a: Branch switch in-flight (workspace key -> target branch)
+    @Published var branchSwitchInFlight: [String: String] = [:]
+    // Phase C3-3b: Branch create in-flight (workspace key -> new branch name)
+    @Published var branchCreateInFlight: [String: String] = [:]
+
+    // Phase C3-4a: Commit message per workspace
+    @Published var commitMessage: [String: String] = [:]
+    // Phase C3-4a: Commit in-flight (workspace key -> true)
+    @Published var commitInFlight: [String: Bool] = [:]
+
     // Phase C2-2a: Flag to use native diff (set to false to fallback to Web diff)
     var useNativeDiff: Bool = true
 
@@ -207,6 +219,16 @@ class AppState: ObservableObject {
         // Phase C3-2a: Handle git operation results
         wsClient.onGitOpResult = { [weak self] result in
             self?.handleGitOpResult(result)
+        }
+
+        // Phase C3-3a: Handle git branches results
+        wsClient.onGitBranchesResult = { [weak self] result in
+            self?.handleGitBranchesResult(result)
+        }
+
+        // Phase C3-4a: Handle git commit results
+        wsClient.onGitCommitResult = { [weak self] result in
+            self?.handleGitCommitResult(result)
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -349,7 +371,9 @@ class AppState: ObservableObject {
             isLoading: false,
             error: result.error,
             isGitRepo: result.isGitRepo,
-            updatedAt: Date()
+            updatedAt: Date(),
+            hasStagedChanges: result.hasStagedChanges,
+            stagedCount: result.stagedCount
         )
         gitStatusCache[result.workspace] = cache
     }
@@ -398,6 +422,50 @@ class AppState: ObservableObject {
         // Remove from in-flight
         let opKey = GitOpInFlight(op: result.op, path: result.path, scope: result.scope)
         gitOpsInFlight[result.workspace]?.remove(opKey)
+
+        // Handle branch switch specially
+        if result.op == "switch_branch" {
+            branchSwitchInFlight.removeValue(forKey: result.workspace)
+            if result.ok {
+                gitOpToast = result.message ?? "Switched branch"
+                gitOpToastIsError = false
+                // Refresh branches and status after switch
+                fetchGitBranches(workspaceKey: result.workspace)
+                fetchGitStatus(workspaceKey: result.workspace)
+                // Close any open diff tabs (they're now stale)
+                closeAllDiffTabs(workspaceKey: result.workspace)
+            } else {
+                gitOpToast = result.message ?? "Switch failed"
+                gitOpToastIsError = true
+            }
+            // Auto-dismiss toast after 2 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.gitOpToast = nil
+            }
+            return
+        }
+
+        // Handle branch create specially
+        if result.op == "create_branch" {
+            branchCreateInFlight.removeValue(forKey: result.workspace)
+            if result.ok {
+                gitOpToast = result.message ?? "Created branch"
+                gitOpToastIsError = false
+                // Refresh branches and status after create
+                fetchGitBranches(workspaceKey: result.workspace)
+                fetchGitStatus(workspaceKey: result.workspace)
+                // Close any open diff tabs (they're now stale)
+                closeAllDiffTabs(workspaceKey: result.workspace)
+            } else {
+                gitOpToast = result.message ?? "Create branch failed"
+                gitOpToastIsError = true
+            }
+            // Auto-dismiss toast after 2 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.gitOpToast = nil
+            }
+            return
+        }
 
         if result.ok {
             // Show success toast
@@ -520,6 +588,179 @@ class AppState: ObservableObject {
     func hasAnyGitOpInFlight(workspaceKey: String) -> Bool {
         guard let ops = gitOpsInFlight[workspaceKey] else { return false }
         return !ops.isEmpty
+    }
+
+    // MARK: - Phase C3-3a: Git Branch API
+
+    /// Handle git branches result from WebSocket
+    private func handleGitBranchesResult(_ result: GitBranchesResult) {
+        let cache = GitBranchCache(
+            current: result.current,
+            branches: result.branches,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+        gitBranchCache[result.workspace] = cache
+    }
+
+    /// Fetch git branches for a workspace
+    func fetchGitBranches(workspaceKey: String) {
+        guard connectionState == .connected else {
+            var cache = gitBranchCache[workspaceKey] ?? GitBranchCache.empty()
+            cache.error = "Disconnected"
+            cache.isLoading = false
+            gitBranchCache[workspaceKey] = cache
+            return
+        }
+
+        // Set loading state
+        var cache = gitBranchCache[workspaceKey] ?? GitBranchCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        gitBranchCache[workspaceKey] = cache
+
+        // Send request
+        wsClient.requestGitBranches(project: selectedProjectName, workspace: workspaceKey)
+    }
+
+    /// Refresh git branches for current workspace
+    func refreshGitBranches() {
+        guard let ws = selectedWorkspaceKey else { return }
+        fetchGitBranches(workspaceKey: ws)
+    }
+
+    /// Get cached git branches for a workspace
+    func getGitBranchCache(workspaceKey: String) -> GitBranchCache? {
+        return gitBranchCache[workspaceKey]
+    }
+
+    /// Switch to a different branch
+    func gitSwitchBranch(workspaceKey: String, branch: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Track in-flight
+        branchSwitchInFlight[workspaceKey] = branch
+
+        wsClient.requestGitSwitchBranch(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            branch: branch
+        )
+    }
+
+    /// Create and switch to a new branch
+    func gitCreateBranch(workspaceKey: String, branch: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Track in-flight
+        branchCreateInFlight[workspaceKey] = branch
+
+        wsClient.requestGitCreateBranch(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            branch: branch
+        )
+    }
+
+    /// Check if branch create is in-flight for a workspace
+    func isBranchCreateInFlight(workspaceKey: String) -> Bool {
+        return branchCreateInFlight[workspaceKey] != nil
+    }
+
+    /// Check if branch switch is in-flight for a workspace
+    func isBranchSwitchInFlight(workspaceKey: String) -> Bool {
+        return branchSwitchInFlight[workspaceKey] != nil
+    }
+
+    /// Close all diff tabs for a workspace (used after branch switch)
+    func closeAllDiffTabs(workspaceKey: String) {
+        guard var tabs = workspaceTabs[workspaceKey] else { return }
+        let diffTabIds = tabs.filter { $0.kind == .diff }.map { $0.id }
+        for tabId in diffTabIds {
+            closeTab(workspaceKey: workspaceKey, tabId: tabId)
+        }
+    }
+
+    // MARK: - Phase C3-4a: Git Commit API
+
+    /// Handle git commit result from WebSocket
+    private func handleGitCommitResult(_ result: GitCommitResult) {
+        // Remove from in-flight
+        commitInFlight.removeValue(forKey: result.workspace)
+
+        if result.ok {
+            // Clear commit message on success
+            commitMessage.removeValue(forKey: result.workspace)
+
+            // Show success toast
+            gitOpToast = result.message ?? "Committed"
+            gitOpToastIsError = false
+
+            // Refresh git status
+            fetchGitStatus(workspaceKey: result.workspace)
+        } else {
+            // Show error toast
+            gitOpToast = result.message ?? "Commit failed"
+            gitOpToastIsError = true
+        }
+
+        // Auto-dismiss toast after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
+    /// Commit staged changes
+    func gitCommit(workspaceKey: String, message: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Validate message
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            gitOpToast = "Commit message cannot be empty"
+            gitOpToastIsError = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.gitOpToast = nil
+            }
+            return
+        }
+
+        // Track in-flight
+        commitInFlight[workspaceKey] = true
+
+        wsClient.requestGitCommit(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            message: trimmedMessage
+        )
+    }
+
+    /// Check if commit is in-flight for a workspace
+    func isCommitInFlight(workspaceKey: String) -> Bool {
+        return commitInFlight[workspaceKey] == true
+    }
+
+    /// Check if workspace has staged changes (from cache)
+    func hasStagedChanges(workspaceKey: String) -> Bool {
+        return gitStatusCache[workspaceKey]?.hasStagedChanges ?? false
+    }
+
+    /// Get staged count for workspace (from cache)
+    func stagedCount(workspaceKey: String) -> Int {
+        return gitStatusCache[workspaceKey]?.stagedCount ?? 0
     }
 
     private func setupCommands() {
