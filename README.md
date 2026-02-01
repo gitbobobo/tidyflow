@@ -21,3 +21,14 @@
 - 自动刷新（60秒缓存）和手动刷新
 - 空态显示（非 git 仓库、无变更、断开连接）
 
+## Build DMG (Unsigned)
+
+构建内部分发用的 DMG（未签名）：
+
+```bash
+./scripts/release/build_dmg.sh
+```
+
+产物位置：`dist/TidyFlow-<version>.dmg`
+
+首次运行需右键 > 打开绕过 Gatekeeper。详见 `design/44-dmg-packaging-d5-1.md`。
