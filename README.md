@@ -235,8 +235,18 @@ Quick Open 使用服务端文件索引 API，提供完整的 Workspace 文件列
 ### 功能特性
 
 - **Git Status 列表** - 显示 M/A/D/??/R/C 状态的文件
-- **Diff Tab** - 点击文件打开 unified diff 视图
+- **Diff Tab** - 点击文件打开 diff 视图，支持 Unified / Split 切换
+- **Diff 模式切换** - 支持查看 Working (未暂存) 和 Staged (已暂存) 两种模式的差异
 - **刷新按钮** - 重新获取 git diff
+
+### Git Diff 查看器
+
+Diff Tab 提供两种模式查看文件变更：
+
+- **Working 模式**: 显示未暂存的变更 (工作区 vs 暂存区)
+- **Staged 模式**: 显示已暂存的变更 (暂存区 vs HEAD)
+
+在 Diff Tab 工具栏中点击 Working/Staged 按钮即可切换模式。
 
 ### 状态码说明
 

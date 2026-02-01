@@ -475,7 +475,8 @@
         if (tabSet.tabs.has(tabId)) {
             switchToTab(tabId);
             // Refresh diff content
-            sendGitDiff(currentProject, currentWorkspace, filePath);
+            const existingTab = tabSet.tabs.get(tabId);
+            sendGitDiff(currentProject, currentWorkspace, filePath, existingTab.diffMode || 'working');
             return tabSet.tabs.get(tabId);
         }
 
@@ -523,10 +524,75 @@
             const tab = tabSet.tabs.get(tabId);
             if (tab) {
                 tab.contentEl.innerHTML = '<div class="diff-loading">Loading diff...</div>';
-                sendGitDiff(tab.project, tab.workspace, tab.filePath);
+                sendGitDiff(tab.project, tab.workspace, tab.filePath, tab.diffMode || 'working');
             }
         });
         toolbar.appendChild(refreshBtn);
+
+        // Diff mode toggle (Working / Staged)
+        const modeToggle = document.createElement('div');
+        modeToggle.className = 'diff-mode-toggle';
+
+        const workingBtn = document.createElement('button');
+        workingBtn.className = 'diff-mode-btn active';
+        workingBtn.textContent = 'Working';
+        workingBtn.dataset.mode = 'working';
+        workingBtn.title = 'Show unstaged changes (git diff)';
+
+        const stagedBtn = document.createElement('button');
+        stagedBtn.className = 'diff-mode-btn';
+        stagedBtn.textContent = 'Staged';
+        stagedBtn.dataset.mode = 'staged';
+        stagedBtn.title = 'Show staged changes (git diff --cached)';
+
+        modeToggle.appendChild(workingBtn);
+        modeToggle.appendChild(stagedBtn);
+
+        modeToggle.addEventListener('click', (e) => {
+            const btn = e.target.closest('.diff-mode-btn');
+            if (!btn) return;
+            const newMode = btn.dataset.mode;
+            const tab = tabSet.tabs.get(tabId);
+            if (tab && tab.diffMode !== newMode) {
+                modeToggle.querySelectorAll('.diff-mode-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                tab.diffMode = newMode;
+                tab.contentEl.innerHTML = '<div class="diff-loading">Loading diff...</div>';
+                sendGitDiff(tab.project, tab.workspace, tab.filePath, newMode);
+            }
+        });
+        toolbar.appendChild(modeToggle);
+
+        // View mode toggle (Unified / Split)
+        const viewToggle = document.createElement('div');
+        viewToggle.className = 'diff-view-toggle';
+
+        const unifiedBtn = document.createElement('button');
+        unifiedBtn.className = 'diff-view-btn active';
+        unifiedBtn.textContent = 'Unified';
+        unifiedBtn.dataset.mode = 'unified';
+
+        const splitBtn = document.createElement('button');
+        splitBtn.className = 'diff-view-btn';
+        splitBtn.textContent = 'Split';
+        splitBtn.dataset.mode = 'split';
+
+        viewToggle.appendChild(unifiedBtn);
+        viewToggle.appendChild(splitBtn);
+
+        viewToggle.addEventListener('click', (e) => {
+            const btn = e.target.closest('.diff-view-btn');
+            if (!btn) return;
+            const mode = btn.dataset.mode;
+            const tab = tabSet.tabs.get(tabId);
+            if (tab && tab.diffData && tab.viewMode !== mode) {
+                viewToggle.querySelectorAll('.diff-view-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                tab.viewMode = mode;
+                renderDiffView(tab);
+            }
+        });
+        toolbar.appendChild(viewToggle);
 
         pane.appendChild(toolbar);
 
@@ -585,7 +651,13 @@
             contentEl,
             statusBar,
             project: currentProject,
-            workspace: currentWorkspace
+            workspace: currentWorkspace,
+            viewMode: 'unified',  // 'unified' or 'split'
+            diffMode: 'working',  // 'working' or 'staged'
+            diffData: null,       // Parsed diff data for reuse
+            rawText: null,        // Raw diff text
+            isBinary: false,
+            truncated: false
         };
 
         tabSet.tabs.set(tabId, tabInfo);
@@ -600,7 +672,7 @@
         const tabInfo = createDiffTab(filePath, code);
         if (tabInfo) {
             switchToTab(tabInfo.id);
-            sendGitDiff(currentProject, currentWorkspace, filePath);
+            sendGitDiff(currentProject, currentWorkspace, filePath, tabInfo.diffMode);
         }
     }
 
@@ -627,87 +699,231 @@
             }
         }
 
+        // Store raw data
+        tab.rawText = text;
+        tab.isBinary = isBinary;
+        tab.truncated = truncated;
+        tab.code = code;
+
         if (isBinary) {
             tab.contentEl.innerHTML = '<div class="diff-binary">Binary file diff not supported</div>';
+            disableSplitMode(tab);
             return;
         }
 
         if (!text || text.trim() === '') {
             tab.contentEl.innerHTML = '<div class="diff-empty">No changes</div>';
+            disableSplitMode(tab);
             return;
         }
 
-        // Parse unified diff and render with line navigation
-        const pre = document.createElement('pre');
-        pre.className = 'diff-text';
+        // Parse unified diff into structured format
+        tab.diffData = parseDiffToStructure(text, path);
 
+        // Check for large diff - disable split mode if > 5000 lines
+        const totalLines = tab.diffData.hunks.reduce((sum, h) => sum + h.lines.length, 0);
+        if (totalLines > 5000) {
+            tab.viewMode = 'unified';
+            disableSplitMode(tab, 'Diff too large for split view (' + totalLines + ' lines)');
+        } else {
+            enableSplitMode(tab);
+        }
+
+        // Render based on current view mode
+        renderDiffView(tab);
+    }
+
+    function parseDiffToStructure(text, path) {
         const lines = text.split('\n');
-        let currentNewLine = 0;
+        const result = {
+            headers: [],
+            hunks: [],
+            path: path
+        };
+
+        let currentHunk = null;
         let currentOldLine = 0;
-        let inHunk = false;
+        let currentNewLine = 0;
 
-        lines.forEach((line, idx) => {
-            const lineEl = document.createElement('div');
-            lineEl.className = 'diff-line';
-
-            // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-            const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        lines.forEach((line) => {
+            // Parse hunk header
+            const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
             if (hunkMatch) {
+                if (currentHunk) {
+                    result.hunks.push(currentHunk);
+                }
                 currentOldLine = parseInt(hunkMatch[1], 10);
                 currentNewLine = parseInt(hunkMatch[2], 10);
-                inHunk = true;
-                lineEl.classList.add('diff-hunk');
-                lineEl.textContent = line;
-                pre.appendChild(lineEl);
+                currentHunk = {
+                    oldStart: currentOldLine,
+                    newStart: currentNewLine,
+                    header: line,
+                    context: hunkMatch[3] || '',
+                    lines: []
+                };
                 return;
             }
 
-            // Header lines (not clickable)
+            // Header lines
             if (line.startsWith('diff --git') || line.startsWith('index ') ||
                 line.startsWith('---') || line.startsWith('+++') ||
                 line.startsWith('new file') || line.startsWith('deleted file') ||
                 line.startsWith('Binary files')) {
-                lineEl.classList.add('diff-header');
-                lineEl.textContent = line;
-                pre.appendChild(lineEl);
+                result.headers.push(line);
                 return;
             }
 
             // Content lines within a hunk
-            if (inHunk) {
+            if (currentHunk) {
                 const firstChar = line.charAt(0);
 
                 if (firstChar === '+') {
-                    lineEl.classList.add('diff-add');
-                    lineEl.dataset.lineNew = currentNewLine;
-                    lineEl.dataset.path = path;
-                    lineEl.dataset.clickable = 'true';
+                    currentHunk.lines.push({
+                        type: 'add',
+                        oldLine: null,
+                        newLine: currentNewLine,
+                        text: line
+                    });
                     currentNewLine++;
                 } else if (firstChar === '-') {
-                    lineEl.classList.add('diff-remove');
-                    // For deleted lines, jump to the nearest new line position
-                    lineEl.dataset.lineNew = currentNewLine;
-                    lineEl.dataset.path = path;
-                    lineEl.dataset.clickable = 'true';
+                    currentHunk.lines.push({
+                        type: 'del',
+                        oldLine: currentOldLine,
+                        newLine: null,
+                        text: line
+                    });
                     currentOldLine++;
                 } else if (firstChar === ' ') {
-                    // Context line
-                    lineEl.dataset.lineNew = currentNewLine;
-                    lineEl.dataset.path = path;
-                    lineEl.dataset.clickable = 'true';
-                    currentNewLine++;
+                    currentHunk.lines.push({
+                        type: 'context',
+                        oldLine: currentOldLine,
+                        newLine: currentNewLine,
+                        text: line
+                    });
                     currentOldLine++;
+                    currentNewLine++;
                 } else if (line === '\\ No newline at end of file') {
-                    // Special marker, not clickable
-                    lineEl.classList.add('diff-meta');
+                    currentHunk.lines.push({
+                        type: 'meta',
+                        oldLine: null,
+                        newLine: null,
+                        text: line
+                    });
+                } else if (line !== '') {
+                    // Unknown line in hunk, treat as context
+                    currentHunk.lines.push({
+                        type: 'context',
+                        oldLine: currentOldLine,
+                        newLine: currentNewLine,
+                        text: line
+                    });
                 }
             }
+        });
 
+        if (currentHunk) {
+            result.hunks.push(currentHunk);
+        }
+
+        return result;
+    }
+
+    function disableSplitMode(tab, reason) {
+        const splitBtn = tab.pane.querySelector('.diff-view-btn[data-mode="split"]');
+        if (splitBtn) {
+            splitBtn.disabled = true;
+            splitBtn.title = reason || 'Split view not available';
+        }
+        // Force unified mode
+        const unifiedBtn = tab.pane.querySelector('.diff-view-btn[data-mode="unified"]');
+        if (unifiedBtn) {
+            unifiedBtn.classList.add('active');
+        }
+        if (splitBtn) {
+            splitBtn.classList.remove('active');
+        }
+        tab.viewMode = 'unified';
+    }
+
+    function enableSplitMode(tab) {
+        const splitBtn = tab.pane.querySelector('.diff-view-btn[data-mode="split"]');
+        if (splitBtn) {
+            splitBtn.disabled = false;
+            splitBtn.title = 'Split view (side-by-side)';
+        }
+    }
+
+    function renderDiffView(tab) {
+        if (!tab.diffData) return;
+
+        // Save scroll position
+        const scrollTop = tab.contentEl.scrollTop;
+
+        if (tab.viewMode === 'split') {
+            renderSplitDiff(tab);
+        } else {
+            renderUnifiedDiff(tab);
+        }
+
+        // Restore scroll position (approximate)
+        tab.contentEl.scrollTop = scrollTop;
+
+        // Update status bar
+        updateDiffStatusBar(tab);
+    }
+
+    function renderUnifiedDiff(tab) {
+        const data = tab.diffData;
+        const pre = document.createElement('pre');
+        pre.className = 'diff-text';
+
+        // Render headers
+        data.headers.forEach(line => {
+            const lineEl = document.createElement('div');
+            lineEl.className = 'diff-line diff-header';
             lineEl.textContent = line;
             pre.appendChild(lineEl);
         });
 
-        // Add click handler for line navigation
+        // Render hunks
+        data.hunks.forEach(hunk => {
+            // Hunk header
+            const hunkEl = document.createElement('div');
+            hunkEl.className = 'diff-line diff-hunk';
+            hunkEl.textContent = hunk.header;
+            pre.appendChild(hunkEl);
+
+            // Hunk lines
+            hunk.lines.forEach(lineInfo => {
+                const lineEl = document.createElement('div');
+                lineEl.className = 'diff-line';
+
+                if (lineInfo.type === 'add') {
+                    lineEl.classList.add('diff-add');
+                    lineEl.dataset.lineNew = lineInfo.newLine;
+                    lineEl.dataset.path = data.path;
+                    lineEl.dataset.clickable = 'true';
+                } else if (lineInfo.type === 'del') {
+                    lineEl.classList.add('diff-remove');
+                    // For deleted lines, find nearest new line for navigation
+                    const nearestNew = findNearestNewLine(hunk, lineInfo);
+                    lineEl.dataset.lineNew = nearestNew;
+                    lineEl.dataset.path = data.path;
+                    lineEl.dataset.clickable = 'true';
+                } else if (lineInfo.type === 'context') {
+                    lineEl.dataset.lineNew = lineInfo.newLine;
+                    lineEl.dataset.path = data.path;
+                    lineEl.dataset.clickable = 'true';
+                } else if (lineInfo.type === 'meta') {
+                    lineEl.classList.add('diff-meta');
+                }
+
+                lineEl.textContent = lineInfo.text;
+                pre.appendChild(lineEl);
+            });
+        });
+
+        // Add click handler
         pre.addEventListener('click', (e) => {
             const lineEl = e.target.closest('.diff-line');
             if (!lineEl || lineEl.dataset.clickable !== 'true') return;
@@ -715,29 +931,247 @@
             const targetLine = parseInt(lineEl.dataset.lineNew, 10);
             const targetPath = lineEl.dataset.path;
 
-            if (targetPath && !isNaN(targetLine) && code !== 'D') {
+            if (targetPath && !isNaN(targetLine) && tab.code !== 'D') {
                 openFileAtLine(targetPath, targetLine);
             }
         });
 
         tab.contentEl.innerHTML = '';
         tab.contentEl.appendChild(pre);
-
-        // Update status bar
-        if (tab.statusBar) {
-            let status = 'Click any line to jump to that location in the file';
-            if (truncated) {
-                status = '⚠️ Diff too large, truncated to 1MB | ' + status;
-            }
-            if (code === 'D') {
-                status = 'File deleted - navigation disabled';
-            }
-            tab.statusBar.textContent = status;
-        }
     }
 
-    function sendGitDiff(project, workspace, path) {
-        sendControlMessage({ type: 'git_diff', project, workspace, path });
+    function renderSplitDiff(tab) {
+        const data = tab.diffData;
+
+        const container = document.createElement('div');
+        container.className = 'diff-split-container';
+
+        // Render headers (full width)
+        if (data.headers.length > 0) {
+            const headersEl = document.createElement('div');
+            headersEl.className = 'diff-split-headers';
+            data.headers.forEach(line => {
+                const lineEl = document.createElement('div');
+                lineEl.className = 'diff-line diff-header';
+                lineEl.textContent = line;
+                headersEl.appendChild(lineEl);
+            });
+            container.appendChild(headersEl);
+        }
+
+        // Render hunks in split view
+        data.hunks.forEach(hunk => {
+            // Hunk header (full width)
+            const hunkHeaderEl = document.createElement('div');
+            hunkHeaderEl.className = 'diff-split-hunk-header diff-hunk';
+            hunkHeaderEl.textContent = hunk.header;
+            container.appendChild(hunkHeaderEl);
+
+            // Split view for hunk content
+            const splitEl = document.createElement('div');
+            splitEl.className = 'diff-split';
+
+            const oldPane = document.createElement('div');
+            oldPane.className = 'diff-split-pane diff-old';
+
+            const newPane = document.createElement('div');
+            newPane.className = 'diff-split-pane diff-new';
+
+            // Build aligned rows
+            const rows = buildSplitRows(hunk.lines);
+
+            rows.forEach(row => {
+                // Old side (left)
+                const oldRow = document.createElement('div');
+                oldRow.className = 'diff-split-row';
+
+                if (row.old) {
+                    const lineNumEl = document.createElement('span');
+                    lineNumEl.className = 'diff-line-num';
+                    lineNumEl.textContent = row.old.oldLine || '';
+                    oldRow.appendChild(lineNumEl);
+
+                    const textEl = document.createElement('span');
+                    textEl.className = 'diff-line-text';
+                    if (row.old.type === 'del') {
+                        textEl.classList.add('diff-remove');
+                    } else if (row.old.type === 'context') {
+                        textEl.classList.add('diff-context');
+                    }
+                    textEl.textContent = row.old.text.substring(1); // Remove +/- prefix
+                    oldRow.appendChild(textEl);
+
+                    // Click handler data
+                    oldRow.dataset.clickable = 'true';
+                    oldRow.dataset.path = data.path;
+                    // For old side, jump to nearest new line
+                    oldRow.dataset.lineNew = row.new ? row.new.newLine : (row.old.newLine || hunk.newStart);
+                } else {
+                    // Empty placeholder
+                    oldRow.classList.add('diff-split-empty');
+                    const lineNumEl = document.createElement('span');
+                    lineNumEl.className = 'diff-line-num';
+                    oldRow.appendChild(lineNumEl);
+                    const textEl = document.createElement('span');
+                    textEl.className = 'diff-line-text';
+                    oldRow.appendChild(textEl);
+                }
+                oldPane.appendChild(oldRow);
+
+                // New side (right)
+                const newRow = document.createElement('div');
+                newRow.className = 'diff-split-row';
+
+                if (row.new) {
+                    const lineNumEl = document.createElement('span');
+                    lineNumEl.className = 'diff-line-num';
+                    lineNumEl.textContent = row.new.newLine || '';
+                    newRow.appendChild(lineNumEl);
+
+                    const textEl = document.createElement('span');
+                    textEl.className = 'diff-line-text';
+                    if (row.new.type === 'add') {
+                        textEl.classList.add('diff-add');
+                    } else if (row.new.type === 'context') {
+                        textEl.classList.add('diff-context');
+                    }
+                    textEl.textContent = row.new.text.substring(1); // Remove +/- prefix
+                    newRow.appendChild(textEl);
+
+                    // Click handler data
+                    newRow.dataset.clickable = 'true';
+                    newRow.dataset.path = data.path;
+                    newRow.dataset.lineNew = row.new.newLine;
+                } else {
+                    // Empty placeholder
+                    newRow.classList.add('diff-split-empty');
+                    const lineNumEl = document.createElement('span');
+                    lineNumEl.className = 'diff-line-num';
+                    newRow.appendChild(lineNumEl);
+                    const textEl = document.createElement('span');
+                    textEl.className = 'diff-line-text';
+                    newRow.appendChild(textEl);
+                }
+                newPane.appendChild(newRow);
+            });
+
+            splitEl.appendChild(oldPane);
+            splitEl.appendChild(newPane);
+            container.appendChild(splitEl);
+        });
+
+        // Add click handler for split view
+        container.addEventListener('click', (e) => {
+            const row = e.target.closest('.diff-split-row');
+            if (!row || row.dataset.clickable !== 'true') return;
+
+            const targetLine = parseInt(row.dataset.lineNew, 10);
+            const targetPath = row.dataset.path;
+
+            if (targetPath && !isNaN(targetLine) && tab.code !== 'D') {
+                openFileAtLine(targetPath, targetLine);
+            }
+        });
+
+        tab.contentEl.innerHTML = '';
+        tab.contentEl.appendChild(container);
+    }
+
+    function buildSplitRows(lines) {
+        const rows = [];
+        let i = 0;
+
+        while (i < lines.length) {
+            const line = lines[i];
+
+            if (line.type === 'context') {
+                rows.push({ old: line, new: line });
+                i++;
+            } else if (line.type === 'del') {
+                // Look ahead for consecutive adds to pair with
+                let delLines = [];
+                let addLines = [];
+
+                // Collect consecutive del lines
+                while (i < lines.length && lines[i].type === 'del') {
+                    delLines.push(lines[i]);
+                    i++;
+                }
+
+                // Collect consecutive add lines
+                while (i < lines.length && lines[i].type === 'add') {
+                    addLines.push(lines[i]);
+                    i++;
+                }
+
+                // Pair them up
+                const maxLen = Math.max(delLines.length, addLines.length);
+                for (let j = 0; j < maxLen; j++) {
+                    rows.push({
+                        old: delLines[j] || null,
+                        new: addLines[j] || null
+                    });
+                }
+            } else if (line.type === 'add') {
+                // Standalone add (no preceding del)
+                rows.push({ old: null, new: line });
+                i++;
+            } else if (line.type === 'meta') {
+                // Meta lines shown on both sides
+                rows.push({ old: line, new: line });
+                i++;
+            } else {
+                i++;
+            }
+        }
+
+        return rows;
+    }
+
+    function findNearestNewLine(hunk, targetLine) {
+        // Find the nearest new line number for a deleted line
+        const idx = hunk.lines.indexOf(targetLine);
+        if (idx === -1) return hunk.newStart;
+
+        // Look forward for context or add line
+        for (let i = idx + 1; i < hunk.lines.length; i++) {
+            if (hunk.lines[i].newLine !== null) {
+                return hunk.lines[i].newLine;
+            }
+        }
+
+        // Look backward
+        for (let i = idx - 1; i >= 0; i--) {
+            if (hunk.lines[i].newLine !== null) {
+                return hunk.lines[i].newLine;
+            }
+        }
+
+        return hunk.newStart;
+    }
+
+    function updateDiffStatusBar(tab) {
+        if (!tab.statusBar) return;
+
+        let status = 'Click any line to jump to that location in the file';
+
+        if (tab.viewMode === 'split') {
+            status = 'Split view: Click left (old) or right (new) to jump | ' + status;
+        }
+
+        if (tab.truncated) {
+            status = '⚠️ Diff too large, truncated to 1MB | ' + status;
+        }
+
+        if (tab.code === 'D') {
+            status = 'File deleted - navigation disabled';
+        }
+
+        tab.statusBar.textContent = status;
+    }
+
+    function sendGitDiff(project, workspace, path, mode = 'working') {
+        sendControlMessage({ type: 'git_diff', project, workspace, path, mode });
     }
 
     // ============================================

@@ -30,7 +30,8 @@ Request unified diff for a specific file.
   "project": "my-project",
   "workspace": "main",
   "path": "src/main.rs",
-  "base": "HEAD"
+  "base": "HEAD",
+  "mode": "working"
 }
 ```
 
@@ -40,6 +41,7 @@ Request unified diff for a specific file.
 | workspace | string | yes | Workspace name |
 | path | string | yes | Relative path to file |
 | base | string | no | Base ref for diff (default: "HEAD") |
+| mode | string | no | "working" or "staged" (default: "working") |
 
 ### Server → Client
 
@@ -89,7 +91,8 @@ Request unified diff for a specific file.
   "format": "unified",
   "text": "diff --git a/src/main.rs b/src/main.rs\n...",
   "is_binary": false,
-  "truncated": false
+  "truncated": false,
+  "mode": "working"
 }
 ```
 
@@ -101,6 +104,7 @@ Request unified diff for a specific file.
 | text | string | Unified diff text |
 | is_binary | bool | True if file is binary |
 | truncated | bool | True if diff was truncated due to size |
+| mode | string | "working" or "staged" |
 
 ## Implementation Details
 
@@ -134,6 +138,19 @@ git diff --no-index /dev/null -- <path>
 ```bash
 git diff -- <path>
 ```
+
+### Diff Mode
+
+The `mode` parameter controls which changes are shown:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| working | `git diff -- <path>` | Unstaged changes (working tree vs index) |
+| staged | `git diff --cached -- <path>` | Staged changes (index vs HEAD) |
+
+**Default**: `working`
+
+**Untracked files in staged mode**: Returns empty diff (untracked files have no staged changes).
 
 ### Size Limits
 
@@ -196,7 +213,6 @@ Refresh button re-sends `git_diff` request and updates content.
 
 ## Future Enhancements
 
-1. **Staged Diff**: `git_diff_index` for staged changes
-2. **Split Diff View**: Side-by-side diff rendering
-3. **Line Navigation**: Click diff line to open file at that line
-4. **Syntax Highlighting**: Language-aware diff highlighting
+1. **Split Diff View**: Side-by-side diff rendering
+2. **Line Navigation**: Click diff line to open file at that line
+3. **Syntax Highlighting**: Language-aware diff highlighting

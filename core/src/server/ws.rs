@@ -959,7 +959,7 @@ async fn handle_client_message(
         }
 
         // v1.5: Git diff
-        ClientMessage::GitDiff { project, workspace, path, base } => {
+        ClientMessage::GitDiff { project, workspace, path, base, mode } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
                 Some(p) => match p.get_workspace(&workspace) {
@@ -969,8 +969,9 @@ async fn handle_client_message(
 
                         // Run git diff in blocking task
                         let path_clone = path.clone();
+                        let mode_clone = mode.clone();
                         let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_diff(&root, &path_clone, base.as_deref())
+                            git_tools::git_diff(&root, &path_clone, base.as_deref(), &mode_clone)
                         }).await;
 
                         match result {
@@ -984,6 +985,7 @@ async fn handle_client_message(
                                     text: diff_result.text,
                                     is_binary: diff_result.is_binary,
                                     truncated: diff_result.truncated,
+                                    mode: diff_result.mode,
                                 }).await?;
                             }
                             Ok(Err(e)) => {

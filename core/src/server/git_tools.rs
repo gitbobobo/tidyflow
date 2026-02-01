@@ -32,6 +32,7 @@ pub struct GitDiffResult {
     pub text: String,
     pub is_binary: bool,
     pub truncated: bool,
+    pub mode: String,
 }
 
 /// Error type for git operations
@@ -200,12 +201,13 @@ fn parse_status_code(xy: &str) -> String {
 
 /// Get git diff for a specific file
 ///
-/// For tracked files: `git diff -- <path>`
+/// For tracked files: `git diff -- <path>` (working) or `git diff --cached -- <path>` (staged)
 /// For untracked files: `git diff --no-index /dev/null -- <path>`
 pub fn git_diff(
     workspace_root: &Path,
     path: &str,
     _base: Option<&str>,
+    mode: &str,  // "working" or "staged"
 ) -> Result<GitDiffResult, GitError> {
     // Validate path
     let _full_path = validate_path(workspace_root, path)?;
@@ -236,16 +238,21 @@ pub fn git_diff(
             text: String::new(),
             is_binary: true,
             truncated: false,
+            mode: mode.to_string(),
         });
     }
 
     // Get diff based on status
     let (text, truncated) = if code == "??" {
-        // Untracked file - diff against /dev/null
-        get_untracked_diff(workspace_root, path)?
+        // Untracked file - diff against /dev/null (no staged changes for untracked)
+        if mode == "staged" {
+            (String::new(), false)
+        } else {
+            get_untracked_diff(workspace_root, path)?
+        }
     } else {
         // Tracked file - normal diff
-        get_tracked_diff(workspace_root, path)?
+        get_tracked_diff(workspace_root, path, mode)?
     };
 
     Ok(GitDiffResult {
@@ -255,6 +262,7 @@ pub fn git_diff(
         text,
         is_binary: false,
         truncated,
+        mode: mode.to_string(),
     })
 }
 
@@ -276,9 +284,15 @@ fn check_binary(workspace_root: &Path, path: &str) -> bool {
 }
 
 /// Get diff for tracked file
-fn get_tracked_diff(workspace_root: &Path, path: &str) -> Result<(String, bool), GitError> {
+fn get_tracked_diff(workspace_root: &Path, path: &str, mode: &str) -> Result<(String, bool), GitError> {
+    let args = if mode == "staged" {
+        vec!["diff", "--cached", "--", path]
+    } else {
+        vec!["diff", "--", path]
+    };
+
     let output = Command::new("git")
-        .args(["diff", "--", path])
+        .args(&args)
         .current_dir(workspace_root)
         .output()
         .map_err(GitError::IoError)?;

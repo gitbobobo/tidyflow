@@ -82,7 +82,13 @@ pub enum ClientMessage {
         path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         base: Option<String>,
+        #[serde(default = "default_diff_mode")]
+        mode: String,  // "working" or "staged"
     },
+}
+
+fn default_diff_mode() -> String {
+    "working".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +192,7 @@ pub enum ServerMessage {
         text: String,
         is_binary: bool,
         truncated: bool,
+        mode: String,  // Echo back the mode
     },
 
     // v1: Error handling
