@@ -31,13 +31,13 @@ struct CommandPaletteView: View {
         guard appState.commandPaletteMode == .file else { return [] }
         guard let ws = appState.selectedWorkspaceKey else { return [] }
 
-        // Get files from cache, fallback to mock if empty
+        // Get files from cache
         let cache = appState.fileIndexCache[ws]
         let files: [String]
         if let cache = cache, !cache.items.isEmpty {
             files = cache.items
         } else {
-            files = appState.mockFiles[ws] ?? []
+            files = []
         }
 
         let query = appState.commandQuery.lowercased()

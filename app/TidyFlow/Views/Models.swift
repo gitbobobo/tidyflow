@@ -215,42 +215,15 @@ class AppState: ObservableObject {
     // Project name (for WS protocol)
     var selectedProjectName: String = "default"
 
-    // Mock data for workspaces
-    let workspaces = [
-        "default": "Default Workspace",
-        "project-alpha": "Project Alpha",
-        "project-beta": "Project Beta"
-    ]
-
-    // Mock files for Quick Open (fallback when disconnected)
-    let mockFiles: [String: [String]] = [
-        "default": ["README.md", "src/main.rs", "Cargo.toml", ".gitignore", "docs/DESIGN.md"],
-        "project-alpha": ["Alpha.swift", "AppDelegate.swift", "Info.plist"],
-        "project-beta": ["index.html", "style.css", "script.js", "package.json"]
-    ]
 
     var commands: [Command] = []
 
     init() {
-        // UX-1: Create default project with mock workspaces
-        let defaultWorkspaces = [
-            WorkspaceModel(name: "default", status: nil),
-            WorkspaceModel(name: "project-alpha", status: nil),
-            WorkspaceModel(name: "project-beta", status: nil)
-        ]
-        let defaultProject = ProjectModel(
-            id: UUID(),
-            name: "Default Project",
-            path: nil,
-            workspaces: defaultWorkspaces,
-            isExpanded: true
-        )
-        self.projects = [defaultProject]
-        self.selectedProjectId = defaultProject.id
+        // Start with empty projects list
+        self.projects = []
+        self.selectedProjectId = nil
+        self.selectedWorkspaceKey = nil
 
-        // Set default workspace
-        self.selectedWorkspaceKey = "default"
-        ensureDefaultTab(for: "default")
         setupCommands()
 
         // Setup Core process callbacks
