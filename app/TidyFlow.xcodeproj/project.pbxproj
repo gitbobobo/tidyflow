@@ -20,6 +20,7 @@
 		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
 		B3A00007 /* NativeDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* NativeDiffView.swift */; };
 		B3A00008 /* NativeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00018 /* NativeGitPanelView.swift */; };
+		B3A00009 /* BranchPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00019 /* BranchPickerView.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
@@ -41,6 +42,7 @@
 		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
 		B3A00017 /* NativeDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiffView.swift; sourceTree = "<group>"; };
 		B3A00018 /* NativeGitPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGitPanelView.swift; sourceTree = "<group>"; };
+		B3A00019 /* BranchPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BranchPickerView.swift; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TidyFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -65,6 +67,7 @@
 		2AEE0BAE2F2F0BAA009B67A9 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				B3A00019 /* BranchPickerView.swift */,
 				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
 				B3A00011 /* CommandPaletteView.swift */,
 				B3A00012 /* KeybindingHandler.swift */,
@@ -213,6 +216,7 @@
 				B3A00004 /* TabContentHostView.swift in Sources */,
 				B3A00007 /* NativeDiffView.swift in Sources */,
 				B3A00008 /* NativeGitPanelView.swift in Sources */,
+				B3A00009 /* BranchPickerView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 			);
