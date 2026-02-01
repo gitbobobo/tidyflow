@@ -752,14 +752,35 @@ enum IntegrationState: String {
     case conflict = "conflict"
     case completed = "completed"
     case failed = "failed"
+    // UX-4: Rebase states
+    case rebasing = "rebasing"
+    case rebaseConflict = "rebase_conflict"
 
     var displayName: String {
         switch self {
         case .idle: return "Ready"
         case .merging: return "Merging"
-        case .conflict: return "Conflict"
+        case .conflict: return "Merge Conflict"
         case .completed: return "Completed"
         case .failed: return "Failed"
+        case .rebasing: return "Rebasing"
+        case .rebaseConflict: return "Rebase Conflict"
+        }
+    }
+
+    /// UX-4: Check if this is a rebase-related state
+    var isRebaseState: Bool {
+        switch self {
+        case .rebasing, .rebaseConflict: return true
+        default: return false
+        }
+    }
+
+    /// UX-4: Check if this is a merge-related state
+    var isMergeState: Bool {
+        switch self {
+        case .merging, .conflict: return true
+        default: return false
         }
     }
 }
@@ -847,6 +868,66 @@ struct GitIntegrationStatusCache {
             updatedAt: .distantPast,
             integrationPath: nil,
             defaultBranch: "main"
+        )
+    }
+}
+
+// MARK: - Phase UX-4: Git Rebase onto Default Protocol Models
+
+/// Result from git_rebase_onto_default request
+struct GitRebaseOntoDefaultResult {
+    let project: String
+    let ok: Bool
+    let state: IntegrationState
+    let message: String?
+    let conflicts: [String]
+    let headSha: String?
+    let integrationPath: String?
+
+    static func from(json: [String: Any]) -> GitRebaseOntoDefaultResult? {
+        guard let project = json["project"] as? String,
+              let ok = json["ok"] as? Bool,
+              let stateStr = json["state"] as? String else {
+            return nil
+        }
+        let state = IntegrationState(rawValue: stateStr) ?? .failed
+        let message = json["message"] as? String
+        let conflicts = json["conflicts"] as? [String] ?? []
+        let headSha = json["head_sha"] as? String
+        let integrationPath = json["integration_path"] as? String
+        return GitRebaseOntoDefaultResult(
+            project: project,
+            ok: ok,
+            state: state,
+            message: message,
+            conflicts: conflicts,
+            headSha: headSha,
+            integrationPath: integrationPath
+        )
+    }
+}
+
+// MARK: - Phase UX-5: Git Reset Integration Worktree Protocol Models
+
+/// Result from git_reset_integration_worktree request
+struct GitResetIntegrationWorktreeResult {
+    let project: String
+    let ok: Bool
+    let message: String?
+    let path: String?
+
+    static func from(json: [String: Any]) -> GitResetIntegrationWorktreeResult? {
+        guard let project = json["project"] as? String,
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        let path = json["path"] as? String
+        return GitResetIntegrationWorktreeResult(
+            project: project,
+            ok: ok,
+            message: message,
+            path: path
         )
     }
 }

@@ -180,6 +180,24 @@ pub enum ClientMessage {
     GitIntegrationStatus {
         project: String,
     },
+
+    // v1.13: Git rebase onto default via integration worktree (UX-4)
+    GitRebaseOntoDefault {
+        project: String,
+        workspace: String,
+        default_branch: String,
+    },
+    GitRebaseOntoDefaultContinue {
+        project: String,
+    },
+    GitRebaseOntoDefaultAbort {
+        project: String,
+    },
+
+    // v1.14: Git reset integration worktree (UX-5)
+    GitResetIntegrationWorktree {
+        project: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -373,7 +391,7 @@ pub enum ServerMessage {
     // v1.12: Git integration worktree status result (UX-3b)
     GitIntegrationStatusResult {
         project: String,
-        state: String,  // "idle", "merging", "conflict"
+        state: String,  // "idle", "merging", "conflict", "rebasing", "rebase_conflict"
         #[serde(default)]
         conflicts: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -381,6 +399,31 @@ pub enum ServerMessage {
         default_branch: String,
         path: String,
         is_clean: bool,
+    },
+
+    // v1.13: Git rebase onto default result (UX-4)
+    GitRebaseOntoDefaultResult {
+        project: String,
+        ok: bool,
+        state: String,  // "idle", "rebasing", "rebase_conflict", "completed", "failed"
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        head_sha: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        integration_path: Option<String>,
+    },
+
+    // v1.14: Git reset integration worktree result (UX-5)
+    GitResetIntegrationWorktreeResult {
+        project: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
     },
 
     // v1: Error handling

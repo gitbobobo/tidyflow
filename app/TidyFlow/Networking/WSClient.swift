@@ -26,6 +26,10 @@ class WSClient: NSObject, ObservableObject {
     var onGitOpStatusResult: ((GitOpStatusResult) -> Void)?
     var onGitMergeToDefaultResult: ((GitMergeToDefaultResult) -> Void)?
     var onGitIntegrationStatusResult: ((GitIntegrationStatusResult) -> Void)?
+    // UX-4: Rebase onto default handler
+    var onGitRebaseOntoDefaultResult: ((GitRebaseOntoDefaultResult) -> Void)?
+    // UX-5: Reset integration worktree handler
+    var onGitResetIntegrationWorktreeResult: ((GitResetIntegrationWorktreeResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -307,6 +311,40 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // Phase UX-4: Request git rebase onto default
+    func requestGitRebaseOntoDefault(project: String, workspace: String, defaultBranch: String) {
+        sendJSON([
+            "type": "git_rebase_onto_default",
+            "project": project,
+            "workspace": workspace,
+            "default_branch": defaultBranch
+        ])
+    }
+
+    // Phase UX-4: Request git rebase onto default continue
+    func requestGitRebaseOntoDefaultContinue(project: String) {
+        sendJSON([
+            "type": "git_rebase_onto_default_continue",
+            "project": project
+        ])
+    }
+
+    // Phase UX-4: Request git rebase onto default abort
+    func requestGitRebaseOntoDefaultAbort(project: String) {
+        sendJSON([
+            "type": "git_rebase_onto_default_abort",
+            "project": project
+        ])
+    }
+
+    // Phase UX-5: Request git reset integration worktree
+    func requestGitResetIntegrationWorktree(project: String) {
+        sendJSON([
+            "type": "git_reset_integration_worktree",
+            "project": project
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -398,6 +436,16 @@ class WSClient: NSObject, ObservableObject {
         case "git_integration_status_result":
             if let result = GitIntegrationStatusResult.from(json: json) {
                 onGitIntegrationStatusResult?(result)
+            }
+
+        case "git_rebase_onto_default_result":
+            if let result = GitRebaseOntoDefaultResult.from(json: json) {
+                onGitRebaseOntoDefaultResult?(result)
+            }
+
+        case "git_reset_integration_worktree_result":
+            if let result = GitResetIntegrationWorktreeResult.from(json: json) {
+                onGitResetIntegrationWorktreeResult?(result)
             }
 
         case "error":

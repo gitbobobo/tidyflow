@@ -2015,6 +2015,240 @@ async fn handle_client_message(
                 }
             }
         }
+
+        // v1.13: Git rebase onto default (UX-4)
+        ClientMessage::GitRebaseOntoDefault { project, workspace, default_branch } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = p.root_path.clone();
+                        let project_name = p.name.clone();
+                        let source_branch = w.branch.clone();
+                        drop(state);
+
+                        // Check if workspace is on a branch (not detached HEAD)
+                        if source_branch == "HEAD" || source_branch.is_empty() {
+                            send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                project,
+                                ok: false,
+                                state: "failed".to_string(),
+                                message: Some("Workspace is in detached HEAD state. Create/switch to a branch first.".to_string()),
+                                conflicts: vec![],
+                                head_sha: None,
+                                integration_path: None,
+                            }).await?;
+                            return Ok(());
+                        }
+
+                        let default_branch_clone = default_branch.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            git_tools::rebase_onto_default(&root, &project_name, &source_branch, &default_branch_clone)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(rebase_result)) => {
+                                send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                    project,
+                                    ok: rebase_result.ok,
+                                    state: rebase_result.state,
+                                    message: rebase_result.message,
+                                    conflicts: rebase_result.conflicts,
+                                    head_sha: rebase_result.head_sha,
+                                    integration_path: rebase_result.integration_path,
+                                }).await?;
+                            }
+                            Ok(Err(e)) => {
+                                send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                    project,
+                                    ok: false,
+                                    state: "failed".to_string(),
+                                    message: Some(format!("{}", e)),
+                                    conflicts: vec![],
+                                    head_sha: None,
+                                    integration_path: None,
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Rebase onto default task failed: {}", e),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.13: Git rebase onto default continue (UX-4)
+        ClientMessage::GitRebaseOntoDefaultContinue { project } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => {
+                    let project_name = p.name.clone();
+                    drop(state);
+
+                    let result = tokio::task::spawn_blocking(move || {
+                        git_tools::rebase_onto_default_continue(&project_name)
+                    }).await;
+
+                    match result {
+                        Ok(Ok(rebase_result)) => {
+                            send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                project,
+                                ok: rebase_result.ok,
+                                state: rebase_result.state,
+                                message: rebase_result.message,
+                                conflicts: rebase_result.conflicts,
+                                head_sha: rebase_result.head_sha,
+                                integration_path: rebase_result.integration_path,
+                            }).await?;
+                        }
+                        Ok(Err(e)) => {
+                            send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                project,
+                                ok: false,
+                                state: "failed".to_string(),
+                                message: Some(format!("{}", e)),
+                                conflicts: vec![],
+                                head_sha: None,
+                                integration_path: None,
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "internal_error".to_string(),
+                                message: format!("Rebase continue task failed: {}", e),
+                            }).await?;
+                        }
+                    }
+                }
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.13: Git rebase onto default abort (UX-4)
+        ClientMessage::GitRebaseOntoDefaultAbort { project } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => {
+                    let project_name = p.name.clone();
+                    drop(state);
+
+                    let result = tokio::task::spawn_blocking(move || {
+                        git_tools::rebase_onto_default_abort(&project_name)
+                    }).await;
+
+                    match result {
+                        Ok(Ok(rebase_result)) => {
+                            send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                project,
+                                ok: rebase_result.ok,
+                                state: rebase_result.state,
+                                message: rebase_result.message,
+                                conflicts: rebase_result.conflicts,
+                                head_sha: rebase_result.head_sha,
+                                integration_path: rebase_result.integration_path,
+                            }).await?;
+                        }
+                        Ok(Err(e)) => {
+                            send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                project,
+                                ok: false,
+                                state: "failed".to_string(),
+                                message: Some(format!("{}", e)),
+                                conflicts: vec![],
+                                head_sha: None,
+                                integration_path: None,
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "internal_error".to_string(),
+                                message: format!("Rebase abort task failed: {}", e),
+                            }).await?;
+                        }
+                    }
+                }
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.14: Git reset integration worktree (UX-5)
+        ClientMessage::GitResetIntegrationWorktree { project } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => {
+                    let project_name = p.name.clone();
+                    let repo_root = p.root_path.clone();
+                    drop(state);
+
+                    // Use "main" as default branch for reset
+                    let default_branch = "main".to_string();
+                    let result = tokio::task::spawn_blocking(move || {
+                        git_tools::reset_integration_worktree(
+                            &PathBuf::from(&repo_root),
+                            &project_name,
+                            &default_branch,
+                        )
+                    }).await;
+
+                    match result {
+                        Ok(Ok(reset_result)) => {
+                            send_message(socket, &ServerMessage::GitResetIntegrationWorktreeResult {
+                                project,
+                                ok: reset_result.ok,
+                                message: reset_result.message,
+                                path: reset_result.path,
+                            }).await?;
+                        }
+                        Ok(Err(e)) => {
+                            send_message(socket, &ServerMessage::GitResetIntegrationWorktreeResult {
+                                project,
+                                ok: false,
+                                message: Some(format!("{}", e)),
+                                path: None,
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "internal_error".to_string(),
+                                message: format!("Reset integration worktree task failed: {}", e),
+                            }).await?;
+                        }
+                    }
+                }
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
     }
 
     Ok(())

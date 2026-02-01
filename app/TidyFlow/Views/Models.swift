@@ -176,6 +176,8 @@ class AppState: ObservableObject {
     @Published var gitIntegrationStatusCache: [String: GitIntegrationStatusCache] = [:]
     // Phase UX-3b: Merge in-flight (workspace key -> true)
     @Published var mergeInFlight: [String: Bool] = [:]
+    // Phase UX-4: Rebase onto default in-flight (workspace key -> true)
+    @Published var rebaseOntoDefaultInFlight: [String: Bool] = [:]
 
     // Phase C2-2a: Flag to use native diff (set to false to fallback to Web diff)
     var useNativeDiff: Bool = true
@@ -378,6 +380,16 @@ class AppState: ObservableObject {
         // Phase UX-3b: Handle git integration status results
         wsClient.onGitIntegrationStatusResult = { [weak self] result in
             self?.handleGitIntegrationStatusResult(result)
+        }
+
+        // Phase UX-4: Handle git rebase onto default results
+        wsClient.onGitRebaseOntoDefaultResult = { [weak self] result in
+            self?.handleGitRebaseOntoDefaultResult(result)
+        }
+
+        // Phase UX-5: Handle git reset integration worktree results
+        wsClient.onGitResetIntegrationWorktreeResult = { [weak self] result in
+            self?.handleGitResetIntegrationWorktreeResult(result)
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -1061,29 +1073,29 @@ class AppState: ObservableObject {
 
     /// Handle git merge to default result from WebSocket
     private func handleGitMergeToDefaultResult(_ result: GitMergeToDefaultResult) {
-        // Remove from in-flight
-        mergeInFlight.removeValue(forKey: result.workspace)
+        // Remove from in-flight (use project as key since integration worktree is project-scoped)
+        mergeInFlight.removeValue(forKey: result.project)
 
         // Update integration status cache
-        var cache = gitIntegrationStatusCache[result.workspace] ?? GitIntegrationStatusCache.empty()
+        var cache = gitIntegrationStatusCache[result.project] ?? GitIntegrationStatusCache.empty()
         cache.isLoading = false
         cache.updatedAt = Date()
 
         if result.state == .conflict {
-            cache.state = .merging
+            cache.state = .conflict
             cache.conflicts = result.conflicts
-        } else if result.state == .completed || result.state == .aborted {
+        } else if result.state == .completed || result.state == .idle {
             cache.state = .idle
             cache.conflicts = []
         }
-        gitIntegrationStatusCache[result.workspace] = cache
+        gitIntegrationStatusCache[result.project] = cache
 
         // Show toast
         if result.ok {
             gitOpToast = result.message ?? "Merge completed"
             gitOpToastIsError = false
         } else if result.state == .conflict {
-            gitOpToast = "Merge conflicts detected (\\(result.conflicts.count) files)"
+            gitOpToast = "Merge conflicts detected (\(result.conflicts.count) files)"
             gitOpToastIsError = true
         } else {
             gitOpToast = result.message ?? "Merge failed"
@@ -1091,7 +1103,7 @@ class AppState: ObservableObject {
         }
 
         // Refresh git status
-        fetchGitStatus(workspaceKey: result.workspace)
+        fetchGitStatus(workspaceKey: result.project)
 
         // Auto-dismiss toast after 4 seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
@@ -1101,16 +1113,16 @@ class AppState: ObservableObject {
 
     /// Handle git integration status result from WebSocket
     private func handleGitIntegrationStatusResult(_ result: GitIntegrationStatusResult) {
-        var cache = gitIntegrationStatusCache[result.workspace] ?? GitIntegrationStatusCache.empty()
+        var cache = gitIntegrationStatusCache[result.project] ?? GitIntegrationStatusCache.empty()
         cache.state = result.state
         cache.conflicts = result.conflicts
         cache.isLoading = false
         cache.updatedAt = Date()
-        gitIntegrationStatusCache[result.workspace] = cache
+        gitIntegrationStatusCache[result.project] = cache
     }
 
     /// Merge current workspace branch to default branch via integration worktree
-    func gitMergeToDefault(workspaceKey: String) {
+    func gitMergeToDefault(workspaceKey: String, defaultBranch: String = "main") {
         guard connectionState == .connected else {
             gitOpToast = "Disconnected"
             gitOpToastIsError = true
@@ -1127,7 +1139,8 @@ class AppState: ObservableObject {
 
         wsClient.requestGitMergeToDefault(
             project: selectedProjectName,
-            workspace: workspaceKey
+            workspace: workspaceKey,
+            defaultBranch: defaultBranch
         )
     }
 
@@ -1142,8 +1155,7 @@ class AppState: ObservableObject {
         mergeInFlight[workspaceKey] = true
 
         wsClient.requestGitMergeContinue(
-            project: selectedProjectName,
-            workspace: workspaceKey
+            project: selectedProjectName
         )
     }
 
@@ -1158,8 +1170,7 @@ class AppState: ObservableObject {
         mergeInFlight[workspaceKey] = true
 
         wsClient.requestGitMergeAbort(
-            project: selectedProjectName,
-            workspace: workspaceKey
+            project: selectedProjectName
         )
     }
 
@@ -1172,8 +1183,7 @@ class AppState: ObservableObject {
         gitIntegrationStatusCache[workspaceKey] = cache
 
         wsClient.requestGitIntegrationStatus(
-            project: selectedProjectName,
-            workspace: workspaceKey
+            project: selectedProjectName
         )
     }
 
@@ -1185,6 +1195,156 @@ class AppState: ObservableObject {
     /// Check if merge is in-flight for a workspace
     func isMergeInFlight(workspaceKey: String) -> Bool {
         return mergeInFlight[workspaceKey] == true
+    }
+
+    // MARK: - Phase UX-4: Git Rebase onto Default API
+
+    /// Handle git rebase onto default result from WebSocket
+    private func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult) {
+        // Remove from in-flight
+        rebaseOntoDefaultInFlight.removeValue(forKey: result.project)
+
+        // Update integration status cache
+        var cache = gitIntegrationStatusCache[result.project] ?? GitIntegrationStatusCache.empty()
+        cache.isLoading = false
+        cache.updatedAt = Date()
+
+        if result.state == .rebaseConflict {
+            cache.state = .rebaseConflict
+            cache.conflicts = result.conflicts
+        } else if result.state == .rebasing {
+            cache.state = .rebasing
+            cache.conflicts = []
+        } else if result.state == .completed || result.state == .idle {
+            cache.state = .idle
+            cache.conflicts = []
+        }
+        gitIntegrationStatusCache[result.project] = cache
+
+        // Show toast
+        if result.ok {
+            gitOpToast = result.message ?? "Rebase completed"
+            gitOpToastIsError = false
+        } else if result.state == .rebaseConflict {
+            gitOpToast = "Rebase conflicts detected (\(result.conflicts.count) files)"
+            gitOpToastIsError = true
+        } else {
+            gitOpToast = result.message ?? "Rebase failed"
+            gitOpToastIsError = true
+        }
+
+        // Refresh git status
+        fetchGitStatus(workspaceKey: result.project)
+
+        // Auto-dismiss toast after 4 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
+    /// Rebase current workspace branch onto default branch via integration worktree
+    func gitRebaseOntoDefault(workspaceKey: String, defaultBranch: String = "main") {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        // Track in-flight
+        rebaseOntoDefaultInFlight[workspaceKey] = true
+
+        // Update cache to loading
+        var cache = gitIntegrationStatusCache[workspaceKey] ?? GitIntegrationStatusCache.empty()
+        cache.isLoading = true
+        gitIntegrationStatusCache[workspaceKey] = cache
+
+        wsClient.requestGitRebaseOntoDefault(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            defaultBranch: defaultBranch
+        )
+    }
+
+    /// Continue a paused rebase in integration worktree
+    func gitRebaseOntoDefaultContinue(workspaceKey: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        rebaseOntoDefaultInFlight[workspaceKey] = true
+
+        wsClient.requestGitRebaseOntoDefaultContinue(
+            project: selectedProjectName
+        )
+    }
+
+    /// Abort a rebase in progress in integration worktree
+    func gitRebaseOntoDefaultAbort(workspaceKey: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        rebaseOntoDefaultInFlight[workspaceKey] = true
+
+        wsClient.requestGitRebaseOntoDefaultAbort(
+            project: selectedProjectName
+        )
+    }
+
+    /// Check if rebase onto default is in-flight for a workspace
+    func isRebaseOntoDefaultInFlight(workspaceKey: String) -> Bool {
+        return rebaseOntoDefaultInFlight[workspaceKey] == true
+    }
+
+    // MARK: - Phase UX-5: Git Reset Integration Worktree API
+
+    /// Handle git reset integration worktree result from WebSocket
+    private func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) {
+        // Clear in-flight flags
+        mergeInFlight.removeValue(forKey: result.project)
+        rebaseOntoDefaultInFlight.removeValue(forKey: result.project)
+
+        // Reset integration status cache to idle
+        var cache = gitIntegrationStatusCache[result.project] ?? GitIntegrationStatusCache.empty()
+        cache.state = .idle
+        cache.conflicts = []
+        cache.isLoading = false
+        cache.updatedAt = Date()
+        if let path = result.path {
+            cache.integrationPath = path
+        }
+        gitIntegrationStatusCache[result.project] = cache
+
+        // Show toast
+        if result.ok {
+            gitOpToast = result.message ?? "Integration worktree reset"
+            gitOpToastIsError = false
+        } else {
+            gitOpToast = result.message ?? "Reset failed"
+            gitOpToastIsError = true
+        }
+
+        // Auto-dismiss toast after 4 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
+    /// Reset integration worktree to clean state
+    func gitResetIntegrationWorktree(workspaceKey: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        wsClient.requestGitResetIntegrationWorktree(
+            project: selectedProjectName
+        )
     }
 
     private func setupCommands() {
@@ -1254,6 +1414,24 @@ class AppState: ObservableObject {
             Command(id: "git.aiResolve", title: "Git: Resolve Conflicts with AI", subtitle: "Open terminal with opencode", scope: .workspace, keyHint: nil) { app in
                 guard let ws = app.selectedWorkspaceKey else { return }
                 app.spawnTerminalWithCommand(workspaceKey: ws, command: "opencode")
+            },
+            // UX-4: Git rebase onto default (integration worktree) commands
+            Command(id: "git.rebaseOntoDefault", title: "Git: Safe Rebase onto Default", subtitle: "Rebase in integration worktree", scope: .workspace, keyHint: nil) { app in
+                guard let ws = app.selectedWorkspaceKey else { return }
+                app.gitRebaseOntoDefault(workspaceKey: ws)
+            },
+            Command(id: "git.rebaseOntoDefaultContinue", title: "Git: Continue Safe Rebase", subtitle: "Continue rebase in integration worktree", scope: .workspace, keyHint: nil) { app in
+                guard let ws = app.selectedWorkspaceKey else { return }
+                app.gitRebaseOntoDefaultContinue(workspaceKey: ws)
+            },
+            Command(id: "git.rebaseOntoDefaultAbort", title: "Git: Abort Safe Rebase", subtitle: "Abort rebase in integration worktree", scope: .workspace, keyHint: nil) { app in
+                guard let ws = app.selectedWorkspaceKey else { return }
+                app.gitRebaseOntoDefaultAbort(workspaceKey: ws)
+            },
+            // UX-5: Git reset integration worktree command
+            Command(id: "git.resetIntegrationWorktree", title: "Git: Reset Integration Worktree", subtitle: "Reset integration worktree to clean state", scope: .workspace, keyHint: nil) { app in
+                guard let ws = app.selectedWorkspaceKey else { return }
+                app.gitResetIntegrationWorktree(workspaceKey: ws)
             }
         ]
     }
