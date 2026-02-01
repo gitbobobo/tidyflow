@@ -1,6 +1,7 @@
 /**
  * TidyFlow Terminal - Main JavaScript
- * Connects xterm.js to Rust core via WebSocket (Protocol v1.1 - Multi-Terminal)
+ * Workspace-scoped tabs with unified Editor + Terminal tabs
+ * Protocol v1.3 - Multi-Terminal + File Operations
  */
 
 (function() {
@@ -73,39 +74,421 @@
     let protocolVersion = 0;
     let capabilities = [];
 
-    // Workspace state
+    // Projects/Workspaces state
     let projects = [];
-    let workspaces = [];
+    let workspacesMap = new Map(); // project -> workspace[]
     let currentProject = null;
     let currentWorkspace = null;
+    let currentWorkspaceRoot = null;
 
-    // Multi-terminal state (v1.2: with workspace binding)
-    let tabs = new Map(); // term_id -> { term, fitAddon, container, tabEl, cwd, project, workspace }
-    let activeTermId = null;
+    // Workspace-scoped tabs (v2.0)
+    // workspaceTabs: Map<workspaceKey, TabSet>
+    // TabSet = { tabs: Map<tabId, TabInfo>, activeTabId, tabOrder }
+    let workspaceTabs = new Map();
     let tabCounter = 0;
+
+    // Current workspace's active tab references
+    let activeTabId = null;
+
+    // Right panel state
+    let activeToolView = 'explorer';
+    let explorerTree = new Map(); // path -> items (cached)
+    let expandedDirs = new Set(); // expanded directory paths
+    let allFilePaths = []; // for search (from explorer)
+    let gitStatus = [];
+
+    // File index cache for Quick Open (Cmd+P)
+    // Map<workspaceKey, {items: string[], truncated: boolean, updatedAt: number}>
+    let workspaceFileIndex = new Map();
 
     // DOM elements
     let tabBar = null;
-    let terminalsContainer = null;
-    let workspaceInfo = null;
+    let tabContent = null;
+    let placeholder = null;
+    let projectTree = null;
+
+    function getWorkspaceKey(project, workspace) {
+        return `${project}/${workspace}`;
+    }
+
+    function getCurrentWorkspaceKey() {
+        if (!currentProject || !currentWorkspace) return null;
+        return getWorkspaceKey(currentProject, currentWorkspace);
+    }
+
+    function getOrCreateTabSet(wsKey) {
+        if (!workspaceTabs.has(wsKey)) {
+            workspaceTabs.set(wsKey, {
+                tabs: new Map(),
+                activeTabId: null,
+                tabOrder: []
+            });
+        }
+        return workspaceTabs.get(wsKey);
+    }
 
     function initUI() {
         tabBar = document.getElementById('tab-bar');
-        terminalsContainer = document.getElementById('terminals');
-        workspaceInfo = document.getElementById('workspace-info');
+        tabContent = document.getElementById('tab-content');
+        placeholder = document.getElementById('placeholder');
+        projectTree = document.getElementById('project-tree');
 
-        // New tab button
-        document.getElementById('tab-new').addEventListener('click', () => {
-            if (currentProject && currentWorkspace) {
-                createTerminal(currentProject, currentWorkspace);
-            } else {
-                console.warn('No workspace selected');
+        // New terminal button
+        const newTermBtn = document.getElementById('new-terminal-btn');
+        if (newTermBtn) {
+            newTermBtn.addEventListener('click', () => {
+                if (currentProject && currentWorkspace) {
+                    createTerminal(currentProject, currentWorkspace);
+                }
+            });
+        }
+
+        // Refresh projects button
+        const refreshBtn = document.getElementById('refresh-projects');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', listProjects);
+        }
+
+        // Tool icon switching
+        document.querySelectorAll('.tool-icon').forEach(icon => {
+            icon.addEventListener('click', () => {
+                switchToolView(icon.dataset.tool);
+            });
+        });
+
+        // Search input
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                performSearch(e.target.value);
+            });
+        }
+
+        // Git refresh button
+        const gitRefreshBtn = document.getElementById('git-refresh-btn');
+        if (gitRefreshBtn) {
+            gitRefreshBtn.addEventListener('click', refreshGitStatus);
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                e.preventDefault();
+                saveCurrentEditor();
             }
         });
     }
 
-    function createTerminalInstance(termId, cwd, project, workspace) {
+    // ============================================
+    // Tool Panel Functions
+    // ============================================
+
+    function switchToolView(toolName) {
+        activeToolView = toolName;
+
+        // Update icon states
+        document.querySelectorAll('.tool-icon').forEach(icon => {
+            icon.classList.toggle('active', icon.dataset.tool === toolName);
+        });
+
+        // Update view visibility
+        document.querySelectorAll('.tool-view').forEach(view => {
+            view.classList.toggle('active', view.id === `${toolName}-view`);
+        });
+
+        // Refresh view content
+        if (toolName === 'explorer') refreshExplorer();
+        if (toolName === 'git') refreshGitStatus();
+    }
+
+    function refreshExplorer() {
+        const explorerTreeEl = document.getElementById('explorer-tree');
+        if (!explorerTreeEl) return;
+
+        if (!currentProject || !currentWorkspace) {
+            explorerTreeEl.innerHTML = '<div class="file-empty">No workspace selected</div>';
+            return;
+        }
+
+        // Request root directory listing
+        sendFileList(currentProject, currentWorkspace, '.');
+    }
+
+    function renderExplorerTree(path, items) {
+        const explorerTreeEl = document.getElementById('explorer-tree');
+        if (!explorerTreeEl) return;
+
+        // Cache items
+        explorerTree.set(path, items);
+
+        if (path === '.') {
+            // Root level - rebuild entire tree
+            explorerTreeEl.innerHTML = '';
+            if (items.length === 0) {
+                explorerTreeEl.innerHTML = '<div class="file-empty">Empty directory</div>';
+                return;
+            }
+            items.forEach(item => {
+                explorerTreeEl.appendChild(createFileItem(item, '.'));
+            });
+        } else {
+            // Subdirectory - find and update the parent
+            const parentEl = explorerTreeEl.querySelector(`[data-path="${path}"]`);
+            if (parentEl) {
+                let childrenEl = parentEl.querySelector('.file-children');
+                if (!childrenEl) {
+                    childrenEl = document.createElement('div');
+                    childrenEl.className = 'file-children';
+                    parentEl.appendChild(childrenEl);
+                }
+                childrenEl.innerHTML = '';
+                items.forEach(item => {
+                    childrenEl.appendChild(createFileItem(item, path));
+                });
+            }
+        }
+
+        // Update allFilePaths for search
+        updateFilePathsCache();
+    }
+
+    function createFileItem(item, parentPath) {
+        const fullPath = parentPath === '.' ? item.name : `${parentPath}/${item.name}`;
+        const el = document.createElement('div');
+        el.className = 'file-item' + (item.is_dir ? ' directory' : '');
+        el.dataset.path = fullPath;
+
+        const icon = document.createElement('span');
+        icon.className = 'file-icon';
+        icon.textContent = item.is_dir ? '▶' : getFileIcon(item.name);
+        el.appendChild(icon);
+
+        const name = document.createElement('span');
+        name.className = 'file-name';
+        name.textContent = item.name;
+        el.appendChild(name);
+
+        if (!item.is_dir) {
+            const size = document.createElement('span');
+            size.className = 'file-size';
+            size.textContent = formatSize(item.size);
+            el.appendChild(size);
+        }
+
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (item.is_dir) {
+                toggleDirectory(el, fullPath);
+            } else {
+                openFileInEditor(fullPath);
+            }
+        });
+
+        // If directory is expanded, add children container
+        if (item.is_dir && expandedDirs.has(fullPath)) {
+            el.classList.add('expanded');
+            const childrenEl = document.createElement('div');
+            childrenEl.className = 'file-children';
+            el.appendChild(childrenEl);
+            // Request children
+            sendFileList(currentProject, currentWorkspace, fullPath);
+        }
+
+        return el;
+    }
+
+    function toggleDirectory(el, path) {
+        if (expandedDirs.has(path)) {
+            expandedDirs.delete(path);
+            el.classList.remove('expanded');
+            const childrenEl = el.querySelector('.file-children');
+            if (childrenEl) childrenEl.remove();
+        } else {
+            expandedDirs.add(path);
+            el.classList.add('expanded');
+            const childrenEl = document.createElement('div');
+            childrenEl.className = 'file-children';
+            childrenEl.innerHTML = '<div class="file-empty">Loading...</div>';
+            el.appendChild(childrenEl);
+            sendFileList(currentProject, currentWorkspace, path);
+        }
+    }
+
+    function getFileIcon(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const icons = {
+            'js': '📜', 'ts': '📘', 'jsx': '⚛️', 'tsx': '⚛️',
+            'html': '🌐', 'css': '🎨', 'json': '📋',
+            'md': '📝', 'txt': '📄',
+            'rs': '🦀', 'go': '🐹', 'py': '🐍',
+            'swift': '🍎', 'java': '☕',
+            'png': '🖼️', 'jpg': '🖼️', 'gif': '🖼️', 'svg': '🖼️',
+        };
+        return icons[ext] || '📄';
+    }
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function updateFilePathsCache() {
+        allFilePaths = [];
+        function collectPaths(path, items) {
+            items.forEach(item => {
+                const fullPath = path === '.' ? item.name : `${path}/${item.name}`;
+                if (!item.is_dir) {
+                    allFilePaths.push(fullPath);
+                }
+                if (item.is_dir && explorerTree.has(fullPath)) {
+                    collectPaths(fullPath, explorerTree.get(fullPath));
+                }
+            });
+        }
+        if (explorerTree.has('.')) {
+            collectPaths('.', explorerTree.get('.'));
+        }
+    }
+
+    function performSearch(query) {
+        const resultsEl = document.getElementById('search-results');
+        if (!resultsEl) return;
+
+        if (!query.trim()) {
+            resultsEl.innerHTML = '<div class="search-empty">Enter a search term</div>';
+            return;
+        }
+
+        const lowerQuery = query.toLowerCase();
+        const matches = allFilePaths.filter(p => p.toLowerCase().includes(lowerQuery));
+
+        if (matches.length === 0) {
+            resultsEl.innerHTML = '<div class="search-empty">No files found</div>';
+            return;
+        }
+
+        resultsEl.innerHTML = '';
+        matches.slice(0, 50).forEach(path => {
+            const el = document.createElement('div');
+            el.className = 'search-result';
+
+            const icon = document.createElement('span');
+            icon.className = 'file-icon';
+            icon.textContent = getFileIcon(path);
+            el.appendChild(icon);
+
+            const name = document.createElement('span');
+            name.className = 'file-name';
+            // Highlight match
+            const idx = path.toLowerCase().indexOf(lowerQuery);
+            name.innerHTML = path.substring(0, idx) +
+                '<span class="match">' + path.substring(idx, idx + query.length) + '</span>' +
+                path.substring(idx + query.length);
+            el.appendChild(name);
+
+            el.addEventListener('click', () => openFileInEditor(path));
+            resultsEl.appendChild(el);
+        });
+    }
+
+    function refreshGitStatus() {
+        const listEl = document.getElementById('git-status-list');
+        if (!listEl) return;
+
+        if (!currentProject || !currentWorkspace) {
+            listEl.innerHTML = '<div class="git-empty">No workspace selected</div>';
+            return;
+        }
+
+        // For now, show placeholder - git_status API not yet implemented
+        listEl.innerHTML = '<div class="git-empty">Git status not available</div>';
+        // TODO: When git_status API is added:
+        // sendControlMessage({ type: 'git_status', project: currentProject, workspace: currentWorkspace });
+    }
+
+    function renderGitStatus(items, branch, isGitRepo) {
+        const listEl = document.getElementById('git-status-list');
+        if (!listEl) return;
+
+        if (!isGitRepo) {
+            listEl.innerHTML = '<div class="git-empty">Not a git repository</div>';
+            return;
+        }
+
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="git-empty">Working tree clean</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        items.forEach(item => {
+            const el = document.createElement('div');
+            el.className = 'git-item';
+
+            const status = document.createElement('span');
+            status.className = 'git-status';
+            status.textContent = item.status;
+            if (item.status === 'M') status.classList.add('modified');
+            else if (item.status === 'A') status.classList.add('added');
+            else if (item.status === 'D') status.classList.add('deleted');
+            else if (item.status === '?') status.classList.add('untracked');
+            el.appendChild(status);
+
+            const file = document.createElement('span');
+            file.className = 'git-file';
+            file.textContent = item.path;
+            el.appendChild(file);
+
+            el.addEventListener('click', () => openFileInEditor(item.path));
+            listEl.appendChild(el);
+        });
+    }
+
+    // ============================================
+    // Project Tree Functions
+    // ============================================
+
+    function renderProjectTree() {
+        if (!projectTree) return;
+        projectTree.innerHTML = '';
+
+        projects.forEach(proj => {
+            // Project node
+            const projEl = document.createElement('div');
+            projEl.className = 'tree-item project';
+            projEl.innerHTML = `<span class="tree-icon">📦</span><span class="tree-name">${proj.name}</span>`;
+            projEl.addEventListener('click', () => {
+                listWorkspaces(proj.name);
+            });
+            projectTree.appendChild(projEl);
+
+            // Workspaces under this project
+            const wsItems = workspacesMap.get(proj.name) || [];
+            wsItems.forEach(ws => {
+                const wsEl = document.createElement('div');
+                wsEl.className = 'tree-item workspace';
+                if (currentProject === proj.name && currentWorkspace === ws.name) {
+                    wsEl.classList.add('selected');
+                }
+                wsEl.innerHTML = `<span class="tree-icon">📁</span><span class="tree-name">${ws.name}</span>`;
+                wsEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectWorkspace(proj.name, ws.name);
+                });
+                projectTree.appendChild(wsEl);
+            });
+        });
+    }
+
+    // ============================================
+    // Tab Management (Workspace-Scoped)
+    // ============================================
+
+    function createTerminalTab(termId, cwd, project, workspace) {
         tabCounter++;
+        const wsKey = getWorkspaceKey(project, workspace);
+        const tabSet = getOrCreateTabSet(wsKey);
 
         // Create terminal
         const term = new Terminal({
@@ -141,11 +524,15 @@
             console.warn('WebGL addon failed:', e.message);
         }
 
-        // Create container
+        // Create pane container
+        const pane = document.createElement('div');
+        pane.className = 'tab-pane terminal-pane';
+        pane.id = 'pane-' + termId;
+
         const container = document.createElement('div');
         container.className = 'terminal-container';
-        container.id = 'term-' + termId;
-        terminalsContainer.appendChild(container);
+        pane.appendChild(container);
+        tabContent.appendChild(pane);
 
         // Open terminal
         term.open(container);
@@ -153,143 +540,451 @@
         // Create tab element
         const tabEl = document.createElement('div');
         tabEl.className = 'tab';
-        tabEl.dataset.termId = termId;
+        tabEl.dataset.tabId = termId;
+
+        const icon = document.createElement('span');
+        icon.className = 'tab-icon terminal';
+        icon.textContent = '⌘';
+        tabEl.appendChild(icon);
 
         const title = document.createElement('span');
         title.className = 'tab-title';
-        // v1.2: Show workspace name in tab title
-        title.textContent = workspace || 'Tab ' + tabCounter;
+        title.textContent = workspace || 'Terminal';
         tabEl.appendChild(title);
 
         const closeBtn = document.createElement('span');
         closeBtn.className = 'tab-close';
-        closeBtn.textContent = '\u00d7';
+        closeBtn.textContent = '×';
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            closeTerminal(termId);
+            closeTab(termId);
         });
         tabEl.appendChild(closeBtn);
 
-        tabEl.addEventListener('click', () => {
-            switchToTab(termId);
-        });
+        tabEl.addEventListener('click', () => switchToTab(termId));
 
-        // Insert before the + button
-        const newBtn = document.getElementById('tab-new');
-        tabBar.insertBefore(tabEl, newBtn);
+        // Insert before tab-actions
+        const tabActions = document.getElementById('tab-actions');
+        tabBar.insertBefore(tabEl, tabActions);
 
         // Handle input
         term.onData((data) => {
             if (transport && transport.isConnected) {
                 const encoder = new TextEncoder();
                 const bytes = encoder.encode(data);
-                const msg = JSON.stringify({
+                transport.send(JSON.stringify({
                     type: 'input',
                     term_id: termId,
                     data_b64: encodeBase64(bytes)
-                });
-                transport.send(msg);
+                }));
             }
         });
 
         // Handle resize
         const resizeObserver = new ResizeObserver(() => {
-            if (fitAddon && activeTermId === termId) {
+            if (fitAddon && activeTabId === termId) {
                 fitAddon.fit();
                 sendResize(termId, term.cols, term.rows);
             }
         });
         resizeObserver.observe(container);
 
-        // Store tab info (v1.2: with workspace binding)
-        tabs.set(termId, {
+        // Store tab info
+        const tabInfo = {
+            id: termId,
+            type: 'terminal',
+            title: workspace || 'Terminal',
+            termId: termId,
             term,
             fitAddon,
-            container,
+            pane,
             tabEl,
             cwd: cwd || '',
-            project: project || '',
-            workspace: workspace || '',
+            project,
+            workspace,
             resizeObserver
-        });
+        };
 
-        return { term, fitAddon, container, tabEl };
+        tabSet.tabs.set(termId, tabInfo);
+        tabSet.tabOrder.push(termId);
+
+        return tabInfo;
     }
 
-    function switchToTab(termId) {
-        if (!tabs.has(termId)) return;
+    function createEditorTab(filePath, content) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return null;
 
-        // Deactivate current
-        if (activeTermId && tabs.has(activeTermId)) {
-            const current = tabs.get(activeTermId);
-            current.container.classList.remove('active');
+        const tabSet = getOrCreateTabSet(wsKey);
+        const tabId = 'editor-' + filePath.replace(/[^a-zA-Z0-9]/g, '-');
+
+        // Check if tab already exists
+        if (tabSet.tabs.has(tabId)) {
+            switchToTab(tabId);
+            return tabSet.tabs.get(tabId);
+        }
+
+        // Create pane
+        const pane = document.createElement('div');
+        pane.className = 'tab-pane editor-pane';
+        pane.id = 'pane-' + tabId;
+
+        // Editor toolbar
+        const toolbar = document.createElement('div');
+        toolbar.className = 'editor-toolbar';
+
+        const pathEl = document.createElement('span');
+        pathEl.className = 'editor-path';
+        pathEl.textContent = filePath;
+        toolbar.appendChild(pathEl);
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'editor-save-btn';
+        saveBtn.textContent = 'Save';
+        saveBtn.disabled = true;
+        saveBtn.addEventListener('click', () => saveEditorTab(tabId));
+        toolbar.appendChild(saveBtn);
+
+        pane.appendChild(toolbar);
+
+        // Editor container
+        const editorContainer = document.createElement('div');
+        editorContainer.className = 'editor-container';
+        pane.appendChild(editorContainer);
+
+        // Status bar
+        const statusBar = document.createElement('div');
+        statusBar.className = 'editor-status';
+        pane.appendChild(statusBar);
+
+        tabContent.appendChild(pane);
+
+        // Create CodeMirror editor
+        let editorView = null;
+        if (window.CodeMirror) {
+            const { EditorView, basicSetup } = window.CodeMirror;
+            editorView = new EditorView({
+                doc: content || '',
+                extensions: [
+                    basicSetup,
+                    EditorView.updateListener.of((update) => {
+                        if (update.docChanged) {
+                            const tab = tabSet.tabs.get(tabId);
+                            if (tab && !tab.isDirty) {
+                                tab.isDirty = true;
+                                updateTabDirtyState(tabId, true);
+                            }
+                        }
+                    }),
+                    EditorView.theme({
+                        '&': { height: '100%', fontSize: '14px' },
+                        '.cm-scroller': { fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
+                        '.cm-content': { caretColor: '#d4d4d4' },
+                        '&.cm-focused .cm-cursor': { borderLeftColor: '#d4d4d4' },
+                    }, { dark: true }),
+                ],
+                parent: editorContainer,
+            });
+        }
+
+        // Create tab element
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.dataset.tabId = tabId;
+
+        const icon = document.createElement('span');
+        icon.className = 'tab-icon editor';
+        icon.textContent = getFileIcon(filePath);
+        tabEl.appendChild(icon);
+
+        const title = document.createElement('span');
+        title.className = 'tab-title';
+        title.textContent = filePath.split('/').pop();
+        title.title = filePath;
+        tabEl.appendChild(title);
+
+        const dirtyIndicator = document.createElement('span');
+        dirtyIndicator.className = 'tab-dirty';
+        dirtyIndicator.style.display = 'none';
+        dirtyIndicator.textContent = '*';
+        tabEl.appendChild(dirtyIndicator);
+
+        const closeBtn = document.createElement('span');
+        closeBtn.className = 'tab-close';
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeTab(tabId);
+        });
+        tabEl.appendChild(closeBtn);
+
+        tabEl.addEventListener('click', () => switchToTab(tabId));
+
+        const tabActions = document.getElementById('tab-actions');
+        tabBar.insertBefore(tabEl, tabActions);
+
+        // Store tab info
+        const tabInfo = {
+            id: tabId,
+            type: 'editor',
+            title: filePath.split('/').pop(),
+            filePath,
+            editorView,
+            pane,
+            tabEl,
+            saveBtn,
+            statusBar,
+            dirtyIndicator,
+            isDirty: false,
+            project: currentProject,
+            workspace: currentWorkspace
+        };
+
+        tabSet.tabs.set(tabId, tabInfo);
+        tabSet.tabOrder.push(tabId);
+
+        return tabInfo;
+    }
+
+    function updateTabDirtyState(tabId, isDirty) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet) return;
+
+        const tab = tabSet.tabs.get(tabId);
+        if (!tab) return;
+
+        tab.isDirty = isDirty;
+        if (tab.dirtyIndicator) {
+            tab.dirtyIndicator.style.display = isDirty ? 'inline' : 'none';
+        }
+        if (tab.saveBtn) {
+            tab.saveBtn.disabled = !isDirty;
+        }
+    }
+
+    function saveEditorTab(tabId) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet) return;
+
+        const tab = tabSet.tabs.get(tabId);
+        if (!tab || tab.type !== 'editor' || !tab.editorView) return;
+
+        const content = tab.editorView.state.doc.toString();
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(content);
+        const content_b64 = encodeBase64(bytes);
+
+        sendFileWrite(tab.project, tab.workspace, tab.filePath, content_b64);
+    }
+
+    function saveCurrentEditor() {
+        if (!activeTabId) return;
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet) return;
+
+        const tab = tabSet.tabs.get(activeTabId);
+        if (tab && tab.type === 'editor') {
+            saveEditorTab(activeTabId);
+        }
+    }
+
+    function openFileInEditor(filePath) {
+        if (!currentProject || !currentWorkspace) return;
+        sendFileRead(currentProject, currentWorkspace, filePath);
+    }
+
+    function switchToTab(tabId) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet || !tabSet.tabs.has(tabId)) return;
+
+        // Deactivate current tab
+        if (activeTabId && tabSet.tabs.has(activeTabId)) {
+            const current = tabSet.tabs.get(activeTabId);
+            current.pane.classList.remove('active');
             current.tabEl.classList.remove('active');
         }
 
-        // Activate new
-        const tab = tabs.get(termId);
-        tab.container.classList.add('active');
+        // Activate new tab
+        const tab = tabSet.tabs.get(tabId);
+        tab.pane.classList.add('active');
         tab.tabEl.classList.add('active');
-        activeTermId = termId;
+        activeTabId = tabId;
+        tabSet.activeTabId = tabId;
 
-        // Fit and focus
+        // Hide placeholder
+        if (placeholder) placeholder.style.display = 'none';
+
+        // Focus
         setTimeout(() => {
-            tab.fitAddon.fit();
-            tab.term.focus();
-            sendResize(termId, tab.term.cols, tab.term.rows);
+            if (tab.type === 'terminal' && tab.term) {
+                tab.fitAddon.fit();
+                tab.term.focus();
+                sendResize(tab.termId, tab.term.cols, tab.term.rows);
+            } else if (tab.type === 'editor' && tab.editorView) {
+                tab.editorView.focus();
+            }
         }, 0);
 
-        // Notify Swift
-        notifySwift('tab_switched', { term_id: termId });
+        notifySwift('tab_switched', { tab_id: tabId, type: tab.type });
     }
 
-    function closeTerminal(termId) {
-        if (!tabs.has(termId)) return;
+    function closeTab(tabId) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
 
-        // Send close request to server
-        if (transport && transport.isConnected) {
-            transport.send(JSON.stringify({
-                type: 'term_close',
-                term_id: termId
-            }));
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet || !tabSet.tabs.has(tabId)) return;
+
+        const tab = tabSet.tabs.get(tabId);
+
+        // Check for unsaved changes
+        if (tab.type === 'editor' && tab.isDirty) {
+            if (!confirm('Unsaved changes will be lost. Close anyway?')) {
+                return;
+            }
         }
-    }
 
-    function removeTab(termId) {
-        if (!tabs.has(termId)) return;
-
-        const tab = tabs.get(termId);
+        // For terminals, send close request to server
+        if (tab.type === 'terminal') {
+            if (transport && transport.isConnected) {
+                transport.send(JSON.stringify({
+                    type: 'term_close',
+                    term_id: tab.termId
+                }));
+            }
+        }
 
         // Clean up
-        tab.resizeObserver.disconnect();
-        tab.term.dispose();
-        tab.container.remove();
-        tab.tabEl.remove();
-        tabs.delete(termId);
+        removeTabFromUI(tabId);
+    }
+
+    function removeTabFromUI(tabId) {
+        const wsKey = getCurrentWorkspaceKey();
+        if (!wsKey) return;
+
+        const tabSet = workspaceTabs.get(wsKey);
+        if (!tabSet || !tabSet.tabs.has(tabId)) return;
+
+        const tab = tabSet.tabs.get(tabId);
+
+        // Dispose resources
+        if (tab.type === 'terminal') {
+            if (tab.resizeObserver) tab.resizeObserver.disconnect();
+            if (tab.term) tab.term.dispose();
+        } else if (tab.type === 'editor') {
+            if (tab.editorView) tab.editorView.destroy();
+        }
+
+        // Remove DOM elements
+        if (tab.pane) tab.pane.remove();
+        if (tab.tabEl) tab.tabEl.remove();
+
+        // Remove from tabSet
+        tabSet.tabs.delete(tabId);
+        tabSet.tabOrder = tabSet.tabOrder.filter(id => id !== tabId);
 
         // Switch to another tab if this was active
-        if (activeTermId === termId) {
-            activeTermId = null;
-            const remaining = Array.from(tabs.keys());
-            if (remaining.length > 0) {
-                switchToTab(remaining[0]);
+        if (activeTabId === tabId) {
+            activeTabId = null;
+            tabSet.activeTabId = null;
+            if (tabSet.tabOrder.length > 0) {
+                switchToTab(tabSet.tabOrder[tabSet.tabOrder.length - 1]);
+            } else {
+                // Show placeholder
+                if (placeholder) placeholder.style.display = 'flex';
             }
         }
     }
 
-    function sendResize(termId, cols, rows) {
-        if (transport && transport.isConnected) {
-            const msg = JSON.stringify({
-                type: 'resize',
-                term_id: termId,
-                cols: cols,
-                rows: rows
+    // ============================================
+    // Workspace Switching
+    // ============================================
+
+    function switchWorkspaceUI(project, workspace, root) {
+        const oldWsKey = getCurrentWorkspaceKey();
+        const newWsKey = getWorkspaceKey(project, workspace);
+
+        // Save current workspace state (hide tabs)
+        if (oldWsKey && workspaceTabs.has(oldWsKey)) {
+            const oldTabSet = workspaceTabs.get(oldWsKey);
+            oldTabSet.tabs.forEach(tab => {
+                tab.pane.classList.remove('active');
+                tab.tabEl.style.display = 'none';
             });
-            transport.send(msg);
         }
+
+        // Update current workspace
+        currentProject = project;
+        currentWorkspace = workspace;
+        currentWorkspaceRoot = root;
+
+        // Restore or create new workspace tabs
+        const newTabSet = getOrCreateTabSet(newWsKey);
+        newTabSet.tabs.forEach(tab => {
+            tab.tabEl.style.display = '';
+        });
+
+        // Restore active tab or show placeholder
+        if (newTabSet.activeTabId && newTabSet.tabs.has(newTabSet.activeTabId)) {
+            activeTabId = newTabSet.activeTabId;
+            switchToTab(activeTabId);
+        } else if (newTabSet.tabOrder.length > 0) {
+            switchToTab(newTabSet.tabOrder[0]);
+        } else {
+            activeTabId = null;
+            if (placeholder) placeholder.style.display = 'flex';
+        }
+
+        // Update UI state
+        updateUIForWorkspace();
     }
 
-    // v1.1 Control Plane
+    function updateUIForWorkspace() {
+        // Enable/disable buttons
+        const newTermBtn = document.getElementById('new-terminal-btn');
+        if (newTermBtn) {
+            newTermBtn.disabled = !currentProject || !currentWorkspace;
+        }
+
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) {
+            searchInput.disabled = !currentProject || !currentWorkspace;
+        }
+
+        const gitRefreshBtn = document.getElementById('git-refresh-btn');
+        if (gitRefreshBtn) {
+            gitRefreshBtn.disabled = !currentProject || !currentWorkspace;
+        }
+
+        // Update project tree selection
+        renderProjectTree();
+
+        // Clear and refresh explorer
+        explorerTree.clear();
+        expandedDirs.clear();
+        allFilePaths = [];
+
+        // Refresh active tool view
+        if (activeToolView === 'explorer') refreshExplorer();
+        else if (activeToolView === 'git') refreshGitStatus();
+    }
+
+    // ============================================
+    // Control Plane
+    // ============================================
+
     function sendControlMessage(msg) {
         if (transport && transport.isConnected) {
             transport.send(JSON.stringify(msg));
@@ -305,9 +1000,6 @@
     }
 
     function selectWorkspace(project, workspace) {
-        currentProject = project;
-        currentWorkspace = workspace;
-        updateWorkspaceInfo();
         sendControlMessage({ type: 'select_workspace', project, workspace });
     }
 
@@ -319,7 +1011,7 @@
         sendControlMessage({ type: 'term_list' });
     }
 
-    // v1.3 File Operations API
+    // File Operations API
     function sendFileList(project, workspace, path) {
         sendControlMessage({ type: 'file_list', project, workspace, path: path || '.' });
     }
@@ -332,15 +1024,24 @@
         sendControlMessage({ type: 'file_write', project, workspace, path, content_b64 });
     }
 
-    function updateWorkspaceInfo() {
-        if (workspaceInfo) {
-            if (currentProject && currentWorkspace) {
-                workspaceInfo.textContent = currentProject + '/' + currentWorkspace;
-            } else {
-                workspaceInfo.textContent = '';
-            }
+    function sendFileIndex(project, workspace) {
+        sendControlMessage({ type: 'file_index', project, workspace });
+    }
+
+    function sendResize(termId, cols, rows) {
+        if (transport && transport.isConnected) {
+            transport.send(JSON.stringify({
+                type: 'resize',
+                term_id: termId,
+                cols: cols,
+                rows: rows
+            }));
         }
     }
+
+    // ============================================
+    // Message Handling
+    // ============================================
 
     function handleMessage(data) {
         try {
@@ -351,23 +1052,8 @@
                     protocolVersion = msg.version || 0;
                     capabilities = msg.capabilities || [];
 
-                    // Create default terminal tab (no workspace binding)
-                    const { term } = createTerminalInstance(msg.session_id, null, null, null);
-                    switchToTab(msg.session_id);
-
-                    term.writeln('\x1b[90m[TidyFlow Terminal]\x1b[0m');
-                    term.writeln('\x1b[32m[Connected]\x1b[0m Shell: ' + msg.shell + ', Session: ' + msg.session_id.substring(0, 8));
-                    if (protocolVersion >= 1) {
-                        term.writeln('\x1b[90mProtocol v' + protocolVersion + ' | Capabilities: ' + capabilities.join(', ') + '\x1b[0m');
-                    }
-                    term.writeln('');
-
-                    // Send initial resize
-                    const tab = tabs.get(msg.session_id);
-                    if (tab) {
-                        tab.fitAddon.fit();
-                        sendResize(msg.session_id, tab.term.cols, tab.term.rows);
-                    }
+                    // Request projects list
+                    listProjects();
 
                     notifySwift('hello', {
                         session_id: msg.session_id,
@@ -378,20 +1064,37 @@
                 }
 
                 case 'output': {
-                    const termId = msg.term_id || activeTermId;
-                    if (termId && tabs.has(termId)) {
-                        const bytes = decodeBase64(msg.data_b64);
-                        tabs.get(termId).term.write(bytes);
+                    // Find the terminal tab and write output
+                    const termId = msg.term_id;
+                    if (termId) {
+                        // Search all workspace tabs for this terminal
+                        for (const [wsKey, tabSet] of workspaceTabs) {
+                            if (tabSet.tabs.has(termId)) {
+                                const tab = tabSet.tabs.get(termId);
+                                if (tab.term) {
+                                    const bytes = decodeBase64(msg.data_b64);
+                                    tab.term.write(bytes);
+                                }
+                                break;
+                            }
+                        }
                     }
                     break;
                 }
 
                 case 'exit': {
-                    const termId = msg.term_id || activeTermId;
-                    if (termId && tabs.has(termId)) {
-                        const tab = tabs.get(termId);
-                        tab.term.writeln('');
-                        tab.term.writeln('\x1b[33m[Shell exited with code ' + msg.code + ']\x1b[0m');
+                    const termId = msg.term_id;
+                    if (termId) {
+                        for (const [wsKey, tabSet] of workspaceTabs) {
+                            if (tabSet.tabs.has(termId)) {
+                                const tab = tabSet.tabs.get(termId);
+                                if (tab.term) {
+                                    tab.term.writeln('');
+                                    tab.term.writeln('\x1b[33m[Shell exited with code ' + msg.code + ']\x1b[0m');
+                                }
+                                break;
+                            }
+                        }
                     }
                     break;
                 }
@@ -401,40 +1104,32 @@
 
                 case 'projects':
                     projects = msg.items || [];
+                    renderProjectTree();
                     notifySwift('projects', { items: projects });
                     break;
 
                 case 'workspaces':
-                    workspaces = msg.items || [];
-                    currentProject = msg.project;
-                    updateWorkspaceInfo();
-                    notifySwift('workspaces', { project: msg.project, items: workspaces });
+                    workspacesMap.set(msg.project, msg.items || []);
+                    renderProjectTree();
+                    notifySwift('workspaces', { project: msg.project, items: msg.items });
                     break;
 
                 case 'selected_workspace': {
-                    currentProject = msg.project;
-                    currentWorkspace = msg.workspace;
-                    updateWorkspaceInfo();
+                    // Switch workspace UI
+                    switchWorkspaceUI(msg.project, msg.workspace, msg.root);
 
-                    // Notify editor of workspace change
-                    if (window.tidyflowEditor) {
-                        window.tidyflowEditor.setWorkspace(msg.project, msg.workspace, msg.root);
-                    }
-
-                    // v1.2: Do NOT clear existing tabs - support parallel workspaces
-                    // Create new tab for this workspace
-                    const { term } = createTerminalInstance(msg.session_id, msg.root, msg.project, msg.workspace);
+                    // Create initial terminal for this workspace
+                    const tabInfo = createTerminalTab(msg.session_id, msg.root, msg.project, msg.workspace);
                     switchToTab(msg.session_id);
 
-                    term.writeln('\x1b[32m[Workspace: ' + msg.project + '/' + msg.workspace + ']\x1b[0m');
-                    term.writeln('\x1b[90mRoot: ' + msg.root + '\x1b[0m');
-                    term.writeln('\x1b[90mShell: ' + msg.shell + ', Session: ' + msg.session_id.substring(0, 8) + '\x1b[0m');
-                    term.writeln('');
+                    if (tabInfo.term) {
+                        tabInfo.term.writeln('\x1b[32m[Workspace: ' + msg.project + '/' + msg.workspace + ']\x1b[0m');
+                        tabInfo.term.writeln('\x1b[90mRoot: ' + msg.root + '\x1b[0m');
+                        tabInfo.term.writeln('\x1b[90mShell: ' + msg.shell + '\x1b[0m');
+                        tabInfo.term.writeln('');
 
-                    const tab = tabs.get(msg.session_id);
-                    if (tab) {
-                        tab.fitAddon.fit();
-                        sendResize(msg.session_id, tab.term.cols, tab.term.rows);
+                        tabInfo.fitAddon.fit();
+                        sendResize(msg.session_id, tabInfo.term.cols, tabInfo.term.rows);
                     }
 
                     notifySwift('workspace_selected', {
@@ -446,49 +1141,18 @@
                     break;
                 }
 
-                case 'terminal_spawned': {
-                    // Legacy single-terminal spawn - v1.2: no longer clears tabs
-                    const { term } = createTerminalInstance(msg.session_id, msg.cwd, null, null);
-                    switchToTab(msg.session_id);
-
-                    term.writeln('\x1b[32m[Terminal spawned]\x1b[0m');
-                    term.writeln('\x1b[90mCWD: ' + msg.cwd + '\x1b[0m');
-                    term.writeln('\x1b[90mShell: ' + msg.shell + ', Session: ' + msg.session_id.substring(0, 8) + '\x1b[0m');
-                    term.writeln('');
-
-                    const tab = tabs.get(msg.session_id);
-                    if (tab) {
-                        tab.fitAddon.fit();
-                        sendResize(msg.session_id, tab.term.cols, tab.term.rows);
-                    }
-
-                    notifySwift('terminal_spawned', {
-                        session_id: msg.session_id,
-                        cwd: msg.cwd
-                    });
-                    break;
-                }
-
-                case 'terminal_killed':
-                    removeTab(msg.session_id);
-                    notifySwift('terminal_killed', { session_id: msg.session_id });
-                    break;
-
-                // v1.2: Multi-workspace responses
                 case 'term_created': {
-                    // v1.2: term_created now includes project/workspace
-                    const { term } = createTerminalInstance(msg.term_id, msg.cwd, msg.project, msg.workspace);
+                    const tabInfo = createTerminalTab(msg.term_id, msg.cwd, msg.project, msg.workspace);
                     switchToTab(msg.term_id);
 
-                    term.writeln('\x1b[32m[New Terminal: ' + (msg.workspace || 'default') + ']\x1b[0m');
-                    term.writeln('\x1b[90mCWD: ' + msg.cwd + '\x1b[0m');
-                    term.writeln('\x1b[90mShell: ' + msg.shell + '\x1b[0m');
-                    term.writeln('');
+                    if (tabInfo.term) {
+                        tabInfo.term.writeln('\x1b[32m[New Terminal: ' + (msg.workspace || 'default') + ']\x1b[0m');
+                        tabInfo.term.writeln('\x1b[90mCWD: ' + msg.cwd + '\x1b[0m');
+                        tabInfo.term.writeln('\x1b[90mShell: ' + msg.shell + '\x1b[0m');
+                        tabInfo.term.writeln('');
 
-                    const tab = tabs.get(msg.term_id);
-                    if (tab) {
-                        tab.fitAddon.fit();
-                        sendResize(msg.term_id, tab.term.cols, tab.term.rows);
+                        tabInfo.fitAddon.fit();
+                        sendResize(msg.term_id, tabInfo.term.cols, tabInfo.term.rows);
                     }
 
                     notifySwift('term_created', {
@@ -505,38 +1169,90 @@
                     break;
 
                 case 'term_closed':
-                    removeTab(msg.term_id);
+                    // Find and remove the terminal tab
+                    for (const [wsKey, tabSet] of workspaceTabs) {
+                        if (tabSet.tabs.has(msg.term_id)) {
+                            // Temporarily set current workspace to remove tab
+                            const [proj, ws] = wsKey.split('/');
+                            const savedProj = currentProject;
+                            const savedWs = currentWorkspace;
+                            currentProject = proj;
+                            currentWorkspace = ws;
+                            removeTabFromUI(msg.term_id);
+                            currentProject = savedProj;
+                            currentWorkspace = savedWs;
+                            break;
+                        }
+                    }
                     notifySwift('term_closed', { term_id: msg.term_id });
                     break;
 
-                // v1.3: File operation responses
+                // File operation responses
                 case 'file_list_result':
-                    if (window.tidyflowEditor) {
-                        window.tidyflowEditor.handleFileList(msg.project, msg.workspace, msg.path, msg.items);
+                    if (msg.project === currentProject && msg.workspace === currentWorkspace) {
+                        renderExplorerTree(msg.path, msg.items);
                     }
                     notifySwift('file_list', { project: msg.project, workspace: msg.workspace, items: msg.items });
                     break;
 
                 case 'file_read_result':
-                    if (window.tidyflowEditor) {
-                        window.tidyflowEditor.handleFileRead(msg.project, msg.workspace, msg.path, msg.content_b64, msg.size);
+                    if (msg.project === currentProject && msg.workspace === currentWorkspace) {
+                        try {
+                            const content = new TextDecoder().decode(decodeBase64(msg.content_b64));
+                            const tabInfo = createEditorTab(msg.path, content);
+                            if (tabInfo) {
+                                switchToTab(tabInfo.id);
+                            }
+                        } catch (e) {
+                            console.error('Failed to decode file content:', e);
+                        }
                     }
                     notifySwift('file_read', { project: msg.project, workspace: msg.workspace, path: msg.path, size: msg.size });
                     break;
 
                 case 'file_write_result':
-                    if (window.tidyflowEditor) {
-                        window.tidyflowEditor.handleFileWrite(msg.project, msg.workspace, msg.path, msg.success, msg.size);
+                    if (msg.project === currentProject && msg.workspace === currentWorkspace && msg.success) {
+                        // Find the editor tab and mark as clean
+                        const wsKey = getCurrentWorkspaceKey();
+                        if (wsKey && workspaceTabs.has(wsKey)) {
+                            const tabSet = workspaceTabs.get(wsKey);
+                            const tabId = 'editor-' + msg.path.replace(/[^a-zA-Z0-9]/g, '-');
+                            if (tabSet.tabs.has(tabId)) {
+                                updateTabDirtyState(tabId, false);
+                                const tab = tabSet.tabs.get(tabId);
+                                if (tab.statusBar) {
+                                    tab.statusBar.textContent = 'Saved: ' + msg.path;
+                                    setTimeout(() => { tab.statusBar.textContent = ''; }, 3000);
+                                }
+                            }
+                        }
                     }
                     notifySwift('file_write', { project: msg.project, workspace: msg.workspace, path: msg.path, success: msg.success });
                     break;
 
-                case 'error':
-                    if (activeTermId && tabs.has(activeTermId)) {
-                        const tab = tabs.get(activeTermId);
-                        tab.term.writeln('');
-                        tab.term.writeln('\x1b[31m[Error: ' + msg.code + '] ' + msg.message + '\x1b[0m');
+                case 'file_index_result': {
+                    const wsKey = getWorkspaceKey(msg.project, msg.workspace);
+                    workspaceFileIndex.set(wsKey, {
+                        items: msg.items || [],
+                        truncated: msg.truncated || false,
+                        updatedAt: Date.now()
+                    });
+                    // Notify palette that index is ready
+                    if (window.tidyflowPalette && window.tidyflowPalette.onFileIndexReady) {
+                        window.tidyflowPalette.onFileIndexReady(wsKey);
                     }
+                    notifySwift('file_index', { project: msg.project, workspace: msg.workspace, count: msg.items?.length || 0, truncated: msg.truncated });
+                    break;
+                }
+
+                case 'git_status_result':
+                    if (msg.project === currentProject && msg.workspace === currentWorkspace) {
+                        renderGitStatus(msg.items, msg.branch, msg.is_git_repo);
+                    }
+                    break;
+
+                case 'error':
+                    console.error('Server error:', msg.code, msg.message);
                     notifySwift('error', { code: msg.code, message: msg.message });
                     break;
 
@@ -547,6 +1263,10 @@
             console.error('Failed to parse message:', e);
         }
     }
+
+    // ============================================
+    // Connection
+    // ============================================
 
     function connect() {
         const wsURL = window.TIDYFLOW_WS_URL || 'ws://127.0.0.1:47999/ws';
@@ -563,10 +1283,6 @@
             },
             onClose: () => {
                 notifySwift('disconnected');
-                // Show disconnected message in active terminal
-                if (activeTermId && tabs.has(activeTermId)) {
-                    tabs.get(activeTermId).term.writeln('\x1b[31m[Disconnected]\x1b[0m');
-                }
             },
             onError: (e) => {
                 notifySwift('error', { message: e.message || 'Connection failed' });
@@ -578,9 +1294,6 @@
     }
 
     function reconnect() {
-        if (activeTermId && tabs.has(activeTermId)) {
-            tabs.get(activeTermId).term.writeln('\x1b[90mReconnecting...\x1b[0m');
-        }
         connect();
     }
 
@@ -593,51 +1306,68 @@
     window.tidyflow = {
         connect,
         reconnect,
-        getActiveTermId: () => activeTermId,
+        getActiveTabId: () => activeTabId,
         getProtocolVersion: () => protocolVersion,
         getCapabilities: () => capabilities,
 
-        // v1 Control Plane API
+        // Control Plane API
         listProjects,
         listWorkspaces,
         selectWorkspace,
 
-        // v1.2 Multi-workspace API
+        // Terminal API
         createTerminal,
         listTerminals,
-        closeTerminal,
+        closeTab,
         switchToTab,
 
-        // v1.3 File Operations API
+        // File Operations API
         sendFileList,
         sendFileRead,
         sendFileWrite,
+        sendFileIndex,
+
+        // File index cache for Quick Open
+        getFileIndex: (project, workspace) => {
+            const wsKey = getWorkspaceKey(project, workspace);
+            return workspaceFileIndex.get(wsKey) || null;
+        },
+        refreshFileIndex: (project, workspace) => {
+            const wsKey = getWorkspaceKey(project, workspace);
+            workspaceFileIndex.delete(wsKey);
+            sendFileIndex(project, workspace);
+        },
 
         // State getters
         getProjects: () => projects,
-        getWorkspaces: () => workspaces,
+        getWorkspacesMap: () => workspacesMap,
         getCurrentProject: () => currentProject,
         getCurrentWorkspace: () => currentWorkspace,
-        getTabs: () => Array.from(tabs.keys()),
+        getCurrentWorkspaceRoot: () => currentWorkspaceRoot,
 
-        // v1.2: Get tab info with workspace binding
-        getTabInfo: (termId) => {
-            const tab = tabs.get(termId);
-            if (!tab) return null;
-            return {
-                term_id: termId,
-                project: tab.project,
-                workspace: tab.workspace,
-                cwd: tab.cwd
-            };
+        // Tab info
+        getWorkspaceTabs: () => {
+            const wsKey = getCurrentWorkspaceKey();
+            if (!wsKey || !workspaceTabs.has(wsKey)) return [];
+            const tabSet = workspaceTabs.get(wsKey);
+            return tabSet.tabOrder.map(id => {
+                const tab = tabSet.tabs.get(id);
+                return {
+                    id: tab.id,
+                    type: tab.type,
+                    title: tab.title,
+                    filePath: tab.filePath,
+                    isDirty: tab.isDirty
+                };
+            });
         },
-        getAllTabsInfo: () => {
-            return Array.from(tabs.entries()).map(([termId, tab]) => ({
-                term_id: termId,
-                project: tab.project,
-                workspace: tab.workspace,
-                cwd: tab.cwd
-            }));
-        },
+
+        // Tool panel
+        switchToolView,
+        refreshExplorer,
+        refreshGitStatus,
+
+        // File index for palette
+        getAllFilePaths: () => allFilePaths,
     };
 })();
