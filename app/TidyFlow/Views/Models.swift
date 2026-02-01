@@ -196,12 +196,39 @@ class AppState: ObservableObject {
         ensureDefaultTab(for: "default")
         setupCommands()
 
-        // Start Core process first, then setup WS client
+        // Setup Core process callbacks
+        setupCoreCallbacks()
+
+        // Start Core process first (WS will connect when Core is ready)
         startCoreIfNeeded()
-        setupWSClient()
     }
 
     // MARK: - Core Process Management
+
+    /// Setup callbacks for Core process events
+    private func setupCoreCallbacks() {
+        coreProcessManager.onCoreReady = { [weak self] port in
+            print("[AppState] Core ready on port \(port), connecting WebSocket")
+            self?.setupWSClient(port: port)
+        }
+
+        coreProcessManager.onCoreFailed = { [weak self] message in
+            print("[AppState] Core failed: \(message)")
+            self?.connectionState = .disconnected
+        }
+
+        coreProcessManager.onCoreRestarting = { [weak self] attempt, maxAttempts in
+            print("[AppState] Core restarting (attempt \(attempt)/\(maxAttempts))")
+            // Disconnect WebSocket during restart
+            self?.wsClient.disconnect()
+            self?.connectionState = .disconnected
+        }
+
+        coreProcessManager.onCoreRestartLimitReached = { [weak self] message in
+            print("[AppState] Core restart limit reached: \(message)")
+            self?.connectionState = .disconnected
+        }
+    }
 
     /// Start Core process if not already running
     func startCoreIfNeeded() {
@@ -212,6 +239,14 @@ class AppState: ObservableObject {
         coreProcessManager.start()
     }
 
+    /// Restart Core process (for Cmd+R recovery)
+    /// Resets auto-restart counter for manual recovery
+    func restartCore() {
+        print("[AppState] Restarting Core (manual, resetting counter)...")
+        wsClient.disconnect()
+        coreProcessManager.restart(resetCounter: true)
+    }
+
     /// Stop Core process (called on app termination)
     func stopCore() {
         coreProcessManager.stop()
@@ -219,7 +254,7 @@ class AppState: ObservableObject {
 
     // MARK: - WebSocket Setup
 
-    private func setupWSClient() {
+    private func setupWSClient(port: Int) {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
         }
@@ -265,8 +300,8 @@ class AppState: ObservableObject {
             }
         }
 
-        // Auto-connect on init
-        wsClient.connect()
+        // Connect to the dynamic port
+        wsClient.connect(port: port)
     }
 
     private func handleFileIndexResult(_ result: FileIndexResult) {
@@ -808,8 +843,8 @@ class AppState: ObservableObject {
             Command(id: "global.toggleGit", title: "Show Git", subtitle: nil, scope: .global, keyHint: "Cmd+3") { app in
                 app.activeRightTool = .git
             },
-            Command(id: "global.reconnect", title: "Reconnect", subtitle: "Reconnect to Core", scope: .global, keyHint: "Cmd+R") { app in
-                app.reconnectAndRefresh()
+            Command(id: "global.reconnect", title: "Reconnect", subtitle: "Restart Core and reconnect", scope: .global, keyHint: "Cmd+R") { app in
+                app.restartCore()
             },
             Command(id: "workspace.refreshFileIndex", title: "Refresh File Index", subtitle: "Reload file list from Core", scope: .workspace, keyHint: nil) { app in
                 app.refreshFileIndex()

@@ -1,18 +1,22 @@
 import Foundation
 import Combine
 
-/// Status of the Core process
+/// Status of the Core process with detailed state
 enum CoreStatus: Equatable {
     case stopped
-    case starting
-    case running
+    case starting(attempt: Int, port: Int)
+    case running(port: Int, pid: Int32)
+    case restarting(attempt: Int, maxAttempts: Int, lastError: String?)
     case failed(message: String)
 
     var displayText: String {
         switch self {
         case .stopped: return "Stopped"
-        case .starting: return "Starting"
-        case .running: return "Running"
+        case .starting(let attempt, _):
+            return attempt > 1 ? "Starting (try \(attempt)/\(AppConfig.maxPortRetries))" : "Starting"
+        case .running(let port, _): return "Running :\(port)"
+        case .restarting(let attempt, let max, _):
+            return "Restarting (\(attempt)/\(max))"
         case .failed(let msg): return "Failed: \(msg)"
         }
     }
@@ -21,13 +25,38 @@ enum CoreStatus: Equatable {
         if case .running = self { return true }
         return false
     }
+
+    var isStarting: Bool {
+        if case .starting = self { return true }
+        return false
+    }
+
+    var isRestarting: Bool {
+        if case .restarting = self { return true }
+        return false
+    }
+
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
+    /// Get the port if running or starting
+    var port: Int? {
+        switch self {
+        case .running(let port, _): return port
+        case .starting(_, let port): return port
+        default: return nil
+        }
+    }
 }
 
 /// Manages the lifecycle of the tidyflow-core subprocess
 /// Responsibilities:
 /// - Locate Core binary in app bundle
-/// - Start/stop Core process
-/// - Monitor process status
+/// - Start/stop Core process with dynamic port allocation
+/// - Monitor process status with retry on port conflict
+/// - Auto-restart on crash with exponential backoff
 /// - Inject port configuration via environment variable
 class CoreProcessManager: ObservableObject {
     @Published private(set) var status: CoreStatus = .stopped
@@ -43,9 +72,31 @@ class CoreProcessManager: ObservableObject {
     /// Prevent duplicate starts
     private var isStarting = false
 
+    /// Current attempt number (1-based) for port retry
+    private var currentAttempt = 0
+
+    /// Auto-restart tracking
+    private var autoRestartCount = 0
+    private var isStopping = false
+    private var lastTerminationReason: String?
+    private var lastTerminationCode: Int32?
+
+    /// Callback when Core is ready (WS connection succeeded)
+    var onCoreReady: ((Int) -> Void)?
+
+    /// Callback when Core fails after all retries
+    var onCoreFailed: ((String) -> Void)?
+
+    /// Callback when Core crashes and will auto-restart
+    var onCoreRestarting: ((Int, Int) -> Void)?
+
+    /// Callback when Core crashes and auto-restart limit reached
+    var onCoreRestartLimitReached: ((String) -> Void)?
+
     // MARK: - Public API
 
-    /// Start the Core process if not already running
+    /// Start the Core process with dynamic port allocation
+    /// Retries up to maxPortRetries times on failure
     func start() {
         guard !isStarting && !status.isRunning else {
             print("[CoreProcessManager] Already running or starting, skipping")
@@ -53,10 +104,138 @@ class CoreProcessManager: ObservableObject {
         }
 
         isStarting = true
-        DispatchQueue.main.async {
-            self.status = .starting
+        currentAttempt = 0
+        startWithRetry()
+    }
+
+    /// Stop the Core process gracefully
+    /// Sends SIGTERM first, waits up to 1s, then SIGKILL
+    func stop() {
+        // Mark as stopping to prevent auto-restart
+        isStopping = true
+
+        guard let proc = process, proc.isRunning else {
+            print("[CoreProcessManager] No running process to stop")
+            DispatchQueue.main.async {
+                self.status = .stopped
+                self.isStopping = false
+            }
+            return
         }
 
+        let pid = proc.processIdentifier
+        print("[CoreProcessManager] Stopping process PID: \(pid)")
+
+        // Send SIGTERM first
+        proc.terminate()
+
+        // Wait up to 1 second for graceful termination
+        DispatchQueue.global().async { [weak self] in
+            let deadline = Date().addingTimeInterval(AppConfig.shutdownTimeout)
+
+            while proc.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+
+            if proc.isRunning {
+                print("[CoreProcessManager] Process didn't terminate gracefully, sending SIGKILL")
+                kill(pid, SIGKILL)
+            }
+
+            DispatchQueue.main.async {
+                self?.cleanup()
+                self?.status = .stopped
+                self?.isStopping = false
+            }
+        }
+    }
+
+    /// Restart the Core process (stop then start)
+    /// - Parameter resetCounter: If true, resets auto-restart counter (for manual restart)
+    func restart(resetCounter: Bool = false) {
+        if resetCounter {
+            autoRestartCount = 0
+        }
+        stop()
+        // Wait a bit for cleanup, then start
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.start()
+        }
+    }
+
+    /// Check if process is currently running
+    var isRunning: Bool {
+        process?.isRunning ?? false
+    }
+
+    /// Get the current port (if running or starting)
+    var currentPort: Int? {
+        status.port
+    }
+
+    /// Get auto-restart count (for UI display)
+    var restartAttempts: Int {
+        autoRestartCount
+    }
+
+    /// Get recent log lines for debugging
+    func getRecentLogs() -> [String] {
+        return recentLogs
+    }
+
+    /// Manual run instructions for when auto-start fails
+    static var manualRunInstructions: String {
+        """
+        To run Core manually:
+        1. Open Terminal
+        2. cd to project directory
+        3. Run: ./scripts/run-core.sh
+        Or: cargo run --release -- serve --port <port>
+        """
+    }
+
+    /// Failure message with recovery hint
+    static var failureRecoveryHint: String {
+        "Press Cmd+R to retry"
+    }
+
+    // MARK: - Private: Retry Logic
+
+    private func startWithRetry() {
+        currentAttempt += 1
+
+        guard currentAttempt <= AppConfig.maxPortRetries else {
+            let msg = "Failed after \(AppConfig.maxPortRetries) attempts"
+            print("[CoreProcessManager] \(msg)")
+            DispatchQueue.main.async {
+                self.status = .failed(message: msg)
+                self.isStarting = false
+                self.onCoreFailed?(msg)
+            }
+            return
+        }
+
+        // Allocate a new port
+        guard let port = PortAllocator.findAvailablePort() else {
+            let msg = "Failed to allocate port"
+            print("[CoreProcessManager] \(msg)")
+            // Retry with next attempt
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.startWithRetry()
+            }
+            return
+        }
+
+        print("[CoreProcessManager] Attempt \(currentAttempt): trying port \(port)")
+
+        DispatchQueue.main.async {
+            self.status = .starting(attempt: self.currentAttempt, port: port)
+        }
+
+        startProcess(port: port)
+    }
+
+    private func startProcess(port: Int) {
         // Locate binary in bundle
         guard let binaryURL = locateCoreBinary() else {
             let msg = "Core binary not found in bundle"
@@ -64,6 +243,7 @@ class CoreProcessManager: ObservableObject {
             DispatchQueue.main.async {
                 self.status = .failed(message: msg)
                 self.isStarting = false
+                self.onCoreFailed?(msg)
             }
             return
         }
@@ -73,11 +253,11 @@ class CoreProcessManager: ObservableObject {
         // Create process
         let proc = Process()
         proc.executableURL = binaryURL
-        proc.arguments = ["serve", "--port", "\(AppConfig.corePort)"]
+        proc.arguments = ["serve", "--port", "\(port)"]
 
-        // Also set environment variable as backup
+        // Set environment variable
         var env = ProcessInfo.processInfo.environment
-        env["TIDYFLOW_PORT"] = "\(AppConfig.corePort)"
+        env["TIDYFLOW_PORT"] = "\(port)"
         proc.environment = env
 
         // Setup pipes for stdout/stderr
@@ -107,13 +287,42 @@ class CoreProcessManager: ObservableObject {
         // Handle termination
         proc.terminationHandler = { [weak self] proc in
             DispatchQueue.main.async {
+                guard let self = self else { return }
+
                 let code = proc.terminationStatus
-                if code == 0 {
-                    self?.status = .stopped
-                } else {
-                    self?.status = .failed(message: "Exit code \(code)")
+                let reason = proc.terminationReason
+
+                // Store termination info
+                self.lastTerminationCode = code
+                self.lastTerminationReason = reason == .exit ? "exit(\(code))" : "signal(\(code))"
+
+                // If we're intentionally stopping, don't auto-restart
+                if self.isStopping {
+                    print("[CoreProcessManager] Process stopped intentionally, not auto-restarting")
+                    return
                 }
-                self?.cleanup()
+
+                // If we're still in starting phase and process died, retry (port conflict handling)
+                if self.isStarting {
+                    print("[CoreProcessManager] Process exited during startup with code \(code), retrying...")
+                    self.cleanup()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        self.startWithRetry()
+                    }
+                    return
+                }
+
+                // Unexpected termination - attempt auto-restart
+                let isUnexpected = code != 0 || reason == .uncaughtSignal
+                if isUnexpected {
+                    print("[CoreProcessManager] Unexpected termination: code=\(code), reason=\(reason.rawValue)")
+                    self.handleUnexpectedTermination(code: code, reason: reason)
+                    return
+                }
+
+                // Normal termination (code == 0)
+                self.status = .stopped
+                self.cleanup()
             }
         }
 
@@ -121,70 +330,72 @@ class CoreProcessManager: ObservableObject {
         do {
             try proc.run()
             self.process = proc
-            print("[CoreProcessManager] Process started with PID: \(proc.processIdentifier)")
+            let pid = proc.processIdentifier
+            print("[CoreProcessManager] Process started with PID: \(pid) on port \(port)")
 
-            // Give it a moment to start, then mark as running
+            // Mark as running after a short delay to let it initialize
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self = self else { return }
                 if self.process?.isRunning == true {
-                    self.status = .running
+                    self.status = .running(port: port, pid: pid)
+                    self.isStarting = false
+                    self.onCoreReady?(port)
                 }
-                self.isStarting = false
             }
         } catch {
             let msg = "Failed to start: \(error.localizedDescription)"
             print("[CoreProcessManager] \(msg)")
-            DispatchQueue.main.async {
-                self.status = .failed(message: msg)
-                self.isStarting = false
+
+            // Retry on launch failure
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.startWithRetry()
             }
         }
     }
 
-    /// Stop the Core process
-    func stop() {
-        guard let proc = process, proc.isRunning else {
-            print("[CoreProcessManager] No running process to stop")
-            return
-        }
+    // MARK: - Private: Helpers
 
-        print("[CoreProcessManager] Stopping process PID: \(proc.processIdentifier)")
+    /// Handle unexpected process termination with auto-restart
+    private func handleUnexpectedTermination(code: Int32, reason: Process.TerminationReason) {
+        cleanup()
 
-        // Send SIGTERM first
-        proc.terminate()
+        let errorDesc = reason == .uncaughtSignal ? "Signal \(code)" : "Exit code \(code)"
 
-        // Give it 2 seconds to terminate gracefully
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            if proc.isRunning {
-                print("[CoreProcessManager] Process didn't terminate, sending SIGKILL")
-                kill(proc.processIdentifier, SIGKILL)
+        // Check if we can auto-restart
+        if autoRestartCount < AppConfig.autoRestartLimit {
+            autoRestartCount += 1
+            let attempt = autoRestartCount
+            let maxAttempts = AppConfig.autoRestartLimit
+
+            print("[CoreProcessManager] Auto-restart attempt \(attempt)/\(maxAttempts)")
+
+            // Update status to restarting
+            status = .restarting(attempt: attempt, maxAttempts: maxAttempts, lastError: errorDesc)
+            onCoreRestarting?(attempt, maxAttempts)
+
+            // Calculate backoff delay
+            let backoffIndex = min(attempt - 1, AppConfig.autoRestartBackoffs.count - 1)
+            let delay = AppConfig.autoRestartBackoffs[backoffIndex]
+
+            print("[CoreProcessManager] Waiting \(delay)s before restart...")
+
+            // Schedule restart with backoff
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self else { return }
+                // Double-check we're still in restarting state (user might have manually stopped)
+                if case .restarting = self.status {
+                    self.start()
+                }
             }
-            self?.cleanup()
+        } else {
+            // Auto-restart limit reached
+            let msg = "Core crashed repeatedly (\(AppConfig.autoRestartLimit) times). \(Self.failureRecoveryHint)"
+            print("[CoreProcessManager] \(msg)")
+            status = .failed(message: msg)
+            onCoreRestartLimitReached?(msg)
+            onCoreFailed?(msg)
         }
     }
-
-    /// Check if process is currently running
-    var isRunning: Bool {
-        process?.isRunning ?? false
-    }
-
-    /// Get recent log lines for debugging
-    func getRecentLogs() -> [String] {
-        return recentLogs
-    }
-
-    /// Manual run instructions for when auto-start fails
-    static var manualRunInstructions: String {
-        """
-        To run Core manually:
-        1. Open Terminal
-        2. cd to project directory
-        3. Run: ./scripts/run-core.sh
-        Or: cargo run --release -- serve --port \(AppConfig.corePort)
-        """
-    }
-
-    // MARK: - Private
 
     private func locateCoreBinary() -> URL? {
         // Try Contents/Resources/Core/tidyflow-core first

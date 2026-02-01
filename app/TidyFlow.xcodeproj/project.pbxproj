@@ -28,6 +28,7 @@
 		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
+		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,6 +56,7 @@
 		A1000015 /* TidyFlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TidyFlow.entitlements; sourceTree = "<group>"; };
 		D3900011 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		D3900012 /* CoreProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProcessManager.swift; sourceTree = "<group>"; };
+		D3900013 /* PortAllocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortAllocator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +111,7 @@
 			isa = PBXGroup;
 			children = (
 				D3900012 /* CoreProcessManager.swift */,
+				D3900013 /* PortAllocator.swift */,
 			);
 			path = Process;
 			sourceTree = "<group>";
@@ -237,6 +240,7 @@
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				D3900001 /* AppConfig.swift in Sources */,
 				D3900002 /* CoreProcessManager.swift in Sources */,
+				D3900003 /* PortAllocator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

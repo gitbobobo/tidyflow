@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shows Core process status (Starting/Running/Failed)
+/// Shows Core process status (Starting/Running/Restarting/Failed) with port info
 struct CoreStatusView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var coreManager: CoreProcessManager
@@ -14,6 +14,7 @@ struct CoreStatusView: View {
         case .stopped: return .gray
         case .starting: return .orange
         case .running: return .green
+        case .restarting: return .yellow
         case .failed: return .red
         }
     }
@@ -23,7 +24,27 @@ struct CoreStatusView: View {
         case .stopped: return "stop.circle"
         case .starting: return "hourglass"
         case .running: return "checkmark.circle"
+        case .restarting: return "arrow.triangle.2.circlepath"
         case .failed: return "exclamationmark.triangle"
+        }
+    }
+
+    private var helpText: String {
+        switch coreManager.status {
+        case .running(let port, let pid):
+            return "Core running on port \(port) (PID: \(pid))\nCmd+R to restart"
+        case .starting(let attempt, let port):
+            return "Starting on port \(port) (attempt \(attempt)/\(AppConfig.maxPortRetries))"
+        case .restarting(let attempt, let max, let lastError):
+            var text = "Auto-restarting (attempt \(attempt)/\(max))"
+            if let err = lastError {
+                text += "\nLast error: \(err)"
+            }
+            return text
+        case .failed(let msg):
+            return "Failed: \(msg)\nCmd+R to retry\n\n\(CoreProcessManager.manualRunInstructions)"
+        case .stopped:
+            return "Core stopped\nCmd+R to start"
         }
     }
 
@@ -37,41 +58,35 @@ struct CoreStatusView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
-        .help(coreManager.status.isRunning ? "Core is running" : CoreProcessManager.manualRunInstructions)
+        .help(helpText)
     }
 }
 
 struct ConnectionStatusView: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
         HStack {
             Circle()
                 .fill(appState.connectionState == .connected ? Color.green : Color.red)
                 .frame(width: 8, height: 8)
-            
+
             Text(appState.connectionState == .connected ? "Connected" : "Disconnected")
                 .font(.caption)
-            
+
             Button(action: {
-                // Mock reconnect
-                if appState.connectionState == .connected {
-                    appState.connectionState = .disconnected
-                } else {
-                    appState.connectionState = .connected
-                }
-                print("[Toolbar] Reconnect clicked. New state: \(appState.connectionState)")
+                appState.restartCore()
             }) {
                 Image(systemName: "arrow.clockwise")
             }
-            .help("Reconnect")
+            .help("Restart Core (Cmd+R)")
         }
     }
 }
 
 struct ProjectPickerView: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
         Picker("Project", selection: $appState.selectedWorkspaceKey) {
             Text("Select Project...").tag(String?.none)

@@ -7,6 +7,9 @@ class WSClient: NSObject, ObservableObject {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
 
+    /// Current WebSocket URL (can be updated at runtime)
+    private var currentURL: URL?
+
     // Message handlers
     var onFileIndexResult: ((FileIndexResult) -> Void)?
     var onGitDiffResult: ((GitDiffResult) -> Void)?
@@ -22,20 +25,51 @@ class WSClient: NSObject, ObservableObject {
         urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
     }
 
+    /// Initialize with a specific URL
+    init(url: URL) {
+        super.init()
+        self.currentURL = url
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    }
+
+    /// Update the base URL and optionally reconnect
+    /// - Parameters:
+    ///   - url: New WebSocket URL
+    ///   - reconnect: Whether to disconnect and reconnect immediately
+    func updateBaseURL(_ url: URL, reconnect: Bool = true) {
+        print("[WSClient] Updating URL to: \(url.absoluteString)")
+        currentURL = url
+        if reconnect {
+            self.reconnect()
+        }
+    }
+
+    /// Update the base URL using port number
+    func updatePort(_ port: Int, reconnect: Bool = true) {
+        let url = AppConfig.makeWsURL(port: port)
+        updateBaseURL(url, reconnect: reconnect)
+    }
+
     // MARK: - Connection
 
     func connect() {
         guard webSocketTask == nil else { return }
 
-        let urlString = AppConfig.coreWsURL
-        guard let url = URL(string: urlString) else {
-            onError?("Invalid WebSocket URL")
+        guard let url = currentURL else {
+            onError?("No WebSocket URL configured")
             return
         }
 
+        print("[WSClient] Connecting to: \(url.absoluteString)")
         webSocketTask = urlSession?.webSocketTask(with: url)
         webSocketTask?.resume()
         receiveMessage()
+    }
+
+    /// Connect to a specific port (convenience method)
+    func connect(port: Int) {
+        currentURL = AppConfig.makeWsURL(port: port)
+        connect()
     }
 
     func disconnect() {

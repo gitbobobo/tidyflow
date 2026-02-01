@@ -1,22 +1,34 @@
 import Foundation
 
 /// Centralized configuration for TidyFlow app
-/// Single source of truth for port and URL settings
+/// Single source of truth for host and URL settings
 enum AppConfig {
-    /// Fixed port for Core WebSocket server (MVP: no dynamic port)
-    static let corePort: Int = 47999
-
     /// Host for Core server (localhost only)
     static let coreHost: String = "127.0.0.1"
-
-    /// WebSocket URL for Core connection
-    static var coreWsURL: String {
-        "ws://\(coreHost):\(corePort)/ws"
-    }
 
     /// Core binary name in bundle
     static let coreBinaryName: String = "tidyflow-core"
 
     /// Subdirectory in bundle for Core binary (Contents/Resources/Core/)
     static let coreBundleSubdir: String = "Core"
+
+    /// Maximum retry attempts for port allocation
+    static let maxPortRetries: Int = 5
+
+    /// Timeout for graceful shutdown (seconds)
+    static let shutdownTimeout: TimeInterval = 1.0
+
+    /// Auto-restart configuration
+    static let autoRestartLimit: Int = 3
+    static let autoRestartBackoffs: [TimeInterval] = [0.2, 0.5, 1.2]
+
+    /// Generate WebSocket URL for a given port
+    static func makeWsURL(port: Int) -> URL {
+        URL(string: "ws://\(coreHost):\(port)/ws")!
+    }
+
+    /// Generate WebSocket URL string for a given port
+    static func makeWsURLString(port: Int) -> String {
+        "ws://\(coreHost):\(port)/ws"
+    }
 }
