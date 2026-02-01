@@ -12,6 +12,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Message handlers
     var onFileIndexResult: ((FileIndexResult) -> Void)?
+    var onGitDiffResult: ((GitDiffResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -81,6 +82,17 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // Phase C2-2a: Request git diff
+    func requestGitDiff(project: String, workspace: String, path: String, mode: String) {
+        sendJSON([
+            "type": "git_diff",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "mode": mode
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -127,6 +139,11 @@ class WSClient: NSObject, ObservableObject {
         case "file_index_result":
             if let result = FileIndexResult.from(json: json) {
                 onFileIndexResult?(result)
+            }
+
+        case "git_diff_result":
+            if let result = GitDiffResult.from(json: json) {
+                onGitDiffResult?(result)
             }
 
         case "error":

@@ -18,6 +18,7 @@
 		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
 		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
 		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
+		B3A00007 /* NativeDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* NativeDiffView.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
@@ -37,6 +38,7 @@
 		B3A00012 /* KeybindingHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeybindingHandler.swift; sourceTree = "<group>"; };
 		B3A00013 /* TabStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripView.swift; sourceTree = "<group>"; };
 		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
+		B3A00017 /* NativeDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiffView.swift; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TidyFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -66,6 +68,7 @@
 				B3A00012 /* KeybindingHandler.swift */,
 				2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */,
 				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
+				B3A00017 /* NativeDiffView.swift */,
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
 				B3A00014 /* TabContentHostView.swift */,
 				B3A00013 /* TabStripView.swift */,
@@ -205,6 +208,7 @@
 				B3A00002 /* KeybindingHandler.swift in Sources */,
 				B3A00003 /* TabStripView.swift in Sources */,
 				B3A00004 /* TabContentHostView.swift in Sources */,
+				B3A00007 /* NativeDiffView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 			);

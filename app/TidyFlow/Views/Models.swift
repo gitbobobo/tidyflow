@@ -65,6 +65,10 @@ struct TabModel: Identifiable, Codable, Equatable {
     // Phase C2-1: Diff mode (only for diff tabs)
     // "working" = unstaged changes, "staged" = staged changes
     var diffMode: String?
+
+    // Phase C2-2b: Diff view mode (only for diff tabs)
+    // "unified" = single column, "split" = side-by-side
+    var diffViewMode: String?
 }
 
 // Phase C2-1: Diff mode enum for type safety
@@ -112,6 +116,12 @@ class AppState: ObservableObject {
 
     // File Index Cache (workspace key -> cache)
     @Published var fileIndexCache: [String: FileIndexCache] = [:]
+
+    // Phase C2-2a: Diff Cache (key: "workspace:path:mode" -> DiffCache)
+    @Published var diffCache: [String: DiffCache] = [:]
+
+    // Phase C2-2a: Flag to use native diff (set to false to fallback to Web diff)
+    var useNativeDiff: Bool = true
 
     // Editor Bridge State
     @Published var editorWebReady: Bool = false
@@ -175,6 +185,11 @@ class AppState: ObservableObject {
             self?.handleFileIndexResult(result)
         }
 
+        // Phase C2-2a: Handle git diff results
+        wsClient.onGitDiffResult = { [weak self] result in
+            self?.handleGitDiffResult(result)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -230,6 +245,80 @@ class AppState: ObservableObject {
 
     func reconnectAndRefresh() {
         wsClient.reconnect()
+    }
+
+    // MARK: - Phase C2-2a: Git Diff API
+
+    /// Generate cache key for diff
+    private func diffCacheKey(workspace: String, path: String, mode: String) -> String {
+        return "\(workspace):\(path):\(mode)"
+    }
+
+    /// Handle git diff result from WebSocket
+    private func handleGitDiffResult(_ result: GitDiffResult) {
+        let key = diffCacheKey(workspace: result.workspace, path: result.path, mode: result.mode)
+        let parsedLines = DiffParser.parse(result.text)
+
+        let cache = DiffCache(
+            text: result.text,
+            parsedLines: parsedLines,
+            isLoading: false,
+            error: nil,
+            isBinary: result.isBinary,
+            truncated: result.truncated,
+            code: result.code,
+            updatedAt: Date()
+        )
+        diffCache[key] = cache
+    }
+
+    /// Fetch git diff for a file
+    func fetchGitDiff(workspaceKey: String, path: String, mode: DiffMode) {
+        guard connectionState == .connected else {
+            let key = diffCacheKey(workspace: workspaceKey, path: path, mode: mode.rawValue)
+            var cache = diffCache[key] ?? DiffCache.empty()
+            cache.error = "Disconnected"
+            cache.isLoading = false
+            diffCache[key] = cache
+            return
+        }
+
+        let key = diffCacheKey(workspace: workspaceKey, path: path, mode: mode.rawValue)
+
+        // Set loading state
+        var cache = diffCache[key] ?? DiffCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        diffCache[key] = cache
+
+        // Send request
+        wsClient.requestGitDiff(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            path: path,
+            mode: mode.rawValue
+        )
+    }
+
+    /// Get cached diff for a file/mode
+    func getDiffCache(workspaceKey: String, path: String, mode: DiffMode) -> DiffCache? {
+        let key = diffCacheKey(workspace: workspaceKey, path: path, mode: mode.rawValue)
+        return diffCache[key]
+    }
+
+    /// Refresh diff for active diff tab
+    func refreshActiveDiff() {
+        guard let ws = selectedWorkspaceKey,
+              let path = activeDiffPath else { return }
+        fetchGitDiff(workspaceKey: ws, path: path, mode: activeDiffMode)
+    }
+
+    /// Check if file is deleted (code starts with D)
+    func isFileDeleted(workspaceKey: String, path: String, mode: DiffMode) -> Bool {
+        guard let cache = getDiffCache(workspaceKey: workspaceKey, path: path, mode: mode) else {
+            return false
+        }
+        return cache.code.hasPrefix("D")
     }
     
     private func setupCommands() {
@@ -507,6 +596,25 @@ class AppState: ObservableObject {
               let index = tabs.firstIndex(where: { $0.id == activeId && $0.kind == .diff }) else { return }
 
         tabs[index].diffMode = mode.rawValue
+        workspaceTabs[ws] = tabs
+    }
+
+    /// Get the diff view mode of the active diff tab
+    var activeDiffViewMode: DiffViewMode {
+        guard let tab = getActiveTab(), tab.kind == .diff,
+              let modeStr = tab.diffViewMode,
+              let mode = DiffViewMode(rawValue: modeStr) else { return .unified }
+        return mode
+    }
+
+    /// Update diff view mode for active diff tab
+    func setActiveDiffViewMode(_ mode: DiffViewMode) {
+        guard let ws = selectedWorkspaceKey,
+              var tabs = workspaceTabs[ws],
+              let activeId = activeTabIdByWorkspace[ws],
+              let index = tabs.firstIndex(where: { $0.id == activeId && $0.kind == .diff }) else { return }
+
+        tabs[index].diffViewMode = mode.rawValue
         workspaceTabs[ws] = tabs
     }
 
