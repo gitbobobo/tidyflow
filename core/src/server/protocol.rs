@@ -113,6 +113,29 @@ pub enum ClientMessage {
         #[serde(default = "default_git_scope")]
         scope: String,  // "file" or "all"
     },
+
+    // v1.8: Git branch operations
+    GitBranches {
+        project: String,
+        workspace: String,
+    },
+    GitSwitchBranch {
+        project: String,
+        workspace: String,
+        branch: String,
+    },
+    // v1.9: Git create branch
+    GitCreateBranch {
+        project: String,
+        workspace: String,
+        branch: String,
+    },
+    // v1.10: Git commit
+    GitCommit {
+        project: String,
+        workspace: String,
+        message: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -214,6 +237,10 @@ pub enum ServerMessage {
         workspace: String,
         repo_root: String,
         items: Vec<GitStatusEntry>,
+        #[serde(default)]
+        has_staged_changes: bool,
+        #[serde(default)]
+        staged_count: usize,
     },
     GitDiffResult {
         project: String,
@@ -231,13 +258,32 @@ pub enum ServerMessage {
     GitOpResult {
         project: String,
         workspace: String,
-        op: String,  // "stage", "unstage", or "discard"
+        op: String,  // "stage", "unstage", "discard", "switch_branch", or "create_branch"
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         path: Option<String>,
         scope: String,  // "file" or "all"
+    },
+
+    // v1.8: Git branches result
+    GitBranchesResult {
+        project: String,
+        workspace: String,
+        current: String,
+        branches: Vec<GitBranchInfo>,
+    },
+
+    // v1.10: Git commit result
+    GitCommitResult {
+        project: String,
+        workspace: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sha: Option<String>,
     },
 
     // v1: Error handling
@@ -287,6 +333,11 @@ pub struct GitStatusEntry {
     pub orig_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitBranchInfo {
+    pub name: String,
+}
+
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -302,5 +353,8 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_tools".to_string(),
         "git_stage_unstage".to_string(),
         "git_discard".to_string(),
+        "git_branches".to_string(),
+        "git_create_branch".to_string(),
+        "git_commit".to_string(),
     ]
 }

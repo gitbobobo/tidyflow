@@ -21,6 +21,8 @@ pub struct GitStatusEntry {
 pub struct GitStatusResult {
     pub repo_root: String,
     pub items: Vec<GitStatusEntry>,
+    pub has_staged_changes: bool,
+    pub staged_count: usize,
 }
 
 /// Git diff result
@@ -43,6 +45,27 @@ pub struct GitOpResult {
     pub message: Option<String>,
     pub path: Option<String>,
     pub scope: String,
+}
+
+/// Git branch info
+#[derive(Debug)]
+pub struct GitBranchInfo {
+    pub name: String,
+}
+
+/// Git branches result
+#[derive(Debug)]
+pub struct GitBranchesResult {
+    pub current: String,
+    pub branches: Vec<GitBranchInfo>,
+}
+
+/// Git commit result
+#[derive(Debug)]
+pub struct GitCommitResult {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub sha: Option<String>,
 }
 
 /// Error type for git operations
@@ -104,6 +127,7 @@ fn get_git_repo_root(workspace_root: &Path) -> Option<String> {
 /// Get git status for a workspace
 ///
 /// Uses `git status --porcelain=v1 -z` for stable parsing.
+/// Also checks for staged changes using `git diff --cached --name-only`.
 pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     // Check if it's a git repo
     let repo_root = match get_git_repo_root(workspace_root) {
@@ -112,6 +136,8 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
             return Ok(GitStatusResult {
                 repo_root: String::new(),
                 items: vec![],
+                has_staged_changes: false,
+                staged_count: 0,
             });
         }
     };
@@ -131,7 +157,10 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let items = parse_porcelain_status(&stdout);
 
-    Ok(GitStatusResult { repo_root, items })
+    // Check for staged changes
+    let (has_staged_changes, staged_count) = check_staged_changes(workspace_root);
+
+    Ok(GitStatusResult { repo_root, items, has_staged_changes, staged_count })
 }
 
 /// Parse git status --porcelain=v1 -z output
@@ -586,6 +615,297 @@ pub fn git_discard(
                 })
             }
         }
+    }
+}
+
+/// List local branches and get current branch
+///
+/// Uses:
+/// - `git rev-parse --abbrev-ref HEAD` for current branch
+/// - `git for-each-ref refs/heads --format="%(refname:short)"` for branch list
+pub fn git_branches(workspace_root: &Path) -> Result<GitBranchesResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // Get current branch
+    let current_output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    let current = if current_output.status.success() {
+        String::from_utf8_lossy(&current_output.stdout).trim().to_string()
+    } else {
+        "HEAD".to_string() // Detached HEAD state
+    };
+
+    // Get all local branches
+    let branches_output = Command::new("git")
+        .args(["for-each-ref", "refs/heads", "--format=%(refname:short)"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    let mut branches = Vec::new();
+    if branches_output.status.success() {
+        let stdout = String::from_utf8_lossy(&branches_output.stdout);
+        for line in stdout.lines() {
+            let name = line.trim();
+            if !name.is_empty() {
+                branches.push(GitBranchInfo {
+                    name: name.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(GitBranchesResult { current, branches })
+}
+
+/// Switch to a different branch
+///
+/// Uses `git switch <branch>` (Git 2.23+), falls back to `git checkout <branch>`
+pub fn git_switch_branch(workspace_root: &Path, branch: &str) -> Result<GitOpResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // Try git switch first (Git 2.23+)
+    let switch_output = Command::new("git")
+        .args(["switch", branch])
+        .current_dir(workspace_root)
+        .output();
+
+    match switch_output {
+        Ok(output) if output.status.success() => {
+            return Ok(GitOpResult {
+                op: "switch_branch".to_string(),
+                ok: true,
+                message: Some(format!("Switched to branch '{}'", branch)),
+                path: Some(branch.to_string()),
+                scope: "branch".to_string(),
+            });
+        }
+        Ok(output) => {
+            // Check if it's a "switch not found" error (old git) or actual error
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("is not a git command") {
+                // Real error from git switch
+                return Ok(GitOpResult {
+                    op: "switch_branch".to_string(),
+                    ok: false,
+                    message: Some(stderr.trim().to_string()),
+                    path: Some(branch.to_string()),
+                    scope: "branch".to_string(),
+                });
+            }
+            // Fall through to checkout
+        }
+        Err(_) => {
+            // Fall through to checkout
+        }
+    }
+
+    // Fallback to git checkout
+    let checkout_output = Command::new("git")
+        .args(["checkout", branch])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if checkout_output.status.success() {
+        Ok(GitOpResult {
+            op: "switch_branch".to_string(),
+            ok: true,
+            message: Some(format!("Switched to branch '{}'", branch)),
+            path: Some(branch.to_string()),
+            scope: "branch".to_string(),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&checkout_output.stderr).trim().to_string();
+        Ok(GitOpResult {
+            op: "switch_branch".to_string(),
+            ok: false,
+            message: Some(if stderr.is_empty() { "Switch failed".to_string() } else { stderr }),
+            path: Some(branch.to_string()),
+            scope: "branch".to_string(),
+        })
+    }
+}
+
+/// Create and switch to a new branch
+///
+/// Uses `git switch -c <branch>` (Git 2.23+), falls back to `git checkout -b <branch>`
+pub fn git_create_branch(workspace_root: &Path, branch: &str) -> Result<GitOpResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // Try git switch -c first (Git 2.23+)
+    let switch_output = Command::new("git")
+        .args(["switch", "-c", branch])
+        .current_dir(workspace_root)
+        .output();
+
+    match switch_output {
+        Ok(output) if output.status.success() => {
+            return Ok(GitOpResult {
+                op: "create_branch".to_string(),
+                ok: true,
+                message: Some(format!("Created and switched to '{}'", branch)),
+                path: Some(branch.to_string()),
+                scope: "branch".to_string(),
+            });
+        }
+        Ok(output) => {
+            // Check if it's a "switch not found" error (old git) or actual error
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("is not a git command") {
+                // Real error from git switch -c (e.g., branch already exists)
+                return Ok(GitOpResult {
+                    op: "create_branch".to_string(),
+                    ok: false,
+                    message: Some(stderr.trim().to_string()),
+                    path: Some(branch.to_string()),
+                    scope: "branch".to_string(),
+                });
+            }
+            // Fall through to checkout -b
+        }
+        Err(_) => {
+            // Fall through to checkout -b
+        }
+    }
+
+    // Fallback to git checkout -b
+    let checkout_output = Command::new("git")
+        .args(["checkout", "-b", branch])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if checkout_output.status.success() {
+        Ok(GitOpResult {
+            op: "create_branch".to_string(),
+            ok: true,
+            message: Some(format!("Created and switched to '{}'", branch)),
+            path: Some(branch.to_string()),
+            scope: "branch".to_string(),
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&checkout_output.stderr).trim().to_string();
+        Ok(GitOpResult {
+            op: "create_branch".to_string(),
+            ok: false,
+            message: Some(if stderr.is_empty() { "Create branch failed".to_string() } else { stderr }),
+            path: Some(branch.to_string()),
+            scope: "branch".to_string(),
+        })
+    }
+}
+
+/// Check if there are staged changes
+///
+/// Uses `git diff --cached --name-only` to list staged files.
+fn check_staged_changes(workspace_root: &Path) -> (bool, usize) {
+    let output = Command::new("git")
+        .args(["diff", "--cached", "--name-only"])
+        .current_dir(workspace_root)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let count = stdout.lines().filter(|l| !l.is_empty()).count();
+            (count > 0, count)
+        }
+        _ => (false, 0),
+    }
+}
+
+/// Commit staged changes
+///
+/// Uses `git commit -m <message>` to create a commit.
+/// Returns the short SHA of the new commit on success.
+pub fn git_commit(workspace_root: &Path, message: &str) -> Result<GitCommitResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // Validate message is not empty
+    let trimmed_message = message.trim();
+    if trimmed_message.is_empty() {
+        return Ok(GitCommitResult {
+            ok: false,
+            message: Some("Commit message cannot be empty".to_string()),
+            sha: None,
+        });
+    }
+
+    // Check if there are staged changes
+    let (has_staged, _) = check_staged_changes(workspace_root);
+    if !has_staged {
+        return Ok(GitCommitResult {
+            ok: false,
+            message: Some("No staged changes to commit".to_string()),
+            sha: None,
+        });
+    }
+
+    // Run git commit
+    let output = Command::new("git")
+        .args(["commit", "-m", trimmed_message])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if output.status.success() {
+        // Get the short SHA of the new commit
+        let sha = get_short_head_sha(workspace_root);
+        Ok(GitCommitResult {
+            ok: true,
+            message: Some(format!("Committed: {}", sha.as_deref().unwrap_or("unknown"))),
+            sha,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // Check for common errors and provide helpful messages
+        let error_msg = if stderr.contains("user.name") || stderr.contains("user.email") {
+            "Git identity not configured. Run: git config user.name \"Your Name\" && git config user.email \"you@example.com\"".to_string()
+        } else if stderr.contains("pre-commit") || stderr.contains("hook") {
+            format!("Pre-commit hook failed: {}", stderr)
+        } else if stderr.is_empty() {
+            "Commit failed".to_string()
+        } else {
+            stderr
+        };
+
+        Ok(GitCommitResult {
+            ok: false,
+            message: Some(error_msg),
+            sha: None,
+        })
+    }
+}
+
+/// Get the short SHA of HEAD
+fn get_short_head_sha(workspace_root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(workspace_root)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
     }
 }
 
