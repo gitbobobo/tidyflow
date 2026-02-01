@@ -345,6 +345,15 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // Phase UX-6: Request git check branch up to date
+    func requestGitCheckBranchUpToDate(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_check_branch_up_to_date",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {

@@ -1304,6 +1304,18 @@ pub struct IntegrationStatusResult {
     pub default_branch: String,
     pub path: String,
     pub is_clean: bool,
+    // v1.15: Branch divergence info (UX-6)
+    pub branch_ahead_by: Option<i32>,
+    pub branch_behind_by: Option<i32>,
+    pub compared_branch: Option<String>,
+}
+
+/// v1.15: Branch divergence result (UX-6)
+#[derive(Debug)]
+pub struct BranchDivergenceResult {
+    pub ahead_by: i32,
+    pub behind_by: i32,
+    pub compared_branch: String,
 }
 
 /// Merge to default result
@@ -1489,6 +1501,9 @@ pub fn integration_status(
             default_branch: default_branch.to_string(),
             path: integration_path.to_string_lossy().to_string(),
             is_clean: true,
+            branch_ahead_by: None,
+            branch_behind_by: None,
+            compared_branch: None,
         });
     }
 
@@ -1527,6 +1542,9 @@ pub fn integration_status(
         default_branch: default_branch.to_string(),
         path: integration_path.to_string_lossy().to_string(),
         is_clean,
+        branch_ahead_by: None,
+        branch_behind_by: None,
+        compared_branch: None,
     })
 }
 
@@ -2177,6 +2195,109 @@ pub fn reset_integration_worktree(
             path: None,
         })
     }
+}
+
+// ============================================================================
+// v1.15: Branch Divergence Detection (UX-6)
+// ============================================================================
+
+/// v1.15: Check branch divergence against remote default branch (UX-6)
+///
+/// This function:
+/// 1. Fetches from origin (with timeout, non-blocking)
+/// 2. Runs `git rev-list --left-right --count <current_branch>...origin/<default_branch>`
+/// 3. Parses the output to get ahead/behind counts
+///
+/// All operations are READ-ONLY (fetch only updates remote tracking refs).
+pub fn check_branch_divergence(
+    workspace_root: &Path,
+    current_branch: &str,
+    default_branch: &str,
+) -> Result<BranchDivergenceResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // Fetch from origin (safe, read-only operation)
+    // Use a timeout to avoid blocking indefinitely on network issues
+    let fetch_output = Command::new("git")
+        .args(["fetch", "origin", "--no-tags"])
+        .current_dir(workspace_root)
+        .output();
+
+    // Log fetch result but don't fail if fetch fails (network might be unavailable)
+    if let Err(e) = &fetch_output {
+        tracing::warn!("Git fetch failed (continuing with local data): {}", e);
+    } else if let Ok(output) = &fetch_output {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("Git fetch returned error (continuing with local data): {}", stderr);
+        }
+    }
+
+    // Build the comparison ref
+    let remote_ref = format!("origin/{}", default_branch);
+
+    // Check if the remote ref exists
+    let check_ref_output = Command::new("git")
+        .args(["rev-parse", "--verify", &remote_ref])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !check_ref_output.status.success() {
+        return Err(GitError::CommandFailed(format!(
+            "Remote branch '{}' not found. Make sure the default branch exists on origin.",
+            remote_ref
+        )));
+    }
+
+    // Run git rev-list to get ahead/behind counts
+    // Format: <ahead>\t<behind>
+    let rev_list_output = Command::new("git")
+        .args([
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{}...{}", current_branch, remote_ref),
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !rev_list_output.status.success() {
+        let stderr = String::from_utf8_lossy(&rev_list_output.stderr).trim().to_string();
+        return Err(GitError::CommandFailed(format!(
+            "Failed to compare branches: {}",
+            if stderr.is_empty() { "Unknown error" } else { &stderr }
+        )));
+    }
+
+    // Parse the output: "<ahead>\t<behind>"
+    let stdout = String::from_utf8_lossy(&rev_list_output.stdout);
+    let parts: Vec<&str> = stdout.trim().split('\t').collect();
+
+    if parts.len() != 2 {
+        return Err(GitError::CommandFailed(format!(
+            "Unexpected rev-list output format: '{}'",
+            stdout.trim()
+        )));
+    }
+
+    let ahead_by = parts[0].parse::<i32>().map_err(|e| {
+        GitError::CommandFailed(format!("Failed to parse ahead count: {}", e))
+    })?;
+
+    let behind_by = parts[1].parse::<i32>().map_err(|e| {
+        GitError::CommandFailed(format!("Failed to parse behind count: {}", e))
+    })?;
+
+    Ok(BranchDivergenceResult {
+        ahead_by,
+        behind_by,
+        compared_branch: remote_ref,
+    })
 }
 
 #[cfg(test)]

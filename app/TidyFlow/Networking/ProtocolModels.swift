@@ -827,6 +827,10 @@ struct GitIntegrationStatusResult {
     let defaultBranch: String
     let path: String
     let isClean: Bool
+    // UX-6: Branch divergence fields
+    let branchAheadBy: Int?
+    let branchBehindBy: Int?
+    let comparedBranch: String?
 
     static func from(json: [String: Any]) -> GitIntegrationStatusResult? {
         guard let project = json["project"] as? String,
@@ -839,6 +843,10 @@ struct GitIntegrationStatusResult {
         let state = IntegrationState(rawValue: stateStr) ?? .idle
         let conflicts = json["conflicts"] as? [String] ?? []
         let head = json["head"] as? String
+        // UX-6: Parse branch divergence fields
+        let branchAheadBy = json["branch_ahead_by"] as? Int
+        let branchBehindBy = json["branch_behind_by"] as? Int
+        let comparedBranch = json["compared_branch"] as? String
         return GitIntegrationStatusResult(
             project: project,
             state: state,
@@ -846,7 +854,10 @@ struct GitIntegrationStatusResult {
             head: head,
             defaultBranch: defaultBranch,
             path: path,
-            isClean: isClean
+            isClean: isClean,
+            branchAheadBy: branchAheadBy,
+            branchBehindBy: branchBehindBy,
+            comparedBranch: comparedBranch
         )
     }
 }
@@ -859,6 +870,10 @@ struct GitIntegrationStatusCache {
     var updatedAt: Date
     var integrationPath: String?
     var defaultBranch: String
+    // UX-6: Branch divergence fields
+    var branchAheadBy: Int?
+    var branchBehindBy: Int?
+    var comparedBranch: String?
 
     static func empty() -> GitIntegrationStatusCache {
         GitIntegrationStatusCache(
@@ -867,7 +882,10 @@ struct GitIntegrationStatusCache {
             isLoading: false,
             updatedAt: .distantPast,
             integrationPath: nil,
-            defaultBranch: "main"
+            defaultBranch: "main",
+            branchAheadBy: nil,
+            branchBehindBy: nil,
+            comparedBranch: nil
         )
     }
 }

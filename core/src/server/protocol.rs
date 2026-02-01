@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Protocol version: 1 (backward compatible with v0, with multi-workspace extension v1.2)
 /// v1.11: Git rebase/fetch operations for UX-3a
 /// v1.12: Git merge to default via integration worktree for UX-3b
+/// v1.15: Git check branch up to date (UX-6)
 pub const PROTOCOL_VERSION: u32 = 1;
 
 // ============================================================================
@@ -197,6 +198,12 @@ pub enum ClientMessage {
     // v1.14: Git reset integration worktree (UX-5)
     GitResetIntegrationWorktree {
         project: String,
+    },
+
+    // v1.15: Git check branch up to date (UX-6)
+    GitCheckBranchUpToDate {
+        project: String,
+        workspace: String,
     },
 }
 
@@ -399,6 +406,13 @@ pub enum ServerMessage {
         default_branch: String,
         path: String,
         is_clean: bool,
+        // v1.15: Branch divergence info (UX-6)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch_ahead_by: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch_behind_by: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compared_branch: Option<String>,
     },
 
     // v1.13: Git rebase onto default result (UX-4)
@@ -498,5 +512,6 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_commit".to_string(),
         "git_rebase".to_string(),
         "git_merge_integration".to_string(),
+        "git_branch_divergence".to_string(),
     ]
 }

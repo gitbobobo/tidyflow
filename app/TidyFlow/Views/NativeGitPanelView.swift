@@ -911,6 +911,61 @@ struct GitWorkspaceActionsSection: View {
                 }
             }
 
+            // UX-6: Branch divergence indicator (behind)
+            if let integrationStatus = currentIntegrationStatus,
+               let behindBy = integrationStatus.branchBehindBy,
+               behindBy > 0 {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                        Text("Branch is \(behindBy) commit\(behindBy == 1 ? "" : "s") behind \(integrationStatus.comparedBranch ?? "default")")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.orange)
+                        Spacer()
+                    }
+
+                    // CTA buttons
+                    HStack(spacing: 8) {
+                        Button(action: performRebaseOntoDefault) {
+                            Text("Rebase onto Default")
+                                .font(.system(size: 10))
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isRebaseOntoDefaultInFlight || isMergeInFlight)
+
+                        Button(action: performMergeToDefault) {
+                            Text("Merge Default into Branch")
+                                .font(.system(size: 10))
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isRebaseOntoDefaultInFlight || isMergeInFlight)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.1))
+            }
+
+            // UX-6: Branch divergence indicator (ahead)
+            if let integrationStatus = currentIntegrationStatus,
+               let aheadBy = integrationStatus.branchAheadBy,
+               aheadBy > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(.blue)
+                    Text("Branch is \(aheadBy) commit\(aheadBy == 1 ? "" : "s") ahead of \(integrationStatus.comparedBranch ?? "default")")
+                        .font(.system(size: 11))
+                        .foregroundColor(.blue)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color.blue.opacity(0.05))
+            }
+
             // Conflict files list (if any - rebase)
             if let conflicts = currentOpStatus?.conflicts, !conflicts.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -981,6 +1036,23 @@ struct GitWorkspaceActionsSection: View {
                 .buttonStyle(PlainButtonStyle())
                 .disabled(isRebaseInFlight || isMergeInFlight)
                 .help("Fetch from remote")
+
+                // UX-6: Check Up To Date button
+                Button(action: performCheckUpToDate) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 11))
+                        Text("Check")
+                            .font(.system(size: 11))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.teal.opacity(0.15))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isRebaseInFlight || isMergeInFlight)
+                .help("Check if branch is up to date with default")
 
                 // Rebase button (only show if not in rebase or merge)
                 if !isInRebase && !isInMerge {
@@ -1197,6 +1269,12 @@ struct GitWorkspaceActionsSection: View {
         return appState.isMergeInFlight(workspaceKey: ws)
     }
 
+    // UX-6: Check if rebase onto default is in-flight
+    private var isRebaseOntoDefaultInFlight: Bool {
+        guard let ws = appState.selectedWorkspaceKey else { return false }
+        return appState.isRebaseOntoDefaultInFlight(workspaceKey: ws)
+    }
+
     private func loadOpStatusIfNeeded() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         appState.fetchGitOpStatus(workspaceKey: ws)
@@ -1210,6 +1288,12 @@ struct GitWorkspaceActionsSection: View {
     private func performFetch() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         appState.gitFetch(workspaceKey: ws)
+    }
+
+    // UX-6: Check if branch is up to date with default
+    private func performCheckUpToDate() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitCheckBranchUpToDate(workspaceKey: ws)
     }
 
     private func performRebase() {
@@ -1231,6 +1315,12 @@ struct GitWorkspaceActionsSection: View {
     private func performMergeToDefault() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         appState.gitMergeToDefault(workspaceKey: ws)
+    }
+
+    // UX-6: Perform rebase onto default (via integration worktree)
+    private func performRebaseOntoDefault() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitRebaseOntoDefault(workspaceKey: ws)
     }
 
     private func performMergeContinue() {

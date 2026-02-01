@@ -1991,6 +1991,9 @@ async fn handle_client_message(
                                 default_branch: status_result.default_branch,
                                 path: status_result.path,
                                 is_clean: status_result.is_clean,
+                                branch_ahead_by: status_result.branch_ahead_by,
+                                branch_behind_by: status_result.branch_behind_by,
+                                compared_branch: status_result.compared_branch,
                             }).await?;
                         }
                         Ok(Err(e)) => {
@@ -2241,6 +2244,124 @@ async fn handle_client_message(
                         }
                     }
                 }
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.15: Git check branch up to date (UX-6)
+        ClientMessage::GitCheckBranchUpToDate { project, workspace } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        let current_branch = w.branch.clone();
+                        let project_name = p.name.clone();
+                        drop(state);
+
+                        // Check if workspace is on a branch (not detached HEAD)
+                        if current_branch == "HEAD" || current_branch.is_empty() {
+                            send_message(socket, &ServerMessage::GitIntegrationStatusResult {
+                                project,
+                                state: "idle".to_string(),
+                                conflicts: vec![],
+                                head: None,
+                                default_branch: "main".to_string(),
+                                path: root.to_string_lossy().to_string(),
+                                is_clean: true,
+                                branch_ahead_by: None,
+                                branch_behind_by: None,
+                                compared_branch: None,
+                            }).await?;
+                            return Ok(());
+                        }
+
+                        // Default to "main" branch for comparison
+                        let default_branch = "main".to_string();
+                        let default_branch_clone = default_branch.clone();
+                        let current_branch_clone = current_branch.clone();
+
+                        let result = tokio::task::spawn_blocking(move || {
+                            git_tools::check_branch_divergence(&root, &current_branch_clone, &default_branch_clone)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(divergence_result)) => {
+                                // Get integration status for the full response
+                                let integration_result = tokio::task::spawn_blocking({
+                                    let project_name = project_name.clone();
+                                    let default_branch = default_branch.clone();
+                                    move || {
+                                        git_tools::integration_status(&project_name, &default_branch)
+                                    }
+                                }).await;
+
+                                match integration_result {
+                                    Ok(Ok(status_result)) => {
+                                        send_message(socket, &ServerMessage::GitIntegrationStatusResult {
+                                            project,
+                                            state: status_result.state.as_str().to_string(),
+                                            conflicts: status_result.conflicts,
+                                            head: status_result.head,
+                                            default_branch: status_result.default_branch,
+                                            path: status_result.path,
+                                            is_clean: status_result.is_clean,
+                                            branch_ahead_by: Some(divergence_result.ahead_by),
+                                            branch_behind_by: Some(divergence_result.behind_by),
+                                            compared_branch: Some(divergence_result.compared_branch),
+                                        }).await?;
+                                    }
+                                    Ok(Err(e)) => {
+                                        // Integration status failed, but we still have divergence info
+                                        send_message(socket, &ServerMessage::GitIntegrationStatusResult {
+                                            project,
+                                            state: "idle".to_string(),
+                                            conflicts: vec![],
+                                            head: None,
+                                            default_branch,
+                                            path: String::new(),
+                                            is_clean: true,
+                                            branch_ahead_by: Some(divergence_result.ahead_by),
+                                            branch_behind_by: Some(divergence_result.behind_by),
+                                            compared_branch: Some(divergence_result.compared_branch),
+                                        }).await?;
+                                        warn!("Integration status failed: {}", e);
+                                    }
+                                    Err(e) => {
+                                        send_message(socket, &ServerMessage::Error {
+                                            code: "internal_error".to_string(),
+                                            message: format!("Integration status task failed: {}", e),
+                                        }).await?;
+                                    }
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                // Divergence check failed, return error
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "git_error".to_string(),
+                                    message: format!("Branch divergence check failed: {}", e),
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Branch divergence task failed: {}", e),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),

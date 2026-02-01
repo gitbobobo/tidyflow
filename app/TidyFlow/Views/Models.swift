@@ -1118,6 +1118,10 @@ class AppState: ObservableObject {
         cache.conflicts = result.conflicts
         cache.isLoading = false
         cache.updatedAt = Date()
+        // UX-6: Update branch divergence fields
+        cache.branchAheadBy = result.branchAheadBy
+        cache.branchBehindBy = result.branchBehindBy
+        cache.comparedBranch = result.comparedBranch
         gitIntegrationStatusCache[result.project] = cache
     }
 
@@ -1347,6 +1351,25 @@ class AppState: ObservableObject {
         )
     }
 
+    // MARK: - Phase UX-6: Git Check Branch Up To Date API
+
+    /// Check if branch is up to date with default branch
+    func gitCheckBranchUpToDate(workspaceKey: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        let parts = workspaceKey.split(separator: "/")
+        let workspace = parts.count == 2 ? String(parts[1]) : workspaceKey
+
+        wsClient.requestGitCheckBranchUpToDate(
+            project: selectedProjectName,
+            workspace: workspace
+        )
+    }
+
     private func setupCommands() {
         self.commands = [
             Command(id: "global.palette", title: "Show Command Palette", subtitle: nil, scope: .global, keyHint: "Cmd+Shift+P") { app in
@@ -1432,6 +1455,11 @@ class AppState: ObservableObject {
             Command(id: "git.resetIntegrationWorktree", title: "Git: Reset Integration Worktree", subtitle: "Reset integration worktree to clean state", scope: .workspace, keyHint: nil) { app in
                 guard let ws = app.selectedWorkspaceKey else { return }
                 app.gitResetIntegrationWorktree(workspaceKey: ws)
+            },
+            // UX-6: Git check branch up to date command
+            Command(id: "git.checkBranchUpToDate", title: "Git: Check Branch Up To Date", subtitle: "Check if branch is behind default", scope: .workspace, keyHint: nil) { app in
+                guard let ws = app.selectedWorkspaceKey else { return }
+                app.gitCheckBranchUpToDate(workspaceKey: ws)
             }
         ]
     }
