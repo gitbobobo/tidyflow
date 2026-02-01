@@ -131,6 +131,47 @@ T004 + T009 + T010 → T011 (M0 集成测试)
 
 详见 `08-open-questions.md`。
 
+## UI 布局
+
+TidyFlow 采用 Cursor 风格的三栏布局：
+
+```
++------------------+------------------------+------------------+
+|                  |                        |                  |
+|  LEFT SIDEBAR    |      MAIN AREA         |   RIGHT PANEL    |
+|  (220px)         |      (flex: 1)         |   (280px)        |
+|                  |                        |                  |
+|  Projects/       |  [Tab Bar]             |  [Tool Icons]    |
+|  Workspaces      |  +------------------+  |  Explorer|Search |
+|  Tree            |  | Tab Content      |  |  |Git            |
+|                  |  | (Editor/Terminal)|  |                  |
+|                  |  +------------------+  |  [Tool Content]  |
+|                  |                        |                  |
++------------------+------------------------+------------------+
+```
+
+### 核心特性
+
+1. **Workspace 作用域 Tabs** - 每个 Workspace 拥有独立的 Tab 集合，切换 Workspace 时自动切换整个 Tab 集合
+2. **统一 Tab 栏** - Editor 和 Terminal 混合在同一个 Tab 栏中
+3. **右侧工具面板** - Explorer/Search/Git 三个视图，通过图标切换
+
+### 操作说明
+
+| 操作 | 说明 |
+|------|------|
+| 选择 Workspace | 点击左侧边栏的 Workspace 节点 |
+| 新建 Terminal | 点击 Tab 栏右侧的 ⌘ 按钮 |
+| 打开文件 | 在右侧 Explorer 中点击文件 |
+| 保存文件 | `Cmd+S` (macOS) / `Ctrl+S` |
+| 关闭 Tab | 点击 Tab 上的 × 按钮 |
+| 切换工具视图 | 点击右侧面板顶部的图标 |
+
+### 设计文档
+
+- `design/15-workspace-ui-contract.md` - Workspace UI 契约
+- `design/16-right-panel-tools.md` - 右侧工具面板规范
+
 ## Editor 编辑器
 
 ### 概述
@@ -149,6 +190,35 @@ TidyFlow 内置了一个轻量级文本编辑器，用于在 Workspace 内快速
 | 快捷键 | 功能 |
 |--------|------|
 | `Cmd+S` (macOS) / `Ctrl+S` (其他) | 保存当前文件 |
+
+### 命令面板快捷键
+
+| 快捷键 | 功能 |
+|--------|------|
+| `Cmd+P` | Quick Open - 快速打开文件 |
+| `Cmd+Shift+P` | Command Palette - 命令面板 |
+| `Cmd+1/2/3` | 切换右侧工具面板 (Explorer/Search/Git) |
+| `Cmd+T` | 新建终端 Tab |
+| `Cmd+W` | 关闭当前 Tab |
+| `Ctrl+Tab` | 下一个 Tab |
+| `Ctrl+Shift+Tab` | 上一个 Tab |
+
+### Quick Open 文件索引 (Cmd+P)
+
+Quick Open 使用服务端文件索引 API，提供完整的 Workspace 文件列表：
+
+- **首次打开**: 自动从服务端请求文件索引，显示 loading 状态
+- **后续打开**: 使用缓存的索引，即时响应
+- **刷新索引**: 在命令面板 (Cmd+Shift+P) 中执行 "Refresh File Index"
+
+**过滤规则**:
+- 忽略目录: `.git`, `target`, `node_modules`, `dist`, `build`, `.build`, `.swiftpm` 等
+- 忽略隐藏文件: 以 `.` 开头的文件
+- 最大文件数: 50,000 (超过时显示 truncated 警告)
+
+详见 `design/18-file-index.md`。
+
+详见 `design/17-command-palette.md`。
 
 ### 限制
 
