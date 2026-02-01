@@ -2,6 +2,12 @@ import Foundation
 import Combine
 import SwiftUI
 
+// MARK: - Notifications
+
+extension Notification.Name {
+    static let saveEditorFile = Notification.Name("saveEditorFile")
+}
+
 enum RightTool: String, CaseIterable {
     case explorer
     case search
@@ -62,37 +68,121 @@ class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
     @Published var connectionState: ConnectionState = .disconnected
-    
+
     @Published var workspaceTabs: [String: TabSet] = [:]
     @Published var activeTabIdByWorkspace: [String: UUID] = [:]
-    
+
     // Command Palette State
     @Published var commandPalettePresented: Bool = false
     @Published var commandPaletteMode: PaletteMode = .command
     @Published var commandQuery: String = ""
     @Published var paletteSelectionIndex: Int = 0
-    
+
+    // File Index Cache (workspace key -> cache)
+    @Published var fileIndexCache: [String: FileIndexCache] = [:]
+
+    // Editor Bridge State
+    @Published var editorWebReady: Bool = false
+    @Published var lastEditorPath: String?
+    @Published var editorStatus: String = ""
+    @Published var editorStatusIsError: Bool = false
+
+    // WebSocket Client
+    let wsClient = WSClient()
+
+    // Project name (for WS protocol)
+    var selectedProjectName: String = "default"
+
     // Mock data for workspaces
     let workspaces = [
         "default": "Default Workspace",
         "project-alpha": "Project Alpha",
         "project-beta": "Project Beta"
     ]
-    
-    // Mock files for Quick Open
+
+    // Mock files for Quick Open (fallback when disconnected)
     let mockFiles: [String: [String]] = [
         "default": ["README.md", "src/main.rs", "Cargo.toml", ".gitignore", "docs/DESIGN.md"],
         "project-alpha": ["Alpha.swift", "AppDelegate.swift", "Info.plist"],
         "project-beta": ["index.html", "style.css", "script.js", "package.json"]
     ]
-    
+
     var commands: [Command] = []
-    
+
     init() {
         // Set default workspace
         self.selectedWorkspaceKey = "default"
         ensureDefaultTab(for: "default")
         setupCommands()
+        setupWSClient()
+    }
+
+    // MARK: - WebSocket Setup
+
+    private func setupWSClient() {
+        wsClient.onConnectionStateChanged = { [weak self] connected in
+            self?.connectionState = connected ? .connected : .disconnected
+        }
+
+        wsClient.onFileIndexResult = { [weak self] result in
+            self?.handleFileIndexResult(result)
+        }
+
+        wsClient.onError = { [weak self] errorMsg in
+            // Update cache with error if we were loading
+            if let ws = self?.selectedWorkspaceKey {
+                var cache = self?.fileIndexCache[ws] ?? FileIndexCache.empty()
+                if cache.isLoading {
+                    cache.isLoading = false
+                    cache.error = errorMsg
+                    self?.fileIndexCache[ws] = cache
+                }
+            }
+        }
+
+        // Auto-connect on init
+        wsClient.connect()
+    }
+
+    private func handleFileIndexResult(_ result: FileIndexResult) {
+        let cache = FileIndexCache(
+            items: result.items,
+            truncated: result.truncated,
+            updatedAt: Date(),
+            isLoading: false,
+            error: nil
+        )
+        fileIndexCache[result.workspace] = cache
+    }
+
+    // MARK: - File Index API
+
+    func fetchFileIndex(workspaceKey: String) {
+        guard connectionState == .connected else {
+            var cache = fileIndexCache[workspaceKey] ?? FileIndexCache.empty()
+            cache.error = "Disconnected"
+            cache.isLoading = false
+            fileIndexCache[workspaceKey] = cache
+            return
+        }
+
+        // Set loading state
+        var cache = fileIndexCache[workspaceKey] ?? FileIndexCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        fileIndexCache[workspaceKey] = cache
+
+        // Send request
+        wsClient.requestFileIndex(project: selectedProjectName, workspace: workspaceKey)
+    }
+
+    func refreshFileIndex() {
+        guard let ws = selectedWorkspaceKey else { return }
+        fetchFileIndex(workspaceKey: ws)
+    }
+
+    func reconnectAndRefresh() {
+        wsClient.reconnect()
     }
     
     private func setupCommands() {
@@ -118,8 +208,11 @@ class AppState: ObservableObject {
             Command(id: "global.toggleGit", title: "Show Git", subtitle: nil, scope: .global, keyHint: "Cmd+3") { app in
                 app.activeRightTool = .git
             },
-            Command(id: "global.reconnect", title: "Reconnect", subtitle: nil, scope: .global, keyHint: "Cmd+R") { app in
-                app.connectionState = (app.connectionState == .connected) ? .disconnected : .connected
+            Command(id: "global.reconnect", title: "Reconnect", subtitle: "Reconnect to Core", scope: .global, keyHint: "Cmd+R") { app in
+                app.reconnectAndRefresh()
+            },
+            Command(id: "workspace.refreshFileIndex", title: "Refresh File Index", subtitle: "Reload file list from Core", scope: .workspace, keyHint: nil) { app in
+                app.refreshFileIndex()
             },
             Command(id: "workspace.newTerminal", title: "New Terminal", subtitle: nil, scope: .workspace, keyHint: "Cmd+T") { app in
                 guard let ws = app.selectedWorkspaceKey else { return }
@@ -137,8 +230,7 @@ class AppState: ObservableObject {
                 app.prevTab()
             },
             Command(id: "workspace.save", title: "Save File", subtitle: nil, scope: .workspace, keyHint: "Cmd+S") { app in
-                 // Placeholder save
-                 print("(placeholder) saved")
+                 app.saveActiveEditorFile()
             }
         ]
     }
@@ -226,8 +318,60 @@ class AppState: ObservableObject {
               let tabs = workspaceTabs[ws], !tabs.isEmpty,
               let activeId = activeTabIdByWorkspace[ws],
               let index = tabs.firstIndex(where: { $0.id == activeId }) else { return }
-        
+
         let prevIndex = (index - 1 + tabs.count) % tabs.count
         activeTabIdByWorkspace[ws] = tabs[prevIndex].id
+    }
+
+    // MARK: - Editor Bridge Helpers
+
+    /// Get the active tab for the current workspace
+    func getActiveTab() -> TabModel? {
+        guard let ws = selectedWorkspaceKey,
+              let activeId = activeTabIdByWorkspace[ws],
+              let tabs = workspaceTabs[ws] else { return nil }
+        return tabs.first { $0.id == activeId }
+    }
+
+    /// Check if active tab is an editor tab
+    var isActiveTabEditor: Bool {
+        getActiveTab()?.kind == .editor
+    }
+
+    /// Get the file path of the active editor tab
+    var activeEditorPath: String? {
+        guard let tab = getActiveTab(), tab.kind == .editor else { return nil }
+        return tab.payload
+    }
+
+    /// Save the active editor file (called by Cmd+S)
+    func saveActiveEditorFile() {
+        guard let path = activeEditorPath else {
+            print("[AppState] No active editor tab to save")
+            return
+        }
+        // The actual save is triggered via WebBridge in CenterContentView
+        // This just sets the intent; the view will handle the bridge call
+        lastEditorPath = path
+        editorStatus = "Saving..."
+        editorStatusIsError = false
+        NotificationCenter.default.post(name: .saveEditorFile, object: path)
+    }
+
+    /// Update editor status after save result
+    func handleEditorSaved(path: String) {
+        editorStatus = "Saved"
+        editorStatusIsError = false
+        // Clear status after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            if self?.editorStatus == "Saved" {
+                self?.editorStatus = ""
+            }
+        }
+    }
+
+    func handleEditorSaveError(path: String, message: String) {
+        editorStatus = "Error: \(message)"
+        editorStatusIsError = true
     }
 }

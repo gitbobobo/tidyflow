@@ -2068,6 +2068,11 @@
                                 }
                             }
                         }
+                        // Notify Native of successful save
+                        notifyNativeSaved(msg.path);
+                    } else if (!msg.success) {
+                        // Notify Native of save error
+                        notifyNativeSaveError(msg.path, msg.error || 'Save failed');
                     }
                     notifySwift('file_write', { project: msg.project, workspace: msg.workspace, path: msg.path, success: msg.success });
                     break;
@@ -2147,9 +2152,96 @@
         connect();
     }
 
+    // ============================================
+    // Native Bridge Handler (Phase B-3b)
+    // ============================================
+
+    // Handle events from Native (Swift) via tidyflowNative.receive()
+    function handleNativeEvent(type, payload) {
+        console.log('[NativeBridge] Handling event:', type, payload);
+
+        switch (type) {
+            case 'open_file': {
+                const { project, workspace, path } = payload;
+                if (!project || !workspace || !path) {
+                    console.error('[NativeBridge] open_file missing required fields');
+                    return;
+                }
+                // Switch to workspace if needed
+                if (currentProject !== project || currentWorkspace !== workspace) {
+                    currentProject = project;
+                    currentWorkspace = workspace;
+                }
+                // Open file in editor
+                openFileInEditor(path);
+                break;
+            }
+
+            case 'save_file': {
+                const { project, workspace, path } = payload;
+                if (!path) {
+                    console.error('[NativeBridge] save_file missing path');
+                    postToNative('save_error', { path: '', message: 'Missing path' });
+                    return;
+                }
+                // Find the editor tab and save
+                const wsKey = getWorkspaceKey(project || currentProject, workspace || currentWorkspace);
+                const tabId = 'editor-' + path.replace(/[^a-zA-Z0-9]/g, '-');
+
+                if (workspaceTabs.has(wsKey)) {
+                    const tabSet = workspaceTabs.get(wsKey);
+                    if (tabSet.tabs.has(tabId)) {
+                        saveEditorTab(tabId);
+                    } else {
+                        postToNative('save_error', { path, message: 'Editor tab not found' });
+                    }
+                } else {
+                    postToNative('save_error', { path, message: 'Workspace not found' });
+                }
+                break;
+            }
+
+            default:
+                console.warn('[NativeBridge] Unknown event type:', type);
+        }
+    }
+
+    // Post event to Native (Swift)
+    function postToNative(type, payload) {
+        if (window.tidyflowNative && window.tidyflowNative.post) {
+            window.tidyflowNative.post(type, payload || {});
+        } else {
+            console.warn('[NativeBridge] Native bridge not available');
+        }
+    }
+
+    // Notify Native when file is saved successfully
+    function notifyNativeSaved(path) {
+        postToNative('saved', { path });
+    }
+
+    // Notify Native when save fails
+    function notifyNativeSaveError(path, message) {
+        postToNative('save_error', { path, message });
+    }
+
+    // Initialize native bridge event handler
+    function initNativeBridge() {
+        if (window.tidyflowNative) {
+            window.tidyflowNative.onEvent = handleNativeEvent;
+            // Notify Native that web is ready
+            postToNative('ready', { capabilities: ['editor', 'terminal', 'diff'] });
+            console.log('[NativeBridge] Bridge initialized and ready');
+        } else {
+            console.log('[NativeBridge] Native bridge not available (running in browser?)');
+        }
+    }
+
     // Initialize on load
     document.addEventListener('DOMContentLoaded', () => {
         initUI();
+        // Initialize native bridge after UI
+        setTimeout(initNativeBridge, 100);
     });
 
     // Expose API for Swift

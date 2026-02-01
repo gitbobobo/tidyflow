@@ -14,6 +14,12 @@
 		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
 		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
+		B3A00001 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00011 /* CommandPaletteView.swift */; };
+		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
+		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
+		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
+		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
+		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
 		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
 		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
@@ -27,6 +33,12 @@
 		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
 		2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebBridge.swift; sourceTree = "<group>"; };
 		2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
+		B3A00011 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
+		B3A00012 /* KeybindingHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeybindingHandler.swift; sourceTree = "<group>"; };
+		B3A00013 /* TabStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripView.swift; sourceTree = "<group>"; };
+		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
+		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
+		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TidyFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -50,9 +62,13 @@
 			isa = PBXGroup;
 			children = (
 				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
+				B3A00011 /* CommandPaletteView.swift */,
+				B3A00012 /* KeybindingHandler.swift */,
 				2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */,
 				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
+				B3A00014 /* TabContentHostView.swift */,
+				B3A00013 /* TabStripView.swift */,
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
 			);
 			path = Views;
@@ -65,6 +81,15 @@
 				2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */,
 			);
 			path = WebView;
+			sourceTree = "<group>";
+		};
+		B3A00020 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				B3A00015 /* WSClient.swift */,
+				B3A00016 /* ProtocolModels.swift */,
+			);
+			path = Networking;
 			sourceTree = "<group>";
 		};
 		A1000007 = {
@@ -86,6 +111,7 @@
 		A1000020 /* TidyFlow */ = {
 			isa = PBXGroup;
 			children = (
+				B3A00020 /* Networking */,
 				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
 				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
 				A1000011 /* TidyFlowApp.swift */,
@@ -175,6 +201,12 @@
 				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
 				2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
+				B3A00001 /* CommandPaletteView.swift in Sources */,
+				B3A00002 /* KeybindingHandler.swift in Sources */,
+				B3A00003 /* TabStripView.swift in Sources */,
+				B3A00004 /* TabContentHostView.swift in Sources */,
+				B3A00005 /* WSClient.swift in Sources */,
+				B3A00006 /* ProtocolModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

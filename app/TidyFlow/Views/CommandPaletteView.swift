@@ -3,33 +3,74 @@ import SwiftUI
 struct CommandPaletteView: View {
     @EnvironmentObject var appState: AppState
     @FocusState private var inputFocused: Bool
-    
+
     // Derived data
     var filteredCommands: [Command] {
         guard appState.commandPaletteMode == .command else { return [] }
         let query = appState.commandQuery.lowercased()
-        
+
         return appState.commands.filter { cmd in
             // Filter by scope
             if cmd.scope == .workspace && appState.selectedWorkspaceKey == nil {
                 return false
             }
-            
+
             // Filter by query
             if query.isEmpty { return true }
             return cmd.title.lowercased().contains(query) ||
                    (cmd.subtitle?.lowercased().contains(query) ?? false)
         }
     }
-    
+
+    var currentFileCache: FileIndexCache? {
+        guard let ws = appState.selectedWorkspaceKey else { return nil }
+        return appState.fileIndexCache[ws]
+    }
+
     var filteredFiles: [String] {
         guard appState.commandPaletteMode == .file else { return [] }
-        guard let ws = appState.selectedWorkspaceKey,
-              let files = appState.mockFiles[ws] else { return [] }
-        
+        guard let ws = appState.selectedWorkspaceKey else { return [] }
+
+        // Get files from cache, fallback to mock if empty
+        let cache = appState.fileIndexCache[ws]
+        let files: [String]
+        if let cache = cache, !cache.items.isEmpty {
+            files = cache.items
+        } else {
+            files = appState.mockFiles[ws] ?? []
+        }
+
         let query = appState.commandQuery.lowercased()
         if query.isEmpty { return files }
         return files.filter { $0.lowercased().contains(query) }
+    }
+
+    var fileListState: FileListState {
+        guard appState.commandPaletteMode == .file else { return .ready }
+        guard appState.selectedWorkspaceKey != nil else { return .noWorkspace }
+
+        if appState.connectionState == .disconnected {
+            return .disconnected
+        }
+
+        if let cache = currentFileCache {
+            if cache.isLoading {
+                return .loading
+            }
+            if let error = cache.error {
+                return .error(error)
+            }
+        }
+
+        return .ready
+    }
+
+    enum FileListState {
+        case ready
+        case loading
+        case disconnected
+        case noWorkspace
+        case error(String)
     }
     
     var resultCount: Int {
@@ -81,10 +122,8 @@ struct CommandPaletteView: View {
                 // Results List
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        if appState.commandPaletteMode == .file && appState.selectedWorkspaceKey == nil {
-                            Text("Select a workspace first")
-                                .foregroundColor(.secondary)
-                                .padding()
+                        if appState.commandPaletteMode == .file {
+                            fileResultsContent
                         } else if resultCount == 0 {
                             Text("No results found")
                                 .foregroundColor(.secondary)
@@ -104,6 +143,14 @@ struct CommandPaletteView: View {
         }
         .onAppear {
             inputFocused = true
+            // Auto-fetch file index when opening Quick Open
+            if appState.commandPaletteMode == .file,
+               let ws = appState.selectedWorkspaceKey {
+                let cache = appState.fileIndexCache[ws]
+                if cache == nil || cache!.isExpired {
+                    appState.fetchFileIndex(workspaceKey: ws)
+                }
+            }
         }
         // Handle ESC to close
         .onExitCommand {
@@ -192,7 +239,67 @@ struct CommandPaletteView: View {
             Spacer()
         }
     }
-    
+
+    @ViewBuilder
+    var fileResultsContent: some View {
+        switch fileListState {
+        case .noWorkspace:
+            Text("Select a workspace first")
+                .foregroundColor(.secondary)
+                .padding()
+
+        case .disconnected:
+            HStack {
+                Image(systemName: "wifi.slash")
+                    .foregroundColor(.red)
+                Text("Disconnected from Core")
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+
+        case .loading:
+            HStack {
+                ProgressView()
+                    .scaleEffect(0.7)
+                Text("Loading file index...")
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+
+        case .error(let msg):
+            HStack {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundColor(.orange)
+                Text(msg)
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+
+        case .ready:
+            if resultCount == 0 {
+                Text("No files found")
+                    .foregroundColor(.secondary)
+                    .padding()
+            } else {
+                resultsList
+
+                // Show truncated indicator if applicable
+                if let cache = currentFileCache, cache.truncated {
+                    HStack {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.blue)
+                        Text("Index truncated. Use search to narrow results.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.1))
+                }
+            }
+        }
+    }
+
     func close() {
         appState.commandPalettePresented = false
     }
