@@ -15,6 +15,8 @@ class WSClient: NSObject, ObservableObject {
     var onGitDiffResult: ((GitDiffResult) -> Void)?
     var onGitStatusResult: ((GitStatusResult) -> Void)?
     var onGitOpResult: ((GitOpResult) -> Void)?
+    var onGitBranchesResult: ((GitBranchesResult) -> Void)?
+    var onGitCommitResult: ((GitCommitResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -146,6 +148,45 @@ class WSClient: NSObject, ObservableObject {
         sendJSON(msg)
     }
 
+    // Phase C3-3a: Request git branches
+    func requestGitBranches(project: String, workspace: String) {
+        sendJSON([
+            "type": "git_branches",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    // Phase C3-3a: Request git switch branch
+    func requestGitSwitchBranch(project: String, workspace: String, branch: String) {
+        sendJSON([
+            "type": "git_switch_branch",
+            "project": project,
+            "workspace": workspace,
+            "branch": branch
+        ])
+    }
+
+    // Phase C3-3b: Request git create branch
+    func requestGitCreateBranch(project: String, workspace: String, branch: String) {
+        sendJSON([
+            "type": "git_create_branch",
+            "project": project,
+            "workspace": workspace,
+            "branch": branch
+        ])
+    }
+
+    // Phase C3-4a: Request git commit
+    func requestGitCommit(project: String, workspace: String, message: String) {
+        sendJSON([
+            "type": "git_commit",
+            "project": project,
+            "workspace": workspace,
+            "message": message
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -207,6 +248,16 @@ class WSClient: NSObject, ObservableObject {
         case "git_op_result":
             if let result = GitOpResult.from(json: json) {
                 onGitOpResult?(result)
+            }
+
+        case "git_branches_result":
+            if let result = GitBranchesResult.from(json: json) {
+                onGitBranchesResult?(result)
+            }
+
+        case "git_commit_result":
+            if let result = GitCommitResult.from(json: json) {
+                onGitCommitResult?(result)
             }
 
         case "error":
