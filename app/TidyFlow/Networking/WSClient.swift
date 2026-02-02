@@ -17,6 +17,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Message handlers
     var onFileIndexResult: ((FileIndexResult) -> Void)?
+    var onFileListResult: ((FileListResult) -> Void)?
     var onGitDiffResult: ((GitDiffResult) -> Void)?
     var onGitStatusResult: ((GitStatusResult) -> Void)?
     var onGitOpResult: ((GitOpResult) -> Void)?
@@ -139,6 +140,16 @@ class WSClient: NSObject, ObservableObject {
             "type": "file_index",
             "project": project,
             "workspace": workspace
+        ])
+    }
+
+    /// 请求文件列表（目录浏览）
+    func requestFileList(project: String, workspace: String, path: String = ".") {
+        sendJSON([
+            "type": "file_list",
+            "project": project,
+            "workspace": workspace,
+            "path": path
         ])
     }
 
@@ -470,6 +481,11 @@ class WSClient: NSObject, ObservableObject {
         case "file_index_result":
             if let result = FileIndexResult.from(json: json) {
                 onFileIndexResult?(result)
+            }
+
+        case "file_list_result":
+            if let result = FileListResult.from(json: json) {
+                onFileListResult?(result)
             }
 
         case "git_diff_result":

@@ -157,6 +157,83 @@ struct ProjectModel: Identifiable, Equatable {
     var isExpanded: Bool = true
 }
 
+// MARK: - 文件浏览器模型
+
+/// 文件条目信息（对应 Core 的 FileEntryInfo）
+struct FileEntry: Identifiable, Equatable {
+    var id: String { path }
+    let name: String
+    let path: String      // 相对路径
+    let isDir: Bool
+    let size: UInt64
+    
+    /// 从 JSON 解析
+    static func from(json: [String: Any], parentPath: String) -> FileEntry? {
+        guard let name = json["name"] as? String,
+              let isDir = json["is_dir"] as? Bool else {
+            return nil
+        }
+        let size = json["size"] as? UInt64 ?? 0
+        let path = parentPath.isEmpty ? name : "\(parentPath)/\(name)"
+        return FileEntry(name: name, path: path, isDir: isDir, size: size)
+    }
+}
+
+/// 文件列表请求结果
+struct FileListResult {
+    let project: String
+    let workspace: String
+    let path: String
+    let items: [FileEntry]
+    
+    static func from(json: [String: Any]) -> FileListResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String,
+              let itemsJson = json["items"] as? [[String: Any]] else {
+            return nil
+        }
+        
+        let parentPath = path == "." ? "" : path
+        let items = itemsJson.compactMap { FileEntry.from(json: $0, parentPath: parentPath) }
+        return FileListResult(project: project, workspace: workspace, path: path, items: items)
+    }
+}
+
+/// 目录节点模型（用于展开/折叠状态管理）
+class DirectoryNode: Identifiable, ObservableObject {
+    let id: String
+    let name: String
+    let path: String
+    @Published var isExpanded: Bool = false
+    @Published var isLoading: Bool = false
+    @Published var children: [FileEntry] = []
+    @Published var error: String?
+    
+    init(name: String, path: String) {
+        self.id = path.isEmpty ? "." : path
+        self.name = name
+        self.path = path
+    }
+}
+
+/// 文件列表缓存（按目录路径缓存）
+struct FileListCache {
+    var items: [FileEntry]
+    var isLoading: Bool
+    var error: String?
+    var updatedAt: Date?
+    
+    static func empty() -> FileListCache {
+        FileListCache(items: [], isLoading: false, error: nil, updatedAt: nil)
+    }
+    
+    var isExpired: Bool {
+        guard let updatedAt = updatedAt else { return true }
+        return Date().timeIntervalSince(updatedAt) > 60 // 60秒后过期
+    }
+}
+
 class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
@@ -184,6 +261,11 @@ class AppState: ObservableObject {
 
     // File Index Cache (workspace key -> cache)
     @Published var fileIndexCache: [String: FileIndexCache] = [:]
+
+    // 文件列表缓存 (key: "workspace:path" -> FileListCache)
+    @Published var fileListCache: [String: FileListCache] = [:]
+    // 目录展开状态 (key: "workspace:path" -> isExpanded)
+    @Published var directoryExpandState: [String: Bool] = [:]
 
     // Phase C2-2a: Diff Cache (key: "workspace:path:mode" -> DiffCache)
     @Published var diffCache: [String: DiffCache] = [:]
@@ -296,6 +378,13 @@ class AppState: ObservableObject {
         if let project = projects.first(where: { $0.id == projectId }) {
             selectedProjectName = project.name.lowercased().replacingOccurrences(of: " ", with: "-")
         }
+
+        // 自动请求根目录文件列表（如果缓存不存在或已过期）
+        if connectionState == .connected {
+            if getFileListCache(workspaceKey: workspaceName, path: ".") == nil {
+                fetchFileList(workspaceKey: workspaceName, path: ".")
+            }
+        }
     }
 
     /// Refresh projects and workspaces from Core
@@ -378,6 +467,11 @@ class AppState: ObservableObject {
 
         wsClient.onFileIndexResult = { [weak self] result in
             self?.handleFileIndexResult(result)
+        }
+
+        // 处理文件列表结果
+        wsClient.onFileListResult = { [weak self] result in
+            self?.handleFileListResult(result)
         }
 
         // Phase C2-2a: Handle git diff results
@@ -529,6 +623,80 @@ class AppState: ObservableObject {
 
     func reconnectAndRefresh() {
         wsClient.reconnect()
+    }
+
+    // MARK: - 文件列表 API
+
+    /// 生成文件列表缓存键
+    private func fileListCacheKey(workspace: String, path: String) -> String {
+        return "\(workspace):\(path)"
+    }
+
+    /// 处理文件列表结果
+    private func handleFileListResult(_ result: FileListResult) {
+        let key = fileListCacheKey(workspace: result.workspace, path: result.path)
+        let cache = FileListCache(
+            items: result.items,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+        fileListCache[key] = cache
+    }
+
+    /// 获取目录文件列表
+    func fetchFileList(workspaceKey: String, path: String = ".") {
+        guard connectionState == .connected else {
+            let key = fileListCacheKey(workspace: workspaceKey, path: path)
+            var cache = fileListCache[key] ?? FileListCache.empty()
+            cache.error = "未连接"
+            cache.isLoading = false
+            fileListCache[key] = cache
+            return
+        }
+
+        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+
+        // 设置加载状态
+        var cache = fileListCache[key] ?? FileListCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        fileListCache[key] = cache
+
+        // 发送请求
+        wsClient.requestFileList(project: selectedProjectName, workspace: workspaceKey, path: path)
+    }
+
+    /// 获取缓存的文件列表
+    func getFileListCache(workspaceKey: String, path: String) -> FileListCache? {
+        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+        return fileListCache[key]
+    }
+
+    /// 刷新当前工作空间的根目录文件列表
+    func refreshFileList() {
+        guard let ws = selectedWorkspaceKey else { return }
+        fetchFileList(workspaceKey: ws, path: ".")
+    }
+
+    /// 切换目录展开状态
+    func toggleDirectoryExpanded(workspaceKey: String, path: String) {
+        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+        let currentState = directoryExpandState[key] ?? false
+        directoryExpandState[key] = !currentState
+        
+        // 如果展开且没有缓存，则请求文件列表
+        if !currentState {
+            if fileListCache[key] == nil {
+                fetchFileList(workspaceKey: workspaceKey, path: path)
+            }
+        }
+    }
+
+    /// 检查目录是否展开
+    func isDirectoryExpanded(workspaceKey: String, path: String) -> Bool {
+        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+        return directoryExpandState[key] ?? false
     }
 
     // MARK: - Phase C2-2a: Git Diff API
