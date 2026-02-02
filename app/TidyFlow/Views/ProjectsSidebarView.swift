@@ -92,11 +92,58 @@ struct ProjectsSidebarView: View {
 struct ProjectRowView: View {
     @Binding var project: ProjectModel
     @EnvironmentObject var appState: AppState
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
-        DisclosureGroup(
-            isExpanded: $project.isExpanded,
-            content: {
+        VStack(alignment: .leading, spacing: 0) {
+            // Project Header Row
+            HStack(spacing: 6) {
+                // Chevron indicator
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .rotationEffect(project.isExpanded ? .degrees(90) : .zero)
+                    .animation(.easeInOut(duration: 0.2), value: project.isExpanded)
+
+                Image(systemName: "folder.fill")
+                    .foregroundColor(.orange)
+                    .font(.caption)
+                Text(project.name)
+                    .fontWeight(.medium)
+                Spacer()
+                Text("\(project.workspaces.count)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.2))
+                    .cornerRadius(4)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle()) // Make entire row tappable
+            .onTapGesture {
+                withAnimation {
+                    project.isExpanded.toggle()
+                }
+            }
+            .contextMenu {
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("移除项目", systemImage: "trash")
+                }
+            }
+            .alert("移除项目", isPresented: $showDeleteConfirmation) {
+                Button("取消", role: .cancel) { }
+                Button("移除", role: .destructive) {
+                    appState.removeProject(id: project.id)
+                }
+            } message: {
+                Text("确定要移除项目 \"\(project.name)\" 吗？\n此操作仅从列表移除，不会删除磁盘文件。")
+            }
+
+            // Workspaces List
+            if project.isExpanded {
                 ForEach(project.workspaces) { workspace in
                     WorkspaceRowView(
                         workspace: workspace,
@@ -104,26 +151,10 @@ struct ProjectRowView: View {
                         isSelected: appState.selectedWorkspaceKey == workspace.name
                     )
                     .environmentObject(appState)
-                }
-            },
-            label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.fill")
-                        .foregroundColor(.orange)
-                        .font(.caption)
-                    Text(project.name)
-                        .fontWeight(.medium)
-                    Spacer()
-                    Text("\(project.workspaces.count)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.2))
-                        .cornerRadius(4)
+                    .padding(.leading, 18) // Indent workspaces
                 }
             }
-        )
+        }
     }
 }
 

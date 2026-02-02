@@ -251,8 +251,7 @@ class AppState: ObservableObject {
 
     /// Refresh projects and workspaces from Core
     func refreshProjectsAndWorkspaces() {
-        // TODO: UX-2 - Call core list_projects/list_workspaces via WS
-        print("[AppState] refreshProjectsAndWorkspaces - not yet implemented")
+        wsClient.requestListProjects()
     }
 
     // MARK: - Core Process Management
@@ -311,6 +310,10 @@ class AppState: ObservableObject {
     private func setupWSClient(port: Int) {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
+            if connected {
+                print("[AppState] WebSocket connected, requesting project list")
+                self?.wsClient.requestListProjects()
+            }
         }
 
         wsClient.onFileIndexResult = { [weak self] result in
@@ -377,9 +380,28 @@ class AppState: ObservableObject {
             self?.handleProjectImported(result)
         }
 
+        // UX-2: Handle project list results
+        wsClient.onProjectsList = { [weak self] result in
+            self?.handleProjectsList(result)
+        }
+
         // UX-2: Handle workspace created results
         wsClient.onWorkspaceCreated = { [weak self] result in
             self?.handleWorkspaceCreated(result)
+        }
+
+        // Handle project removed results
+        wsClient.onProjectRemoved = { [weak self] result in
+            if result.ok {
+                self?.gitOpToast = "项目 '\(result.name)' 已移除"
+                self?.gitOpToastIsError = false
+            } else {
+                self?.gitOpToast = result.message ?? "移除项目失败"
+                self?.gitOpToastIsError = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.gitOpToast = nil
+            }
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -1334,6 +1356,25 @@ class AppState: ObservableObject {
     @Published var projectImportInFlight: Bool = false
     @Published var projectImportError: String?
 
+    /// Handle projects list result from WebSocket
+    func handleProjectsList(_ result: ProjectsListResult) {
+        print("[AppState] Received project list with \(result.items.count) items")
+        
+        let oldProjects = self.projects
+        
+        self.projects = result.items.map { info in
+            let oldProject = oldProjects.first(where: { $0.path == info.root })
+            
+            return ProjectModel(
+                id: oldProject?.id ?? UUID(),
+                name: info.name,
+                path: info.root,
+                workspaces: oldProject?.workspaces ?? [], // Keep old workspaces if any, otherwise empty
+                isExpanded: oldProject?.isExpanded ?? true
+            )
+        }
+    }
+
     /// Handle project imported result from WebSocket
     func handleProjectImported(_ result: ProjectImportedResult) {
         projectImportInFlight = false
@@ -1406,6 +1447,26 @@ class AppState: ObservableObject {
             path: path,
             createDefaultWorkspace: createDefaultWorkspace
         )
+    }
+
+    /// 移除项目
+    func removeProject(id: UUID) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+
+        guard connectionState == .connected else {
+            gitOpToast = "未连接，无法移除项目"
+            gitOpToastIsError = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.gitOpToast = nil
+            }
+            return
+        }
+
+        // 先从 UI 移除
+        projects.removeAll { $0.id == id }
+
+        // 发送请求到 Core 进行持久化移除
+        wsClient.requestRemoveProject(name: project.name)
     }
 
     /// Create a new workspace in a project

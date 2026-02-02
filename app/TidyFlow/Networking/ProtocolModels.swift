@@ -61,6 +61,58 @@ struct WorkspaceCreatedResult {
     }
 }
 
+/// Project info returned from list_projects
+struct ProjectInfo {
+    let name: String
+    let root: String
+    let workspaceCount: Int
+
+    static func from(json: [String: Any]) -> ProjectInfo? {
+        guard let name = json["name"] as? String,
+              let root = json["root"] as? String else {
+            return nil
+        }
+        let workspaceCount = json["workspace_count"] as? Int ?? 0
+        return ProjectInfo(name: name, root: root, workspaceCount: workspaceCount)
+    }
+}
+
+/// Result from list_projects request (server sends "projects" message)
+struct ProjectsListResult {
+    let items: [ProjectInfo]
+
+    static func from(json: [String: Any]) -> ProjectsListResult? {
+        guard let itemsArray = json["items"] as? [[String: Any]] else {
+            return nil
+        }
+        
+        var items: [ProjectInfo] = []
+        for itemJson in itemsArray {
+            if let info = ProjectInfo.from(json: itemJson) {
+                items.append(info)
+            }
+        }
+        
+        return ProjectsListResult(items: items)
+    }
+}
+
+/// Result from remove_project request
+struct ProjectRemovedResult {
+    let name: String
+    let ok: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> ProjectRemovedResult? {
+        guard let name = json["name"] as? String,
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        return ProjectRemovedResult(name: name, ok: ok, message: message)
+    }
+}
+
 /// Result from file_index request
 struct FileIndexResult {
     let project: String
