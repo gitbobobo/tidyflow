@@ -7,6 +7,9 @@
 - App 导入项目时默认传 `create_default_workspace=true`，UI 仅在服务端返回 workspace 时才展示默认 workspace。
 - WebSocket 协议中 `ClientMessage` 枚举使用 `snake_case` 序列化，例如 `ListProjects` 对应 `list_projects`。
 - `list_projects` 仅返回项目摘要（含 workspace 数量），不包含 workspace 详情列表，UI 初始化时项目可能显示 0 个 workspace。
+- xterm.js 必须设置 `macOptionIsMeta: true` 才能让 TUI 应用（vim、tmux、opencode 等）正常工作；同时全局快捷键监听需要在终端获得焦点时放行大部分按键。
+- xterm.js WebGL addon 在 `visibility:hidden` 的 tab 切换场景下可能出现渲染问题（黑屏）。升级到 `@xterm/xterm@5.5.0` + `@xterm/addon-webgl@0.19.0` 并在切换时调用 `clearTextureAtlas()` 可解决。
+- xterm.js WebGL addon 在 `visibility:hidden` 的 tab 切换场景下可能出现渲染问题（黑屏）。升级到 `@xterm/xterm@5.5.0` + `@xterm/addon-webgl@0.19.0` 并在切换时调用 `clearTextureAtlas()` 可解决。
 
 ## Project Overview
 

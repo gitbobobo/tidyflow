@@ -13,6 +13,7 @@
 
     const term = new Terminal({
       cursorBlink: true,
+      cursorStyle: "block",
       fontSize: 14,
       fontFamily: '"MesloLGS NF", "Meslo LG M DZ", "FiraCode Nerd Font", "JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
       drawBoldTextInBrightColors: false,
@@ -30,6 +31,11 @@
         brightCyan: "#29b8db", brightWhite: "#e5e5e5",
       },
       allowProposedApi: true,
+      // TUI 应用支持（vim、tmux、opencode 等）
+      macOptionIsMeta: true,              // Option 键作为 Meta 键
+      macOptionClickForcesSelection: true, // Option+Click 强制选择模式
+      scrollback: 10000,                  // 滚动缓冲区行数
+      rightClickSelectsWord: true,        // 右键选择单词
     });
 
     const fitAddon = new FitAddon.FitAddon();
@@ -42,12 +48,18 @@
       console.warn("WebLinks addon failed:", e.message);
     }
 
+    // WebGL addon - 启用 GPU 加速渲染
+    let webglAddon = null;
     try {
-      const webglAddon = new WebglAddon.WebglAddon();
-      webglAddon.onContextLoss(() => webglAddon.dispose());
+      webglAddon = new WebglAddon.WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+        webglAddon = null;
+      });
       term.loadAddon(webglAddon);
     } catch (e) {
       console.warn("WebGL addon failed:", e.message);
+      webglAddon = null;
     }
 
     const pane = document.createElement("div");
@@ -124,6 +136,7 @@
       termId: termId,
       term,
       fitAddon,
+      webglAddon,
       pane,
       tabEl,
       cwd: cwd || "",
@@ -412,15 +425,26 @@
 
     if (TF.placeholder) TF.placeholder.style.display = "none";
 
-    setTimeout(() => {
-      if (tab.type === "terminal" && tab.term) {
-        tab.fitAddon.fit();
-        tab.term.focus();
-        TF.sendResize(tab.termId, tab.term.cols, tab.term.rows);
-      } else if (tab.type === "editor" && tab.editorView) {
-        tab.editorView.focus();
-      }
-    }, 0);
+    // 使用 requestAnimationFrame 确保浏览器完成布局更新后再刷新终端
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (tab.type === "terminal" && tab.term) {
+          // 清除 WebGL 纹理图集以修复 visibility:hidden 后的渲染问题
+          if (tab.term.clearTextureAtlas) {
+            tab.term.clearTextureAtlas();
+          }
+
+          tab.fitAddon.fit();
+          const cols = tab.term.cols;
+          const rows = tab.term.rows;
+          tab.term.refresh(0, rows - 1);
+          tab.term.focus();
+          TF.sendResize(tab.termId, cols, rows);
+        } else if (tab.type === "editor" && tab.editorView) {
+          tab.editorView.focus();
+        }
+      });
+    });
 
     TF.notifySwift("tab_switched", { tab_id: tabId, type: tab.type });
   }
