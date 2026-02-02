@@ -3,6 +3,11 @@
 1. 使用中文交流、编写代码注释、文档
 2. 经验总结：获取到经验教训后，如果它属于可复用的项目开发流程，就用简洁的语言记录到本文档中。
 
+### 经验总结
+- App 导入项目时默认传 `create_default_workspace=true`，UI 仅在服务端返回 workspace 时才展示默认 workspace。
+- WebSocket 协议中 `ClientMessage` 枚举使用 `snake_case` 序列化，例如 `ListProjects` 对应 `list_projects`。
+- `list_projects` 仅返回项目摘要（含 workspace 数量），不包含 workspace 详情列表，UI 初始化时项目可能显示 0 个 workspace。
+
 ## Project Overview
 
 TidyFlow is a macOS-native multi-project development tool with VS Code-level terminal experience and Git worktree-based workspace isolation.

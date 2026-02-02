@@ -34,8 +34,8 @@ tidyflow-core ws create --project <name> --workspace <ws_name> [--from-branch <b
 ```
 
 **Behavior:**
-1. Creates git worktree at `<project>/.tidyflow/workspaces/<ws_name>`
-2. Creates new branch `workspace/<ws_name>` from source branch
+1. Creates git worktree at `~/.tidyflow/workspaces/<ws_name>`
+2. Creates new branch `tidy/<random-two-words>` from source branch, workspace name matches the random words (without tidy/ prefix)
 3. Runs setup steps from `.tidyflow.toml` (unless `--no-setup`)
 4. Updates workspace status based on setup result
 
@@ -88,16 +88,14 @@ tidyflow-core ws remove --project <name> --workspace <ws_name>
 <project_root>/
 ├── .git/                    # Main git directory
 ├── .tidyflow.toml           # Project configuration (optional)
-└── .tidyflow/
-    └── workspaces/
-        ├── <ws_name_1>/     # Git worktree
-        └── <ws_name_2>/     # Git worktree
+└── src/                     # Project source code
+    ...
 ```
 
 ### Worktree Path Pattern
 
 ```
-<project_root>/.tidyflow/workspaces/<workspace_name>/
+~/.tidyflow/workspaces/<workspace_name>/
 ```
 
 ---
@@ -121,7 +119,7 @@ tidyflow-core ws remove --project <name> --workspace <ws_name>
         "<workspace_name>": {
           "name": "string",
           "worktree_path": "/absolute/path",
-          "branch": "workspace/<name>",
+          "branch": "tidy/<random-name>",
           "status": "creating | initializing | ready | setup_failed | destroying",
           "created_at": "ISO8601",
           "last_accessed": "ISO8601",
