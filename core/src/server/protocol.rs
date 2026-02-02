@@ -30,9 +30,16 @@ pub enum ClientMessage {
 
     // v1: Control plane - Workspace management
     ListProjects,
-    ListWorkspaces { project: String },
-    SelectWorkspace { project: String, workspace: String },
-    SpawnTerminal { cwd: String },
+    ListWorkspaces {
+        project: String,
+    },
+    SelectWorkspace {
+        project: String,
+        workspace: String,
+    },
+    SpawnTerminal {
+        cwd: String,
+    },
 
     // v1: Session management
     KillTerminal,
@@ -87,7 +94,7 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         base: Option<String>,
         #[serde(default = "default_diff_mode")]
-        mode: String,  // "working" or "staged"
+        mode: String, // "working" or "staged"
     },
 
     // v1.6: Git stage/unstage operations
@@ -95,17 +102,17 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        path: Option<String>,  // None = stage all
+        path: Option<String>, // None = stage all
         #[serde(default = "default_git_scope")]
-        scope: String,  // "file" or "all"
+        scope: String, // "file" or "all"
     },
     GitUnstage {
         project: String,
         workspace: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        path: Option<String>,  // None = unstage all
+        path: Option<String>, // None = unstage all
         #[serde(default = "default_git_scope")]
-        scope: String,  // "file" or "all"
+        scope: String, // "file" or "all"
     },
 
     // v1.7: Git discard (working tree changes)
@@ -113,9 +120,9 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        path: Option<String>,  // None = discard all
+        path: Option<String>, // None = discard all
         #[serde(default = "default_git_scope")]
-        scope: String,  // "file" or "all"
+        scope: String, // "file" or "all"
     },
 
     // v1.8: Git branch operations
@@ -220,6 +227,11 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         from_branch: Option<String>,
     },
+
+    // v1.17: Remove project
+    RemoveProject {
+        name: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -258,8 +270,13 @@ pub enum ServerMessage {
     Pong,
 
     // v1: Control plane responses
-    Projects { items: Vec<ProjectInfo> },
-    Workspaces { project: String, items: Vec<WorkspaceInfo> },
+    Projects {
+        items: Vec<ProjectInfo>,
+    },
+    Workspaces {
+        project: String,
+        items: Vec<WorkspaceInfo>,
+    },
     SelectedWorkspace {
         project: String,
         workspace: String,
@@ -272,7 +289,9 @@ pub enum ServerMessage {
         shell: String,
         cwd: String,
     },
-    TerminalKilled { session_id: String },
+    TerminalKilled {
+        session_id: String,
+    },
 
     // v1.2: Multi-workspace extension (enhanced term_created/term_list)
     TermCreated {
@@ -339,20 +358,20 @@ pub enum ServerMessage {
         text: String,
         is_binary: bool,
         truncated: bool,
-        mode: String,  // Echo back the mode
+        mode: String, // Echo back the mode
     },
 
     // v1.6: Git operation result
     GitOpResult {
         project: String,
         workspace: String,
-        op: String,  // "stage", "unstage", "discard", "switch_branch", or "create_branch"
+        op: String, // "stage", "unstage", "discard", "switch_branch", or "create_branch"
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         path: Option<String>,
-        scope: String,  // "file" or "all"
+        scope: String, // "file" or "all"
     },
 
     // v1.8: Git branches result
@@ -379,7 +398,7 @@ pub enum ServerMessage {
         project: String,
         workspace: String,
         ok: bool,
-        state: String,  // "completed", "conflict", "aborted", "error"
+        state: String, // "completed", "conflict", "aborted", "error"
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
         #[serde(default)]
@@ -390,7 +409,7 @@ pub enum ServerMessage {
     GitOpStatusResult {
         project: String,
         workspace: String,
-        state: String,  // "normal", "rebasing", "merging"
+        state: String, // "normal", "rebasing", "merging"
         #[serde(default)]
         conflicts: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,7 +422,7 @@ pub enum ServerMessage {
     GitMergeToDefaultResult {
         project: String,
         ok: bool,
-        state: String,  // "idle", "merging", "conflict", "completed", "failed"
+        state: String, // "idle", "merging", "conflict", "completed", "failed"
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
         #[serde(default)]
@@ -417,7 +436,7 @@ pub enum ServerMessage {
     // v1.12: Git integration worktree status result (UX-3b)
     GitIntegrationStatusResult {
         project: String,
-        state: String,  // "idle", "merging", "conflict", "rebasing", "rebase_conflict"
+        state: String, // "idle", "merging", "conflict", "rebasing", "rebase_conflict"
         #[serde(default)]
         conflicts: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,7 +457,7 @@ pub enum ServerMessage {
     GitRebaseOntoDefaultResult {
         project: String,
         ok: bool,
-        state: String,  // "idle", "rebasing", "rebase_conflict", "completed", "failed"
+        state: String, // "idle", "rebasing", "rebase_conflict", "completed", "failed"
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
         #[serde(default)]
@@ -460,7 +479,10 @@ pub enum ServerMessage {
     },
 
     // v1: Error handling
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
 
     // v1.16: Project/Workspace import results
     ProjectImported {
@@ -473,6 +495,14 @@ pub enum ServerMessage {
     WorkspaceCreated {
         project: String,
         workspace: WorkspaceInfo,
+    },
+
+    // v1.17: Remove project result
+    ProjectRemoved {
+        name: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
 }
 
@@ -559,7 +589,11 @@ mod tests {
 
         let result: Result<ClientMessage, _> = serde_json::from_str(json);
         match result {
-            Ok(ClientMessage::ImportProject { name, path, create_default_workspace }) => {
+            Ok(ClientMessage::ImportProject {
+                name,
+                path,
+                create_default_workspace,
+            }) => {
                 assert_eq!(name, "ly_tech");
                 assert_eq!(path, "/Users/godbobo/work/projects/ly_tech");
                 assert!(create_default_workspace);

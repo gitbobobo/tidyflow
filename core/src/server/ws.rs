@@ -2496,7 +2496,7 @@ async fn handle_client_message(
                     // Optionally create default workspace
                     let workspace_info = if create_default_workspace {
                         info!("Creating default workspace...");
-                        match WorkspaceManager::create(&mut state, &name, "default", None, false) {
+                        match WorkspaceManager::create(&mut state, &name, &default_branch, None, false) {
                             Ok(ws) => {
                                 info!("Default workspace created: {}", ws.name);
                                 Some(WorkspaceInfo {
@@ -2581,6 +2581,31 @@ async fn handle_client_message(
                         _ => ("workspace_error".to_string(), e.to_string()),
                     };
                     send_message(socket, &ServerMessage::Error { code, message }).await?;
+                }
+            }
+        }
+
+        // v1.17: Remove project
+        ClientMessage::RemoveProject { name } => {
+            info!("RemoveProject request: name={}", name);
+            let mut state = app_state.lock().await;
+
+            match ProjectManager::remove(&mut state, &name) {
+                Ok(_) => {
+                    info!("Project removed successfully: {}", name);
+                    send_message(socket, &ServerMessage::ProjectRemoved {
+                        name,
+                        ok: true,
+                        message: Some("项目已移除".to_string()),
+                    }).await?;
+                }
+                Err(e) => {
+                    warn!("Failed to remove project: {}, error: {}", name, e);
+                    send_message(socket, &ServerMessage::ProjectRemoved {
+                        name,
+                        ok: false,
+                        message: Some(e.to_string()),
+                    }).await?;
                 }
             }
         }

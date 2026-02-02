@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Error, Debug)]
 pub enum ProjectError {
@@ -89,19 +89,16 @@ impl ProjectManager {
         }
 
         // Determine target directory
-        let base_dir = target_dir
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .expect("Cannot find home directory")
-                    .join("Projects")
-            });
+        let base_dir = target_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+            dirs::home_dir()
+                .expect("Cannot find home directory")
+                .join("Projects")
+        });
 
         let clone_path = base_dir.join(name);
 
         // Create parent directory if needed
-        std::fs::create_dir_all(&base_dir)
-            .map_err(|e| ProjectError::IoError(e.to_string()))?;
+        std::fs::create_dir_all(&base_dir).map_err(|e| ProjectError::IoError(e.to_string()))?;
 
         // Clone the repository
         let mut cmd = Command::new("git");
@@ -111,7 +108,9 @@ impl ProjectManager {
         }
         cmd.arg(url).arg(&clone_path);
 
-        let output = cmd.output().map_err(|e| ProjectError::GitError(e.to_string()))?;
+        let output = cmd
+            .output()
+            .map_err(|e| ProjectError::GitError(e.to_string()))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -177,15 +176,54 @@ impl ProjectManager {
         None
     }
 
-    /// Remove a project (does not delete files)
     pub fn remove(state: &mut AppState, name: &str) -> Result<(), ProjectError> {
+        let project = state.get_project(name).ok_or_else(|| {
+            ProjectError::StateError(StateError::ProjectNotFound(name.to_string()))
+        })?;
+
+        let project_workspaces_dir = dirs::home_dir()
+            .expect("Cannot find home directory")
+            .join(".tidyflow")
+            .join("workspaces")
+            .join(name);
+
+        for (workspace_name, workspace) in &project.workspaces {
+            let workspace_path = project_workspaces_dir.join(workspace_name);
+            if workspace_path.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&workspace_path) {
+                    warn!(project = name, workspace = workspace_name, path = %workspace_path.display(), error = %e, "Failed to remove workspace directory");
+                } else {
+                    info!(project = name, workspace = workspace_name, path = %workspace_path.display(), "Workspace directory removed");
+                }
+            }
+
+            let git_worktree_path = &workspace.worktree_path;
+            if git_worktree_path.exists() && git_worktree_path != &workspace_path {
+                if let Err(e) = std::fs::remove_dir_all(git_worktree_path) {
+                    warn!(project = name, workspace = workspace_name, path = %git_worktree_path.display(), error = %e, "Failed to remove git worktree directory");
+                } else {
+                    info!(project = name, workspace = workspace_name, path = %git_worktree_path.display(), "Git worktree directory removed");
+                }
+            }
+        }
+
+        if project_workspaces_dir.exists() {
+            if let Err(e) = std::fs::remove_dir(&project_workspaces_dir) {
+                warn!(project = name, path = %project_workspaces_dir.display(), error = %e, "Failed to remove project workspaces directory");
+            } else {
+                info!(project = name, path = %project_workspaces_dir.display(), "Project workspaces directory removed");
+            }
+        }
+
         if state.remove_project(name).is_none() {
             return Err(ProjectError::StateError(StateError::ProjectNotFound(
                 name.to_string(),
             )));
         }
+
         state.save()?;
-        info!(project = name, "Project removed from TidyFlow (files not deleted)");
+
+        info!(project = name, "Project removed from TidyFlow");
         Ok(())
     }
 }
