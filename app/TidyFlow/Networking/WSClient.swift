@@ -34,6 +34,7 @@ class WSClient: NSObject, ObservableObject {
     var onProjectImported: ((ProjectImportedResult) -> Void)?
     var onWorkspaceCreated: ((WorkspaceCreatedResult) -> Void)?
     var onProjectsList: ((ProjectsListResult) -> Void)?
+    var onWorkspacesList: ((WorkspacesListResult) -> Void)?
     var onProjectRemoved: ((ProjectRemovedResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
@@ -381,6 +382,14 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // Request list workspaces
+    func requestListWorkspaces(project: String) {
+        sendJSON([
+            "type": "list_workspaces",
+            "project": project
+        ])
+    }
+
     // UX-2: Request create workspace
     func requestCreateWorkspace(project: String, workspace: String, fromBranch: String? = nil) {
         var msg: [String: Any] = [
@@ -527,6 +536,11 @@ class WSClient: NSObject, ObservableObject {
         case "projects":
             if let result = ProjectsListResult.from(json: json) {
                 onProjectsList?(result)
+            }
+
+        case "workspaces":
+            if let result = WorkspacesListResult.from(json: json) {
+                onWorkspacesList?(result)
             }
 
         case "project_removed":
