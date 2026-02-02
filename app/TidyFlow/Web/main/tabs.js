@@ -139,10 +139,20 @@
       }
     });
 
+    // 防抖处理：避免动画期间频繁触发 resize
+    let resizeTimer = null;
     const resizeObserver = new ResizeObserver(() => {
       if (fitAddon && TF.activeTabId === termId) {
-        fitAddon.fit();
-        TF.sendResize(termId, term.cols, term.rows);
+        // 清除之前的定时器
+        if (resizeTimer) {
+          clearTimeout(resizeTimer);
+        }
+        // 延迟执行，等待布局稳定
+        resizeTimer = setTimeout(() => {
+          resizeTimer = null;
+          fitAddon.fit();
+          TF.sendResize(termId, term.cols, term.rows);
+        }, 100);
       }
     });
     resizeObserver.observe(container);
@@ -161,6 +171,14 @@
       project,
       workspace,
       resizeObserver,
+      // 存储 resizeTimer 的引用，用于清理
+      getResizeTimer: () => resizeTimer,
+      clearResizeTimer: () => {
+        if (resizeTimer) {
+          clearTimeout(resizeTimer);
+          resizeTimer = null;
+        }
+      },
     };
 
     tabSet.tabs.set(termId, tabInfo);
@@ -499,6 +517,7 @@
     const tab = tabSet.tabs.get(tabId);
 
     if (tab.type === "terminal") {
+      if (tab.clearResizeTimer) tab.clearResizeTimer();
       if (tab.resizeObserver) tab.resizeObserver.disconnect();
       if (tab.term) tab.term.dispose();
     } else if (tab.type === "editor") {

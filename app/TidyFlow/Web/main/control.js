@@ -118,15 +118,25 @@
     sendControlMessage({ type: "file_index", project, workspace });
   }
 
+  // 记录每个终端上次发送的尺寸，用于去重
+  const lastSentSize = new Map();
+
   function sendResize(termId, cols, rows) {
-    if (TF.transport && TF.transport.isConnected) {
-      TF.transport.send(JSON.stringify({
-        type: "resize",
-        term_id: termId,
-        cols: cols,
-        rows: rows,
-      }));
+    if (!TF.transport || !TF.transport.isConnected) return;
+
+    // 去重：如果尺寸没有变化，不重复发送
+    const lastSize = lastSentSize.get(termId);
+    if (lastSize && lastSize.cols === cols && lastSize.rows === rows) {
+      return;
     }
+
+    lastSentSize.set(termId, { cols, rows });
+    TF.transport.send(JSON.stringify({
+      type: "resize",
+      term_id: termId,
+      cols: cols,
+      rows: rows,
+    }));
   }
 
   TF.sendControlMessage = sendControlMessage;
