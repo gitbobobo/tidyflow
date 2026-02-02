@@ -34,14 +34,41 @@ struct TabContentHostView: View {
                 }
 
             } else {
-                VStack {
-                    Spacer()
-                    Text("No Active Tab")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
+                // 没有活跃标签时，显示空白提示并隐藏 WebView
+                NoActiveTabView()
+                    .onAppear {
+                        webViewVisible = false
+                    }
             }
         }
+    }
+}
+
+// MARK: - No Active Tab View（空白提示视图）
+
+struct NoActiveTabView: View {
+    @EnvironmentObject var appState: AppState
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            
+            Image(systemName: "terminal")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary.opacity(0.5))
+            
+            Text("没有打开的终端")
+                .font(.headline)
+                .foregroundColor(.secondary)
+            
+            Text("按 ⌘T 创建新终端")
+                .font(.subheadline)
+                .foregroundColor(.secondary.opacity(0.7))
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(NSColor.windowBackgroundColor))
     }
 }
 
