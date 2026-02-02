@@ -113,8 +113,8 @@ impl AppState {
 
         self.last_updated = Some(Utc::now());
 
-        let content =
-            serde_json::to_string_pretty(self).map_err(|e| StateError::WriteError(e.to_string()))?;
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| StateError::WriteError(e.to_string()))?;
 
         fs::write(&path, content).map_err(|e| StateError::WriteError(e.to_string()))
     }
@@ -173,6 +173,9 @@ impl Project {
 
     /// Get the worktrees directory for this project
     pub fn worktrees_dir(&self) -> PathBuf {
-        self.root_path.join(".tidyflow").join("workspaces")
+        dirs::home_dir()
+            .expect("Cannot find home directory")
+            .join(".tidyflow")
+            .join("workspaces")
     }
 }

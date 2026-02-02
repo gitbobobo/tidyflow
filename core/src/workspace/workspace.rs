@@ -2,8 +2,11 @@
 
 use crate::workspace::config::ProjectConfig;
 use crate::workspace::setup::SetupExecutor;
-use crate::workspace::state::{AppState, SetupResultSummary, StateError, Workspace, WorkspaceStatus};
+use crate::workspace::state::{
+    AppState, SetupResultSummary, StateError, Workspace, WorkspaceStatus,
+};
 use chrono::Utc;
+use petname::{Generator, Petnames};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
@@ -54,15 +57,53 @@ impl WorkspaceManager {
         // Determine source branch
         let source_branch = from_branch.unwrap_or(&default_branch);
 
-        // Create worktree directory
+        // Generate random branch name with retry on conflict
+        let mut workspace_branch = format!("tidy/{}", Self::generate_random_branch_name());
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 5;
+
+        // Check if branch already exists and retry if needed
+        while attempts < MAX_ATTEMPTS {
+            let output = Command::new("git")
+                .args([
+                    "show-ref",
+                    "--quiet",
+                    "--verify",
+                    &format!("refs/heads/{}", workspace_branch),
+                ])
+                .current_dir(&project_root)
+                .output();
+
+            match output {
+                Ok(ref out) if out.status.success() => {
+                    // Branch exists, generate new name
+                    workspace_branch = format!("tidy/{}", Self::generate_random_branch_name());
+                    attempts += 1;
+                }
+                _ => {
+                    // Branch doesn't exist, we can use it
+                    break;
+                }
+            }
+        }
+
+        if attempts >= MAX_ATTEMPTS {
+            return Err(WorkspaceError::GitError(format!(
+                "Failed to generate unique branch name after {} attempts",
+                MAX_ATTEMPTS
+            )));
+        }
+
+        let workspace_display_name = workspace_branch
+            .strip_prefix("tidy/")
+            .unwrap_or(&workspace_branch)
+            .to_string();
+
         let worktrees_dir = project.worktrees_dir();
         std::fs::create_dir_all(&worktrees_dir)
             .map_err(|e| WorkspaceError::IoError(e.to_string()))?;
 
-        let worktree_path = worktrees_dir.join(workspace_name);
-
-        // Create a new branch for this workspace
-        let workspace_branch = format!("workspace/{}", workspace_name);
+        let worktree_path = worktrees_dir.join(&workspace_display_name);
 
         // Create the worktree with a new branch
         let output = Command::new("git")
@@ -104,14 +145,13 @@ impl WorkspaceManager {
 
         info!(
             project = project_name,
-            workspace = workspace_name,
+            workspace = workspace_display_name,
             branch = workspace_branch,
             "Worktree created"
         );
 
-        // Create workspace record
         let mut workspace = Workspace {
-            name: workspace_name.to_string(),
+            name: workspace_display_name.clone(),
             worktree_path: worktree_path.clone(),
             branch: workspace_branch,
             status: WorkspaceStatus::Creating,
@@ -129,11 +169,16 @@ impl WorkspaceManager {
 
         // Run setup if requested
         if run_setup {
-            workspace = Self::run_setup_internal(state, project_name, workspace_name, &worktree_path)?;
+            workspace = Self::run_setup_internal(
+                state,
+                project_name,
+                &workspace_display_name,
+                &worktree_path,
+            )?;
         } else {
             // Mark as ready if no setup
             let project = state.get_project_mut(project_name).unwrap();
-            if let Some(ws) = project.get_workspace_mut(workspace_name) {
+            if let Some(ws) = project.get_workspace_mut(&workspace_display_name) {
                 ws.status = WorkspaceStatus::Ready;
                 workspace.status = WorkspaceStatus::Ready;
             }
@@ -225,6 +270,12 @@ impl WorkspaceManager {
         Ok(ws_clone)
     }
 
+    fn generate_random_branch_name() -> String {
+        Petnames::default()
+            .generate_one(2, "-")
+            .expect("Failed to generate branch name")
+    }
+
     /// Remove a workspace
     pub fn remove(
         state: &mut AppState,
@@ -244,7 +295,12 @@ impl WorkspaceManager {
 
         // Remove git worktree
         let output = Command::new("git")
-            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+            .args([
+                "worktree",
+                "remove",
+                "--force",
+                worktree_path.to_str().unwrap(),
+            ])
             .current_dir(&project_root)
             .output()
             .map_err(|e| WorkspaceError::GitError(e.to_string()))?;
