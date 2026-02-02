@@ -385,6 +385,11 @@ class AppState: ObservableObject {
             self?.handleProjectsList(result)
         }
 
+        // Handle workspaces list results
+        wsClient.onWorkspacesList = { [weak self] result in
+            self?.handleWorkspacesList(result)
+        }
+
         // UX-2: Handle workspace created results
         wsClient.onWorkspaceCreated = { [weak self] result in
             self?.handleWorkspaceCreated(result)
@@ -1369,9 +1374,28 @@ class AppState: ObservableObject {
                 id: oldProject?.id ?? UUID(),
                 name: info.name,
                 path: info.root,
-                workspaces: oldProject?.workspaces ?? [], // Keep old workspaces if any, otherwise empty
+                workspaces: oldProject?.workspaces ?? [], // Keep old workspaces while loading
                 isExpanded: oldProject?.isExpanded ?? true
             )
+        }
+
+        // Request workspaces for each project
+        for project in result.items {
+            print("[AppState] Requesting workspaces for project: \(project.name)")
+            wsClient.requestListWorkspaces(project: project.name)
+        }
+    }
+
+    /// Handle workspaces list result from WebSocket
+    func handleWorkspacesList(_ result: WorkspacesListResult) {
+        print("[AppState] Received workspaces for project: \(result.project) (\(result.items.count) items)")
+        
+        if let index = projects.firstIndex(where: { $0.name == result.project }) {
+            let newWorkspaces = result.items.map { item in
+                WorkspaceModel(name: item.name, status: item.status)
+            }
+            
+            projects[index].workspaces = newWorkspaces
         }
     }
 
