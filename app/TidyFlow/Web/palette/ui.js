@@ -350,9 +350,6 @@
     // 当焦点在终端中时，只保留必要的全局快捷键，其他键传递给终端
     // 这对于 TUI 应用（vim、tmux、opencode 等）非常重要
     const terminalContainer = document.activeElement?.closest(".terminal-container");
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/32320cbc-e53a-472d-b913-91a971c9bee7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ui.js:handleGlobalKeydown',message:'Global keydown',data:{key,inTerminal:!!terminalContainer,activeEl:document.activeElement?.tagName,activeClass:document.activeElement?.className},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     if (terminalContainer) {
       // 仅保留命令面板快捷键，其他键让终端处理
       const allowedInTerminal = ["Cmd+Shift+P", "Cmd+P"];

@@ -128,6 +128,16 @@ struct TerminalContentView: View {
                 }
             }
         }
+        .onChange(of: appState.selectedWorkspaceKey) { newWsKey in
+            // 当 workspace 切换时，重新发送 terminal mode 命令
+            guard let newWsKey = newWsKey else { return }
+            guard appState.editorWebReady else { return }
+            guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
+            
+            print("[TerminalContentView] workspace changed to: \(newWsKey), re-sending terminal mode")
+            currentTabId = tab.id
+            sendTerminalMode()
+        }
     }
 
     private func sendTerminalMode() {

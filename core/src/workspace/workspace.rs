@@ -57,6 +57,21 @@ impl WorkspaceManager {
         // Determine source branch
         let source_branch = from_branch.unwrap_or(&default_branch);
 
+        // Check if source branch exists locally
+        let branch_check = Command::new("git")
+            .args(["rev-parse", "--verify", &format!("refs/heads/{}", source_branch)])
+            .current_dir(&project_root)
+            .output();
+
+        let source_branch_exists = matches!(branch_check, Ok(ref out) if out.status.success());
+
+        if !source_branch_exists {
+            return Err(WorkspaceError::GitError(format!(
+                "源分支 '{}' 不存在，无法创建工作空间。请确保仓库中存在该分支。",
+                source_branch
+            )));
+        }
+
         // Generate random branch name with retry on conflict
         let mut workspace_branch = format!("tidy/{}", Self::generate_random_branch_name());
         let mut attempts = 0;

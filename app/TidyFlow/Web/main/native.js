@@ -65,8 +65,44 @@
 
       case "enter_mode": {
         const { mode, project, workspace } = payload;
-        if (project) TF.currentProject = project;
-        if (workspace) TF.currentWorkspace = workspace;
+        const oldWsKey = TF.getCurrentWorkspaceKey();
+        const newProject = project || TF.currentProject;
+        const newWorkspace = workspace || TF.currentWorkspace;
+        const newWsKey = TF.getWorkspaceKey(newProject, newWorkspace);
+
+        // 如果 workspace 发生变化，切换 tab UI
+        if (oldWsKey !== newWsKey && newProject && newWorkspace) {
+          // 隐藏旧 workspace 的 tabs
+          if (oldWsKey && TF.workspaceTabs.has(oldWsKey)) {
+            const oldTabSet = TF.workspaceTabs.get(oldWsKey);
+            oldTabSet.tabs.forEach((tab) => {
+              tab.pane.classList.remove("active");
+              tab.tabEl.style.display = "none";
+            });
+          }
+
+          // 更新当前 workspace
+          TF.currentProject = newProject;
+          TF.currentWorkspace = newWorkspace;
+
+          // 显示新 workspace 的 tabs（如果已存在）
+          if (TF.workspaceTabs.has(newWsKey)) {
+            const newTabSet = TF.workspaceTabs.get(newWsKey);
+            newTabSet.tabs.forEach((tab) => {
+              tab.tabEl.style.display = "";
+            });
+            // 激活之前的活动 tab
+            if (newTabSet.activeTabId && newTabSet.tabs.has(newTabSet.activeTabId)) {
+              TF.activeTabId = newTabSet.activeTabId;
+              TF.switchToTab(TF.activeTabId);
+            }
+          }
+        } else {
+          // 只更新状态，不切换 UI
+          if (project) TF.currentProject = project;
+          if (workspace) TF.currentWorkspace = workspace;
+        }
+
         console.log("[NativeBridge] enter_mode:", mode, "project:", TF.currentProject, "workspace:", TF.currentWorkspace);
         if (mode === "terminal" || mode === "editor" || mode === "diff") {
           TF.setNativeMode(mode);

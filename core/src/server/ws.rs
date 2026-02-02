@@ -2477,7 +2477,15 @@ async fn handle_client_message(
                             }
                             Err(e) => {
                                 warn!("Failed to create default workspace: {}", e);
-                                None
+                                // 回滚：移除已导入的项目
+                                state.remove_project(&name);
+                                let _ = state.save();
+                                // 发送错误消息
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "workspace_creation_failed".to_string(),
+                                    message: e.to_string(),
+                                }).await?;
+                                return Ok(());
                             }
                         }
                     } else {

@@ -5,7 +5,7 @@ import Combine
 /// Bridge protocol for Native <-> Web communication
 /// Native -> Web: tidyflow:open_file, tidyflow:save_file, tidyflow:enter_mode, tidyflow:terminal_ensure
 /// Web -> Native: tidyflow:ready, tidyflow:saved, tidyflow:save_error, tidyflow:terminal_ready, tidyflow:terminal_error
-class WebBridge: NSObject, WKScriptMessageHandler {
+class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
     private weak var webView: WKWebView?
 
     // Callbacks for Web -> Native events

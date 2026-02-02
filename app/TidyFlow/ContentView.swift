@@ -2,7 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    let webBridge = WebBridge()
+    // 使用 @StateObject 确保 WebBridge 只创建一次，不随视图更新而重建
+    @StateObject private var webBridge = WebBridge()
 
     /// 控制 Inspector 显示状态（与 rightSidebarCollapsed 反向绑定）
     private var inspectorPresented: Binding<Bool> {
@@ -20,9 +21,9 @@ struct ContentView: View {
                     .environmentObject(appState)
                     .navigationSplitViewColumnWidth(min: 200, ideal: 250)
             } detail: {
+                // 移除 .id() 修饰符，避免切换 workspace 时重建 WKWebView 导致终端会话丢失
                 CenterContentView(webBridge: webBridge)
                     .environmentObject(appState)
-                    .id(appState.selectedWorkspaceKey ?? "none")
             }
             // 使用苹果官方 Inspector API 实现右侧面板
             .inspector(isPresented: inspectorPresented) {
