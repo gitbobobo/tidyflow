@@ -11,19 +11,6 @@
   </head>
   <body>
     <div id="app-container">
-      <!-- Left Sidebar: Projects/Workspaces Tree -->
-      <div id="left-sidebar">
-        <div id="sidebar-header">
-          <span>Projects</span>
-          <button class="refresh-btn" id="refresh-projects" title="Refresh">
-            ↻
-          </button>
-        </div>
-        <div id="project-tree"></div>
-      </div>
-
-      <div class="resize-handle-v" id="resize-left"></div>
-
       <!-- Main Area: Unified Tabs -->
       <div id="main-area">
         <div id="tab-bar">
@@ -46,56 +33,6 @@
         </div>
       </div>
 
-      <div class="resize-handle-v" id="resize-right"></div>
-
-      <!-- Right Tool Panel: Explorer/Search/Git -->
-      <div id="right-panel">
-        <div id="tool-icons">
-          <button
-            class="tool-icon active"
-            data-tool="explorer"
-            title="Explorer">
-            📁
-          </button>
-          <button class="tool-icon" data-tool="search" title="Search">
-            🔍
-          </button>
-          <button class="tool-icon" data-tool="git" title="Git">⎇</button>
-        </div>
-        <div id="tool-content">
-          <!-- Explorer View -->
-          <div id="explorer-view" class="tool-view active">
-            <div class="tool-header">Explorer</div>
-            <div id="explorer-tree">
-              <div class="file-empty">No workspace selected</div>
-            </div>
-          </div>
-          <!-- Search View -->
-          <div id="search-view" class="tool-view">
-            <div class="tool-header">Search</div>
-            <div id="search-input-container">
-              <input
-                type="text"
-                id="search-input"
-                placeholder="Search files..."
-                disabled />
-            </div>
-            <div id="search-results">
-              <div class="search-empty">Enter a search term</div>
-            </div>
-          </div>
-          <!-- Git View -->
-          <div id="git-view" class="tool-view">
-            <div class="tool-header">Git Status</div>
-            <div id="git-status-list">
-              <div class="git-empty">No workspace selected</div>
-            </div>
-            <div id="git-refresh">
-              <button id="git-refresh-btn" disabled>Refresh Status</button>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <script src="vendor/xterm.js"></script>

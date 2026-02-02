@@ -10,7 +10,6 @@
     TF.tabBar = document.getElementById("tab-bar");
     TF.tabContent = document.getElementById("tab-content");
     TF.placeholder = document.getElementById("placeholder");
-    TF.projectTree = document.getElementById("project-tree");
 
     const newTermBtn = document.getElementById("new-terminal-btn");
     if (newTermBtn) {
@@ -19,25 +18,6 @@
           TF.createTerminal(TF.currentProject, TF.currentWorkspace);
         }
       });
-    }
-
-    const refreshBtn = document.getElementById("refresh-projects");
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", TF.listProjects);
-    }
-
-    document.querySelectorAll(".tool-icon").forEach((icon) => {
-      icon.addEventListener("click", () => TF.switchToolView(icon.dataset.tool));
-    });
-
-    const searchInput = document.getElementById("search-input");
-    if (searchInput) {
-      searchInput.addEventListener("input", (e) => TF.performSearch(e.target.value));
-    }
-
-    const gitRefreshBtn = document.getElementById("git-refresh-btn");
-    if (gitRefreshBtn) {
-      gitRefreshBtn.addEventListener("click", TF.refreshGitStatus);
     }
 
     document.addEventListener("keydown", (e) => {
@@ -156,12 +136,6 @@
         };
       });
     },
-
-    switchToolView: TF.switchToolView,
-    refreshExplorer: TF.refreshExplorer,
-    refreshGitStatus: TF.refreshGitStatus,
-
-    getAllFilePaths: () => TF.allFilePaths,
 
     setNativeMode: TF.setNativeMode,
     getNativeMode: () => TF.nativeMode,

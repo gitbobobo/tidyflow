@@ -102,17 +102,11 @@
   TF.tabCounter = 0;
   TF.activeTabId = null;
 
-  TF.activeToolView = "explorer";
-  TF.explorerTree = new Map();
-  TF.expandedDirs = new Set();
-  TF.allFilePaths = [];
-  TF.gitStatus = [];
   TF.workspaceFileIndex = new Map();
 
   TF.tabBar = null;
   TF.tabContent = null;
   TF.placeholder = null;
-  TF.projectTree = null;
   TF.pendingLineNavigation = null;
 
   TF.WebSocketTransport = WebSocketTransport;

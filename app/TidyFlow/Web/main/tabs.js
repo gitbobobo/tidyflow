@@ -36,10 +36,28 @@
       macOptionClickForcesSelection: true, // Option+Click 强制选择模式
       scrollback: 10000,                  // 滚动缓冲区行数
       rightClickSelectsWord: true,        // 右键选择单词
+      overviewRulerWidth: 0,              // 禁用右侧概览标尺
     });
 
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
+
+    // 自定义 fit 函数，不预留滚动条宽度，尽量填满容器
+    const originalProposeDimensions = fitAddon.proposeDimensions.bind(fitAddon);
+    fitAddon.proposeDimensions = function() {
+      const dims = originalProposeDimensions();
+      if (!dims) return dims;
+      const core = term._core;
+      if (core && core.viewport) {
+        const scrollBarWidth = core.viewport.scrollBarWidth || 0;
+        const cellWidth = core._renderService.dimensions.css.cell.width;
+        if (cellWidth > 0) {
+          // 加回滚动条宽度对应的列数，使用 ceil 确保填满
+          dims.cols += Math.ceil(scrollBarWidth / cellWidth);
+        }
+      }
+      return dims;
+    };
 
     try {
       const webLinksAddon = new WebLinksAddon.WebLinksAddon();

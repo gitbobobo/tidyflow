@@ -250,21 +250,12 @@
     TF.nativeMode = mode;
     console.log("[NativeMode] Switching to:", mode);
 
-    const leftSidebar = document.getElementById("left-sidebar");
-    const rightPanel = document.getElementById("right-panel");
-
     if (mode === "terminal") {
-      if (leftSidebar) leftSidebar.style.display = "none";
-      if (rightPanel) rightPanel.style.display = "none";
       TF.hideNonTerminalTabs();
       TF.showTerminalMode();
     } else if (mode === "diff") {
-      if (leftSidebar) leftSidebar.style.display = "none";
-      if (rightPanel) rightPanel.style.display = "none";
       TF.showDiffMode();
     } else {
-      if (leftSidebar) leftSidebar.style.display = "flex";
-      if (rightPanel) rightPanel.style.display = "flex";
       TF.showEditorMode();
     }
   }
