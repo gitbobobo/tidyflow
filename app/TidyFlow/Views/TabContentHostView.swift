@@ -164,10 +164,18 @@ struct TerminalContentView: View {
     private func handleTabSwitch(_ tab: TabModel) {
         guard appState.editorWebReady else { return }
         guard let ws = appState.selectedWorkspaceKey else { return }
+        
+        // 如果这个 Tab 正在 pending spawn，跳过（避免重复 spawn）
+        if appState.pendingSpawnTabs.contains(tab.id) {
+            return
+        }
+
+        let sessionId = appState.getTerminalSessionId(for: tab.id)
 
         // Phase C1-2: Switch to this tab's session
-        if let sessionId = appState.getTerminalSessionId(for: tab.id) {
-            webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
+        if let sessionId = sessionId {
+            // 使用回调而不是直接调用，确保使用正确的 WebBridge 实例
+            appState.onTerminalAttach?(tab.id.uuidString, sessionId)
         } else {
             // No session, spawn new one
             webBridge.terminalSpawn(

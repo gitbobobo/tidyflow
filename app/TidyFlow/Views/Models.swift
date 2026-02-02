@@ -203,8 +203,16 @@ class AppState: ObservableObject {
     @Published var terminalSessionByTabId: [UUID: String] = [:]
     // Track stale sessions (disconnected but tab still exists)
     @Published var staleTerminalTabs: Set<UUID> = []
+    // Track tabs that are pending spawn (to skip handleTabSwitch)
+    var pendingSpawnTabs: Set<UUID> = []
     // Callback for terminal kill (set by CenterContentView)
     var onTerminalKill: ((String, String) -> Void)?
+    // Callback for terminal spawn (set by CenterContentView)
+    // Parameters: tabId, project, workspace
+    var onTerminalSpawn: ((String, String, String) -> Void)?
+    // Callback for terminal attach (set by CenterContentView)
+    // Parameters: tabId, sessionId
+    var onTerminalAttach: ((String, String) -> Void)?
     // Callback for Core ready with port (set by CenterContentView to update WebBridge)
     var onCoreReadyWithPort: ((Int) -> Void)?
 
@@ -1691,6 +1699,10 @@ class AppState: ObservableObject {
     }
     
     func addTab(workspaceKey: String, kind: TabKind, title: String, payload: String) {
+        // 检查是否已有终端 Tab（用于判断是否需要通过回调 spawn）
+        let existingTabs = workspaceTabs[workspaceKey] ?? []
+        let hasExistingTerminalTab = existingTabs.contains { $0.kind == .terminal }
+        
         let newTab = TabModel(
             id: UUID(),
             title: title,
@@ -1705,6 +1717,18 @@ class AppState: ObservableObject {
         
         workspaceTabs[workspaceKey]?.append(newTab)
         activeTabIdByWorkspace[workspaceKey] = newTab.id
+        
+        // 当创建终端 Tab 且已有其他终端时，直接通知 WebBridge spawn 新终端
+        // （第一个终端由 TerminalContentView.onAppear 处理）
+        if kind == .terminal && hasExistingTerminalTab {
+            // 标记为 pending spawn，防止 handleTabSwitch 重复 spawn
+            pendingSpawnTabs.insert(newTab.id)
+            
+            // workspaceKey 只是 workspace 名称，project 从 selectedProjectName 获取
+            let project = selectedProjectName
+            let workspace = workspaceKey
+            onTerminalSpawn?(newTab.id.uuidString, project, workspace)
+        }
     }
     
     func addTerminalTab(workspaceKey: String) {
@@ -1945,6 +1969,7 @@ class AppState: ObservableObject {
         // Update session mapping
         terminalSessionByTabId[uuid] = sessionId
         staleTerminalTabs.remove(uuid)
+        pendingSpawnTabs.remove(uuid)  // 移除 pending 标记
 
         // Update tab's terminalSessionId
         if let ws = selectedWorkspaceKey,

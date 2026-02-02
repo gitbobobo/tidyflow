@@ -224,6 +224,7 @@ class WebBridge: NSObject, WKScriptMessageHandler {
 
     /// Spawn a new terminal session for a tab
     func terminalSpawn(project: String, workspace: String, tabId: String) {
+        print("[WebBridge] terminalSpawn called: project=\(project), workspace=\(workspace), tabId=\(tabId)")
         send(type: "terminal_spawn", payload: [
             "project": project,
             "workspace": workspace,

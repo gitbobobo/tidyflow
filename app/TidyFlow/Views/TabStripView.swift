@@ -26,21 +26,17 @@ struct TabStripView: View {
                     .padding(.leading, 1)
                 }
                 
-                // Debug Controls for Verification
-                HStack(spacing: 4) {
-                    Button("+T") {
-                        appState.addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Term", payload: "")
-                    }
-                    Button("+E") {
-                        appState.addTab(workspaceKey: workspaceKey, kind: .editor, title: "Edit", payload: "main.rs")
-                    }
-                    Button("+D") {
-                        appState.addTab(workspaceKey: workspaceKey, kind: .diff, title: "Diff", payload: "main.rs")
-                    }
+                // 新建终端按钮
+                Button(action: {
+                    appState.addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Terminal", payload: "")
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .controlSize(.mini)
-                .padding(.horizontal, 4)
+                .help("新建终端 (⌘T)")
+                .padding(.horizontal, 8)
             } else {
                 Spacer()
             }

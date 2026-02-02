@@ -80,13 +80,12 @@
         const { project, workspace, tab_id } = payload;
         console.log("[NativeBridge] terminal_spawn:", tab_id, project, workspace);
 
-        TF.currentProject = project;
-        TF.currentWorkspace = workspace;
-
         TF.pendingTerminalSpawn = { tabId: tab_id, project, workspace };
 
         if (!TF.transport || !TF.transport.isConnected) {
           console.log("[NativeBridge] WebSocket not connected, connecting first...");
+          TF.currentProject = project;
+          TF.currentWorkspace = workspace;
           TF.connect();
           setTimeout(() => {
             if (TF.transport && TF.transport.isConnected) {
@@ -99,8 +98,17 @@
           return;
         }
 
-        console.log("[NativeBridge] Sending select_workspace:", project, workspace);
-        TF.sendControlMessage({ type: "select_workspace", project, workspace });
+        // 如果 workspace 已经是当前 workspace，直接创建新终端
+        // 否则先选择 workspace
+        if (TF.currentProject === project && TF.currentWorkspace === workspace) {
+          console.log("[NativeBridge] Workspace already selected, sending term_create:", project, workspace);
+          TF.sendControlMessage({ type: "term_create", project, workspace });
+        } else {
+          console.log("[NativeBridge] Switching workspace, sending select_workspace:", project, workspace);
+          TF.currentProject = project;
+          TF.currentWorkspace = workspace;
+          TF.sendControlMessage({ type: "select_workspace", project, workspace });
+        }
         break;
       }
 

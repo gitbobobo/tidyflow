@@ -100,6 +100,20 @@ struct CenterContentView: View {
         appState.onTerminalKill = { [weak webBridge] tabId, sessionId in
             webBridge?.terminalKill(tabId: tabId, sessionId: sessionId)
         }
+        
+        // 设置终端 attach 回调
+        appState.onTerminalAttach = { [weak webBridge] tabId, sessionId in
+            webBridge?.terminalAttach(tabId: tabId, sessionId: sessionId)
+        }
+        
+        // 设置终端 spawn 回调，当创建新终端 Tab 时调用
+        appState.onTerminalSpawn = { [weak webBridge, weak appState] tabId, project, workspace in
+            guard let webBridge = webBridge, let appState = appState else { return }
+            // 仅当 WebView 已就绪时才发送 spawn 命令
+            if appState.editorWebReady {
+                webBridge.terminalSpawn(project: project, workspace: workspace, tabId: tabId)
+            }
+        }
 
         // Set Core ready callback to update WebBridge with the port
         appState.onCoreReadyWithPort = { [weak webBridge] port in
