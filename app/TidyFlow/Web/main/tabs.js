@@ -373,6 +373,15 @@
 
   function openFileInEditor(filePath) {
     if (!TF.currentProject || !TF.currentWorkspace) return;
+
+    // 如果 WebSocket 未连接，先连接再发送文件读取请求
+    if (!TF.transport || !TF.transport.isConnected) {
+      console.log("[openFileInEditor] WebSocket not connected, connecting first...");
+      TF.pendingFileOpen = { filePath, project: TF.currentProject, workspace: TF.currentWorkspace };
+      TF.connect();
+      return;
+    }
+
     TF.sendFileRead(TF.currentProject, TF.currentWorkspace, filePath);
   }
 
@@ -398,6 +407,15 @@
     }
 
     TF.pendingLineNavigation = { filePath, lineNumber };
+
+    // 如果 WebSocket 未连接，先连接再发送文件读取请求
+    if (!TF.transport || !TF.transport.isConnected) {
+      console.log("[openFileAtLine] WebSocket not connected, connecting first...");
+      TF.pendingFileOpen = { filePath, project: TF.currentProject, workspace: TF.currentWorkspace };
+      TF.connect();
+      return;
+    }
+
     TF.sendFileRead(TF.currentProject, TF.currentWorkspace, filePath);
   }
 

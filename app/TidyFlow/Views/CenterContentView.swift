@@ -6,7 +6,6 @@ struct CenterContentView: View {
     @State private var webViewVisible: Bool = false
 
     var body: some View {
-        let _ = print("[CenterContentView] body evaluated, selectedWorkspaceKey: \(appState.selectedWorkspaceKey ?? "nil")")
         VStack(spacing: 0) {
             // Native tab 栏（始终在顶部）
             if appState.selectedWorkspaceKey != nil {

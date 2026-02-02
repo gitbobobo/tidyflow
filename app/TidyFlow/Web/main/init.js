@@ -44,6 +44,14 @@
       onOpen: () => {
         TF.notifySwift("connected");
         TF.postToNative("terminal_connected", {});
+
+        // 处理待打开的文件
+        if (TF.pendingFileOpen) {
+          const { filePath, project, workspace } = TF.pendingFileOpen;
+          TF.pendingFileOpen = null;
+          console.log("[connect] Processing pending file open:", filePath);
+          TF.sendFileRead(project, workspace, filePath);
+        }
       },
       onClose: () => {
         TF.notifySwift("disconnected");

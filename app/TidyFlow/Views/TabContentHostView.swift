@@ -12,6 +12,9 @@ struct TabContentHostView: View {
                let tabs = appState.workspaceTabs[workspaceKey],
                let activeTab = tabs.first(where: { $0.id == activeId }) {
 
+                // 有活跃的 terminal/editor/diff tab 时，确保 WebView 可见
+                let _ = { webViewVisible = true }()
+
                 switch activeTab.kind {
                 case .terminal:
                     // Phase C1-1: Show WebView for terminal tabs
@@ -35,10 +38,8 @@ struct TabContentHostView: View {
 
             } else {
                 // 没有活跃标签时，显示空白提示并隐藏 WebView
+                let _ = { webViewVisible = false }()
                 NoActiveTabView()
-                    .onAppear {
-                        webViewVisible = false
-                    }
             }
         }
     }
@@ -135,7 +136,7 @@ struct TerminalContentView: View {
             }
         }
         .onDisappear {
-            webViewVisible = false
+            // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
             // Switch back to editor mode when leaving terminal
             if appState.editorWebReady {
                 webBridge.enterMode("editor")
@@ -311,7 +312,7 @@ struct EditorContentView: View {
             }
         }
         .onDisappear {
-            webViewVisible = false
+            // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
         }
         .onChange(of: appState.editorWebReady) { ready in
             if ready {
@@ -327,6 +328,8 @@ struct EditorContentView: View {
 
     private func sendOpenFile() {
         guard let ws = appState.selectedWorkspaceKey else { return }
+        // 先切换到编辑器模式，否则 Web 端可能仍在 terminal/diff 模式，编辑器 pane 被隐藏
+        webBridge.enterMode("editor", project: appState.selectedProjectName, workspace: ws)
         webBridge.openFile(
             project: appState.selectedProjectName,
             workspace: ws,
@@ -451,7 +454,7 @@ struct DiffContentView: View {
             }
         }
         .onDisappear {
-            webViewVisible = false
+            // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
         }
         .onChange(of: appState.editorWebReady) { ready in
             if ready {

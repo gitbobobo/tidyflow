@@ -174,10 +174,16 @@ body.renderer-only #tab-content {
   z-index: 1;
 }
 
+/* 有活动 pane 时强制隐藏 placeholder，避免遮挡编辑器/终端内容 */
+#tab-content:has(.tab-pane.active) #placeholder {
+  display: none !important;
+}
+
 /* Editor Tab Pane */
 .editor-pane {
   display: flex;
   flex-direction: column;
+  min-height: 0; /* 允许 flex 子项正确收缩 */
 }
 .editor-toolbar {
   display: flex;
@@ -214,7 +220,16 @@ body.renderer-only #tab-content {
 }
 .editor-container {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+  position: relative;
+}
+.editor-container .cm-editor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 .editor-status {
   padding: 2px 8px;

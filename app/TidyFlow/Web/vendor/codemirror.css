@@ -3,24 +3,76 @@
     height: 100%;
     font-family: Menlo, Monaco, "Courier New", monospace;
     font-size: 14px;
+    color: #d4d4d4 !important;
+    background: #1e1e1e;
+}
+
+/* 确保所有子元素继承文字颜色 */
+.cm-editor * {
+    color: inherit;
 }
 
 .cm-editor.cm-focused {
     outline: none;
 }
 
+.cm-editor *:focus {
+    outline: none;
+}
+
+.cm-content:focus {
+    outline: none;
+}
+
+/* 移除 WebKit contenteditable 的默认边框和高亮 */
+.cm-content[contenteditable] {
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.cm-content[contenteditable]:focus {
+    outline: none;
+    border: none;
+    box-shadow: none;
+}
+
+/* 移除任何可能的绿色边框 */
+.cm-line {
+    border: none !important;
+    outline: none !important;
+}
+
+.cm-editor, .cm-scroller, .cm-content, .cm-gutters {
+    border: none;
+    outline: none;
+}
+
 .cm-scroller {
     overflow: auto;
     font-family: inherit;
+    display: flex;
+    align-items: stretch;
+    height: 100%;
 }
 
 .cm-content {
-    padding: 4px 0;
+    padding: 0;
     caret-color: #d4d4d4;
+    flex: 1;
+    min-width: 0;
+    line-height: 1.5;
+    color: #d4d4d4;
+    background: #1e1e1e;
 }
 
 .cm-line {
-    padding: 0 4px;
+    padding: 0 4px 0 8px;
+    line-height: 1.5;
+    color: #d4d4d4 !important;
+}
+
+.cm-line * {
+    color: inherit !important;
 }
 
 .cm-gutters {
@@ -37,6 +89,7 @@
     padding: 0 8px 0 16px;
     min-width: 40px;
     text-align: right;
+    line-height: 1.5;
 }
 
 .cm-activeLineGutter {

@@ -36,6 +36,10 @@
           TF.currentProject = project;
           TF.currentWorkspace = workspace;
         }
+        // 确保处于编辑器模式，否则新建的编辑器 pane 会被 terminal/diff 模式隐藏
+        if (TF.nativeMode !== "editor") {
+          TF.setNativeMode("editor");
+        }
         TF.openFileInEditor(path);
         break;
       }

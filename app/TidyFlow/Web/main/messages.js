@@ -234,6 +234,19 @@
               const tabInfo = TF.createEditorTab(msg.path, content);
               if (tabInfo) {
                 TF.switchToTab(tabInfo.id);
+                // 创建 tab 后再次确保编辑器模式下的 tab 可见（open_file 时 tab set 可能尚不存在，showEditorMode 曾提前返回）
+                if (TF.nativeMode === "editor") {
+                  TF.showEditorMode();
+                }
+                // 强制隐藏 placeholder（避免被 placeholder 遮挡）
+                // 注意：不要设置 pane 的内联 visibility/z-index，依赖 .active 类控制可见性
+                if (TF.placeholder) TF.placeholder.style.setProperty("display", "none", "important");
+                // pane 可见后再触发布局，避免 CodeMirror 在零尺寸下测量
+                if (tabInfo.editorView) {
+                  requestAnimationFrame(() => {
+                    tabInfo.editorView.focus();
+                  });
+                }
 
                 if (
                   TF.pendingLineNavigation &&

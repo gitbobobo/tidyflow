@@ -108,6 +108,7 @@
   TF.tabContent = null;
   TF.placeholder = null;
   TF.pendingLineNavigation = null;
+  TF.pendingFileOpen = null;  // 待打开的文件（WebSocket 连接后处理）
 
   TF.WebSocketTransport = WebSocketTransport;
   TF.encodeBase64 = encodeBase64;
