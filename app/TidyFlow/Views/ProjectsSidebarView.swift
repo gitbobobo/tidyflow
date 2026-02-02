@@ -122,7 +122,7 @@ struct ProjectRowView: View {
             .padding(.vertical, 4)
             .contentShape(Rectangle()) // Make entire row tappable
             .onTapGesture {
-                withAnimation {
+                withAnimation(.easeInOut(duration: 0.2)) {
                     project.isExpanded.toggle()
                 }
             }
@@ -144,15 +144,18 @@ struct ProjectRowView: View {
 
             // Workspaces List
             if project.isExpanded {
-                ForEach(project.workspaces) { workspace in
-                    WorkspaceRowView(
-                        workspace: workspace,
-                        projectId: project.id,
-                        isSelected: appState.selectedWorkspaceKey == workspace.name
-                    )
-                    .environmentObject(appState)
-                    .padding(.leading, 18) // Indent workspaces
+                VStack(spacing: 0) {
+                    ForEach(project.workspaces) { workspace in
+                        WorkspaceRowView(
+                            workspace: workspace,
+                            projectId: project.id,
+                            isSelected: appState.selectedWorkspaceKey == workspace.name
+                        )
+                        .environmentObject(appState)
+                        .padding(.leading, 18) // Indent workspaces
+                    }
                 }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
     }
@@ -179,10 +182,17 @@ struct WorkspaceRowView: View {
                     .foregroundColor(.secondary)
             }
         }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        )
         .tag(workspace.name)
         .contentShape(Rectangle())
         .onTapGesture {
             appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
         }
+        .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 }
