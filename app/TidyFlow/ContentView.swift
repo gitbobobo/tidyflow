@@ -4,30 +4,32 @@ struct ContentView: View {
     @EnvironmentObject var appState: AppState
     let webBridge = WebBridge()
 
+    /// 控制 Inspector 显示状态（与 rightSidebarCollapsed 反向绑定）
+    private var inspectorPresented: Binding<Bool> {
+        Binding(
+            get: { !appState.rightSidebarCollapsed },
+            set: { appState.rightSidebarCollapsed = !$0 }
+        )
+    }
+
     var body: some View {
         ZStack {
-            // Main layout with conditional right panel
-            HStack(spacing: 0) {
-                // Left sidebar + Center content using NavigationSplitView
-                NavigationSplitView {
-                    ProjectsSidebarView()
-                        .environmentObject(appState)
-                        .navigationSplitViewColumnWidth(min: 200, ideal: 250)
-                } detail: {
-                    CenterContentView(webBridge: webBridge)
-                        .environmentObject(appState)
-                        .id(appState.selectedWorkspaceKey ?? "none") // 强制在工作空间变化时重新创建视图
-                }
-
-                // Right panel (conditionally shown)
-                if !appState.rightSidebarCollapsed {
-                    RightToolPanelView()
-                        .environmentObject(appState)
-                        .frame(width: 300)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+            // 主布局：左侧边栏 + 中心内容
+            NavigationSplitView {
+                ProjectsSidebarView()
+                    .environmentObject(appState)
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 250)
+            } detail: {
+                CenterContentView(webBridge: webBridge)
+                    .environmentObject(appState)
+                    .id(appState.selectedWorkspaceKey ?? "none")
             }
-            .animation(.easeInOut(duration: 0.25), value: appState.rightSidebarCollapsed)
+            // 使用苹果官方 Inspector API 实现右侧面板
+            .inspector(isPresented: inspectorPresented) {
+                InspectorContentView()
+                    .environmentObject(appState)
+            }
+            .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 12) {
@@ -41,14 +43,16 @@ struct ContentView: View {
                             .environmentObject(appState)
                     }
                 }
-                // Right panel toggle button
+                // 右侧面板切换按钮（保留手动控制）
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: {
-                        appState.rightSidebarCollapsed.toggle()
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            appState.rightSidebarCollapsed.toggle()
+                        }
                     }) {
                         Image(systemName: "sidebar.right")
                     }
-                    .help(appState.rightSidebarCollapsed ? "Show Right Panel" : "Hide Right Panel")
+                    .help(appState.rightSidebarCollapsed ? "显示检查器 (⌘⌃I)" : "隐藏检查器 (⌘⌃I)")
                 }
             }
 

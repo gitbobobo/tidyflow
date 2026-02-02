@@ -47,5 +47,9 @@ struct TidyFlowApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 900, height: 600)
+        // 添加 InspectorCommands 支持标准快捷键 ⌘⌃I 切换检查器
+        .commands {
+            InspectorCommands()
+        }
     }
 }
