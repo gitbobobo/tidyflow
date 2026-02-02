@@ -44,6 +44,10 @@ struct ContentView: View {
                             .environmentObject(appState)
                     }
                 }
+                ToolbarItem(placement: .principal) {
+                    OpenInEditorButtonView()
+                        .environmentObject(appState)
+                }
                 // 右侧面板切换按钮（保留手动控制）
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: {

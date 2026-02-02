@@ -106,6 +106,7 @@ struct Command: Identifiable {
 struct WorkspaceModel: Identifiable, Equatable {
     var id: String { name }
     let name: String
+    var root: String?  // 工作空间路径
     var status: String?
 }
 
@@ -262,6 +263,17 @@ class AppState: ObservableObject {
     /// Refresh projects and workspaces from Core
     func refreshProjectsAndWorkspaces() {
         wsClient.requestListProjects()
+    }
+
+    /// 获取当前选中工作空间的根目录路径
+    var selectedWorkspacePath: String? {
+        guard let projectId = selectedProjectId,
+              let workspaceKey = selectedWorkspaceKey,
+              let project = projects.first(where: { $0.id == projectId }),
+              let workspace = project.workspaces.first(where: { $0.name == workspaceKey }) else {
+            return nil
+        }
+        return workspace.root
     }
 
     // MARK: - Core Process Management
@@ -1402,7 +1414,7 @@ class AppState: ObservableObject {
         
         if let index = projects.firstIndex(where: { $0.name == result.project }) {
             let newWorkspaces = result.items.map { item in
-                WorkspaceModel(name: item.name, status: item.status)
+                WorkspaceModel(name: item.name, root: item.root, status: item.status)
             }
             
             projects[index].workspaces = newWorkspaces
@@ -1417,7 +1429,7 @@ class AppState: ObservableObject {
         // Create local ProjectModel
         var workspaces: [WorkspaceModel] = []
         if let ws = result.workspace {
-            workspaces.append(WorkspaceModel(name: ws.name, status: ws.status))
+            workspaces.append(WorkspaceModel(name: ws.name, root: ws.root, status: ws.status))
         }
 
         let newProject = ProjectModel(
@@ -1450,6 +1462,7 @@ class AppState: ObservableObject {
         if let index = projects.firstIndex(where: { $0.name == result.project }) {
             let newWorkspace = WorkspaceModel(
                 name: result.workspace.name,
+                root: result.workspace.root,
                 status: result.workspace.status
             )
             projects[index].workspaces.append(newWorkspace)

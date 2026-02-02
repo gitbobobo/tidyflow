@@ -34,6 +34,7 @@
 		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
 		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
 		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
+		A1000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000016 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -67,6 +68,7 @@
 		D3900012 /* CoreProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProcessManager.swift; sourceTree = "<group>"; };
 		D3900013 /* PortAllocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortAllocator.swift; sourceTree = "<group>"; };
 		E4200011 /* LogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogWriter.swift; sourceTree = "<group>"; };
+		A1000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -164,6 +166,7 @@
 		A1000020 /* TidyFlow */ = {
 			isa = PBXGroup;
 			children = (
+				A1000016 /* Assets.xcassets */,
 				F5D00020 /* Debug */,
 				E4200020 /* Logging */,
 				B3A00020 /* Networking */,
@@ -241,6 +244,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000003 /* Web in Resources */,
+				A1000004 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
