@@ -2459,7 +2459,7 @@ async fn handle_client_message(
                     // Optionally create default workspace
                     let workspace_info = if create_default_workspace {
                         info!("Creating default workspace...");
-                        match WorkspaceManager::create(&mut state, &name, &default_branch, None, false) {
+                        match WorkspaceManager::create(&mut state, &name, None, false) {
                             Ok(ws) => {
                                 info!("Default workspace created: {}", ws.name);
                                 Some(WorkspaceInfo {
@@ -2519,11 +2519,11 @@ async fn handle_client_message(
             }
         }
 
-        // v1.16: Create workspace
-        ClientMessage::CreateWorkspace { project, workspace, from_branch } => {
+        // v1.16: Create workspace（名称由 Core 用 petname 生成）
+        ClientMessage::CreateWorkspace { project, from_branch } => {
             let mut state = app_state.lock().await;
 
-            match WorkspaceManager::create(&mut state, &project, &workspace, from_branch.as_deref(), false) {
+            match WorkspaceManager::create(&mut state, &project, from_branch.as_deref(), false) {
                 Ok(ws) => {
                     send_message(socket, &ServerMessage::WorkspaceCreated {
                         project,
@@ -2574,6 +2574,33 @@ async fn handle_client_message(
                     warn!("Failed to remove project: {}, error: {}", name, e);
                     send_message(socket, &ServerMessage::ProjectRemoved {
                         name,
+                        ok: false,
+                        message: Some(e.to_string()),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.18: Remove workspace
+        ClientMessage::RemoveWorkspace { project, workspace } => {
+            info!("RemoveWorkspace request: project={}, workspace={}", project, workspace);
+            let mut state = app_state.lock().await;
+
+            match WorkspaceManager::remove(&mut state, &project, &workspace) {
+                Ok(_) => {
+                    info!("Workspace removed successfully: {} / {}", project, workspace);
+                    send_message(socket, &ServerMessage::WorkspaceRemoved {
+                        project: project.clone(),
+                        workspace: workspace.clone(),
+                        ok: true,
+                        message: Some("工作空间已删除".to_string()),
+                    }).await?;
+                }
+                Err(e) => {
+                    warn!("Failed to remove workspace: {} / {}, error: {}", project, workspace, e);
+                    send_message(socket, &ServerMessage::WorkspaceRemoved {
+                        project,
+                        workspace,
                         ok: false,
                         message: Some(e.to_string()),
                     }).await?;

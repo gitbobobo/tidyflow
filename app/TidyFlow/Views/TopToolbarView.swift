@@ -119,50 +119,7 @@ struct FixedSizeAssetImage: View {
     }
 }
 
-// MARK: - 外部编辑器枚举
-enum ExternalEditor: String, CaseIterable {
-    case vscode = "VSCode"
-    case cursor = "Cursor"
-
-    /// 应用程序的 bundle identifier
-    var bundleId: String {
-        switch self {
-        case .vscode: return "com.microsoft.VSCode"
-        case .cursor: return "com.todesktop.230313mzl4w4u92"
-        }
-    }
-
-    /// 命令行工具名称
-    var cliCommand: String {
-        switch self {
-        case .vscode: return "code"
-        case .cursor: return "cursor"
-        }
-    }
-
-    /// 工程内嵌的官方图标名称（Assets.xcassets）
-    var assetName: String {
-        switch self {
-        case .vscode: return "vscode-icon"
-        case .cursor: return "cursor-icon"
-        }
-    }
-
-    /// SF Symbol 备用图标（Asset 不可用时使用）
-    var fallbackIconName: String {
-        switch self {
-        case .vscode: return "chevron.left.forwardslash.chevron.right"
-        case .cursor: return "cursorarrow.rays"
-        }
-    }
-
-    /// 检查应用是否已安装
-    var isInstalled: Bool {
-        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) != nil
-    }
-}
-
-/// 在外部编辑器中打开工作空间按钮
+// MARK: - 在外部编辑器中打开工作空间按钮（ExternalEditor 定义在 Models.swift）
 struct OpenInEditorButtonView: View {
     @EnvironmentObject var appState: AppState
     @State private var showingAlert = false
@@ -200,7 +157,10 @@ struct OpenInEditorButtonView: View {
         Menu {
             ForEach(ExternalEditor.allCases, id: \.self) { editor in
                 Button(action: {
-                    openInEditor(editor)
+                    if let path = appState.selectedWorkspacePath, !appState.openPathInEditor(path, editor: editor) {
+                        alertMessage = appState.gitOpToast ?? "打开失败"
+                        showingAlert = true
+                    }
                 }) {
                     Label {
                         Text(editor.rawValue)
@@ -221,38 +181,6 @@ struct OpenInEditorButtonView: View {
             Button("确定", role: .cancel) {}
         } message: {
             Text(alertMessage)
-        }
-    }
-
-    /// 在指定编辑器中打开当前工作空间
-    private func openInEditor(_ editor: ExternalEditor) {
-        guard let path = appState.selectedWorkspacePath else {
-            alertMessage = "未选择工作空间"
-            showingAlert = true
-            return
-        }
-
-        guard editor.isInstalled else {
-            alertMessage = "\(editor.rawValue) 未安装"
-            showingAlert = true
-            return
-        }
-
-        // 使用 open 命令打开编辑器
-        let task = Process()
-        task.launchPath = "/usr/bin/open"
-        task.arguments = ["-b", editor.bundleId, path]
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-            if task.terminationStatus != 0 {
-                alertMessage = "无法启动 \(editor.rawValue)"
-                showingAlert = true
-            }
-        } catch {
-            alertMessage = "启动失败: \(error.localizedDescription)"
-            showingAlert = true
         }
     }
 }

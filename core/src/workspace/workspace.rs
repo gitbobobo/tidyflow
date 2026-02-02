@@ -33,11 +33,11 @@ pub enum WorkspaceError {
 pub struct WorkspaceManager;
 
 impl WorkspaceManager {
-    /// Create a new workspace using git worktree
+    /// Create a new workspace using git worktree.
+    /// 名称由 Core 用 petname 生成唯一名。
     pub fn create(
         state: &mut AppState,
         project_name: &str,
-        workspace_name: &str,
         from_branch: Option<&str>,
         run_setup: bool,
     ) -> Result<Workspace, WorkspaceError> {
@@ -45,11 +45,6 @@ impl WorkspaceManager {
         let project = state
             .get_project(project_name)
             .ok_or_else(|| WorkspaceError::ProjectNotFound(project_name.to_string()))?;
-
-        // Check if workspace already exists
-        if project.get_workspace(workspace_name).is_some() {
-            return Err(WorkspaceError::AlreadyExists(workspace_name.to_string()));
-        }
 
         let project_root = project.root_path.clone();
         let default_branch = project.default_branch.clone();
@@ -72,14 +67,18 @@ impl WorkspaceManager {
             )));
         }
 
-        // Generate random branch name with retry on conflict
+        // Generate random branch name with retry on conflict (branch or workspace name)
         let mut workspace_branch = format!("tidy/{}", Self::generate_random_branch_name());
         let mut attempts = 0;
         const MAX_ATTEMPTS: u32 = 5;
 
-        // Check if branch already exists and retry if needed
-        while attempts < MAX_ATTEMPTS {
-            let output = Command::new("git")
+        let workspace_display_name = loop {
+            let display = workspace_branch
+                .strip_prefix("tidy/")
+                .unwrap_or(&workspace_branch)
+                .to_string();
+
+            let branch_exists = Command::new("git")
                 .args([
                     "show-ref",
                     "--quiet",
@@ -88,31 +87,25 @@ impl WorkspaceManager {
                 ])
                 .current_dir(&project_root)
                 .output();
+            let branch_exists = matches!(branch_exists, Ok(ref out) if out.status.success());
 
-            match output {
-                Ok(ref out) if out.status.success() => {
-                    // Branch exists, generate new name
-                    workspace_branch = format!("tidy/{}", Self::generate_random_branch_name());
-                    attempts += 1;
-                }
-                _ => {
-                    // Branch doesn't exist, we can use it
-                    break;
-                }
+            let name_exists = state
+                .get_project(project_name)
+                .map(|p| p.get_workspace(&display).is_some())
+                .unwrap_or(false);
+
+            if !branch_exists && !name_exists {
+                break display;
             }
-        }
-
-        if attempts >= MAX_ATTEMPTS {
-            return Err(WorkspaceError::GitError(format!(
-                "Failed to generate unique branch name after {} attempts",
-                MAX_ATTEMPTS
-            )));
-        }
-
-        let workspace_display_name = workspace_branch
-            .strip_prefix("tidy/")
-            .unwrap_or(&workspace_branch)
-            .to_string();
+            workspace_branch = format!("tidy/{}", Self::generate_random_branch_name());
+            attempts += 1;
+            if attempts >= MAX_ATTEMPTS {
+                return Err(WorkspaceError::GitError(format!(
+                    "Failed to generate unique workspace name after {} attempts",
+                    MAX_ATTEMPTS
+                )));
+            }
+        };
 
         let worktrees_dir = project.worktrees_dir();
         std::fs::create_dir_all(&worktrees_dir)

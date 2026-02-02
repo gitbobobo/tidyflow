@@ -6,8 +6,9 @@ set -e
 
 WS_URL="${WS_URL:-ws://127.0.0.1:47999/ws}"
 DEMO_PROJECT="${DEMO_PROJECT:-demo-project}"
-WS_A="ws-a"
-WS_B="ws-b"
+# WS_A, WS_B 由 Step 3 根据已有工作空间或新建得到（create_workspace 不再传名称，由 Core 生成）
+WS_A=""
+WS_B=""
 
 # Colors
 RED='\033[0;31m'
@@ -63,27 +64,36 @@ HAS_PROJECT=$(echo "$PROJECTS" | jq -r ".items[] | select(.name==\"$DEMO_PROJECT
 if [ -z "$HAS_PROJECT" ]; then
     warn "Demo project '$DEMO_PROJECT' not found."
     warn "Please create it first with: tidyflow-core import <repo-url> --name $DEMO_PROJECT"
-    warn "Then create workspaces: tidyflow-core workspace create $DEMO_PROJECT $WS_A"
+    warn "Then create workspaces: tidyflow-core ws create --project $DEMO_PROJECT (run twice; names are auto-generated)"
     warn "                        tidyflow-core workspace create $DEMO_PROJECT $WS_B"
     fail "Demo project not found"
 fi
 log "Found project: $DEMO_PROJECT"
 
-# Step 3: Check workspaces
+# Step 3: Ensure at least 2 workspaces (use existing or create via create_workspace without name)
 log "Step 3: Checking workspaces..."
 WORKSPACES=$(send_wait "{\"type\":\"list_workspaces\",\"project\":\"$DEMO_PROJECT\"}" "workspaces")
-WS_A_ROOT=$(echo "$WORKSPACES" | jq -r ".items[] | select(.name==\"$WS_A\") | .root" 2>/dev/null)
-WS_B_ROOT=$(echo "$WORKSPACES" | jq -r ".items[] | select(.name==\"$WS_B\") | .root" 2>/dev/null)
-
-if [ -z "$WS_A_ROOT" ] || [ -z "$WS_B_ROOT" ]; then
-    warn "Workspaces $WS_A and/or $WS_B not found"
-    warn "Create them with:"
-    warn "  tidyflow-core workspace create $DEMO_PROJECT $WS_A"
-    warn "  tidyflow-core workspace create $DEMO_PROJECT $WS_B"
-    fail "Required workspaces not found"
+COUNT=$(echo "$WORKSPACES" | jq -r '.items | length' 2>/dev/null || echo "0")
+if [ "$COUNT" -ge 2 ]; then
+    WS_A=$(echo "$WORKSPACES" | jq -r '.items[0].name' 2>/dev/null)
+    WS_B=$(echo "$WORKSPACES" | jq -r '.items[1].name' 2>/dev/null)
+    WS_A_ROOT=$(echo "$WORKSPACES" | jq -r '.items[0].root' 2>/dev/null)
+    WS_B_ROOT=$(echo "$WORKSPACES" | jq -r '.items[1].root' 2>/dev/null)
+else
+    log "Creating 2 workspaces (create_workspace without name; Core generates names)..."
+    CREATED1=$(send_wait "{\"type\":\"create_workspace\",\"project\":\"$DEMO_PROJECT\"}" "workspace_created" 5)
+    WS_A=$(echo "$CREATED1" | jq -r '.workspace.name' 2>/dev/null)
+    WS_A_ROOT=$(echo "$CREATED1" | jq -r '.workspace.root' 2>/dev/null)
+    CREATED2=$(send_wait "{\"type\":\"create_workspace\",\"project\":\"$DEMO_PROJECT\"}" "workspace_created" 5)
+    WS_B=$(echo "$CREATED2" | jq -r '.workspace.name' 2>/dev/null)
+    WS_B_ROOT=$(echo "$CREATED2" | jq -r '.workspace.root' 2>/dev/null)
 fi
-log "Found workspace $WS_A: $WS_A_ROOT"
-log "Found workspace $WS_B: $WS_B_ROOT"
+if [ -z "$WS_A" ] || [ -z "$WS_B" ] || [ -z "$WS_A_ROOT" ] || [ -z "$WS_B_ROOT" ]; then
+    warn "Could not get or create 2 workspaces (have $COUNT, need 2)"
+    fail "Required workspaces not available"
+fi
+log "Using workspace A: $WS_A ($WS_A_ROOT)"
+log "Using workspace B: $WS_B ($WS_B_ROOT)"
 
 # Step 4: Create terminals in both workspaces (parallel)
 log "Step 4: Creating terminals in parallel workspaces..."

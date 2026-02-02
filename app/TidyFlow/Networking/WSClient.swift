@@ -36,6 +36,7 @@ class WSClient: NSObject, ObservableObject {
     var onProjectsList: ((ProjectsListResult) -> Void)?
     var onWorkspacesList: ((WorkspacesListResult) -> Void)?
     var onProjectRemoved: ((ProjectRemovedResult) -> Void)?
+    var onWorkspaceRemoved: ((WorkspaceRemovedResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -390,12 +391,11 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
-    // UX-2: Request create workspace
-    func requestCreateWorkspace(project: String, workspace: String, fromBranch: String? = nil) {
+    // UX-2: Request create workspace（名称由 Core 用 petname 生成）
+    func requestCreateWorkspace(project: String, fromBranch: String? = nil) {
         var msg: [String: Any] = [
             "type": "create_workspace",
-            "project": project,
-            "workspace": workspace
+            "project": project
         ]
         if let branch = fromBranch {
             msg["from_branch"] = branch
@@ -408,6 +408,15 @@ class WSClient: NSObject, ObservableObject {
         sendJSON([
             "type": "remove_project",
             "name": name
+        ])
+    }
+
+    // Remove workspace
+    func requestRemoveWorkspace(project: String, workspace: String) {
+        sendJSON([
+            "type": "remove_workspace",
+            "project": project,
+            "workspace": workspace
         ])
     }
 
@@ -546,6 +555,11 @@ class WSClient: NSObject, ObservableObject {
         case "project_removed":
             if let result = ProjectRemovedResult.from(json: json) {
                 onProjectRemoved?(result)
+            }
+
+        case "workspace_removed":
+            if let result = WorkspaceRemovedResult.from(json: json) {
+                onWorkspaceRemoved?(result)
             }
 
         case "error":

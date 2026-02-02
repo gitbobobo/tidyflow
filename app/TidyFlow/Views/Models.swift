@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 // MARK: - Notifications
 
@@ -12,6 +15,41 @@ enum RightTool: String, CaseIterable {
     case explorer
     case search
     case git
+}
+
+// MARK: - 外部编辑器（侧边栏与工具栏共用）
+enum ExternalEditor: String, CaseIterable {
+    case vscode = "VSCode"
+    case cursor = "Cursor"
+
+    var bundleId: String {
+        switch self {
+        case .vscode: return "com.microsoft.VSCode"
+        case .cursor: return "com.todesktop.230313mzl4w4u92"
+        }
+    }
+
+    var assetName: String {
+        switch self {
+        case .vscode: return "vscode-icon"
+        case .cursor: return "cursor-icon"
+        }
+    }
+
+    var fallbackIconName: String {
+        switch self {
+        case .vscode: return "chevron.left.forwardslash.chevron.right"
+        case .cursor: return "cursorarrow.rays"
+        }
+    }
+
+    #if canImport(AppKit)
+    var isInstalled: Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) != nil
+    }
+    #else
+    var isInstalled: Bool { false }
+    #endif
 }
 
 enum ConnectionState {
@@ -429,6 +467,11 @@ class AppState: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 self?.gitOpToast = nil
             }
+        }
+
+        // Handle workspace removed results
+        wsClient.onWorkspaceRemoved = { [weak self] result in
+            self?.handleWorkspaceRemoved(result)
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -1479,6 +1522,26 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Handle workspace removed result from WebSocket
+    private func handleWorkspaceRemoved(_ result: WorkspaceRemovedResult) {
+        if result.ok {
+            if let index = projects.firstIndex(where: { $0.name == result.project }) {
+                projects[index].workspaces.removeAll { $0.name == result.workspace }
+                if selectedWorkspaceKey == result.workspace {
+                    selectedWorkspaceKey = projects[index].workspaces.first?.name
+                }
+            }
+            gitOpToast = "工作空间 '\(result.workspace)' 已删除"
+            gitOpToastIsError = false
+        } else {
+            gitOpToast = result.message ?? "删除工作空间失败"
+            gitOpToastIsError = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
     /// Import a project from local path
     func importProject(name: String, path: String, createDefaultWorkspace: Bool = true) {
         guard connectionState == .connected else {
@@ -1516,19 +1579,58 @@ class AppState: ObservableObject {
         wsClient.requestRemoveProject(name: project.name)
     }
 
-    /// Create a new workspace in a project
-    func createWorkspace(projectName: String, workspaceName: String, fromBranch: String? = nil) {
+    /// Create a new workspace in a project（名称由 Core 用 petname 生成）
+    func createWorkspace(projectName: String, fromBranch: String? = nil) {
         guard connectionState == .connected else {
             gitOpToast = "Disconnected"
             gitOpToastIsError = true
             return
         }
 
-        wsClient.requestCreateWorkspace(
-            project: projectName,
-            workspace: workspaceName,
-            fromBranch: fromBranch
-        )
+        wsClient.requestCreateWorkspace(project: projectName, fromBranch: fromBranch)
+    }
+
+    /// Remove a workspace from a project
+    func removeWorkspace(projectName: String, workspaceName: String) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+        wsClient.requestRemoveWorkspace(project: projectName, workspace: workspaceName)
+    }
+
+    /// 在指定编辑器中打开路径（项目根或工作空间根）
+    func openPathInEditor(_ path: String, editor: ExternalEditor) -> Bool {
+        #if canImport(AppKit)
+        guard editor.isInstalled else {
+            gitOpToast = "\(editor.rawValue) 未安装"
+            gitOpToastIsError = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.gitOpToast = nil }
+            return false
+        }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-b", editor.bundleId, path]
+        do {
+            try task.run()
+            task.waitUntilExit()
+            if task.terminationStatus != 0 {
+                gitOpToast = "无法启动 \(editor.rawValue)"
+                gitOpToastIsError = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.gitOpToast = nil }
+                return false
+            }
+            return true
+        } catch {
+            gitOpToast = "启动失败: \(error.localizedDescription)"
+            gitOpToastIsError = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.gitOpToast = nil }
+            return false
+        }
+        #else
+        return false
+        #endif
     }
 
     /// Reset integration worktree to clean state

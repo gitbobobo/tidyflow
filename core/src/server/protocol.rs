@@ -223,7 +223,6 @@ pub enum ClientMessage {
     },
     CreateWorkspace {
         project: String,
-        workspace: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         from_branch: Option<String>,
     },
@@ -231,6 +230,12 @@ pub enum ClientMessage {
     // v1.17: Remove project
     RemoveProject {
         name: String,
+    },
+
+    // v1.18: Remove workspace
+    RemoveWorkspace {
+        project: String,
+        workspace: String,
     },
 }
 
@@ -500,6 +505,15 @@ pub enum ServerMessage {
     // v1.17: Remove project result
     ProjectRemoved {
         name: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+
+    // v1.18: Remove workspace result
+    WorkspaceRemoved {
+        project: String,
+        workspace: String,
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,

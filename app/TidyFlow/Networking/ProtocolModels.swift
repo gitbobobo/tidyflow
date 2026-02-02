@@ -153,6 +153,24 @@ struct ProjectRemovedResult {
     }
 }
 
+/// Result from remove_workspace request
+struct WorkspaceRemovedResult {
+    let project: String
+    let workspace: String
+    let ok: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> WorkspaceRemovedResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let ok = json["ok"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        return WorkspaceRemovedResult(project: project, workspace: workspace, ok: ok, message: message)
+    }
+}
+
 /// Result from file_index request
 struct FileIndexResult {
     let project: String
