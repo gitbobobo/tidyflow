@@ -97,6 +97,46 @@ struct ProjectsListResult {
     }
 }
 
+/// Workspace info returned from list_workspaces
+struct WorkspaceInfo {
+    let name: String
+    let root: String
+    let branch: String
+    let status: String
+
+    static func from(json: [String: Any]) -> WorkspaceInfo? {
+        guard let name = json["name"] as? String,
+              let root = json["root"] as? String,
+              let branch = json["branch"] as? String,
+              let status = json["status"] as? String else {
+            return nil
+        }
+        return WorkspaceInfo(name: name, root: root, branch: branch, status: status)
+    }
+}
+
+/// Result from list_workspaces request (server sends "workspaces" message)
+struct WorkspacesListResult {
+    let project: String
+    let items: [WorkspaceInfo]
+
+    static func from(json: [String: Any]) -> WorkspacesListResult? {
+        guard let project = json["project"] as? String,
+              let itemsArray = json["items"] as? [[String: Any]] else {
+            return nil
+        }
+        
+        var items: [WorkspaceInfo] = []
+        for itemJson in itemsArray {
+            if let info = WorkspaceInfo.from(json: itemJson) {
+                items.append(info)
+            }
+        }
+        
+        return WorkspacesListResult(project: project, items: items)
+    }
+}
+
 /// Result from remove_project request
 struct ProjectRemovedResult {
     let name: String
