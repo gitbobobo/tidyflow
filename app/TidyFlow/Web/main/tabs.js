@@ -91,11 +91,21 @@
 
     term.open(container);
 
+    // IME composition 状态追踪
+    // 解决中文输入法切换到英文时产生空格的问题（如 "o p" -> "op"）
     let isComposing = false;
+    let compositionJustEnded = false;
     const textarea = container.querySelector("textarea");
     if (textarea) {
-      textarea.addEventListener("compositionstart", () => { isComposing = true; });
-      textarea.addEventListener("compositionend", () => { isComposing = false; });
+      textarea.addEventListener("compositionstart", () => {
+        isComposing = true;
+        compositionJustEnded = false;
+      });
+      textarea.addEventListener("compositionend", () => {
+        isComposing = false;
+        compositionJustEnded = true;
+        setTimeout(() => { compositionJustEnded = false; }, 100);
+      });
     }
 
     const tabEl = document.createElement("div");
@@ -127,7 +137,14 @@
     TF.tabBar.insertBefore(tabEl, tabActions);
 
     term.onData((data) => {
+      // composition 期间不发送（避免重复）
       if (isComposing) return;
+      
+      // composition 刚结束时，处理拼音残留（如 "o p" -> "op"）
+      if (compositionJustEnded && /^[a-z](\s+[a-z])+$/i.test(data)) {
+        data = data.replace(/\s+/g, '');
+      }
+
       if (TF.transport && TF.transport.isConnected) {
         const encoder = new TextEncoder();
         const bytes = encoder.encode(data);
