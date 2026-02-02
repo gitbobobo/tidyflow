@@ -42,6 +42,7 @@ struct TidyFlowApp: App {
                     // Give delegate access to appState for cleanup
                     appDelegate.appState = appState
                 }
+                .preferredColorScheme(.dark)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

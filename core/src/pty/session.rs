@@ -46,15 +46,19 @@ impl PtySession {
         let master = pair.master;
 
         // Set working directory
-        let working_dir = cwd.unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
-        });
+        let working_dir =
+            cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
 
         debug!(session_id = %session_id, cwd = ?working_dir, "Setting working directory");
 
         // Build command
         let mut cmd = CommandBuilder::new(shell_path);
         cmd.cwd(working_dir);
+
+        // Ensure term info is correct for rich terminal features
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("LANG", "en_US.UTF-8");
 
         // Spawn child process
         let child = pair.slave.spawn_command(cmd)?;
@@ -88,10 +92,16 @@ impl PtySession {
     }
 
     /// 从 session 中取出 reader，用于独立的读取线程
-    pub fn take_reader(&mut self) -> Result<Box<dyn Read + Send>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn take_reader(
+        &mut self,
+    ) -> Result<Box<dyn Read + Send>, Box<dyn std::error::Error + Send + Sync>> {
         // 使用 master 克隆一个新的 reader
-        self.master.try_clone_reader()
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error + Send + Sync>)
+        self.master.try_clone_reader().map_err(|e| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )) as Box<dyn std::error::Error + Send + Sync>
+        })
     }
 
     #[instrument(skip(self, buf), fields(session_id = %self.session_id))]
