@@ -291,15 +291,19 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../core/Cargo.toml",
+				"$(SRCROOT)/../core/Cargo.lock",
+				"$(SRCROOT)/../core/src",
 			);
 			name = "Build Core (Run Script)";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../core/target/release/tidyflow-core",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "# Build tidyflow-core in release mode\n# Skip if SKIP_CORE_BUILD=1 (for faster dev iterations)\nif [ \"$SKIP_CORE_BUILD\" = \"1\" ]; then\n    echo \"Skipping core build (SKIP_CORE_BUILD=1)\"\n    exit 0\nfi\n\nCORE_DIR=\"$SRCROOT/../core\"\nif [ -d \"$CORE_DIR\" ]; then\n    echo \"Building tidyflow-core...\"\n    cd \"$CORE_DIR\"\n    cargo build --release 2>&1 | head -20\n    if [ ${PIPESTATUS[0]} -ne 0 ]; then\n        echo \"warning: Core build failed, app may not work correctly\"\n    fi\n    \n    # Copy binary to Resources/Core\n    CORE_BINARY=\"$CORE_DIR/target/release/tidyflow-core\"\n    DEST_DIR=\"$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Resources/Core\"\n    if [ -f \"$CORE_BINARY\" ]; then\n        mkdir -p \"$DEST_DIR\"\n        cp \"$CORE_BINARY\" \"$DEST_DIR/\"\n        echo \"Copied tidyflow-core to $DEST_DIR\"\n    else\n        echo \"warning: Core binary not found at $CORE_BINARY\"\n    fi\nelse\n    echo \"warning: Core directory not found at $CORE_DIR\"\nfi\n";
+			shellScript = "# Build tidyflow-core in release mode\n# Add cargo to PATH (Xcode doesn't load shell profile)\nexport PATH=\"$HOME/.cargo/bin:$PATH\"\n\n# Skip if SKIP_CORE_BUILD=1 (for faster dev iterations)\nif [ \"$SKIP_CORE_BUILD\" = \"1\" ]; then\n    echo \"Skipping core build (SKIP_CORE_BUILD=1)\"\n    exit 0\nfi\n\nCORE_DIR=\"$SRCROOT/../core\"\nif [ -d \"$CORE_DIR\" ]; then\n    echo \"Building tidyflow-core...\"\n    cd \"$CORE_DIR\"\n    if cargo build --release; then\n        echo \"Core build succeeded\"\n    else\n        echo \"warning: Core build failed, app may not work correctly\"\n    fi\n    \n    # Copy binary to Resources/Core\n    CORE_BINARY=\"$CORE_DIR/target/release/tidyflow-core\"\n    DEST_DIR=\"$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Resources/Core\"\n    if [ -f \"$CORE_BINARY\" ]; then\n        mkdir -p \"$DEST_DIR\"\n        cp \"$CORE_BINARY\" \"$DEST_DIR/\"\n        echo \"Copied tidyflow-core to $DEST_DIR\"\n    else\n        echo \"warning: Core binary not found at $CORE_BINARY\"\n    fi\nelse\n    echo \"warning: Core directory not found at $CORE_DIR\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

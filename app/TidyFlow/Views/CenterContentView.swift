@@ -106,6 +106,18 @@ struct CenterContentView: View {
             webBridge?.terminalKill(tabId: tabId, sessionId: sessionId)
         }
 
+        // Set Core ready callback to update WebBridge with the port
+        appState.onCoreReadyWithPort = { [weak webBridge] port in
+            print("[CenterContentView] Core ready on port \(port), setting WebSocket URL")
+            webBridge?.setWsURL(port: port)
+        }
+
+        // If Core is already running, set the WebSocket URL now
+        if let port = appState.coreProcessManager.currentPort {
+            print("[CenterContentView] Core already running on port \(port), setting WebSocket URL")
+            webBridge.setWsURL(port: port)
+        }
+
         // Phase C2-1: Diff callbacks (extended C2-1.5 for line navigation)
         webBridge.onOpenFile = { [weak appState, weak webBridge] workspace, path, line in
             DispatchQueue.main.async {

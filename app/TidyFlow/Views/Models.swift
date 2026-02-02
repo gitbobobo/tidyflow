@@ -205,6 +205,8 @@ class AppState: ObservableObject {
     @Published var staleTerminalTabs: Set<UUID> = []
     // Callback for terminal kill (set by CenterContentView)
     var onTerminalKill: ((String, String) -> Void)?
+    // Callback for Core ready with port (set by CenterContentView to update WebBridge)
+    var onCoreReadyWithPort: ((Int) -> Void)?
 
     // WebSocket Client
     let wsClient = WSClient()
@@ -260,6 +262,8 @@ class AppState: ObservableObject {
         coreProcessManager.onCoreReady = { [weak self] port in
             print("[AppState] Core ready on port \(port), connecting WebSocket")
             self?.setupWSClient(port: port)
+            // Notify CenterContentView to update WebBridge with the port
+            self?.onCoreReadyWithPort?(port)
         }
 
         coreProcessManager.onCoreFailed = { [weak self] message in
@@ -366,6 +370,16 @@ class AppState: ObservableObject {
         // Phase UX-5: Handle git reset integration worktree results
         wsClient.onGitResetIntegrationWorktreeResult = { [weak self] result in
             self?.handleGitResetIntegrationWorktreeResult(result)
+        }
+
+        // UX-2: Handle project import results
+        wsClient.onProjectImported = { [weak self] result in
+            self?.handleProjectImported(result)
+        }
+
+        // UX-2: Handle workspace created results
+        wsClient.onWorkspaceCreated = { [weak self] result in
+            self?.handleWorkspaceCreated(result)
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -1312,6 +1326,101 @@ class AppState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             self?.gitOpToast = nil
         }
+    }
+
+    // MARK: - UX-2: Project Import API
+
+    /// Callback for project import in-flight tracking
+    @Published var projectImportInFlight: Bool = false
+    @Published var projectImportError: String?
+
+    /// Handle project imported result from WebSocket
+    func handleProjectImported(_ result: ProjectImportedResult) {
+        projectImportInFlight = false
+        projectImportError = nil
+
+        // Create local ProjectModel
+        var workspaces: [WorkspaceModel] = []
+        if let ws = result.workspace {
+            workspaces.append(WorkspaceModel(name: ws.name, status: ws.status))
+        }
+
+        let newProject = ProjectModel(
+            id: UUID(),
+            name: result.name,
+            path: result.root,
+            workspaces: workspaces,
+            isExpanded: true
+        )
+
+        // Add to state
+        projects.append(newProject)
+
+        // Auto-select the new workspace if created
+        if let ws = result.workspace {
+            selectWorkspace(projectId: newProject.id, workspaceName: ws.name)
+        }
+
+        // Show success toast
+        gitOpToast = "Project '\(result.name)' imported"
+        gitOpToastIsError = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
+    /// Handle workspace created result from WebSocket
+    private func handleWorkspaceCreated(_ result: WorkspaceCreatedResult) {
+        // Find the project and add the workspace
+        if let index = projects.firstIndex(where: { $0.name == result.project }) {
+            let newWorkspace = WorkspaceModel(
+                name: result.workspace.name,
+                status: result.workspace.status
+            )
+            projects[index].workspaces.append(newWorkspace)
+
+            // Auto-select the new workspace
+            selectWorkspace(projectId: projects[index].id, workspaceName: result.workspace.name)
+        }
+
+        // Show success toast
+        gitOpToast = "Workspace '\(result.workspace.name)' created"
+        gitOpToastIsError = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.gitOpToast = nil
+        }
+    }
+
+    /// Import a project from local path
+    func importProject(name: String, path: String, createDefaultWorkspace: Bool = true) {
+        guard connectionState == .connected else {
+            projectImportError = "Disconnected"
+            return
+        }
+
+        projectImportInFlight = true
+        projectImportError = nil
+
+        wsClient.requestImportProject(
+            name: name,
+            path: path,
+            createDefaultWorkspace: createDefaultWorkspace
+        )
+    }
+
+    /// Create a new workspace in a project
+    func createWorkspace(projectName: String, workspaceName: String, fromBranch: String? = nil) {
+        guard connectionState == .connected else {
+            gitOpToast = "Disconnected"
+            gitOpToastIsError = true
+            return
+        }
+
+        wsClient.requestCreateWorkspace(
+            project: projectName,
+            workspace: workspaceName,
+            fromBranch: fromBranch
+        )
     }
 
     /// Reset integration worktree to clean state

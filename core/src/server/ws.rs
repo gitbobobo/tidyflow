@@ -26,6 +26,8 @@ use crate::server::protocol::{
     v1_capabilities,
 };
 use crate::workspace::state::{AppState, WorkspaceStatus};
+use crate::workspace::project::ProjectManager;
+use crate::workspace::workspace::WorkspaceManager;
 
 /// Shared application state for the WebSocket server
 pub type SharedAppState = Arc<Mutex<AppState>>;
@@ -255,12 +257,26 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
     let tx_exit_reader = tx_exit.clone();
 
     tokio::spawn(async move {
+        info!("PTY reader task started");
+        crate::util::flush_logs();
+        let mut reader_loop_count: u64 = 0;
         loop {
+            reader_loop_count += 1;
+            if reader_loop_count == 1 {
+                info!("PTY reader: first iteration, getting term_ids");
+                crate::util::flush_logs();
+            }
+
             // Get list of terminal IDs to read from
             let term_ids = {
                 let mgr = manager_reader.lock().await;
                 mgr.term_ids()
             };
+
+            if reader_loop_count == 1 {
+                info!("PTY reader: got {} term_ids", term_ids.len());
+                crate::util::flush_logs();
+            }
 
             if term_ids.is_empty() {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -268,8 +284,14 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
             }
 
             for term_id in term_ids {
-                let (bytes_read, exit_code) = {
-                    let mut mgr = manager_reader.lock().await;
+                if reader_loop_count == 1 {
+                    info!("PTY reader: about to read from term_id {}", term_id);
+                    crate::util::flush_logs();
+                }
+
+                // Use block_in_place to avoid blocking the tokio runtime
+                let (bytes_read, exit_code) = tokio::task::block_in_place(|| {
+                    let mut mgr = futures::executor::block_on(manager_reader.lock());
                     if let Some(handle) = mgr.get_mut(&term_id) {
                         let mut buf = [0u8; 8192];
                         let bytes = match handle.session.read_output(&mut buf) {
@@ -282,7 +304,12 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                     } else {
                         (None, None)
                     }
-                };
+                });
+
+                if reader_loop_count == 1 {
+                    info!("PTY reader: read completed, bytes_read={:?}", bytes_read.as_ref().map(|b| b.len()));
+                    crate::util::flush_logs();
+                }
 
                 if let Some(data) = bytes_read {
                     if tx_output_reader.send((term_id.clone(), data)).await.is_err() {
@@ -306,25 +333,38 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
     });
 
     // Main loop: handle WebSocket messages and PTY output
+    info!("Entering main WebSocket loop");
+    crate::util::flush_logs();
+    let mut loop_count: u64 = 0;
+    let mut last_log_time = std::time::Instant::now();
     loop {
-        tokio::select! {
-            // Handle PTY output
-            Some((term_id, output)) = rx_output.recv() => {
-                let data_b64 = BASE64.encode(&output);
-                let msg = ServerMessage::Output {
-                    data_b64,
-                    term_id: Some(term_id),
-                };
-                if let Err(e) = send_message(&mut socket, &msg).await {
-                    error!("Failed to send output message: {}", e);
-                    break;
-                }
-            }
+        loop_count += 1;
 
-            // Handle WebSocket messages
-            Some(msg) = socket.recv() => {
-                match msg {
-                    Ok(Message::Text(text)) => {
+        // Log first iteration and every 5 seconds
+        if loop_count == 1 {
+            info!("First loop iteration, about to call tokio::select!");
+            crate::util::flush_logs();
+        } else if last_log_time.elapsed().as_secs() >= 5 {
+            info!("Main loop still running, iteration {}", loop_count);
+            crate::util::flush_logs();
+            last_log_time = std::time::Instant::now();
+        }
+
+        tokio::select! {
+            biased;  // 优先处理 WebSocket 消息
+
+            // Handle WebSocket messages (优先)
+            msg_result = socket.recv() => {
+                info!("socket.recv() returned: {:?}", msg_result.as_ref().map(|r| r.as_ref().map(|m| match m {
+                    Message::Text(t) => format!("Text({}...)", &t[..t.len().min(50)]),
+                    Message::Binary(b) => format!("Binary({} bytes)", b.len()),
+                    Message::Ping(_) => "Ping".to_string(),
+                    Message::Pong(_) => "Pong".to_string(),
+                    Message::Close(_) => "Close".to_string(),
+                })));
+                match msg_result {
+                    Some(Ok(Message::Text(text))) => {
+                        info!("Received client message: {}", &text[..text.len().min(200)]);
                         if let Err(e) = handle_client_message(
                             &text,
                             &mut socket,
@@ -334,22 +374,47 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                             tx_exit.clone(),
                         ).await {
                             warn!("Error handling client message: {}", e);
+                            // 发送错误消息给客户端
+                            if let Err(send_err) = send_message(&mut socket, &ServerMessage::Error {
+                                code: "message_error".to_string(),
+                                message: e.clone(),
+                            }).await {
+                                error!("Failed to send error message: {}", send_err);
+                            }
                         }
                     }
-                    Ok(Message::Close(_)) => {
+                    Some(Ok(Message::Close(_))) => {
                         info!("WebSocket connection closed by client");
                         break;
                     }
-                    Ok(Message::Binary(_)) => {
+                    Some(Ok(Message::Binary(_))) => {
                         warn!("Received unexpected binary message");
                     }
-                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
+                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
                         // Handled automatically by axum
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         error!("WebSocket error: {}", e);
                         break;
                     }
+                    None => {
+                        info!("WebSocket connection closed (recv returned None)");
+                        break;
+                    }
+                }
+            }
+
+            // Handle PTY output
+            Some((term_id, output)) = rx_output.recv() => {
+                debug!("PTY output received for term_id: {}, {} bytes", term_id, output.len());
+                let data_b64 = BASE64.encode(&output);
+                let msg = ServerMessage::Output {
+                    data_b64,
+                    term_id: Some(term_id),
+                };
+                if let Err(e) = send_message(&mut socket, &msg).await {
+                    error!("Failed to send output message: {}", e);
+                    break;
                 }
             }
 
@@ -409,8 +474,13 @@ async fn handle_client_message(
     tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
 ) -> Result<(), String> {
+    info!("handle_client_message called with text length: {}", text.len());
     let client_msg: ClientMessage =
-        serde_json::from_str(text).map_err(|e| format!("Parse error: {}", e))?;
+        serde_json::from_str(text).map_err(|e| {
+            error!("Failed to parse client message: {}, text: {}", e, &text[..text.len().min(500)]);
+            format!("Parse error: {}", e)
+        })?;
+    info!("Parsed client message: {:?}", std::mem::discriminant(&client_msg));
 
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
@@ -2405,6 +2475,112 @@ async fn handle_client_message(
                         code: "project_not_found".to_string(),
                         message: format!("Project '{}' not found", project),
                     }).await?;
+                }
+            }
+        }
+
+        // v1.16: Import project
+        ClientMessage::ImportProject { name, path, create_default_workspace } => {
+            info!("ImportProject request: name={}, path={}, create_default_workspace={}", name, path, create_default_workspace);
+            let path_buf = PathBuf::from(&path);
+            info!("Acquiring app_state lock...");
+            let mut state = app_state.lock().await;
+            info!("app_state lock acquired, calling ProjectManager::import_local");
+
+            match ProjectManager::import_local(&mut state, &name, &path_buf) {
+                Ok(project) => {
+                    info!("Project imported successfully: {}", project.name);
+                    let default_branch = project.default_branch.clone();
+                    let root = project.root_path.to_string_lossy().to_string();
+
+                    // Optionally create default workspace
+                    let workspace_info = if create_default_workspace {
+                        info!("Creating default workspace...");
+                        match WorkspaceManager::create(&mut state, &name, "default", None, false) {
+                            Ok(ws) => {
+                                info!("Default workspace created: {}", ws.name);
+                                Some(WorkspaceInfo {
+                                    name: ws.name,
+                                    root: ws.worktree_path.to_string_lossy().to_string(),
+                                    branch: ws.branch,
+                                    status: match ws.status {
+                                        WorkspaceStatus::Ready => "ready".to_string(),
+                                        WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
+                                        WorkspaceStatus::Creating => "creating".to_string(),
+                                        WorkspaceStatus::Initializing => "initializing".to_string(),
+                                        WorkspaceStatus::Destroying => "destroying".to_string(),
+                                    },
+                                })
+                            }
+                            Err(e) => {
+                                warn!("Failed to create default workspace: {}", e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    info!("Sending ProjectImported response...");
+                    send_message(socket, &ServerMessage::ProjectImported {
+                        name,
+                        root,
+                        default_branch,
+                        workspace: workspace_info,
+                    }).await?;
+                    info!("ProjectImported response sent successfully");
+                }
+                Err(e) => {
+                    let (code, message) = match &e {
+                        crate::workspace::project::ProjectError::AlreadyExists(_) => {
+                            ("project_exists".to_string(), e.to_string())
+                        }
+                        crate::workspace::project::ProjectError::PathNotFound(_) => {
+                            ("path_not_found".to_string(), e.to_string())
+                        }
+                        crate::workspace::project::ProjectError::NotGitRepo(_) => {
+                            ("not_git_repo".to_string(), e.to_string())
+                        }
+                        _ => ("import_error".to_string(), e.to_string()),
+                    };
+                    send_message(socket, &ServerMessage::Error { code, message }).await?;
+                }
+            }
+        }
+
+        // v1.16: Create workspace
+        ClientMessage::CreateWorkspace { project, workspace, from_branch } => {
+            let mut state = app_state.lock().await;
+
+            match WorkspaceManager::create(&mut state, &project, &workspace, from_branch.as_deref(), false) {
+                Ok(ws) => {
+                    send_message(socket, &ServerMessage::WorkspaceCreated {
+                        project,
+                        workspace: WorkspaceInfo {
+                            name: ws.name,
+                            root: ws.worktree_path.to_string_lossy().to_string(),
+                            branch: ws.branch,
+                            status: match ws.status {
+                                WorkspaceStatus::Ready => "ready".to_string(),
+                                WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
+                                WorkspaceStatus::Creating => "creating".to_string(),
+                                WorkspaceStatus::Initializing => "initializing".to_string(),
+                                WorkspaceStatus::Destroying => "destroying".to_string(),
+                            },
+                        },
+                    }).await?;
+                }
+                Err(e) => {
+                    let (code, message) = match &e {
+                        crate::workspace::workspace::WorkspaceError::AlreadyExists(_) => {
+                            ("workspace_exists".to_string(), e.to_string())
+                        }
+                        crate::workspace::workspace::WorkspaceError::ProjectNotFound(_) => {
+                            ("project_not_found".to_string(), e.to_string())
+                        }
+                        _ => ("workspace_error".to_string(), e.to_string()),
+                    };
+                    send_message(socket, &ServerMessage::Error { code, message }).await?;
                 }
             }
         }

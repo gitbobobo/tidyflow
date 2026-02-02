@@ -1,5 +1,66 @@
 import Foundation
 
+// MARK: - UX-2: Project Import Protocol Models
+
+/// Workspace info returned from import/create operations
+struct WorkspaceImportInfo {
+    let name: String
+    let root: String
+    let branch: String
+    let status: String
+
+    static func from(json: [String: Any]) -> WorkspaceImportInfo? {
+        guard let name = json["name"] as? String,
+              let root = json["root"] as? String,
+              let branch = json["branch"] as? String,
+              let status = json["status"] as? String else {
+            return nil
+        }
+        return WorkspaceImportInfo(name: name, root: root, branch: branch, status: status)
+    }
+}
+
+/// Result from import_project request
+struct ProjectImportedResult {
+    let name: String
+    let root: String
+    let defaultBranch: String
+    let workspace: WorkspaceImportInfo?
+
+    static func from(json: [String: Any]) -> ProjectImportedResult? {
+        guard let name = json["name"] as? String,
+              let root = json["root"] as? String,
+              let defaultBranch = json["default_branch"] as? String else {
+            return nil
+        }
+        var workspace: WorkspaceImportInfo? = nil
+        if let wsJson = json["workspace"] as? [String: Any] {
+            workspace = WorkspaceImportInfo.from(json: wsJson)
+        }
+        return ProjectImportedResult(
+            name: name,
+            root: root,
+            defaultBranch: defaultBranch,
+            workspace: workspace
+        )
+    }
+}
+
+/// Result from create_workspace request
+struct WorkspaceCreatedResult {
+    let project: String
+    let workspace: WorkspaceImportInfo
+
+    static func from(json: [String: Any]) -> WorkspaceCreatedResult? {
+        guard let project = json["project"] as? String,
+              let wsJson = json["workspace"] as? [String: Any],
+              let workspace = WorkspaceImportInfo.from(json: wsJson) else {
+            return nil
+        }
+        return WorkspaceCreatedResult(project: project, workspace: workspace)
+    }
+}
+
 /// Result from file_index request
 struct FileIndexResult {
     let project: String

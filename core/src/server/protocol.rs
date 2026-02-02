@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 /// v1.11: Git rebase/fetch operations for UX-3a
 /// v1.12: Git merge to default via integration worktree for UX-3b
 /// v1.15: Git check branch up to date (UX-6)
+/// v1.16: Project/Workspace import (UX-2)
 pub const PROTOCOL_VERSION: u32 = 1;
 
 // ============================================================================
@@ -205,6 +206,20 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
     },
+
+    // v1.16: Project/Workspace import
+    ImportProject {
+        name: String,
+        path: String,
+        #[serde(default = "default_true")]
+        create_default_workspace: bool,
+    },
+    CreateWorkspace {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from_branch: Option<String>,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -213,6 +228,10 @@ fn default_diff_mode() -> String {
 
 fn default_git_scope() -> String {
     "file".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,6 +461,19 @@ pub enum ServerMessage {
 
     // v1: Error handling
     Error { code: String, message: String },
+
+    // v1.16: Project/Workspace import results
+    ProjectImported {
+        name: String,
+        root: String,
+        default_branch: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace: Option<WorkspaceInfo>,
+    },
+    WorkspaceCreated {
+        project: String,
+        workspace: WorkspaceInfo,
+    },
 }
 
 // ============================================================================
@@ -513,5 +545,27 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_rebase".to_string(),
         "git_merge_integration".to_string(),
         "git_branch_divergence".to_string(),
+        "project_import".to_string(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_import_project() {
+        let json = r#"{"type":"import_project","name":"ly_tech","path":"/Users/godbobo/work/projects/ly_tech","create_default_workspace":true}"#;
+
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        match result {
+            Ok(ClientMessage::ImportProject { name, path, create_default_workspace }) => {
+                assert_eq!(name, "ly_tech");
+                assert_eq!(path, "/Users/godbobo/work/projects/ly_tech");
+                assert!(create_default_workspace);
+            }
+            Ok(other) => panic!("Unexpected message type: {:?}", other),
+            Err(e) => panic!("Parse error: {}", e),
+        }
+    }
 }

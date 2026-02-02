@@ -30,6 +30,9 @@ class WSClient: NSObject, ObservableObject {
     var onGitRebaseOntoDefaultResult: ((GitRebaseOntoDefaultResult) -> Void)?
     // UX-5: Reset integration worktree handler
     var onGitResetIntegrationWorktreeResult: ((GitResetIntegrationWorktreeResult) -> Void)?
+    // UX-2: Project import handlers
+    var onProjectImported: ((ProjectImportedResult) -> Void)?
+    var onWorkspaceCreated: ((WorkspaceCreatedResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -102,13 +105,18 @@ class WSClient: NSObject, ObservableObject {
 
     func send(_ message: String) {
         guard isConnected else {
+            print("[WSClient] Cannot send - not connected")
             onError?("Not connected")
             return
         }
 
+        print("[WSClient] Sending message: \(message.prefix(200))...")
         webSocketTask?.send(.string(message)) { [weak self] error in
             if let error = error {
+                print("[WSClient] Send failed: \(error.localizedDescription)")
                 self?.onError?("Send failed: \(error.localizedDescription)")
+            } else {
+                print("[WSClient] Message sent successfully")
             }
         }
     }
@@ -354,6 +362,29 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // UX-2: Request import project
+    func requestImportProject(name: String, path: String, createDefaultWorkspace: Bool = true) {
+        sendJSON([
+            "type": "import_project",
+            "name": name,
+            "path": path,
+            "create_default_workspace": createDefaultWorkspace
+        ])
+    }
+
+    // UX-2: Request create workspace
+    func requestCreateWorkspace(project: String, workspace: String, fromBranch: String? = nil) {
+        var msg: [String: Any] = [
+            "type": "create_workspace",
+            "project": project,
+            "workspace": workspace
+        ]
+        if let branch = fromBranch {
+            msg["from_branch"] = branch
+        }
+        sendJSON(msg)
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -386,11 +417,15 @@ class WSClient: NSObject, ObservableObject {
     }
 
     private func parseAndDispatch(_ text: String) {
+        print("[WSClient] Received raw message: \(text.prefix(300))...")
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String else {
+            print("[WSClient] Failed to parse message as JSON")
             return
         }
+
+        print("[WSClient] Parsed message type: \(type)")
 
         switch type {
         case "hello":
@@ -457,6 +492,21 @@ class WSClient: NSObject, ObservableObject {
                 onGitResetIntegrationWorktreeResult?(result)
             }
 
+        case "project_imported":
+            print("[WSClient] Received project_imported: \(json)")
+            if let result = ProjectImportedResult.from(json: json) {
+                print("[WSClient] Parsed ProjectImportedResult: \(result.name)")
+                onProjectImported?(result)
+            } else {
+                print("[WSClient] Failed to parse ProjectImportedResult from: \(json)")
+                onError?("Failed to parse project import response")
+            }
+
+        case "workspace_created":
+            if let result = WorkspaceCreatedResult.from(json: json) {
+                onWorkspaceCreated?(result)
+            }
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)
@@ -479,10 +529,19 @@ class WSClient: NSObject, ObservableObject {
 
 extension WSClient: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        print("[WSClient] WebSocket connection opened to: \(currentURL?.absoluteString ?? "unknown")")
         updateConnectionState(true)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "none"
+        print("[WSClient] WebSocket connection closed. Code: \(closeCode.rawValue), Reason: \(reasonStr)")
         updateConnectionState(false)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            print("[WSClient] URLSession task completed with error: \(error.localizedDescription)")
+        }
     }
 }

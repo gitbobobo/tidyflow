@@ -170,34 +170,76 @@ struct AddProjectSheet: View {
         isImporting = true
         importError = nil
 
-        // UX-1: For now, create a local mock project
-        // TODO: In UX-2, call core import via WS protocol
         let trimmedName = projectName.trimmingCharacters(in: .whitespaces)
 
-        // Check for duplicate name
+        // Check for duplicate name locally first
         if appState.projects.contains(where: { $0.name.lowercased() == trimmedName.lowercased() }) {
             importError = "A project with this name already exists"
             isImporting = false
             return
         }
 
-        // Create project with default workspace
-        let defaultWorkspace = WorkspaceModel(name: "default", status: nil)
-        let newProject = ProjectModel(
-            id: UUID(),
+        // UX-2: Call backend API to import project
+        // Start security-scoped access for the selected path
+        let didStartAccess = path.startAccessingSecurityScopedResource()
+
+        // Store previous handlers to restore later
+        let previousImportHandler = appState.wsClient.onProjectImported
+        let previousErrorHandler = appState.wsClient.onError
+
+        // 使用 @State 绑定来跟踪超时是否已取消
+        var timeoutCancelled = false
+
+        // 添加超时保护（30秒，因为大型仓库的 git 操作可能较慢）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak appState] in
+            guard !timeoutCancelled else { return }
+            print("[AddProjectSheet] Import timeout")
+            if didStartAccess {
+                path.stopAccessingSecurityScopedResource()
+            }
+            appState?.wsClient.onProjectImported = previousImportHandler
+            appState?.wsClient.onError = previousErrorHandler
+            self.importError = "Import timed out. Please check if the server is running."
+            self.isImporting = false
+        }
+
+        appState.wsClient.onProjectImported = { [weak appState] result in
+            timeoutCancelled = true
+            DispatchQueue.main.async {
+                print("[AddProjectSheet] Received project imported: \(result.name)")
+                if didStartAccess {
+                    path.stopAccessingSecurityScopedResource()
+                }
+                // Restore previous handler
+                appState?.wsClient.onProjectImported = previousImportHandler
+                appState?.wsClient.onError = previousErrorHandler
+                // Handle the result
+                appState?.handleProjectImported(result)
+                self.isImporting = false
+                self.dismiss()
+            }
+        }
+
+        appState.wsClient.onError = { [weak appState] errorMsg in
+            timeoutCancelled = true
+            DispatchQueue.main.async {
+                print("[AddProjectSheet] Received error: \(errorMsg)")
+                if didStartAccess {
+                    path.stopAccessingSecurityScopedResource()
+                }
+                // Restore previous handlers
+                appState?.wsClient.onProjectImported = previousImportHandler
+                appState?.wsClient.onError = previousErrorHandler
+                self.importError = errorMsg
+                self.isImporting = false
+            }
+        }
+
+        print("[AddProjectSheet] Sending import request: name=\(trimmedName), path=\(path.path)")
+        appState.wsClient.requestImportProject(
             name: trimmedName,
             path: path.path,
-            workspaces: [defaultWorkspace],
-            isExpanded: true
+            createDefaultWorkspace: true
         )
-
-        // Add to state
-        appState.projects.append(newProject)
-
-        // Auto-select the new workspace
-        appState.selectWorkspace(projectId: newProject.id, workspaceName: "default")
-
-        isImporting = false
-        dismiss()
     }
 }

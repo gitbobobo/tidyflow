@@ -153,6 +153,25 @@ class WebBridge: NSObject, WKScriptMessageHandler {
 
     // MARK: - Convenience Methods
 
+    /// Set the WebSocket URL for the JavaScript side
+    /// This must be called before the JavaScript connects to the WebSocket
+    func setWsURL(port: Int) {
+        guard let webView = webView else {
+            print("[WebBridge] setWsURL: No webView available")
+            return
+        }
+        let wsURL = AppConfig.makeWsURLString(port: port)
+        let js = "window.TIDYFLOW_WS_URL = '\(wsURL)'; console.log('[NativeBridge] WebSocket URL set to:', window.TIDYFLOW_WS_URL);"
+        print("[WebBridge] Setting WebSocket URL to: \(wsURL)")
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                print("[WebBridge] setWsURL error: \(error.localizedDescription)")
+            } else {
+                print("[WebBridge] WebSocket URL set successfully")
+            }
+        }
+    }
+
     /// UX-1: Enable renderer-only mode (hide Web's sidebar/tabbar/tools)
     func setRendererOnly(_ enabled: Bool) {
         guard let webView = webView else { return }
