@@ -16,6 +16,7 @@ struct ContentView: View {
                 } detail: {
                     CenterContentView(webBridge: webBridge)
                         .environmentObject(appState)
+                        .id(appState.selectedWorkspaceKey ?? "none") // 强制在工作空间变化时重新创建视图
                 }
 
                 // Right panel (conditionally shown)

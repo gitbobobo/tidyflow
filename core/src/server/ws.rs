@@ -125,16 +125,47 @@ impl TerminalManager {
         cwd: Option<PathBuf>,
         project: Option<String>,
         workspace: Option<String>,
-        _tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+        tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
         _tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
     ) -> Result<(String, String), String> {
         let term_id = Uuid::new_v4().to_string();
         let cwd_path = cwd.unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string())));
 
-        let session = PtySession::new(Some(cwd_path.clone()))
+        let mut session = PtySession::new(Some(cwd_path.clone()))
             .map_err(|e| format!("Failed to create PTY: {}", e))?;
 
         let shell_name = session.shell_name().to_string();
+        
+        // 为这个终端创建独立的读取线程
+        let reader_term_id = term_id.clone();
+        let reader = session.take_reader()
+            .map_err(|e| format!("Failed to take reader: {}", e))?;
+        
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut reader = reader;
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        // EOF - terminal closed
+                        break;
+                    }
+                    Ok(n) => {
+                        let data = buf[..n].to_vec();
+                        // 使用 blocking send，因为我们在独立线程中
+                        if tx_output.blocking_send((reader_term_id.clone(), data)).is_err() {
+                            // Channel closed, exit
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        debug!("PTY read error for {}: {}", reader_term_id, e);
+                        break;
+                    }
+                }
+            }
+        });
 
         let handle = TerminalHandle {
             session,
@@ -251,86 +282,8 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
         return;
     }
 
-    // Spawn PTY reader tasks for all terminals
-    let manager_reader = Arc::clone(&manager);
-    let tx_output_reader = tx_output.clone();
-    let tx_exit_reader = tx_exit.clone();
-
-    tokio::spawn(async move {
-        info!("PTY reader task started");
-        crate::util::flush_logs();
-        let mut reader_loop_count: u64 = 0;
-        loop {
-            reader_loop_count += 1;
-            if reader_loop_count == 1 {
-                info!("PTY reader: first iteration, getting term_ids");
-                crate::util::flush_logs();
-            }
-
-            // Get list of terminal IDs to read from
-            let term_ids = {
-                let mgr = manager_reader.lock().await;
-                mgr.term_ids()
-            };
-
-            if reader_loop_count == 1 {
-                info!("PTY reader: got {} term_ids", term_ids.len());
-                crate::util::flush_logs();
-            }
-
-            if term_ids.is_empty() {
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                continue;
-            }
-
-            for term_id in term_ids {
-                if reader_loop_count == 1 {
-                    info!("PTY reader: about to read from term_id {}", term_id);
-                    crate::util::flush_logs();
-                }
-
-                // Use block_in_place to avoid blocking the tokio runtime
-                let (bytes_read, exit_code) = tokio::task::block_in_place(|| {
-                    let mut mgr = futures::executor::block_on(manager_reader.lock());
-                    if let Some(handle) = mgr.get_mut(&term_id) {
-                        let mut buf = [0u8; 8192];
-                        let bytes = match handle.session.read_output(&mut buf) {
-                            Ok(n) if n > 0 => Some(buf[..n].to_vec()),
-                            Ok(_) => None,
-                            Err(_) => None,
-                        };
-                        let exit = handle.session.wait();
-                        (bytes, exit)
-                    } else {
-                        (None, None)
-                    }
-                });
-
-                if reader_loop_count == 1 {
-                    info!("PTY reader: read completed, bytes_read={:?}", bytes_read.as_ref().map(|b| b.len()));
-                    crate::util::flush_logs();
-                }
-
-                if let Some(data) = bytes_read {
-                    if tx_output_reader.send((term_id.clone(), data)).await.is_err() {
-                        debug!("PTY reader: output channel closed");
-                        return;
-                    }
-                }
-
-                if let Some(code) = exit_code {
-                    info!(term_id = %term_id, exit_code = code, "Terminal process exited");
-                    let _ = tx_exit_reader.send((term_id.clone(), code)).await;
-                    // Remove from manager
-                    let mut mgr = manager_reader.lock().await;
-                    mgr.close(&term_id);
-                }
-            }
-
-            // Small delay to prevent busy loop
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        }
-    });
+    // 注意：PTY 读取现在由每个终端的独立线程处理，
+    // 在 TerminalManager::spawn() 中创建
 
     // Main loop: handle WebSocket messages and PTY output
     info!("Entering main WebSocket loop");
@@ -485,24 +438,34 @@ async fn handle_client_message(
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
         ClientMessage::Input { data_b64, term_id } => {
+            info!("[DEBUG] Input received: term_id={:?}, data_len={}", term_id, data_b64.len());
             let data = BASE64
                 .decode(&data_b64)
                 .map_err(|e| format!("Base64 decode error: {}", e))?;
+            info!("[DEBUG] Input decoded: {} bytes", data.len());
 
             let mut mgr = manager.lock().await;
             let resolved_id = mgr.resolve_term_id(term_id.as_deref());
+            info!("[DEBUG] Resolved term_id: {:?}, available_terms: {:?}", resolved_id, mgr.term_ids());
 
             if let Some(id) = resolved_id {
                 if let Some(handle) = mgr.get_mut(&id) {
+                    info!("[DEBUG] Writing input to PTY: term_id={}", id);
                     handle.session.write_input(&data)
                         .map_err(|e| format!("Write error: {}", e))?;
+                    info!("[DEBUG] Input written successfully");
+                } else {
+                    info!("[DEBUG] Handle not found for term_id={}", id);
                 }
             } else if term_id.is_some() {
                 // Invalid term_id provided
+                info!("[DEBUG] Term not found: {:?}", term_id);
                 send_message(socket, &ServerMessage::Error {
                     code: "term_not_found".to_string(),
                     message: format!("Terminal '{}' not found", term_id.unwrap()),
                 }).await?;
+            } else {
+                info!("[DEBUG] No term_id provided and no default terminal");
             }
         }
 

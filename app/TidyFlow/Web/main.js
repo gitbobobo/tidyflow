@@ -98,6 +98,11 @@
     // 'editor' | 'terminal' - controls which UI is visible
     let nativeMode = 'editor';
     let nativeTerminalReady = false;
+    
+    // 服务器自动创建的默认终端 ID（从 hello 消息获取）
+    let defaultServerTerminalId = null;
+    // 暂存未注册 session 时收到的 output（用于回放）
+    let pendingOutputBuffer = [];
 
     // Phase C1-2: Multi-session management
     // Maps sessionId -> { buffer: string[], tabId: string, project: string, workspace: string }
@@ -1333,11 +1338,12 @@
             if (transport && transport.isConnected) {
                 const encoder = new TextEncoder();
                 const bytes = encoder.encode(data);
-                transport.send(JSON.stringify({
+                const msg = JSON.stringify({
                     type: 'input',
                     term_id: termId,
                     data_b64: encodeBase64(bytes)
-                }));
+                });
+                transport.send(msg);
             }
         });
 
@@ -1876,6 +1882,87 @@
     function createTerminal(project, workspace) {
         sendControlMessage({ type: 'term_create', project, workspace });
     }
+    
+    // 使用服务器提供的默认终端（避免 term_create 可能的问题）
+    function useDefaultServerTerminal(tabId, project, workspace) {
+        const sessionId = defaultServerTerminalId;
+        if (!sessionId) {
+            console.error('[useDefaultServerTerminal] No default server terminal ID');
+            postToNative('terminal_error', {
+                tab_id: tabId,
+                message: 'No default terminal available'
+            });
+            return;
+        }
+        
+        try {
+            // 创建本地终端 UI（xterm.js）并关联到服务器的默认终端
+            const tabInfo = createTerminalTab(sessionId, '~', project, workspace);
+            switchToTab(sessionId);
+            
+            if (tabInfo && tabInfo.term) {
+                // 延迟 fit 和回放，确保 pane 完全在 DOM 中渲染
+                setTimeout(() => {
+                    tabInfo.fitAddon.fit();
+                    sendResize(sessionId, tabInfo.term.cols, tabInfo.term.rows);
+                    
+                    // 回放暂存的 output
+                    const itemsToReplay = pendingOutputBuffer.filter(item => item.termId === sessionId);
+                    pendingOutputBuffer = pendingOutputBuffer.filter(item => item.termId !== sessionId);
+                    
+                    if (itemsToReplay.length > 0) {
+                        let writePromise = Promise.resolve();
+                        for (const item of itemsToReplay) {
+                            writePromise = writePromise.then(() => {
+                                return new Promise(resolve => {
+                                    tabInfo.term.write(item.bytes, resolve);
+                                });
+                            });
+                        }
+                        writePromise.then(() => {
+                            tabInfo.term.refresh(0, tabInfo.term.rows - 1);
+                            tabInfo.term.scrollToBottom();
+                            tabInfo.term.focus();
+                        });
+                    } else {
+                        tabInfo.term.focus();
+                        tabInfo.term.refresh(0, tabInfo.term.rows - 1);
+                    }
+                }, 100);
+            }
+            
+            // 注册 session
+            terminalSessions.set(sessionId, {
+                buffer: [],
+                tabId: tabId,
+                project: project,
+                workspace: workspace
+            });
+            activeSessionId = sessionId;
+            nativeTerminalReady = true;
+            
+            // 通知 Native 终端已就绪
+            postToNative('terminal_ready', {
+                tab_id: tabId,
+                session_id: sessionId,
+                project: project,
+                workspace: workspace
+            });
+            
+            // 清除默认终端 ID，表示已使用（每个连接只有一个默认终端）
+            defaultServerTerminalId = null;
+            
+            // 确保终端模式正确显示
+            setNativeMode('terminal');
+            showTerminalMode();
+        } catch (err) {
+            console.error('[useDefaultServerTerminal] Error:', err);
+            postToNative('terminal_error', {
+                tab_id: tabId,
+                message: 'Failed to setup terminal: ' + (err?.message || String(err))
+            });
+        }
+    }
 
     function listTerminals() {
         sendControlMessage({ type: 'term_list' });
@@ -1921,6 +2008,11 @@
                 case 'hello': {
                     protocolVersion = msg.version || 0;
                     capabilities = msg.capabilities || [];
+                    
+                    // 保存服务器提供的默认终端信息
+                    if (msg.session_id) {
+                        defaultServerTerminalId = msg.session_id;
+                    }
 
                     // Request projects list
                     listProjects();
@@ -1934,18 +2026,23 @@
                 }
 
                 case 'output': {
-                    // Phase C1-2: Route output to correct session buffer
                     const termId = msg.term_id;
+                    
+                    // 如果 session 还没注册但 termId 匹配默认终端，暂存 output
+                    if (termId && !terminalSessions.has(termId) && termId === defaultServerTerminalId) {
+                        const bytes = decodeBase64(msg.data_b64);
+                        pendingOutputBuffer.push({ termId, bytes });
+                        break;
+                    }
+                    
                     if (termId) {
                         const bytes = decodeBase64(msg.data_b64);
 
                         // Store in session buffer
                         if (terminalSessions.has(termId)) {
                             const session = terminalSessions.get(termId);
-                            // Convert bytes to string for buffer
                             const text = new TextDecoder().decode(bytes);
                             session.buffer.push(text);
-                            // Limit buffer size
                             while (session.buffer.length > MAX_BUFFER_LINES) {
                                 session.buffer.shift();
                             }
@@ -1953,7 +2050,6 @@
 
                         // Write to xterm if this is the active session
                         if (termId === activeSessionId) {
-                            // Search all workspace tabs for this terminal
                             for (const [wsKey, tabSet] of workspaceTabs) {
                                 if (tabSet.tabs.has(termId)) {
                                     const tab = tabSet.tabs.get(termId);
@@ -2004,33 +2100,35 @@
                     // Switch workspace UI
                     switchWorkspaceUI(msg.project, msg.workspace, msg.root);
 
+                    // 使用 pendingTerminalSpawn 中的 tabId（如果有的话）
+                    const originalTabId = pendingTerminalSpawn?.tabId || msg.session_id;
+                    
                     // Create initial terminal for this workspace
                     const tabInfo = createTerminalTab(msg.session_id, msg.root, msg.project, msg.workspace);
                     switchToTab(msg.session_id);
 
                     if (tabInfo.term) {
-                        tabInfo.term.writeln('\x1b[32m[Workspace: ' + msg.project + '/' + msg.workspace + ']\x1b[0m');
-                        tabInfo.term.writeln('\x1b[90mRoot: ' + msg.root + '\x1b[0m');
-                        tabInfo.term.writeln('\x1b[90mShell: ' + msg.shell + '\x1b[0m');
-                        tabInfo.term.writeln('');
-
+                        // 不打印欢迎信息，直接显示 shell 提示符
                         tabInfo.fitAddon.fit();
                         sendResize(msg.session_id, tabInfo.term.cols, tabInfo.term.rows);
                     }
 
-                    // Phase C1-2: Register session (for legacy workspace selection)
+                    // Phase C1-2: Register session
                     terminalSessions.set(msg.session_id, {
                         buffer: [],
-                        tabId: msg.session_id, // Legacy: tabId same as sessionId
+                        tabId: originalTabId,
                         project: msg.project,
                         workspace: msg.workspace
                     });
                     activeSessionId = msg.session_id;
                     nativeTerminalReady = true;
 
-                    // Notify Native (legacy format for backward compatibility)
+                    // 清除 pendingTerminalSpawn
+                    pendingTerminalSpawn = null;
+
+                    // Notify Native
                     postToNative('terminal_ready', {
-                        tab_id: msg.session_id,
+                        tab_id: originalTabId,
                         session_id: msg.session_id,
                         project: msg.project,
                         workspace: msg.workspace
@@ -2042,11 +2140,13 @@
                         root: msg.root,
                         session_id: msg.session_id
                     });
+                    
+                    // 切换到终端模式并显示
+                    setNativeMode('terminal');
                     break;
                 }
 
                 case 'term_created': {
-                    // Phase C1-2: Check if this was spawned by Native (has pending tabId)
                     const sessionId = msg.term_id;
                     const pendingTabId = pendingTerminalSpawn ? pendingTerminalSpawn.tabId : null;
 
@@ -2220,7 +2320,13 @@
     // Connection
     // ============================================
 
-    function connect() {
+    function connect(retryCount = 0) {
+        // 等待 TIDYFLOW_WS_URL 被设置（最多等待 500ms，每 50ms 检查一次）
+        if (!window.TIDYFLOW_WS_URL && retryCount < 10) {
+            setTimeout(() => connect(retryCount + 1), 50);
+            return;
+        }
+        
         const wsURL = window.TIDYFLOW_WS_URL || 'ws://127.0.0.1:47999/ws';
 
         if (transport) {
@@ -2310,7 +2416,11 @@
 
             // Phase C1-2: Mode switching (extended for diff in C2-1)
             case 'enter_mode': {
-                const { mode } = payload;
+                const { mode, project, workspace } = payload;
+                // 更新当前工作空间信息（如果提供）
+                if (project) currentProject = project;
+                if (workspace) currentWorkspace = workspace;
+                console.log('[NativeBridge] enter_mode:', mode, 'project:', currentProject, 'workspace:', currentWorkspace);
                 if (mode === 'terminal' || mode === 'editor' || mode === 'diff') {
                     setNativeMode(mode);
                 } else {
@@ -2324,19 +2434,43 @@
                 const { project, workspace, tab_id } = payload;
                 console.log('[NativeBridge] terminal_spawn:', tab_id, project, workspace);
 
+                // Update current project/workspace so showTerminalMode() can find the correct workspace
+                currentProject = project;
+                currentWorkspace = workspace;
+                
+                // 保存待处理的终端请求，在 selected_workspace 响应时使用
+                pendingTerminalSpawn = { tabId: tab_id, project, workspace };
+
                 if (!transport || !transport.isConnected) {
-                    postToNative('terminal_error', {
-                        tab_id: tab_id,
-                        message: 'Not connected to core'
-                    });
+                    console.log('[NativeBridge] WebSocket not connected, connecting first...');
+                    connect();
+                    // Retry after connection is established
+                    setTimeout(() => {
+                        if (transport && transport.isConnected) {
+                            // 发送 select_workspace 消息，服务器会创建带正确 cwd 的终端
+                            console.log('[NativeBridge] Sending select_workspace:', project, workspace);
+                            sendControlMessage({
+                                type: 'select_workspace',
+                                project: project,
+                                workspace: workspace
+                            });
+                        } else {
+                            postToNative('terminal_error', {
+                                tab_id: tab_id,
+                                message: 'Not connected to core'
+                            });
+                        }
+                    }, 1000);
                     return;
                 }
 
-                // Store pending spawn info to associate with term_created response
-                pendingTerminalSpawn = { tabId: tab_id, project, workspace };
-
-                // Request terminal creation from core
-                createTerminal(project, workspace);
+                // 已连接，直接发送 select_workspace 消息
+                console.log('[NativeBridge] Sending select_workspace:', project, workspace);
+                sendControlMessage({
+                    type: 'select_workspace',
+                    project: project,
+                    workspace: workspace
+                });
                 break;
             }
 
@@ -2600,8 +2734,17 @@
         }
 
         if (terminalTab) {
+            // 先移除所有其他 pane 的 active class
+            tabSet.tabs.forEach((tab, tabId) => {
+                if (tabId !== terminalTab.id) {
+                    tab.pane.classList.remove('active');
+                    tab.tabEl.classList.remove('active');
+                }
+            });
+            
             // Show and activate terminal tab
             terminalTab.tabEl.style.display = '';
+            terminalTab.tabEl.classList.add('active');
             terminalTab.pane.classList.add('active');
             activeTabId = terminalTab.id;
             tabSet.activeTabId = terminalTab.id;

@@ -63,21 +63,9 @@ struct ProjectsSidebarView: View {
     // MARK: - Project List
 
     private var projectListView: some View {
-        List(selection: Binding(
-            get: { appState.selectedWorkspaceKey },
-            set: { newValue in
-                if let ws = newValue {
-                    // Find which project this workspace belongs to
-                    for project in appState.projects {
-                        if project.workspaces.contains(where: { $0.name == ws }) {
-                            appState.selectWorkspace(projectId: project.id, workspaceName: ws)
-                            return
-                        }
-                    }
-                }
-                appState.selectedWorkspaceKey = newValue
-            }
-        )) {
+        // 不使用 List(selection:) 绑定，因为它无法正确识别嵌套的 WorkspaceRowView 的 tag
+        // 选择逻辑由 WorkspaceRowView 的 onTapGesture 处理
+        List {
             ForEach($appState.projects) { $project in
                 ProjectRowView(project: $project)
                     .environmentObject(appState)

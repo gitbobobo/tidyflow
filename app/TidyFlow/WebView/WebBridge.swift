@@ -211,8 +211,15 @@ class WebBridge: NSObject, WKScriptMessageHandler {
     // MARK: - Phase C1-2: Terminal Methods (Multi-Session)
 
     /// Enter a specific mode (editor or terminal)
-    func enterMode(_ mode: String) {
-        send(type: "enter_mode", payload: ["mode": mode])
+    func enterMode(_ mode: String, project: String? = nil, workspace: String? = nil) {
+        var payload: [String: Any] = ["mode": mode]
+        if let project = project {
+            payload["project"] = project
+        }
+        if let workspace = workspace {
+            payload["workspace"] = workspace
+        }
+        send(type: "enter_mode", payload: payload)
     }
 
     /// Spawn a new terminal session for a tab

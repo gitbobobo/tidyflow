@@ -87,6 +87,13 @@ impl PtySession {
         &self.shell_name
     }
 
+    /// 从 session 中取出 reader，用于独立的读取线程
+    pub fn take_reader(&mut self) -> Result<Box<dyn Read + Send>, Box<dyn std::error::Error + Send + Sync>> {
+        // 使用 master 克隆一个新的 reader
+        self.master.try_clone_reader()
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as Box<dyn std::error::Error + Send + Sync>)
+    }
+
     #[instrument(skip(self, buf), fields(session_id = %self.session_id))]
     pub fn read_output(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_read = self.reader.read(buf)?;

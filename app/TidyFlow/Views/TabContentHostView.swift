@@ -97,10 +97,14 @@ struct TerminalContentView: View {
 
         }
         .onAppear {
+            print("[TerminalContentView] onAppear - setting webViewVisible = true")
             webViewVisible = true
             // Send enter_mode and terminal commands when terminal tab becomes active
             if appState.editorWebReady {
+                print("[TerminalContentView] editorWebReady is true, sending terminal mode")
                 sendTerminalMode()
+            } else {
+                print("[TerminalContentView] editorWebReady is false, waiting...")
             }
         }
         .onDisappear {
@@ -131,7 +135,8 @@ struct TerminalContentView: View {
         guard let ws = appState.selectedWorkspaceKey else { return }
 
         currentTabId = tab.id
-        webBridge.enterMode("terminal")
+        // 传递 project 和 workspace 以便 JavaScript 端更新当前工作空间
+        webBridge.enterMode("terminal", project: appState.selectedProjectName, workspace: ws)
 
         // Phase C1-2: Check if this tab has a session
         if let sessionId = appState.getTerminalSessionId(for: tab.id) {

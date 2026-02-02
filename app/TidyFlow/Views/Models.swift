@@ -239,8 +239,10 @@ class AppState: ObservableObject {
 
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
+        print("[AppState] selectWorkspace called: projectId=\(projectId), workspaceName=\(workspaceName)")
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
+        print("[AppState] selectedWorkspaceKey set to: \(workspaceName)")
         ensureDefaultTab(for: workspaceName)
 
         // Update selectedProjectName for WS protocol
@@ -1637,6 +1639,7 @@ class AppState: ObservableObject {
     // MARK: - Tab Helpers
     
     func ensureDefaultTab(for workspaceKey: String) {
+        print("[AppState] ensureDefaultTab called for: \(workspaceKey)")
         if workspaceTabs[workspaceKey]?.isEmpty ?? true {
             let newTab = TabModel(
                 id: UUID(),
@@ -1647,6 +1650,9 @@ class AppState: ObservableObject {
             )
             workspaceTabs[workspaceKey] = [newTab]
             activeTabIdByWorkspace[workspaceKey] = newTab.id
+            print("[AppState] Created default terminal tab: \(newTab.id) for workspace: \(workspaceKey)")
+        } else {
+            print("[AppState] Workspace already has tabs: \(workspaceTabs[workspaceKey]?.count ?? 0)")
         }
     }
     

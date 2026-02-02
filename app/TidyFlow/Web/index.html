@@ -460,6 +460,11 @@
         /* Terminal Tab Pane */
         .terminal-pane { background: #1e1e1e; }
         .terminal-container { flex: 1; }
+        
+        /* xterm.js 文字颜色修复 - 确保默认前景色可见 */
+        .xterm-rows { color: #d4d4d4; }
+        .xterm-rows span { color: inherit; }
+        .xterm-cursor { background-color: #d4d4d4 !important; }
 
         /* Placeholder when no workspace selected */
         #placeholder {
