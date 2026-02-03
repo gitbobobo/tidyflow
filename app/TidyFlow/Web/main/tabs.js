@@ -699,6 +699,23 @@
 
     if (TF.placeholder) TF.placeholder.style.display = "none";
 
+    // 如果是终端 tab，更新 activeSessionId 并应用缓冲数据
+    if (tab.type === "terminal" && tab.termId) {
+      TF.activeSessionId = tab.termId;
+      
+      // 将缓冲区中的数据写入终端
+      // 这解决了切换 tab 期间 TUI 应用输出未显示的问题
+      const session = TF.terminalSessions.get(tab.termId);
+      if (session && session.buffer && session.buffer.length > 0 && tab.term) {
+        // 将所有缓冲数据写入终端
+        for (const text of session.buffer) {
+          tab.term.write(text);
+        }
+        // 清空缓冲区
+        session.buffer = [];
+      }
+    }
+
     // 使用 requestAnimationFrame 确保浏览器完成布局更新后再刷新终端
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
