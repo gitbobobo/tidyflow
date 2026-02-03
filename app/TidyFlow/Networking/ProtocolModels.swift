@@ -812,6 +812,76 @@ struct GitLogCache {
     }
 }
 
+// MARK: - Git Show (单个 commit 详情)
+
+/// Git show 文件变更条目
+struct GitShowFileEntry: Identifiable {
+    var id: String { path }
+    let status: String      // "M", "A", "D", "R" 等
+    let path: String
+    let oldPath: String?    // 重命名时的原路径
+}
+
+/// Git show 结果（单个 commit 详情）
+struct GitShowResult {
+    let project: String
+    let workspace: String
+    let sha: String
+    let fullSha: String
+    let message: String     // 完整提交消息
+    let author: String
+    let authorEmail: String
+    let date: String
+    let files: [GitShowFileEntry]
+    
+    static func from(json: [String: Any]) -> GitShowResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let sha = json["sha"] as? String,
+              let fullSha = json["full_sha"] as? String,
+              let message = json["message"] as? String,
+              let author = json["author"] as? String,
+              let authorEmail = json["author_email"] as? String,
+              let date = json["date"] as? String else {
+            return nil
+        }
+        
+        var files: [GitShowFileEntry] = []
+        if let filesArray = json["files"] as? [[String: Any]] {
+            for fileJson in filesArray {
+                if let status = fileJson["status"] as? String,
+                   let path = fileJson["path"] as? String {
+                    let oldPath = fileJson["old_path"] as? String
+                    files.append(GitShowFileEntry(
+                        status: status,
+                        path: path,
+                        oldPath: oldPath
+                    ))
+                }
+            }
+        }
+        
+        return GitShowResult(
+            project: project,
+            workspace: workspace,
+            sha: sha,
+            fullSha: fullSha,
+            message: message,
+            author: author,
+            authorEmail: authorEmail,
+            date: date,
+            files: files
+        )
+    }
+}
+
+/// Git show 缓存（按 SHA 索引）
+struct GitShowCache {
+    var result: GitShowResult?
+    var isLoading: Bool
+    var error: String?
+}
+
 // MARK: - Phase C3-2a: Git Stage/Unstage Protocol Models
 
 /// Result from git_stage or git_unstage request

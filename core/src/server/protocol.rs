@@ -245,6 +245,13 @@ pub enum ClientMessage {
         #[serde(default = "default_git_log_limit")]
         limit: usize,
     },
+
+    // v1.20: Git show (single commit details)
+    GitShow {
+        project: String,
+        workspace: String,
+        sha: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -537,6 +544,19 @@ pub enum ServerMessage {
         workspace: String,
         entries: Vec<GitLogEntryInfo>,
     },
+
+    // v1.20: Git show result (single commit details)
+    GitShowResult {
+        project: String,
+        workspace: String,
+        sha: String,
+        full_sha: String,
+        message: String,
+        author: String,
+        author_email: String,
+        date: String,
+        files: Vec<GitShowFileInfo>,
+    },
 }
 
 // ============================================================================
@@ -595,6 +615,14 @@ pub struct GitLogEntryInfo {
     pub date: String,
     #[serde(default)]
     pub refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitShowFileInfo {
+    pub status: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
 }
 
 // ============================================================================

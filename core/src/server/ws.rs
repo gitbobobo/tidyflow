@@ -2671,6 +2671,74 @@ async fn handle_client_message(
                 }
             }
         }
+
+        // v1.20: Git show (single commit details)
+        ClientMessage::GitShow { project, workspace, sha } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        // Run git show in blocking task
+                        let result = tokio::task::spawn_blocking(move || {
+                            git_tools::git_show(&root, &sha)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(show_result)) => {
+                                use crate::server::protocol::GitShowFileInfo;
+                                let files: Vec<GitShowFileInfo> = show_result.files
+                                    .into_iter()
+                                    .map(|f| GitShowFileInfo {
+                                        status: f.status,
+                                        path: f.path,
+                                        old_path: f.old_path,
+                                    })
+                                    .collect();
+
+                                send_message(socket, &ServerMessage::GitShowResult {
+                                    project,
+                                    workspace,
+                                    sha: show_result.sha,
+                                    full_sha: show_result.full_sha,
+                                    message: show_result.message,
+                                    author: show_result.author,
+                                    author_email: show_result.author_email,
+                                    date: show_result.date,
+                                    files,
+                                }).await?;
+                            }
+                            Ok(Err(e)) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "git_error".to_string(),
+                                    message: format!("Git show failed: {}", e),
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Git show task failed: {}", e),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
     }
 
     Ok(())

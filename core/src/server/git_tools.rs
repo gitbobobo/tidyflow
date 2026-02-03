@@ -120,6 +120,26 @@ pub struct GitLogResult {
     pub entries: Vec<GitLogEntry>,
 }
 
+/// Git show 文件变更条目
+#[derive(Debug, Clone)]
+pub struct GitShowFileEntry {
+    pub status: String,     // "M", "A", "D", "R" 等
+    pub path: String,       // 文件路径
+    pub old_path: Option<String>,  // 重命名时的原路径
+}
+
+/// Git show 结果（单个 commit 详情）
+#[derive(Debug)]
+pub struct GitShowResult {
+    pub sha: String,
+    pub full_sha: String,
+    pub message: String,      // 完整提交消息（含正文）
+    pub author: String,
+    pub author_email: String,
+    pub date: String,
+    pub files: Vec<GitShowFileEntry>,
+}
+
 /// Error type for git operations
 #[derive(Debug)]
 pub enum GitError {
@@ -379,6 +399,121 @@ pub fn git_log(workspace_root: &Path, limit: usize) -> Result<GitLogResult, GitE
     }
 
     Ok(GitLogResult { entries })
+}
+
+/// Get details for a single commit
+///
+/// Uses `git show --name-status --format=...` to get commit details and changed files.
+pub fn git_show(workspace_root: &Path, sha: &str) -> Result<GitShowResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // 验证 SHA 格式，防止命令注入
+    if !sha.chars().all(|c| c.is_ascii_hexdigit()) || sha.is_empty() || sha.len() > 40 {
+        return Err(GitError::CommandFailed("Invalid SHA format".to_string()));
+    }
+
+    // 获取提交元信息：%H (full SHA), %h (short SHA), %s (subject), %b (body), %an (author), %ae (email), %aI (date)
+    let format = "%H%x00%h%x00%s%x00%b%x00%an%x00%ae%x00%aI";
+    
+    let output = Command::new("git")
+        .args([
+            "show",
+            "--name-status",
+            &format!("--pretty=format:{}", format),
+            sha,
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GitError::CommandFailed(stderr.to_string()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    
+    if lines.is_empty() {
+        return Err(GitError::CommandFailed("Empty output from git show".to_string()));
+    }
+
+    // 第一行是格式化的元信息
+    let first_line = lines[0];
+    let fields: Vec<&str> = first_line.split('\x00').collect();
+    
+    if fields.len() < 7 {
+        return Err(GitError::CommandFailed("Invalid git show output format".to_string()));
+    }
+
+    let full_sha = fields[0].to_string();
+    let short_sha = fields[1].to_string();
+    let subject = fields[2].to_string();
+    let body = fields[3].trim().to_string();
+    let author = fields[4].to_string();
+    let author_email = fields[5].to_string();
+    let date = fields[6].to_string();
+
+    // 组合完整消息
+    let message = if body.is_empty() {
+        subject
+    } else {
+        format!("{}\n\n{}", subject, body)
+    };
+
+    // 解析文件变更列表
+    // 注意：git show --name-status 输出中，如果 body 为空，文件列表可能直接跟在元数据行后面（无空行分隔）
+    // 文件变更格式：STATUS\tPATH 或 STATUS\tOLD_PATH\tNEW_PATH（重命名）
+    // STATUS 可以是：M(修改), A(新增), D(删除), R(重命名), C(复制) 等
+    let mut files = Vec::new();
+    
+    for line in lines.iter().skip(1) {
+        let line = line.trim();
+        
+        // 跳过空行
+        if line.is_empty() {
+            continue;
+        }
+        
+        // 尝试解析为文件变更行：STATUS\tPATH
+        let parts: Vec<&str> = line.split('\t').collect();
+        
+        if parts.len() >= 2 {
+            // 检查第一部分是否是有效的状态码（M, A, D, R100 等）
+            let status_part = parts[0];
+            let first_char = status_part.chars().next().unwrap_or('?');
+            
+            // 有效的 git 状态码：M, A, D, R, C, T, U, X, B
+            if "MADRCTUXYB".contains(first_char) {
+                let status = first_char.to_string();
+                let (path, old_path) = if parts.len() >= 3 && (status == "R" || status == "C") {
+                    // 重命名/复制: R100\told_path\tnew_path
+                    (parts[2].to_string(), Some(parts[1].to_string()))
+                } else {
+                    (parts[1].to_string(), None)
+                };
+                
+                files.push(GitShowFileEntry {
+                    status,
+                    path,
+                    old_path,
+                });
+            }
+        }
+    }
+
+    Ok(GitShowResult {
+        sha: short_sha,
+        full_sha,
+        message,
+        author,
+        author_email,
+        date,
+        files,
+    })
 }
 
 /// Get git diff for a specific file

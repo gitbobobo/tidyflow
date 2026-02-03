@@ -789,6 +789,7 @@ struct GitGraphSection: View {
                         } else {
                             ForEach(cache.entries) { entry in
                                 GitLogRow(entry: entry)
+                                    .environmentObject(appState)
                             }
                         }
                     } else {
@@ -805,100 +806,282 @@ struct GitGraphSection: View {
     }
 }
 
-// MARK: - 提交历史行
+// MARK: - 提交历史行（支持折叠展开）
 
 struct GitLogRow: View {
+    @EnvironmentObject var appState: AppState
     let entry: GitLogEntry
     @State private var isHovered: Bool = false
+    @State private var isExpanded: Bool = false
+    @State private var showPopover: Bool = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            // 提交图标
-            Circle()
-                .fill(isHead ? Color.accentColor : Color.secondary.opacity(0.5))
-                .frame(width: 8, height: 8)
-            
-            // 提交信息
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    // 提交消息
-                    Text(entry.message)
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    
-                    // 分支/标签引用
-                    ForEach(displayRefs, id: \.self) { ref in
-                        Text(ref)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(refColor(for: ref))
-                            .cornerRadius(3)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            // 主行：默认只显示一行内容
+            HStack(spacing: 6) {
+                // 展开/折叠指示器
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .frame(width: 10)
                 
-                // 作者和时间
-                HStack(spacing: 4) {
-                    Text(entry.author)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    
-                    Text("·")
-                        .foregroundColor(.secondary)
-                    
-                    Text(entry.relativeDate)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            Spacer()
-            
-            // SHA（悬停显示）
-            if isHovered {
-                Text(entry.sha)
-                    .font(.system(size: 10, design: .monospaced))
+                // 提交图标
+                Circle()
+                    .fill(isHead ? Color.accentColor : Color.secondary.opacity(0.5))
+                    .frame(width: 8, height: 8)
+                
+                // 提交消息（单行）
+                Text(entry.message)
+                    .font(.system(size: 12))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                
+                Spacer()
+                
+                // 相对时间
+                Text(entry.relativeDate)
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 6)
-        .background(isHovered ? Color.primary.opacity(0.05) : Color.clear)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            isHovered = hovering
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .background(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+                // 展开时加载文件列表
+                if isExpanded, let ws = appState.selectedWorkspaceKey {
+                    appState.fetchGitShow(workspaceKey: ws, sha: entry.sha)
+                }
+            }
+            .onHover { hovering in
+                isHovered = hovering
+                // 悬浮一段时间后显示 popover
+                if hovering {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        if isHovered {
+                            showPopover = true
+                        }
+                    }
+                } else {
+                    showPopover = false
+                }
+            }
+            .popover(isPresented: $showPopover, arrowEdge: .leading) {
+                CommitDetailPopover(entry: entry)
+                    .environmentObject(appState)
+            }
+            
+            // 展开后显示文件列表
+            if isExpanded {
+                CommitFilesView(sha: entry.sha)
+                    .environmentObject(appState)
+            }
         }
     }
 
     private var isHead: Bool {
         entry.refs.contains { $0.contains("HEAD") }
     }
+}
 
-    private var displayRefs: [String] {
-        // 只显示前 2 个引用，简化显示
-        let refs = entry.refs.prefix(2).map { ref -> String in
-            // 简化引用名
-            if ref.starts(with: "HEAD -> ") {
-                return String(ref.dropFirst(8))
-            } else if ref.starts(with: "origin/") {
-                return String(ref.dropFirst(7))
-            } else if ref.starts(with: "tag: ") {
-                return String(ref.dropFirst(5))
+// MARK: - 提交详情悬浮提示
+
+struct CommitDetailPopover: View {
+    @EnvironmentObject var appState: AppState
+    let entry: GitLogEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // SHA
+            HStack(spacing: 4) {
+                Text("SHA:")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                Text(entry.sha)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .textSelection(.enabled)
             }
-            return ref
+            
+            Divider()
+            
+            // 提交消息
+            Text(entry.message)
+                .font(.system(size: 12))
+                .foregroundColor(.primary)
+                .lineLimit(10)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            Divider()
+            
+            // 作者和时间
+            HStack(spacing: 4) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(entry.author)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(entry.relativeDate)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            
+            // 引用标签
+            if !entry.refs.isEmpty {
+                Divider()
+                HStack(spacing: 4) {
+                    Image(systemName: "tag")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    ForEach(entry.refs, id: \.self) { ref in
+                        Text(ref)
+                            .font(.system(size: 10))
+                            .foregroundColor(.blue)
+                    }
+                }
+            }
         }
-        return Array(refs)
+        .padding(10)
+        .frame(minWidth: 250, maxWidth: 350)
+    }
+}
+
+// MARK: - 提交文件列表视图
+
+struct CommitFilesView: View {
+    @EnvironmentObject var appState: AppState
+    let sha: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let ws = appState.selectedWorkspaceKey,
+               let cache = appState.getGitShowCache(workspaceKey: ws, sha: sha) {
+                if cache.isLoading {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                } else if let result = cache.result {
+                    if result.files.isEmpty {
+                        Text("没有文件变更")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(result.files) { file in
+                            CommitFileRow(file: file)
+                        }
+                    }
+                } else if let error = cache.error {
+                    Text("加载失败: \(error)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 4)
+                }
+            } else {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+    }
+}
+
+// MARK: - 提交文件行
+
+struct CommitFileRow: View {
+    let file: GitShowFileEntry
+    @State private var isHovered: Bool = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // 缩进 + 状态标识
+            Text(file.status)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(statusColor)
+                .frame(width: 14, alignment: .center)
+            
+            // 文件图标
+            Image(systemName: fileIcon)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            
+            // 文件名
+            Text(fileName)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            
+            // 目录路径
+            if let dir = directoryPath {
+                Text(dir)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 3)
+        .background(isHovered ? Color.primary.opacity(0.03) : Color.clear)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 
-    private func refColor(for ref: String) -> Color {
-        if ref.contains("main") || ref.contains("master") {
-            return .green
-        } else if ref.contains("HEAD") {
-            return .accentColor
-        } else {
-            return .orange
+    private var fileName: String {
+        file.path.split(separator: "/").last.map(String.init) ?? file.path
+    }
+
+    private var directoryPath: String? {
+        let components = file.path.split(separator: "/")
+        guard components.count > 1 else { return nil }
+        return components.dropLast().joined(separator: "/")
+    }
+
+    private var fileIcon: String {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        switch ext {
+        case "swift": return "swift"
+        case "rs": return "gear"
+        case "js", "ts", "jsx", "tsx": return "j.square"
+        case "json": return "curlybraces"
+        case "md": return "doc.richtext"
+        case "toml", "yaml", "yml": return "doc.text"
+        default: return "doc"
+        }
+    }
+
+    private var statusColor: Color {
+        switch file.status {
+        case "M": return .orange
+        case "A": return .green
+        case "D": return .red
+        case "R": return .blue
+        case "C": return .purple
+        default: return .secondary
         }
     }
 }

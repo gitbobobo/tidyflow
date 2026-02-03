@@ -280,6 +280,9 @@ class AppState: ObservableObject {
     // Git Log Cache (workspace key -> GitLogCache)
     @Published var gitLogCache: [String: GitLogCache] = [:]
 
+    // Git Show Cache (workspace key + sha -> GitShowCache)
+    @Published var gitShowCache: [String: GitShowCache] = [:]
+
     // Phase C3-2a: Git operation in-flight tracking (workspace key -> Set<GitOpInFlight>)
     @Published var gitOpsInFlight: [String: Set<GitOpInFlight>] = [:]
     // Phase C3-2a: Git operation toast message
@@ -382,8 +385,9 @@ class AppState: ObservableObject {
         ensureDefaultTab(for: workspaceName)
 
         // Update selectedProjectName for WS protocol
+        // 注意：使用原始项目名称，不进行格式转换，因为服务端使用原始名称索引项目
         if let project = projects.first(where: { $0.id == projectId }) {
-            selectedProjectName = project.name.lowercased().replacingOccurrences(of: " ", with: "-")
+            selectedProjectName = project.name
         }
 
         // 自动请求根目录文件列表（如果缓存不存在或已过期）
@@ -494,6 +498,11 @@ class AppState: ObservableObject {
         // Handle git log results
         wsClient.onGitLogResult = { [weak self] result in
             self?.handleGitLogResult(result)
+        }
+
+        // Handle git show results (single commit details)
+        wsClient.onGitShowResult = { [weak self] result in
+            self?.handleGitShowResult(result)
         }
 
         // Phase C3-2a: Handle git operation results
@@ -886,6 +895,54 @@ class AppState: ObservableObject {
     func shouldFetchGitLog(workspaceKey: String) -> Bool {
         guard let cache = gitLogCache[workspaceKey] else { return true }
         return cache.isExpired && !cache.isLoading
+    }
+
+    // MARK: - Git Show (单个 commit 详情) API
+
+    /// Handle git show result from WebSocket
+    private func handleGitShowResult(_ result: GitShowResult) {
+        let cacheKey = "\(result.workspace):\(result.sha)"
+        let cache = GitShowCache(
+            result: result,
+            isLoading: false,
+            error: nil
+        )
+        gitShowCache[cacheKey] = cache
+    }
+
+    /// Fetch git show for a specific commit
+    func fetchGitShow(workspaceKey: String, sha: String) {
+        let cacheKey = "\(workspaceKey):\(sha)"
+        
+        guard connectionState == .connected else {
+            gitShowCache[cacheKey] = GitShowCache(
+                result: nil,
+                isLoading: false,
+                error: "Disconnected"
+            )
+            return
+        }
+
+        // 检查缓存是否已存在
+        if let existing = gitShowCache[cacheKey], existing.result != nil {
+            return  // 已有缓存，无需重新请求
+        }
+
+        // Set loading state
+        gitShowCache[cacheKey] = GitShowCache(
+            result: nil,
+            isLoading: true,
+            error: nil
+        )
+
+        // Send request
+        wsClient.requestGitShow(project: selectedProjectName, workspace: workspaceKey, sha: sha)
+    }
+
+    /// Get cached git show result for a commit
+    func getGitShowCache(workspaceKey: String, sha: String) -> GitShowCache? {
+        let cacheKey = "\(workspaceKey):\(sha)"
+        return gitShowCache[cacheKey]
     }
 
     // MARK: - Phase C3-2a: Git Stage/Unstage API

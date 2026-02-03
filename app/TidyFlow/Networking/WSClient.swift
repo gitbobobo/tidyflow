@@ -21,6 +21,7 @@ class WSClient: NSObject, ObservableObject {
     var onGitDiffResult: ((GitDiffResult) -> Void)?
     var onGitStatusResult: ((GitStatusResult) -> Void)?
     var onGitLogResult: ((GitLogResult) -> Void)?
+    var onGitShowResult: ((GitShowResult) -> Void)?
     var onGitOpResult: ((GitOpResult) -> Void)?
     var onGitBranchesResult: ((GitBranchesResult) -> Void)?
     var onGitCommitResult: ((GitCommitResult) -> Void)?
@@ -181,6 +182,16 @@ class WSClient: NSObject, ObservableObject {
             "project": project,
             "workspace": workspace,
             "limit": limit
+        ])
+    }
+
+    // Git Show: Request single commit details
+    func requestGitShow(project: String, workspace: String, sha: String) {
+        sendJSON([
+            "type": "git_show",
+            "project": project,
+            "workspace": workspace,
+            "sha": sha
         ])
     }
 
@@ -512,6 +523,11 @@ class WSClient: NSObject, ObservableObject {
         case "git_log_result":
             if let result = GitLogResult.from(json: json) {
                 onGitLogResult?(result)
+            }
+
+        case "git_show_result":
+            if let result = GitShowResult.from(json: json) {
+                onGitShowResult?(result)
             }
 
         case "git_op_result":
