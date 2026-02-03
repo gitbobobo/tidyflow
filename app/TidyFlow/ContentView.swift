@@ -78,6 +78,20 @@ struct ContentView: View {
         }
         .handleGlobalKeybindings()
         .environmentObject(appState)
+        // 点击空白区域时取消输入框焦点
+        .simultaneousGesture(
+            TapGesture().onEnded { _ in
+                // 延迟执行，避免干扰按钮等控件的正常点击
+                DispatchQueue.main.async {
+                    if let window = NSApp.keyWindow,
+                       let firstResponder = window.firstResponder,
+                       firstResponder is NSTextView {
+                        // 仅当焦点在文本输入框时才取消
+                        window.makeFirstResponder(nil)
+                    }
+                }
+            }
+        )
         // UX-1: Add Project Sheet
         .sheet(isPresented: $appState.addProjectSheetPresented) {
             AddProjectSheet()

@@ -693,6 +693,125 @@ struct GitStatusCache {
     }
 }
 
+// MARK: - Git Log (Commit History) Protocol Models
+
+/// 单条提交记录
+struct GitLogEntry: Identifiable {
+    let id: String       // 使用 sha 作为 ID
+    let sha: String      // 短 SHA (7字符)
+    let message: String  // 提交消息（首行）
+    let author: String   // 作者名
+    let date: String     // ISO 日期
+    let refs: [String]   // HEAD, branch, tag 等引用
+    
+    /// 格式化的相对时间
+    var relativeDate: String {
+        // 解析 ISO 日期并转换为相对时间
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        // 尝试多种格式
+        if let parsedDate = formatter.date(from: date) {
+            return formatRelativeDate(parsedDate)
+        }
+        
+        // 尝试不带小数秒的格式
+        formatter.formatOptions = [.withInternetDateTime]
+        if let parsedDate = formatter.date(from: date) {
+            return formatRelativeDate(parsedDate)
+        }
+        
+        return date
+    }
+    
+    private func formatRelativeDate(_ date: Date) -> String {
+        let now = Date()
+        let interval = now.timeIntervalSince(date)
+        
+        if interval < 60 {
+            return "刚刚"
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return "\(minutes) 分钟前"
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return "\(hours) 小时前"
+        } else if interval < 604800 {
+            let days = Int(interval / 86400)
+            return "\(days) 天前"
+        } else if interval < 2592000 {
+            let weeks = Int(interval / 604800)
+            return "\(weeks) 周前"
+        } else {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            return dateFormatter.string(from: date)
+        }
+    }
+}
+
+/// git_log 请求的响应结果
+struct GitLogResult {
+    let project: String
+    let workspace: String
+    let entries: [GitLogEntry]
+    
+    static func from(json: [String: Any]) -> GitLogResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+        
+        var entries: [GitLogEntry] = []
+        if let entriesArray = json["entries"] as? [[String: Any]] {
+            for entryJson in entriesArray {
+                if let sha = entryJson["sha"] as? String,
+                   let message = entryJson["message"] as? String,
+                   let author = entryJson["author"] as? String,
+                   let date = entryJson["date"] as? String {
+                    let refs = entryJson["refs"] as? [String] ?? []
+                    entries.append(GitLogEntry(
+                        id: sha,
+                        sha: sha,
+                        message: message,
+                        author: author,
+                        date: date,
+                        refs: refs
+                    ))
+                }
+            }
+        }
+        
+        return GitLogResult(
+            project: project,
+            workspace: workspace,
+            entries: entries
+        )
+    }
+}
+
+/// Git 日志缓存
+struct GitLogCache {
+    var entries: [GitLogEntry]
+    var isLoading: Bool
+    var error: String?
+    var updatedAt: Date
+    
+    static func empty() -> GitLogCache {
+        GitLogCache(
+            entries: [],
+            isLoading: false,
+            error: nil,
+            updatedAt: .distantPast
+        )
+    }
+    
+    var isExpired: Bool {
+        // Git log cache 过期时间：5 分钟
+        Date().timeIntervalSince(updatedAt) > 300
+    }
+}
+
 // MARK: - Phase C3-2a: Git Stage/Unstage Protocol Models
 
 /// Result from git_stage or git_unstage request

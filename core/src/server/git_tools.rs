@@ -104,6 +104,22 @@ pub struct GitOpStatusResult {
     pub onto: Option<String>,
 }
 
+/// Git log entry (single commit)
+#[derive(Debug, Clone)]
+pub struct GitLogEntry {
+    pub sha: String,           // 短 SHA (7字符)
+    pub message: String,       // 提交消息（首行）
+    pub author: String,        // 作者名
+    pub date: String,          // ISO 日期
+    pub refs: Vec<String>,     // HEAD, branch, tag 等引用
+}
+
+/// Git log result
+#[derive(Debug)]
+pub struct GitLogResult {
+    pub entries: Vec<GitLogEntry>,
+}
+
 /// Error type for git operations
 #[derive(Debug)]
 pub enum GitError {
@@ -272,6 +288,97 @@ fn parse_status_code(xy: &str) -> String {
             else { "M".to_string() }
         }
     }
+}
+
+/// Get git log (commit history) for a workspace
+///
+/// Uses `git log --pretty=format:...` to get commit history.
+/// Returns up to `limit` entries.
+pub fn git_log(workspace_root: &Path, limit: usize) -> Result<GitLogResult, GitError> {
+    // Check if it's a git repo
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    // 使用特定格式获取日志：SHA%x00消息%x00作者%x00日期%x00引用%x1e
+    // %x00 = NUL 字符用于分隔字段
+    // %x1e = Record Separator 用于分隔条目
+    let format = "%h%x00%s%x00%an%x00%aI%x00%D%x1e";
+    
+    let output = Command::new("git")
+        .args([
+            "log",
+            &format!("--pretty=format:{}", format),
+            &format!("-{}", limit),
+            "--no-walk=unsorted",
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    // 如果 --no-walk 失败（旧版本 git），尝试不带该参数
+    let output = if !output.status.success() {
+        Command::new("git")
+            .args([
+                "log",
+                &format!("--pretty=format:{}", format),
+                &format!("-{}", limit),
+            ])
+            .current_dir(workspace_root)
+            .output()
+            .map_err(GitError::IoError)?
+    } else {
+        output
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // 如果没有提交，返回空列表
+        if stderr.contains("does not have any commits") {
+            return Ok(GitLogResult { entries: vec![] });
+        }
+        return Err(GitError::CommandFailed(stderr.to_string()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+
+    // 按 Record Separator 分割条目
+    for record in stdout.split('\x1e') {
+        let record = record.trim();
+        if record.is_empty() {
+            continue;
+        }
+
+        let fields: Vec<&str> = record.split('\x00').collect();
+        if fields.len() >= 4 {
+            let sha = fields[0].to_string();
+            let message = fields[1].to_string();
+            let author = fields[2].to_string();
+            let date = fields[3].to_string();
+            
+            // 解析引用（如 "HEAD -> main, origin/main, tag: v1.0"）
+            let refs: Vec<String> = if fields.len() > 4 && !fields[4].is_empty() {
+                fields[4]
+                    .split(", ")
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            entries.push(GitLogEntry {
+                sha,
+                message,
+                author,
+                date,
+                refs,
+            });
+        }
+    }
+
+    Ok(GitLogResult { entries })
 }
 
 /// Get git diff for a specific file

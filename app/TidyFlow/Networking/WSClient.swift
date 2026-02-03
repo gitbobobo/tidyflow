@@ -20,6 +20,7 @@ class WSClient: NSObject, ObservableObject {
     var onFileListResult: ((FileListResult) -> Void)?
     var onGitDiffResult: ((GitDiffResult) -> Void)?
     var onGitStatusResult: ((GitStatusResult) -> Void)?
+    var onGitLogResult: ((GitLogResult) -> Void)?
     var onGitOpResult: ((GitOpResult) -> Void)?
     var onGitBranchesResult: ((GitBranchesResult) -> Void)?
     var onGitCommitResult: ((GitCommitResult) -> Void)?
@@ -170,6 +171,16 @@ class WSClient: NSObject, ObservableObject {
             "type": "git_status",
             "project": project,
             "workspace": workspace
+        ])
+    }
+
+    // Git Log: Request commit history
+    func requestGitLog(project: String, workspace: String, limit: Int = 50) {
+        sendJSON([
+            "type": "git_log",
+            "project": project,
+            "workspace": workspace,
+            "limit": limit
         ])
     }
 
@@ -496,6 +507,11 @@ class WSClient: NSObject, ObservableObject {
         case "git_status_result":
             if let result = GitStatusResult.from(json: json) {
                 onGitStatusResult?(result)
+            }
+
+        case "git_log_result":
+            if let result = GitLogResult.from(json: json) {
+                onGitLogResult?(result)
             }
 
         case "git_op_result":

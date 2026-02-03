@@ -277,6 +277,9 @@ class AppState: ObservableObject {
     // Phase C3-1: Git Status Cache (workspace key -> GitStatusCache)
     @Published var gitStatusCache: [String: GitStatusCache] = [:]
 
+    // Git Log Cache (workspace key -> GitLogCache)
+    @Published var gitLogCache: [String: GitLogCache] = [:]
+
     // Phase C3-2a: Git operation in-flight tracking (workspace key -> Set<GitOpInFlight>)
     @Published var gitOpsInFlight: [String: Set<GitOpInFlight>] = [:]
     // Phase C3-2a: Git operation toast message
@@ -486,6 +489,11 @@ class AppState: ObservableObject {
         // Phase C3-1: Handle git status results
         wsClient.onGitStatusResult = { [weak self] result in
             self?.handleGitStatusResult(result)
+        }
+
+        // Handle git log results
+        wsClient.onGitLogResult = { [weak self] result in
+            self?.handleGitLogResult(result)
         }
 
         // Phase C3-2a: Handle git operation results
@@ -827,6 +835,56 @@ class AppState: ObservableObject {
     /// Check if git status cache is empty or expired
     func shouldFetchGitStatus(workspaceKey: String) -> Bool {
         guard let cache = gitStatusCache[workspaceKey] else { return true }
+        return cache.isExpired && !cache.isLoading
+    }
+
+    // MARK: - Git Log (Commit History) API
+
+    /// Handle git log result from WebSocket
+    private func handleGitLogResult(_ result: GitLogResult) {
+        let cache = GitLogCache(
+            entries: result.entries,
+            isLoading: false,
+            error: nil,
+            updatedAt: Date()
+        )
+        gitLogCache[result.workspace] = cache
+    }
+
+    /// Fetch git log for a workspace
+    func fetchGitLog(workspaceKey: String, limit: Int = 50) {
+        guard connectionState == .connected else {
+            var cache = gitLogCache[workspaceKey] ?? GitLogCache.empty()
+            cache.error = "Disconnected"
+            cache.isLoading = false
+            gitLogCache[workspaceKey] = cache
+            return
+        }
+
+        // Set loading state
+        var cache = gitLogCache[workspaceKey] ?? GitLogCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        gitLogCache[workspaceKey] = cache
+
+        // Send request
+        wsClient.requestGitLog(project: selectedProjectName, workspace: workspaceKey, limit: limit)
+    }
+
+    /// Refresh git log for current workspace
+    func refreshGitLog() {
+        guard let ws = selectedWorkspaceKey else { return }
+        fetchGitLog(workspaceKey: ws)
+    }
+
+    /// Get cached git log for a workspace
+    func getGitLogCache(workspaceKey: String) -> GitLogCache? {
+        return gitLogCache[workspaceKey]
+    }
+
+    /// Check if git log cache is empty or expired
+    func shouldFetchGitLog(workspaceKey: String) -> Bool {
+        guard let cache = gitLogCache[workspaceKey] else { return true }
         return cache.isExpired && !cache.isLoading
     }
 

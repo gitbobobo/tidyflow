@@ -2607,6 +2607,70 @@ async fn handle_client_message(
                 }
             }
         }
+
+        // v1.19: Git log (commit history)
+        ClientMessage::GitLog { project, workspace, limit } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => match p.get_workspace(&workspace) {
+                    Some(w) => {
+                        let root = w.worktree_path.clone();
+                        drop(state);
+
+                        // Run git log in blocking task
+                        let result = tokio::task::spawn_blocking(move || {
+                            git_tools::git_log(&root, limit)
+                        }).await;
+
+                        match result {
+                            Ok(Ok(log_result)) => {
+                                use crate::server::protocol::GitLogEntryInfo;
+                                let entries: Vec<GitLogEntryInfo> = log_result.entries
+                                    .into_iter()
+                                    .map(|e| GitLogEntryInfo {
+                                        sha: e.sha,
+                                        message: e.message,
+                                        author: e.author,
+                                        date: e.date,
+                                        refs: e.refs,
+                                    })
+                                    .collect();
+
+                                send_message(socket, &ServerMessage::GitLogResult {
+                                    project,
+                                    workspace,
+                                    entries,
+                                }).await?;
+                            }
+                            Ok(Err(e)) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "git_error".to_string(),
+                                    message: format!("Git log failed: {}", e),
+                                }).await?;
+                            }
+                            Err(e) => {
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "internal_error".to_string(),
+                                    message: format!("Git log task failed: {}", e),
+                                }).await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(socket, &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!("Workspace '{}' not found", workspace),
+                        }).await?;
+                    }
+                },
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "project_not_found".to_string(),
+                        message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
     }
 
     Ok(())

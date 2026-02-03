@@ -237,6 +237,14 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
     },
+
+    // v1.19: Git log (commit history)
+    GitLog {
+        project: String,
+        workspace: String,
+        #[serde(default = "default_git_log_limit")]
+        limit: usize,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -249,6 +257,10 @@ fn default_git_scope() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_git_log_limit() -> usize {
+    50
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,6 +530,13 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    // v1.19: Git log result
+    GitLogResult {
+        project: String,
+        workspace: String,
+        entries: Vec<GitLogEntryInfo>,
+    },
 }
 
 // ============================================================================
@@ -566,6 +585,16 @@ pub struct GitStatusEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitBranchInfo {
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitLogEntryInfo {
+    pub sha: String,
+    pub message: String,
+    pub author: String,
+    pub date: String,
+    #[serde(default)]
+    pub refs: Vec<String>,
 }
 
 // ============================================================================
