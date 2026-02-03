@@ -597,9 +597,14 @@ pub struct FileEntryInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitStatusEntry {
     pub path: String,
+    /// 序列化为 "status" 以匹配 Swift 端 GitStatusItem 的字段名
+    #[serde(rename = "status")]
     pub code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "rename_from")]
     pub orig_path: Option<String>,
+    /// 是否有暂存区变更，用于 UI 区分「暂存的更改」与「未暂存的更改」
+    pub staged: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

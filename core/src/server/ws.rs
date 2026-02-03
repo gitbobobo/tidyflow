@@ -989,9 +989,17 @@ async fn handle_client_message(
                                         path: e.path,
                                         code: e.code,
                                         orig_path: e.orig_path,
+                                        staged: e.staged,
                                     })
                                     .collect();
 
+                                // #region agent log
+                                let items_len = items.len();
+                                let entry_keys = vec!["path".to_string(), "code".to_string(), "orig_path".to_string()];
+                                let log_path = "/Users/godbobo/work/projects/tidyflow/.cursor/debug.log".to_string();
+                                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+                                let keys_str = format!("{:?}", entry_keys);
+                                // #endregion
                                 send_message(socket, &ServerMessage::GitStatusResult {
                                     project,
                                     workspace,
@@ -1000,6 +1008,16 @@ async fn handle_client_message(
                                     has_staged_changes: status_result.has_staged_changes,
                                     staged_count: status_result.staged_count,
                                 }).await?;
+                                // #region agent log
+                                tokio::task::spawn_blocking(move || {
+                                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                                        use std::io::Write;
+                                        let line = format!("{{\"location\":\"ws.rs:GitStatusResult\",\"message\":\"sent\",\"data\":{{\"items_len\":{},\"entry_keys\":\"{}\"}},\"timestamp\":{},\"sessionId\":\"debug-session\",\"hypothesisId\":\"H3\"}}\n",
+                                            items_len, keys_str.replace('\\', "\\\\").replace('"', "\\\""), ts);
+                                        let _ = f.write_all(line.as_bytes());
+                                    }
+                                }).await.ok();
+                                // #endregion
                             }
                             Ok(Err(e)) => {
                                 send_message(socket, &ServerMessage::Error {

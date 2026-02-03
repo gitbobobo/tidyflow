@@ -8,12 +8,14 @@ use std::process::Command;
 /// Maximum diff size in bytes (1MB)
 pub const MAX_DIFF_SIZE: usize = 1_048_576;
 
-/// Git status entry
+/// Git status entry (porcelain v1: X=index/staged, Y=worktree/unstaged)
 #[derive(Debug, Clone)]
 pub struct GitStatusEntry {
     pub path: String,
     pub code: String,
     pub orig_path: Option<String>,
+    /// 是否有暂存区变更（X != ' '）
+    pub staged: bool,
 }
 
 /// Git status result
@@ -232,12 +234,40 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     // Check for staged changes
     let (has_staged_changes, staged_count) = check_staged_changes(workspace_root);
 
+    // #region agent log
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Users/godbobo/work/projects/tidyflow/.cursor/debug.log") {
+        use std::io::Write;
+        let first_code = items.first().map(|e| e.code.as_str()).unwrap_or("");
+        let first_path = items.first().map(|e| e.path.len()).unwrap_or(0);
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        let line = format!("{{\"location\":\"git_tools.rs:git_status\",\"message\":\"git_status exit\",\"data\":{{\"items_len\":{},\"first_code\":\"{}\",\"first_path_len\":{}}},\"timestamp\":{},\"sessionId\":\"debug-session\",\"hypothesisId\":\"H4\"}}\n",
+            items.len(), first_code.replace('\\', "\\\\").replace('"', "\\\""), first_path, ts);
+        let _ = f.write_all(line.as_bytes());
+    }
+    // #endregion
+
     Ok(GitStatusResult { repo_root, items, has_staged_changes, staged_count })
+}
+
+/// 单字符 (X 或 Y) 转状态码
+fn char_to_code(c: char) -> String {
+    match c {
+        '?' => "??".to_string(),
+        '!' => "!!".to_string(),
+        'M' => "M".to_string(),
+        'A' => "A".to_string(),
+        'D' => "D".to_string(),
+        'R' => "R".to_string(),
+        'C' => "C".to_string(),
+        'U' => "U".to_string(),
+        _ => c.to_string(),
+    }
 }
 
 /// Parse git status --porcelain=v1 -z output
 ///
 /// Format: XY PATH\0 or XY ORIG_PATH\0PATH\0 for renames
+/// X = index (staged), Y = work tree (unstaged). 每条线可产生 0/1/2 条记录以区分暂存/未暂存。
 fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
     let mut items = Vec::new();
     let parts: Vec<&str> = output.split('\0').collect();
@@ -255,43 +285,64 @@ fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
             continue;
         }
 
-        let xy = &part[0..2];
-        let path = &part[3..];
+        let x = part.chars().next().unwrap_or(' ');
+        let y = part.chars().nth(1).unwrap_or(' ');
+        let path_str = &part[3..];
 
-        // Determine the status code
-        let code = parse_status_code(xy);
-
-        // Check for rename/copy (has original path in next entry)
-        if (code == "R" || code == "C") && i + 1 < parts.len() && !parts[i + 1].is_empty() {
-            // For renames: XY ORIG_PATH\0NEW_PATH\0
-            // The path after XY is the original, next part is the new path
-            let orig_path = path.to_string();
-            let new_path = parts[i + 1].to_string();
-            items.push(GitStatusEntry {
-                path: new_path,
-                code,
-                orig_path: Some(orig_path),
-            });
-            i += 2;
+        // Rename/copy: XY ORIG\0NEW\0 → 用 new_path 作为 path，orig_path 为 ORIG
+        let (path, orig_path, advance) = if (x == 'R' || x == 'C' || y == 'R' || y == 'C')
+            && i + 1 < parts.len()
+            && !parts[i + 1].is_empty()
+        {
+            (
+                parts[i + 1].to_string(),
+                Some(path_str.to_string()),
+                2,
+            )
         } else {
+            (path_str.to_string(), None, 1)
+        };
+
+        // ??/!! 仅一条，视为未暂存
+        if (x == '?' && y == '?') || (x == '!' && y == '!') {
             items.push(GitStatusEntry {
-                path: path.to_string(),
-                code,
-                orig_path: None,
+                path: path.clone(),
+                code: if x == '?' { "??".into() } else { "!!".into() },
+                orig_path: orig_path.clone(),
+                staged: false,
             });
-            i += 1;
+            i += advance;
+            continue;
         }
+
+        // 否则按 X/Y 分别产出：X != ' ' → 暂存一条，Y != ' ' → 未暂存一条
+        if x != ' ' {
+            items.push(GitStatusEntry {
+                path: path.clone(),
+                code: char_to_code(x),
+                orig_path: orig_path.clone(),
+                staged: true,
+            });
+        }
+        if y != ' ' {
+            items.push(GitStatusEntry {
+                path: path.clone(),
+                code: char_to_code(y),
+                orig_path: orig_path.clone(),
+                staged: false,
+            });
+        }
+        i += advance;
     }
 
     items
 }
 
-/// Parse XY status code to simplified code
+/// Parse XY status code to simplified code (保留供其他调用方)
 fn parse_status_code(xy: &str) -> String {
     let x = xy.chars().next().unwrap_or(' ');
     let y = xy.chars().nth(1).unwrap_or(' ');
 
-    // Prioritize index status, then worktree status
     match (x, y) {
         ('?', '?') => "??".to_string(),
         ('!', '!') => "!!".to_string(),
@@ -302,7 +353,6 @@ fn parse_status_code(xy: &str) -> String {
         ('M', _) | (_, 'M') => "M".to_string(),
         ('U', _) | (_, 'U') => "U".to_string(),
         _ => {
-            // Return non-space character or M as fallback
             if x != ' ' { x.to_string() }
             else if y != ' ' { y.to_string() }
             else { "M".to_string() }
@@ -2560,12 +2610,21 @@ mod tests {
 
     #[test]
     fn test_parse_porcelain_status() {
-        // Simple modified file
+        // 未暂存修改 (X=space, Y=M)
         let output = " M src/main.rs\0";
         let items = parse_porcelain_status(output);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].path, "src/main.rs");
         assert_eq!(items[0].code, "M");
+        assert!(!items[0].staged);
+
+        // 已暂存修改 (X=M, Y=space)
+        let output = "M  staged.rs\0";
+        let items = parse_porcelain_status(output);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, "staged.rs");
+        assert_eq!(items[0].code, "M");
+        assert!(items[0].staged);
 
         // Untracked file
         let output = "?? new-file.txt\0";
@@ -2573,6 +2632,7 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].path, "new-file.txt");
         assert_eq!(items[0].code, "??");
+        assert!(!items[0].staged);
     }
 
     #[test]
