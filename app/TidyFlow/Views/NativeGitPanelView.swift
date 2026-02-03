@@ -610,7 +610,7 @@ struct CollapsibleSection<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header：整行可点击展开/折叠（含标题与空白区域）
             HStack(spacing: 6) {
                 Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -637,6 +637,8 @@ struct CollapsibleSection<Content: View>: View {
                     actions()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .onTapGesture {
