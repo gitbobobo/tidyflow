@@ -2283,10 +2283,16 @@ class AppState: ObservableObject {
             // 标记为 pending spawn，防止 handleTabSwitch 重复 spawn
             pendingSpawnTabs.insert(newTab.id)
             
-            // workspaceKey 只是 workspace 名称，project 从 selectedProjectName 获取
-            let project = selectedProjectName
-            let workspace = workspaceKey
-            onTerminalSpawn?(newTab.id.uuidString, project, workspace)
+            // 协议要求传 (projectName, workspaceName)。TabStrip 传入的是 globalKey "project:workspace"，需解析为纯 workspace 名
+            let (rpcProject, rpcWorkspace): (String, String)
+            if let colonIdx = workspaceKey.firstIndex(of: ":") {
+                rpcProject = String(workspaceKey[..<colonIdx])
+                rpcWorkspace = String(workspaceKey[workspaceKey.index(after: colonIdx)...])
+            } else {
+                rpcProject = selectedProjectName
+                rpcWorkspace = workspaceKey
+            }
+            onTerminalSpawn?(newTab.id.uuidString, rpcProject, rpcWorkspace)
         }
     }
     
