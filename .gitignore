@@ -119,5 +119,8 @@ Temporary Items
 # Rust
 **/target/
 
+# Build artifacts
+dist/
+
 # Cursor editor debug logs
 .cursor/debug.log
