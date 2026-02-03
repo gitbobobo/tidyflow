@@ -401,6 +401,8 @@ class AppState: ObservableObject {
         ensureDefaultTab(for: globalKey)
 
         // 连接后请求数据（使用原始 workspaceName，因为 fetchXXX 方法内部会用 selectedProjectName 构建完整键）
+        // 切换项目但 workspace 名相同时（如 A-default → B-default）selectedWorkspaceKey 不变，onChange 不触发，
+        // Git 面板的 loadDataIfNeeded 不会执行，因此这里一并请求分支与提交历史，保证切换后 Git 面板有数据。
         if connectionState == .connected {
             // 请求根目录文件列表（如果缓存不存在）
             if getFileListCache(workspaceKey: workspaceName, path: ".") == nil {
@@ -409,6 +411,14 @@ class AppState: ObservableObject {
             // 请求 Git 状态（如果缓存不存在）
             if getGitStatusCache(workspaceKey: workspaceName) == nil {
                 fetchGitStatus(workspaceKey: workspaceName)
+            }
+            // 请求分支信息（若未缓存）
+            if getGitBranchCache(workspaceKey: workspaceName) == nil {
+                fetchGitBranches(workspaceKey: workspaceName)
+            }
+            // 请求 Git 日志（若应拉取：无缓存或已过期且未在加载中）
+            if shouldFetchGitLog(workspaceKey: workspaceName) {
+                fetchGitLog(workspaceKey: workspaceName)
             }
         }
     }
