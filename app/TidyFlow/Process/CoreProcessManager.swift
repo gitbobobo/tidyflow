@@ -116,10 +116,14 @@ class CoreProcessManager: ObservableObject {
 
     /// Kill any orphaned tidyflow-core processes from previous runs
     /// This handles the case where Xcode force-stops the app without calling termination handlers
+    /// Only kills processes whose parent is launchd (PPID=1), meaning they are true orphans
     static func cleanupOrphanedProcesses() {
+        // 使用 ps 获取 tidyflow-core 进程的 PID 和 PPID
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        task.arguments = ["-x", AppConfig.coreBinaryName]
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        // -x: 只匹配完整进程名
+        // -o pid=,ppid=: 输出 PID 和 PPID，不带表头
+        task.arguments = ["-xo", "pid=,ppid=,comm="]
 
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -133,23 +137,33 @@ class CoreProcessManager: ObservableObject {
                 return
             }
 
-            // Get current process's child PID (if any) to avoid killing our own child
-            let currentChildPID = ProcessInfo.processInfo.processIdentifier
+            // 解析输出，查找 tidyflow-core 进程
+            for line in output.split(separator: "\n") {
+                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+                guard parts.count >= 3 else { continue }
 
-            let pids = output.split(separator: "\n").compactMap { Int32($0) }
-            for pid in pids {
-                // Don't kill if it's somehow our own process
-                if pid == currentChildPID { continue }
+                // 检查进程名是否为 tidyflow-core
+                let comm = String(parts[2...].joined(separator: " "))
+                guard comm.hasSuffix(AppConfig.coreBinaryName) else { continue }
 
-                print("[CoreProcessManager] Killing orphaned tidyflow-core process: \(pid)")
-                kill(pid, SIGTERM)
+                guard let pid = Int32(parts[0]),
+                      let ppid = Int32(parts[1]) else { continue }
 
-                // Give it a moment to terminate gracefully
-                usleep(100_000) // 100ms
+                // 只杀掉真正的孤儿进程（父进程是 launchd，PPID=1）
+                // 如果 PPID 不是 1，说明父进程（另一个 TidyFlow 实例）还在运行
+                if ppid == 1 {
+                    print("[CoreProcessManager] Killing orphaned tidyflow-core process: PID=\(pid) (PPID=1)")
+                    kill(pid, SIGTERM)
 
-                // Force kill if still running
-                if kill(pid, 0) == 0 {
-                    kill(pid, SIGKILL)
+                    // Give it a moment to terminate gracefully
+                    usleep(100_000) // 100ms
+
+                    // Force kill if still running
+                    if kill(pid, 0) == 0 {
+                        kill(pid, SIGKILL)
+                    }
+                } else {
+                    print("[CoreProcessManager] Skipping tidyflow-core process: PID=\(pid), PPID=\(ppid) (has active parent)")
                 }
             }
         } catch {

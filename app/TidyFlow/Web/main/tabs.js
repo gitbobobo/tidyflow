@@ -148,6 +148,24 @@
 
     term.open(container);
 
+    // Shift+Enter 发送换行符（用于 TUI 应用的多行输入）
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+        // 阻止 xterm.js 默认处理，手动发送 \n
+        if (TF.transport && TF.transport.isConnected) {
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode('\n');
+          TF.transport.send(JSON.stringify({
+            type: "input",
+            term_id: termId,
+            data_b64: TF.encodeBase64(bytes),
+          }));
+        }
+        return false; // 阻止默认处理
+      }
+      return true; // 其他按键正常处理
+    });
+
     // IME composition 状态追踪
     // 解决中文输入法切换到英文时产生空格的问题（如 "o p" -> "op"）
     // 以及中文标点（如 shift+9 输入 `（`）在 composition 期间被阻止的问题
