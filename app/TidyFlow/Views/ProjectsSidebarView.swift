@@ -143,13 +143,18 @@ struct ProjectRowView: View {
                 }
             }
         )
-        // 项目右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、新建工作空间、移除项目
+        // 项目右键菜单：复制路径、在 Finder 中打开、在编辑器中打开(VSCode/Cursor)、新建工作空间、移除项目
         .contextMenu {
             if let path = projectPath {
                 Button {
                     copyPathToPasteboard(path)
                 } label: {
                     Label("复制路径", systemImage: "doc.on.doc")
+                }
+                Button {
+                    openInFinder(path)
+                } label: {
+                    Label("在 Finder 中打开", systemImage: "folder")
                 }
                 Menu {
                     ForEach(ExternalEditor.allCases, id: \.self) { editor in
@@ -196,8 +201,13 @@ private func copyPathToPasteboard(_ path: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(path, forType: .string)
 }
+
+private func openInFinder(_ path: String) {
+    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
+}
 #else
 private func copyPathToPasteboard(_ path: String) {}
+private func openInFinder(_ path: String) {}
 #endif
 
 // MARK: - Workspace Row
@@ -255,13 +265,18 @@ struct WorkspaceRowView: View {
             }
         )
         .tag(workspace.name)
-        // 工作空间右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、快捷键配置、删除（默认工作空间不可删除）
+        // 工作空间右键菜单：复制路径、在 Finder 中打开、在编辑器中打开(VSCode/Cursor)、快捷键配置、删除（默认工作空间不可删除）
         .contextMenu {
             if let path = workspacePath {
                 Button {
                     copyPathToPasteboard(path)
                 } label: {
                     Label("复制路径", systemImage: "doc.on.doc")
+                }
+                Button {
+                    openInFinder(path)
+                } label: {
+                    Label("在 Finder 中打开", systemImage: "folder")
                 }
                 Menu {
                     ForEach(ExternalEditor.allCases, id: \.self) { editor in

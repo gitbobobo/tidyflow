@@ -33,7 +33,7 @@ final class LogWriter {
 
     // MARK: - Private Properties
 
-    private let queue = DispatchQueue(label: "com.tidyflow.logwriter", qos: .utility)
+    private let queue = DispatchQueue(label: "cn.tidyflow.logwriter", qos: .utility)
     private var fileHandle: FileHandle?
     private var currentFileSize: UInt64 = 0
     private var isInitialized = false

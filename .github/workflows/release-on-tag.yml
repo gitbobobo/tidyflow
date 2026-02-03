@@ -1,7 +1,7 @@
-# Auto-release on tag push (D5-3c)
-# Builds notarized DMG and publishes to GitHub Releases
+# Build signed & notarized DMG and publish to GitHub Releases
+# Manual trigger - builds and publishes complete release
 #
-# Trigger: Push tag matching v* (e.g., v1.0.0, v1.2.3-beta)
+# Trigger: Manual workflow_dispatch
 #
 # Required GitHub Secrets (same as release-dmg.yml):
 #   Signing:
@@ -16,9 +16,12 @@
 name: Release on Tag
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g., v1.0.0, v1.2.3-beta)'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,7 +37,7 @@ jobs:
       - name: Extract version from tag
         id: tag
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          TAG_NAME="${{ inputs.tag_name }}"
           VERSION="${TAG_NAME#v}"
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT

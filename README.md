@@ -1,114 +1,120 @@
-## Native Shell 快捷键 (Phase B-2)
+<p align="center">
+  <img src="design/tidyflow_icon.svg" width="128" height="128" alt="TidyFlow Logo">
+</p>
 
-### Global
-- `Cmd+Shift+P`: 打开命令板 (Command Palette)
-- `Cmd+P`: 快速打开文件 (Quick Open)
-- `Cmd+1/2/3`: 切换右侧工具面板 (Explorer/Search/Git)
-- `Cmd+R`: 重新连接 (Reconnect)
+<h1 align="center">TidyFlow</h1>
 
-### Workspace
-- `Cmd+T`: 新建终端 Tab
-- `Cmd+W`: 关闭当前 Tab
-- `Ctrl+Tab` / `Ctrl+Shift+Tab`: 切换 Tab
-- `Cmd+S`: 保存文件 (Placeholder)
+<p align="center">
+  <strong>专为专业开发者打造的 macOS 原生多项目并行开发工具</strong>
+</p>
 
-## Native Git Panel (Phase C3-1)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-LGPL--3.0-blue.svg" alt="License"></a>
+  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/Platform-macOS-black.svg" alt="Platform"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust"></a>
+  <a href="https://developer.apple.com/xcode/swiftui/"><img src="https://img.shields.io/badge/UI-SwiftUI-red.svg" alt="SwiftUI"></a>
+</p>
 
-右侧 Git 工具面板已原生化，支持：
-- 显示 git status 列表（M/A/D/??/R/C 等状态）
-- 文件名过滤搜索
-- 点击文件打开 Native Diff Tab
-- 自动刷新（60秒缓存）和手动刷新
-- 空态显示（非 git 仓库、无变更、断开连接）
+---
 
-## Build DMG
+## 🌟 什么是 TidyFlow?
 
-### Unsigned Build (Internal Testing)
+TidyFlow 是一款 macOS 原生的工作流管理工具，旨在解决开发者在多项目、多分支开发时频繁切换上下文的痛点。它结合了 Rust 核心引擎的高性能与 SwiftUI 的精致原生体验，通过 **Git Worktree** 技术提供极致的分支隔离体验。
 
+> "让你的开发流程像流水一样顺畅。"
+
+---
+
+## ✨ 核心特性
+
+- 📂 **多项目并行管理**：在一个界面中同时管理多个独立项目，互不干扰。
+- 🌿 **Git Worktree 原生支持**：基于 Git Worktree 实现真正的分支隔离，无需 `git stash` 或频繁切分支，多个分支同时开发。
+- 💻 **VS Code 级终端体验**：集成 xterm.js + 真实 PTY，完美支持 `vim`、`tmux`、`htop` 等复杂 TUI 工具，支持 256 色及 TrueColor。
+- 🍎 **纯正 macOS 原生体验**：使用 SwiftUI + AppKit 构建，遵循 macOS HIG，支持快捷键全键盘操作。
+- 🚀 **极致性能**：Rust 编写的核心后端，冷启动秒开，Workspace 创建瞬间完成。
+- 🛠️ **自动化环境准备**：克隆项目后自动检测类型并执行 `setup` 脚本，开箱即用。
+
+---
+
+## 📸 界面预览
+
+| 项目管理与 Workspace | 终端体验 |
+| :---: | :---: |
+| ![项目列表占位符](docs/images/screenshot-projects.png) | ![终端占位符](docs/images/screenshot-terminal.png) |
+| *多项目侧边栏与工作区管理* | *VS Code 级的专业终端渲染* |
+
+| Git 交互面板 | 全局命令板 (Command Palette) |
+| :---: | :---: |
+| ![Git面板占位符](docs/images/screenshot-git.png) | ![命令板占位符](docs/images/screenshot-palette.png) |
+| *原生的 Git 状态管理与 Diff 视图* | *高效的全键盘操作体验* |
+
+---
+
+## 🏗️ 技术架构
+
+TidyFlow 采用现代化的**混合原生架构**：
+
+- **Frontend (UI Shell)**: 使用 SwiftUI 和 AppKit 构建的 macOS 原生应用，负责窗口管理和系统集成。
+- **Terminal Container**: 通过 WKWebView 承载 xterm.js，提供业界标准的高性能终端渲染。
+- **Core Engine (Backend)**: 由 Rust 编写的高性能引擎，处理 PTY 管理、Git 操作、文件系统和状态持久化。
+- **Communication**: 前后端通过 JSON-RPC 2.0 协议在 WebSocket 上进行高效通信。
+
+---
+
+## ⌨️ 常用快捷键
+
+### 全局操作
+- `Cmd + Shift + P`: 打开命令板 (Command Palette)
+- `Cmd + P`: 快速打开文件 (Quick Open)
+- `Cmd + R`: 重新连接后端引擎
+
+### 工作区操作
+- `Cmd + T`: 新建终端 Tab
+- `Cmd + W`: 关闭当前 Tab
+- `Ctrl + Tab`: 切换下一个 Tab
+- `Ctrl + Shift + Tab`: 切换上一个 Tab
+
+---
+
+## 🛠️ 如何构建
+
+如果你想从源代码构建 TidyFlow，请确保你的系统已安装 **Rust** 和 **Xcode**。
+
+### 1. 快速启动 (推荐)
 ```bash
-./scripts/release/build_dmg.sh
+./scripts/run-app.sh  # 自动构建核心引擎、应用并启动
 ```
 
-首次运行需右键 > 打开绕过 Gatekeeper。
-
-### Signed Build (Distribution)
-
+### 2. 手动构建核心 (Rust Core)
 ```bash
-# 查看可用签名身份
-security find-identity -v -p codesigning
-
-# 使用 Developer ID Application 签名
-SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/release/build_dmg.sh --sign
+cd core
+cargo build --release
 ```
 
-签名后仍需公证（D5-3）才能完全绕过 Gatekeeper。
-
-产物位置：`dist/TidyFlow-<version>.dmg`
-
-详见 `design/45-codesign-d5-2.md`。
-
-### Notarize (D5-3)
-
-公证让用户无需手动绕过 Gatekeeper。
-
+### 3. 手动构建应用 (macOS App)
 ```bash
-# 1. 创建 Keychain profile（一次性）
-xcrun notarytool store-credentials tidyflow-notary \
-  --apple-id your@email.com \
-  --team-id YOURTEAMID \
-  --password <app-specific-password>
-
-# 2. 公证已签名的 DMG
-./scripts/release/notarize.sh --profile tidyflow-notary
-
-# 3. 验证
-xcrun stapler validate dist/TidyFlow-*.dmg
-hdiutil attach dist/TidyFlow-*.dmg
-spctl --assess --type execute --verbose /Volumes/TidyFlow/TidyFlow.app
+open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
 ```
 
-详见 `design/46-notarization-d5-3a.md`。
+---
 
-### CI Build (GitHub Actions)
+## 📦 打包发布
 
-手动触发 workflow 构建 DMG：
+项目支持自动化的签名与公证流程，确保在其他 macOS 设备上顺畅运行。
 
-1. 进入 Actions > "Build Release DMG"
-2. 点击 "Run workflow"
-3. 可选：勾选 "Sign the app" 进行签名构建
-4. 可选：勾选 "Notarize the signed app" 进行公证（需先勾选签名）
+- **构建未签名 DMG**: `./scripts/release/build_dmg.sh`
+- **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/release/build_dmg.sh --sign`
+- **公证**: `./scripts/release/notarize.sh --profile tidyflow-notary`
 
-签名构建需要配置 GitHub Secrets：
-- `MACOS_CERT_P12_BASE64` - Developer ID 证书（p12 base64）
-- `MACOS_CERT_PASSWORD` - p12 密码
-- `SIGN_IDENTITY` - 签名身份字符串
+---
 
-公证构建需要额外配置：
-- `ASC_API_KEY_ID` - App Store Connect API Key ID
-- `ASC_API_ISSUER_ID` - App Store Connect Issuer ID
-- `ASC_API_KEY_P8_BASE64` - AuthKey_XXXX.p8（base64）
+## 📄 开源协议
 
-详见 `design/48-ci-codesign-d5-3b-2.md` 和 `design/49-ci-notarize-d5-3b-3.md`。
+本项目采用 **LGPL-3.0** 协议开源。
+详细内容请参阅 [LICENSE](LICENSE) 与 [COPYING](COPYING)。
 
-### Release via Tag (D5-3c)
+---
 
-推送 `v*` 格式的 tag 自动触发发布：
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-自动执行：
-1. 构建签名 DMG
-2. 提交 Apple 公证
-3. 创建 GitHub Release
-4. 上传 notarized DMG 作为 Asset
-
-发布后用户可直接从 GitHub Releases 下载，双击运行无 Gatekeeper 警告。
-
-详见 `design/50-github-release-d5-3c.md`。
-
-## 许可证
-
-本项目使用 `LGPL-3.0-only`。完整许可证文本见 `LICENSE`，并附带 `COPYING`（GNU GPL v3）供引用。
+<p align="center">
+  Made with ❤️ for macOS Developers
+</p>
