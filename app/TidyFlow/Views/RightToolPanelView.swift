@@ -169,6 +169,8 @@ struct TreeRowView: View {
     var isSelected: Bool = false
     /// 选中时的背景色；nil 表示使用 Color.accentColor
     var selectedBackgroundColor: Color? = nil
+    /// 尾部标签文本（如快捷键提示 ⌘1）
+    var trailingText: String? = nil
     var onTap: () -> Void
 
     @State private var isHovering: Bool = false
@@ -197,6 +199,11 @@ struct TreeRowView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            if let trailing = trailingText {
+                Text(trailing)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.vertical, 4)
         .padding(.leading, leadingPadding)

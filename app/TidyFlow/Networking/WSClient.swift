@@ -41,7 +41,7 @@ class WSClient: NSObject, ObservableObject {
     var onProjectRemoved: ((ProjectRemovedResult) -> Void)?
     var onWorkspaceRemoved: ((WorkspaceRemovedResult) -> Void)?
     // 客户端设置
-    var onClientSettingsResult: (([CustomCommand]) -> Void)?
+    var onClientSettingsResult: ((ClientSettings) -> Void)?
     var onClientSettingsSaved: ((Bool, String?) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
@@ -465,8 +465,8 @@ class WSClient: NSObject, ObservableObject {
     }
 
     /// 保存客户端设置
-    func requestSaveClientSettings(customCommands: [CustomCommand]) {
-        let commandsData = customCommands.map { cmd -> [String: Any] in
+    func requestSaveClientSettings(settings: ClientSettings) {
+        let commandsData = settings.customCommands.map { cmd -> [String: Any] in
             return [
                 "id": cmd.id,
                 "name": cmd.name,
@@ -476,7 +476,8 @@ class WSClient: NSObject, ObservableObject {
         }
         sendJSON([
             "type": "save_client_settings",
-            "custom_commands": commandsData
+            "custom_commands": commandsData,
+            "workspace_shortcuts": settings.workspaceShortcuts
         ])
     }
 
@@ -639,8 +640,9 @@ class WSClient: NSObject, ObservableObject {
 
         case "client_settings_result":
             // 解析自定义命令列表
+            var commands: [CustomCommand] = []
             if let commandsJson = json["custom_commands"] as? [[String: Any]] {
-                let commands = commandsJson.compactMap { cmdJson -> CustomCommand? in
+                commands = commandsJson.compactMap { cmdJson -> CustomCommand? in
                     guard let id = cmdJson["id"] as? String,
                           let name = cmdJson["name"] as? String,
                           let icon = cmdJson["icon"] as? String,
@@ -649,8 +651,11 @@ class WSClient: NSObject, ObservableObject {
                     }
                     return CustomCommand(id: id, name: name, icon: icon, command: command)
                 }
-                onClientSettingsResult?(commands)
             }
+            // 解析工作空间快捷键映射
+            let workspaceShortcuts = json["workspace_shortcuts"] as? [String: String] ?? [:]
+            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts)
+            onClientSettingsResult?(settings)
 
         case "client_settings_saved":
             let ok = json["ok"] as? Bool ?? false

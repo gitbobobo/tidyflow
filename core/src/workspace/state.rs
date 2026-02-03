@@ -35,6 +35,9 @@ pub struct CustomCommand {
 pub struct ClientSettings {
     #[serde(default)]
     pub custom_commands: Vec<CustomCommand>,
+    /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
+    #[serde(default)]
+    pub workspace_shortcuts: HashMap<String, String>,
 }
 
 /// Application state - persisted to JSON

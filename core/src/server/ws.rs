@@ -2796,10 +2796,11 @@ async fn handle_client_message(
                 .collect();
             send_message(socket, &ServerMessage::ClientSettingsResult {
                 custom_commands: commands,
+                workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
             }).await?;
         }
 
-        ClientMessage::SaveClientSettings { custom_commands } => {
+        ClientMessage::SaveClientSettings { custom_commands, workspace_shortcuts } => {
             let mut state = app_state.lock().await;
             state.client_settings.custom_commands = custom_commands
                 .into_iter()
@@ -2810,6 +2811,7 @@ async fn handle_client_message(
                     command: c.command,
                 })
                 .collect();
+            state.client_settings.workspace_shortcuts = workspace_shortcuts;
             
             match state.save() {
                 Ok(_) => {

@@ -212,6 +212,20 @@ struct WorkspaceRowView: View {
 
     /// 工作空间路径，用于复制与在编辑器中打开
     private var workspacePath: String? { workspace.root }
+    
+    /// 工作空间唯一标识，用于快捷键配置
+    private var workspaceKey: String {
+        if workspace.isDefault {
+            return "\(projectName)/(default)"
+        } else {
+            return "\(projectName)/\(workspace.name)"
+        }
+    }
+    
+    /// 当前工作空间绑定的快捷键
+    private var currentShortcutKey: String? {
+        appState.getWorkspaceShortcutKey(workspaceKey: workspaceKey)
+    }
 
     /// 菜单项图标尺寸
     private let menuIconSize: CGFloat = 16
@@ -220,6 +234,12 @@ struct WorkspaceRowView: View {
         FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
     }
 
+    /// 快捷键显示文本（如 "⌘1"）
+    private var shortcutDisplayText: String? {
+        guard let key = currentShortcutKey else { return nil }
+        return "⌘\(key)"
+    }
+    
     var body: some View {
         TreeRowView(
             isExpandable: false,
@@ -229,12 +249,13 @@ struct WorkspaceRowView: View {
             title: workspace.name,
             depth: 1,
             isSelected: isSelected,
+            trailingText: shortcutDisplayText,
             onTap: {
                 appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
             }
         )
         .tag(workspace.name)
-        // 工作空间右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、删除（默认工作空间不可删除）
+        // 工作空间右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、快捷键配置、删除（默认工作空间不可删除）
         .contextMenu {
             if let path = workspacePath {
                 Button {
@@ -259,6 +280,40 @@ struct WorkspaceRowView: View {
                     Label("在编辑器中打开", systemImage: "square.and.arrow.up")
                 }
             }
+            
+            // 快捷键配置菜单
+            Divider()
+            Menu {
+                ForEach(0...9, id: \.self) { num in
+                    let key = String(num)
+                    Button {
+                        appState.setWorkspaceShortcut(workspaceKey: workspaceKey, shortcutKey: key)
+                    } label: {
+                        HStack {
+                            Text("⌘\(num)")
+                            if currentShortcutKey == key {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+                if currentShortcutKey != nil {
+                    Divider()
+                    Button {
+                        appState.clearWorkspaceShortcut(workspaceKey: workspaceKey)
+                    } label: {
+                        Label("清除快捷键", systemImage: "xmark.circle")
+                    }
+                }
+            } label: {
+                if let key = currentShortcutKey {
+                    Label("快捷键 ⌘\(key)", systemImage: "command")
+                } else {
+                    Label("设置快捷键", systemImage: "command")
+                }
+            }
+            
             // 只有非默认工作空间才显示删除选项
             if !workspace.isDefault {
                 Divider()

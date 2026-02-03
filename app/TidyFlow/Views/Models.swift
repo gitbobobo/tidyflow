@@ -144,9 +144,23 @@ struct CustomCommand: Identifiable, Codable, Equatable {
 /// 客户端设置
 struct ClientSettings: Codable {
     var customCommands: [CustomCommand]
+    /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
+    var workspaceShortcuts: [String: String]
     
-    init(customCommands: [CustomCommand] = []) {
+    enum CodingKeys: String, CodingKey {
+        case customCommands
+        case workspaceShortcuts
+    }
+    
+    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:]) {
         self.customCommands = customCommands
+        self.workspaceShortcuts = workspaceShortcuts
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        customCommands = try container.decodeIfPresent([CustomCommand].self, forKey: .customCommands) ?? []
+        workspaceShortcuts = try container.decodeIfPresent([String: String].self, forKey: .workspaceShortcuts) ?? [:]
     }
 }
 
@@ -699,10 +713,10 @@ class AppState: ObservableObject {
         }
 
         // 处理客户端设置结果
-        wsClient.onClientSettingsResult = { [weak self] commands in
-            self?.clientSettings.customCommands = commands
+        wsClient.onClientSettingsResult = { [weak self] settings in
+            self?.clientSettings = settings
             self?.clientSettingsLoaded = true
-            print("[AppState] 已加载 \(commands.count) 个自定义命令")
+            print("[AppState] 已加载 \(settings.customCommands.count) 个自定义命令, \(settings.workspaceShortcuts.count) 个工作空间快捷键")
         }
 
         wsClient.onClientSettingsSaved = { [weak self] ok, message in
@@ -2123,13 +2137,13 @@ class AppState: ObservableObject {
                 app.commandQuery = ""
                 app.paletteSelectionIndex = 0
             },
-            Command(id: "global.toggleExplorer", title: "Show Explorer", subtitle: nil, scope: .global, keyHint: "Cmd+1") { app in
+            Command(id: "global.toggleExplorer", title: "Show Explorer", subtitle: nil, scope: .global, keyHint: nil) { app in
                 app.activeRightTool = .explorer
             },
-            Command(id: "global.toggleSearch", title: "Show Search", subtitle: nil, scope: .global, keyHint: "Cmd+2") { app in
+            Command(id: "global.toggleSearch", title: "Show Search", subtitle: nil, scope: .global, keyHint: nil) { app in
                 app.activeRightTool = .search
             },
-            Command(id: "global.toggleGit", title: "Show Git", subtitle: nil, scope: .global, keyHint: "Cmd+3") { app in
+            Command(id: "global.toggleGit", title: "Show Git", subtitle: nil, scope: .global, keyHint: nil) { app in
                 app.activeRightTool = .git
             },
             Command(id: "global.reconnect", title: "Reconnect", subtitle: "Restart Core and reconnect", scope: .global, keyHint: "Cmd+R") { app in
@@ -2329,7 +2343,7 @@ class AppState: ObservableObject {
 
     /// 保存客户端设置到服务端
     func saveClientSettings() {
-        wsClient.requestSaveClientSettings(customCommands: clientSettings.customCommands)
+        wsClient.requestSaveClientSettings(settings: clientSettings)
     }
 
     /// 添加自定义命令
@@ -2350,6 +2364,93 @@ class AppState: ObservableObject {
     func deleteCustomCommand(id: String) {
         clientSettings.customCommands.removeAll { $0.id == id }
         saveClientSettings()
+    }
+    
+    // MARK: - 工作空间快捷键
+    
+    /// 为工作空间设置快捷键（Cmd+0-9）
+    /// - Parameters:
+    ///   - workspaceKey: 工作空间标识（"projectName/workspaceName" 或 "projectName/(default)"）
+    ///   - shortcutKey: 快捷键数字 "0"-"9"
+    func setWorkspaceShortcut(workspaceKey: String, shortcutKey: String) {
+        // 移除之前绑定到此快捷键的工作空间
+        clientSettings.workspaceShortcuts[shortcutKey] = workspaceKey
+        saveClientSettings()
+    }
+    
+    /// 清除工作空间的快捷键
+    /// - Parameter workspaceKey: 工作空间标识
+    func clearWorkspaceShortcut(workspaceKey: String) {
+        // 找到并移除此工作空间的快捷键
+        for (key, value) in clientSettings.workspaceShortcuts {
+            if value == workspaceKey {
+                clientSettings.workspaceShortcuts.removeValue(forKey: key)
+                break
+            }
+        }
+        saveClientSettings()
+    }
+    
+    /// 获取工作空间的快捷键
+    /// - Parameter workspaceKey: 工作空间标识
+    /// - Returns: 快捷键数字 "0"-"9"，如果没有设置则返回 nil
+    func getWorkspaceShortcutKey(workspaceKey: String) -> String? {
+        for (key, value) in clientSettings.workspaceShortcuts {
+            if value == workspaceKey {
+                return key
+            }
+        }
+        return nil
+    }
+    
+    /// 根据快捷键切换工作空间
+    /// - Parameter shortcutKey: 快捷键数字 "0"-"9"
+    func switchToWorkspaceByShortcut(shortcutKey: String) {
+        guard let workspaceKey = clientSettings.workspaceShortcuts[shortcutKey] else {
+            return
+        }
+        
+        // 解析 workspaceKey: "projectName/workspaceName" 或 "projectName/(default)"
+        let components = workspaceKey.split(separator: "/", maxSplits: 1)
+        guard components.count == 2 else { return }
+        
+        let projectName = String(components[0])
+        var workspaceName = String(components[1])
+        
+        // 默认工作空间的名称映射：(default) -> default
+        if workspaceName == "(default)" {
+            workspaceName = "default"
+        }
+        
+        // 验证项目是否存在
+        guard let project = projects.first(where: { $0.name == projectName }) else {
+            print("[AppState] 快捷键切换失败：项目 \(projectName) 不存在")
+            // 清除无效的快捷键配置
+            clientSettings.workspaceShortcuts.removeValue(forKey: shortcutKey)
+            saveClientSettings()
+            return
+        }
+        
+        // 检查工作空间是否存在
+        let workspaceExists: Bool
+        if workspaceName == "default" {
+            // 默认工作空间总是存在的
+            workspaceExists = true
+        } else {
+            workspaceExists = project.workspaces.contains { $0.name == workspaceName }
+        }
+        
+        guard workspaceExists else {
+            print("[AppState] 快捷键切换失败：工作空间 \(workspaceName) 不存在")
+            // 清除无效的快捷键配置
+            clientSettings.workspaceShortcuts.removeValue(forKey: shortcutKey)
+            saveClientSettings()
+            return
+        }
+        
+        // 调用 selectWorkspace，与鼠标点击行为一致（会创建终端 Tab 等）
+        selectWorkspace(projectId: project.id, workspaceName: workspaceName)
+        print("[AppState] 快捷键 ⌘\(shortcutKey) 切换到工作空间: \(projectName)/\(workspaceName)")
     }
 
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)

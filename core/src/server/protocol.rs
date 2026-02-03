@@ -255,6 +255,8 @@ pub enum ClientMessage {
     GetClientSettings,
     SaveClientSettings {
         custom_commands: Vec<CustomCommandInfo>,
+        #[serde(default)]
+        workspace_shortcuts: std::collections::HashMap<String, String>,
     },
 }
 
@@ -561,6 +563,7 @@ pub enum ServerMessage {
     // v1.21: Client settings result
     ClientSettingsResult {
         custom_commands: Vec<CustomCommandInfo>,
+        workspace_shortcuts: std::collections::HashMap<String, String>,
     },
     ClientSettingsSaved {
         ok: bool,
