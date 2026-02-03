@@ -155,6 +155,65 @@ struct PanelHeaderView<MenuContent: View>: View {
     }
 }
 
+// MARK: - 树行组件（资源管理器文件树与左侧项目树共用）
+
+/// 可复用的树行：展开指示器 + 图标 + 标题，无数量/状态等尾部信息
+/// - Parameter selectedBackgroundColor: 选中时的背景色；为 nil 时使用系统 accentColor（如左侧项目树）；可传入更淡的颜色用于资源管理器等
+struct TreeRowView: View {
+    var isExpandable: Bool
+    var isExpanded: Bool
+    var iconName: String
+    var iconColor: Color
+    var title: String
+    var depth: Int = 0
+    var isSelected: Bool = false
+    /// 选中时的背景色；nil 表示使用 Color.accentColor
+    var selectedBackgroundColor: Color? = nil
+    var onTap: () -> Void
+
+    @State private var isHovering: Bool = false
+
+    private var leadingPadding: CGFloat {
+        CGFloat(depth * 16 + 8)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if isExpandable {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .frame(width: 12)
+            } else {
+                Spacer()
+                    .frame(width: 12)
+            }
+            Image(systemName: iconName)
+                .font(.system(size: 13))
+                .foregroundColor(iconColor)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .padding(.leading, leadingPadding)
+        .padding(.trailing, 8)
+        .background(RoundedRectangle(cornerRadius: 5).fill(backgroundColor))
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .onTapGesture(perform: onTap)
+    }
+
+    private var backgroundColor: Color {
+        if isSelected { return selectedBackgroundColor ?? Color.accentColor }
+        if isHovering { return Color.primary.opacity(0.05) }
+        return Color.clear
+    }
+}
+
 // MARK: - 文件浏览器视图
 
 struct ExplorerView: View {
@@ -220,7 +279,7 @@ struct FileTreeView: View {
                     FileListContent(workspaceKey: workspaceKey, path: ".", depth: 0)
                         .environmentObject(appState)
                 }
-                .padding(.vertical, 4)
+                .padding(4)
             }
         }
         .onAppear {
@@ -288,19 +347,17 @@ struct FileListContent: View {
     }
 }
 
-/// 单个文件/目录行
+/// 单个文件/目录行（使用共用 TreeRowView）
 struct FileRowView: View {
     @EnvironmentObject var appState: AppState
     let workspaceKey: String
     let item: FileEntry
     let depth: Int
-    
-    @State private var isHovering: Bool = false
-    
+
     private var isExpanded: Bool {
         appState.isDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
     }
-    
+
     private var iconName: String {
         if item.isDir {
             return isExpanded ? "folder.fill" : "folder"
@@ -308,7 +365,7 @@ struct FileRowView: View {
             return fileIconName(for: item.name)
         }
     }
-    
+
     private var iconColor: Color {
         if item.isDir {
             return .accentColor
@@ -316,49 +373,28 @@ struct FileRowView: View {
             return .secondary
         }
     }
-    
+
+    /// 当前文件是否为资源管理器中应高亮的“当前打开文件”（与活动编辑器标签一致）
+    private var isSelected: Bool {
+        !item.isDir
+            && appState.selectedWorkspaceKey == workspaceKey
+            && appState.activeEditorPath == item.path
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 当前行
-            HStack(spacing: 4) {
-                // 展开/折叠指示器（仅目录）
-                if item.isDir {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .frame(width: 12)
-                } else {
-                    Spacer()
-                        .frame(width: 12)
-                }
-                
-                // 图标
-                Image(systemName: iconName)
-                    .font(.system(size: 13))
-                    .foregroundColor(iconColor)
-                    .frame(width: 16)
-                
-                // 文件名
-                Text(item.name)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .padding(.leading, CGFloat(depth * 16 + 8))
-            .padding(.trailing, 8)
-            .background(isHovering ? Color.primary.opacity(0.05) : Color.clear)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                isHovering = hovering
-            }
-            .onTapGesture {
-                handleTap()
-            }
-            
-            // 子目录内容（展开时）
+            TreeRowView(
+                isExpandable: item.isDir,
+                isExpanded: isExpanded,
+                iconName: iconName,
+                iconColor: iconColor,
+                title: item.name,
+                depth: depth,
+                isSelected: isSelected,
+                selectedBackgroundColor: Color.accentColor.opacity(0.35),
+                onTap: { handleTap() }
+            )
+
             if item.isDir && isExpanded {
                 FileListContent(
                     workspaceKey: workspaceKey,
@@ -369,7 +405,7 @@ struct FileRowView: View {
             }
         }
     }
-    
+
     private func handleTap() {
         if item.isDir {
             // 目录：切换展开状态

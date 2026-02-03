@@ -10,27 +10,16 @@ struct ProjectsSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header with Add Project button
+            // 标题栏
             HStack {
-                Text("Projects")
-                    .font(.headline)
+                Text("项目")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
                 Spacer()
-                Button(action: {
-                    appState.addProjectSheetPresented = true
-                }) {
-                    Image(systemName: "plus")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .help("Add Project")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            Divider()
-
-            // Project Tree or Empty State
             if appState.projects.isEmpty {
                 emptyStateView
             } else {
@@ -65,27 +54,60 @@ struct ProjectsSidebarView: View {
 
     // MARK: - Project List
 
-    /// 项目与工作空间拆成 List 的独立行，避免嵌套时右键菜单被项目行抢走（点哪里都是项目菜单）
-    private var projectListView: some View {
-        List {
-            ForEach($appState.projects) { $project in
-                ProjectRowView(project: $project)
-                    .environmentObject(appState)
-                if project.isExpanded {
-                    ForEach(project.workspaces) { workspace in
-                        WorkspaceRowView(
-                            workspace: workspace,
-                            projectId: project.id,
-                            projectName: project.name,
-                            isSelected: appState.selectedWorkspaceKey == workspace.name
-                        )
-                        .environmentObject(appState)
-                        .padding(.leading, 18)
-                    }
+    /// 扁平化的列表行类型
+    private enum SidebarRow: Identifiable {
+        case project(Binding<ProjectModel>)
+        case workspace(WorkspaceModel, projectId: UUID, projectName: String)
+
+        var id: String {
+            switch self {
+            case .project(let binding):
+                return "project-\(binding.wrappedValue.id)"
+            case .workspace(let ws, let projectId, _):
+                return "workspace-\(projectId)-\(ws.id)"
+            }
+        }
+    }
+
+    /// 将项目和工作空间扁平化为单一列表
+    private var flattenedRows: [SidebarRow] {
+        var rows: [SidebarRow] = []
+        for index in appState.projects.indices {
+            let projectBinding = $appState.projects[index]
+            let project = projectBinding.wrappedValue
+            rows.append(.project(projectBinding))
+            if project.isExpanded {
+                for workspace in project.workspaces {
+                    rows.append(.workspace(workspace, projectId: project.id, projectName: project.name))
                 }
             }
         }
-        .listStyle(.sidebar)
+        return rows
+    }
+
+    /// 使用 ScrollView + LazyVStack 实现无间距列表，与资源管理器面板保持一致
+    private var projectListView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(flattenedRows) { row in
+                    switch row {
+                    case .project(let binding):
+                        ProjectRowView(project: binding)
+                            .environmentObject(appState)
+                    case .workspace(let workspace, let projectId, let projectName):
+                        WorkspaceRowView(
+                            workspace: workspace,
+                            projectId: projectId,
+                            projectName: projectName,
+                            isSelected: appState.selectedWorkspaceKey == workspace.name
+                        )
+                        .environmentObject(appState)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .padding(.horizontal, 4)
     }
 }
 
@@ -107,35 +129,20 @@ struct ProjectRowView: View {
     }
 
     var body: some View {
-        // 仅项目头行；工作空间行由 List 中单独渲染，保证各自右键菜单独立
-        HStack(spacing: 6) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.secondary)
-                .rotationEffect(project.isExpanded ? .degrees(90) : .zero)
-                .animation(.easeInOut(duration: 0.2), value: project.isExpanded)
-
-            Image(systemName: "folder.fill")
-                .foregroundColor(.orange)
-                .font(.caption)
-            Text(project.name)
-                .fontWeight(.medium)
-            Spacer()
-            Text("\(project.workspaces.count)")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.2))
-                .cornerRadius(4)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                project.isExpanded.toggle()
+        TreeRowView(
+            isExpandable: true,
+            isExpanded: project.isExpanded,
+            iconName: project.isExpanded ? "folder.fill" : "folder",
+            iconColor: .accentColor,
+            title: project.name,
+            depth: 0,
+            isSelected: false,
+            onTap: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    project.isExpanded.toggle()
+                }
             }
-        }
+        )
         // 项目右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、新建工作空间、移除项目
         .contextMenu {
             if let path = projectPath {
@@ -214,29 +221,19 @@ struct WorkspaceRowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "square.grid.2x2")
-                .foregroundColor(.blue)
-                .font(.caption)
-            Text(workspace.name)
-            Spacer()
-            if let status = workspace.status {
-                Text(status)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+        TreeRowView(
+            isExpandable: false,
+            isExpanded: false,
+            iconName: "square.grid.2x2",
+            iconColor: .secondary,
+            title: workspace.name,
+            depth: 1,
+            isSelected: isSelected,
+            onTap: {
+                appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
             }
-        }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
         )
         .tag(workspace.name)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
-        }
         // 工作空间右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、删除（与项目菜单不同，无「新建工作空间/移除项目」）
         .contextMenu {
             if let path = workspacePath {
