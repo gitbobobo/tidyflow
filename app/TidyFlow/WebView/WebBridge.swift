@@ -248,6 +248,14 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         ])
     }
 
+    /// Send input to a terminal session (for executing custom commands)
+    func terminalSendInput(sessionId: String, input: String) {
+        send(type: "terminal_input", payload: [
+            "session_id": sessionId,
+            "input": input
+        ])
+    }
+
     /// Legacy: Ensure a terminal exists for the given workspace (for backward compatibility)
     func terminalEnsure(project: String, workspace: String) {
         send(type: "terminal_ensure", payload: [

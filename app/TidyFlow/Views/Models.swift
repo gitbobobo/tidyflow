@@ -2577,7 +2577,7 @@ class AppState: ObservableObject {
     }
 
     /// Handle terminal ready event from WebBridge (with tabId)
-    func handleTerminalReady(tabId: String, sessionId: String, project: String, workspace: String) {
+    func handleTerminalReady(tabId: String, sessionId: String, project: String, workspace: String, webBridge: WebBridge?) {
         guard let uuid = UUID(uuidString: tabId) else {
             print("[AppState] Invalid tabId: \(tabId)")
             return
@@ -2590,10 +2590,18 @@ class AppState: ObservableObject {
 
         // Update tab's terminalSessionId（使用服务端返回的 project 和 workspace 生成全局键）
         let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        
         if var tabs = workspaceTabs[globalKey],
            let index = tabs.firstIndex(where: { $0.id == uuid }) {
             tabs[index].terminalSessionId = sessionId
             workspaceTabs[globalKey] = tabs
+            
+            // 检查 tab 的 payload，如果非空则执行自定义命令
+            let payload = tabs[index].payload
+            if !payload.isEmpty, let bridge = webBridge {
+                print("[AppState] Executing custom command: \(payload)")
+                bridge.terminalSendInput(sessionId: sessionId, input: payload)
+            }
         }
 
         // Update global terminal state for status bar

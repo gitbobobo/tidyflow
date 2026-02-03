@@ -74,9 +74,9 @@ struct CenterContentView: View {
         }
 
         // Phase C1-2: Terminal callbacks (with tabId)
-        webBridge.onTerminalReady = { [weak appState] tabId, sessionId, project, workspace in
+        webBridge.onTerminalReady = { [weak appState, weak webBridge] tabId, sessionId, project, workspace in
             DispatchQueue.main.async {
-                appState?.handleTerminalReady(tabId: tabId, sessionId: sessionId, project: project, workspace: workspace)
+                appState?.handleTerminalReady(tabId: tabId, sessionId: sessionId, project: project, workspace: workspace, webBridge: webBridge)
             }
         }
 

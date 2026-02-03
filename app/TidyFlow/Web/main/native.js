@@ -211,6 +211,23 @@
         break;
       }
 
+      case "terminal_input": {
+        const { session_id, input } = payload;
+        console.log("[NativeBridge] terminal_input:", session_id, input);
+
+        if (TF.transport && TF.transport.isConnected) {
+          const encoder = new TextEncoder();
+          // 添加换行符以执行命令
+          const bytes = encoder.encode(input + "\n");
+          TF.transport.send(JSON.stringify({
+            type: "input",
+            term_id: session_id,
+            data_b64: TF.encodeBase64(bytes),
+          }));
+        }
+        break;
+      }
+
       case "terminal_ensure": {
         const { project, workspace } = payload;
         TF.ensureTerminalForNative(project, workspace);
