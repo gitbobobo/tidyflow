@@ -150,18 +150,42 @@
 
     // IME composition 状态追踪
     // 解决中文输入法切换到英文时产生空格的问题（如 "o p" -> "op"）
+    // 以及中文标点（如 shift+9 输入 `（`）在 composition 期间被阻止的问题
     let isComposing = false;
     let compositionJustEnded = false;
+    let compositionEndData = "";      // compositionend 事件的数据
+    let compositionDataSent = false;  // onData 是否已发送 composition 数据
     const textarea = container.querySelector("textarea");
     if (textarea) {
       textarea.addEventListener("compositionstart", () => {
         isComposing = true;
         compositionJustEnded = false;
+        compositionEndData = "";
+        compositionDataSent = false;
       });
-      textarea.addEventListener("compositionend", () => {
+      textarea.addEventListener("compositionend", (e) => {
         isComposing = false;
         compositionJustEnded = true;
-        setTimeout(() => { compositionJustEnded = false; }, 100);
+        compositionEndData = e.data || "";
+        compositionDataSent = false;
+        
+        // 设置短暂超时：如果 onData 没有触发（中文标点的情况），手动发送数据
+        setTimeout(() => {
+          if (!compositionDataSent && compositionEndData.length > 0) {
+            // onData 没有发送数据，手动发送 compositionend 的内容
+            if (TF.transport && TF.transport.isConnected) {
+              const encoder = new TextEncoder();
+              const bytes = encoder.encode(compositionEndData);
+              TF.transport.send(JSON.stringify({
+                type: "input",
+                term_id: termId,
+                data_b64: TF.encodeBase64(bytes),
+              }));
+            }
+          }
+          compositionJustEnded = false;
+          compositionEndData = "";
+        }, 50);
       });
     }
 
@@ -194,14 +218,12 @@
     TF.tabBar.insertBefore(tabEl, tabActions);
 
     term.onData((data) => {
-      // composition 期间：只阻止看起来像拼音中间态的输入
-      // 允许直接输入的中文字符和标点符号通过（如 `？`、`（`、`）`）
-      if (isComposing) {
-        // 如果是纯 ASCII 字母或数字（拼音输入中间态），阻止发送
-        if (/^[a-zA-Z0-9]+$/.test(data)) {
-          return;
-        }
-        // 其他字符（如中文标点）允许通过
+      // composition 期间不发送（避免重复）
+      if (isComposing) return;
+      
+      // composition 刚结束后，标记 onData 已触发，避免 compositionend 超时重复发送
+      if (compositionJustEnded) {
+        compositionDataSent = true;
       }
       
       // composition 刚结束时，处理拼音残留（如 "o p" -> "op"）
