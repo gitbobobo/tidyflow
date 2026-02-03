@@ -1,6 +1,7 @@
 import Foundation
 import WebKit
 import Combine
+import AppKit
 
 /// Bridge protocol for Native <-> Web communication
 /// Native -> Web: tidyflow:open_file, tidyflow:save_file, tidyflow:enter_mode, tidyflow:terminal_ensure
@@ -98,6 +99,14 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         case "diff_error":
             let errorMsg = body["message"] as? String ?? "Unknown diff error"
             onDiffError?(errorMsg)
+
+        // 剪贴板操作：终端选中文字自动复制
+        case "clipboard_copy":
+            if let text = body["text"] as? String, !text.isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                print("[WebBridge] Copied to clipboard: \(text.prefix(50))...")
+            }
 
         default:
             print("[WebBridge] Unknown message type: \(type)")

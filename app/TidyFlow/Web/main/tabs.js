@@ -274,6 +274,30 @@
     const tabActions = document.getElementById("tab-actions");
     TF.tabBar.insertBefore(tabEl, tabActions);
 
+    // OSC 52 剪贴板支持 - 用于 TUI 应用（如 opencode、vim 等）
+    // 使用 ClipboardAddon 处理 OSC 52 序列，通过自定义 ClipboardProvider 发送到 Native Bridge
+    if (typeof ClipboardAddon !== 'undefined' && ClipboardAddon.ClipboardAddon) {
+      // 自定义 ClipboardProvider，通过 Native Bridge 写入系统剪贴板
+      const nativeClipboardProvider = {
+        readText: function(selection) {
+          // 读取剪贴板暂不支持
+          return Promise.resolve('');
+        },
+        writeText: function(selection, text) {
+          if (text && text.length > 0) {
+            TF.postToNative("clipboard_copy", { text: text });
+          }
+          return Promise.resolve();
+        }
+      };
+      try {
+        const clipboardAddon = new ClipboardAddon.ClipboardAddon(undefined, nativeClipboardProvider);
+        term.loadAddon(clipboardAddon);
+      } catch (e) {
+        console.warn("[Clipboard] Failed to load ClipboardAddon:", e);
+      }
+    }
+
     term.onData((data) => {
       // 标记 onData 已触发，用于 input 事件的 fallback 逻辑
       if (term._inputFallbackMarker) {
