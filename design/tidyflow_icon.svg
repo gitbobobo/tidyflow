@@ -1,0 +1,72 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <!-- Background Gradient: Deep Night -->
+        <linearGradient id="bg_grad" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#1e293b"/> <!-- Slate 800 -->
+            <stop offset="100%" stop-color="#020617"/> <!-- Slate 950 -->
+        </linearGradient>
+
+        <!-- Fluid Wave Gradient: Flow -->
+        <linearGradient id="flow_grad" x1="0" y1="1024" x2="1024" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.8"/> <!-- Indigo -->
+            <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.6"/> <!-- Violet -->
+            <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.2"/> <!-- Cyan -->
+        </linearGradient>
+
+        <!-- Arrow Gradient: Neon -->
+        <linearGradient id="arrow_grad" x1="500" y1="300" x2="900" y2="700" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#22d3ee"/> <!-- Cyan 400 -->
+            <stop offset="100%" stop-color="#3b82f6"/> <!-- Blue 500 -->
+        </linearGradient>
+
+        <!-- Soft Shadow -->
+        <filter id="soft_shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="15"/>
+            <feOffset dx="0" dy="10" result="offsetblur"/>
+            <feComponentTransfer>
+                <feFuncA type="linear" slope="0.4"/>
+            </feComponentTransfer>
+            <feMerge>
+                <feMergeNode/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+        
+        <!-- Glass Effect for List Items -->
+        <filter id="glass_blur">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="1"/>
+        </filter>
+    </defs>
+
+    <!-- Main Squircle Shape -->
+    <rect width="1024" height="1024" rx="224" fill="url(#bg_grad)"/>
+
+    <!-- Mask to clip contents to squircle -->
+    <mask id="icon_mask">
+        <rect width="1024" height="1024" rx="224" fill="white"/>
+    </mask>
+
+    <g mask="url(#icon_mask)">
+        <!-- Terminal Flow Foreground (Moved Behind Flow) -->
+        <g filter="url(#soft_shadow)">
+            <!-- Prompt Chevron (>) - Resized and Moved to Top-Left -->
+            <!-- Previous: M 362,350 L 512,512 L 362,674 (Width 150, Height 324) -->
+            <!-- New: Scaled down (~60%) and moved to ~Top-Left (x:150, y:150) -->
+            <!-- Path: (150,150) -> (250,250) -> (150,350) -->
+            <path d="M 150,150 L 250,250 L 150,350" 
+                  stroke="white" stroke-width="60" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </g>
+
+        <!-- Irregular Flow Background -->
+        <!-- A wave flowing from bottom-left up towards top-right -->
+        <path d="M-100,1024 C100,800 400,900 600,600 C800,300 900,200 1124,0 V1024 H-100 Z" 
+              fill="url(#flow_grad)" style="mix-blend-mode: screen;"/>
+        
+        <!-- Secondary Flow Element for depth -->
+        <path d="M-50,1024 C150,950 300,950 500,800 C700,650 850,600 1124,400 V1024 H-50 Z" 
+              fill="#6366f1" opacity="0.3" style="mix-blend-mode: overlay;"/>
+    </g>
+    
+    <!-- Subtle Border Ring -->
+    <rect x="1" y="1" width="1022" height="1022" rx="223" stroke="white" stroke-opacity="0.1" stroke-width="2" fill="none"/>
+</svg>
