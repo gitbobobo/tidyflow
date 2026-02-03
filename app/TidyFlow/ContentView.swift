@@ -52,12 +52,10 @@ struct ContentView: View {
                 // 右侧面板切换按钮（保留手动控制）
                 // 设置按钮
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: {
-                        appState.openSettingsTab()
-                    }) {
+                    SettingsLink {
                         Image(systemName: "gearshape")
                     }
-                    .help("设置")
+                    .help("设置 (⌘,)")
                 }
                 // 右侧面板切换按钮
                 ToolbarItem(placement: .primaryAction) {

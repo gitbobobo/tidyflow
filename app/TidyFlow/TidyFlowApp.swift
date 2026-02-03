@@ -132,5 +132,13 @@ struct TidyFlowApp: App {
         .commands {
             InspectorCommands()
         }
+        
+        // 设置窗口（独立窗口，通过 ⌘, 或点击设置按钮打开）
+        Settings {
+            SettingsContentView()
+                .environmentObject(appState)
+                .frame(minWidth: 500, minHeight: 400)
+                .preferredColorScheme(.dark)
+        }
     }
 }

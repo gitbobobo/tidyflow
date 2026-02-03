@@ -60,11 +60,11 @@ struct TabContentHostView: View {
     }
 }
 
-// MARK: - No Workspace Selected View（未选择工作区时的欢迎提示）
+// MARK: - No Active Tab View（空白提示视图）
 
-struct NoWorkspaceSelectedView: View {
+struct NoActiveTabView: View {
     @EnvironmentObject var appState: AppState
-
+    
     var body: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -92,34 +92,6 @@ struct NoWorkspaceSelectedView: View {
             .buttonStyle(.borderedProminent)
             .padding(.top, 8)
 
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.windowBackgroundColor))
-    }
-}
-
-// MARK: - No Active Tab View（空白提示视图）
-
-struct NoActiveTabView: View {
-    @EnvironmentObject var appState: AppState
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            
-            Image(systemName: "terminal")
-                .font(.system(size: 48))
-                .foregroundColor(.secondary.opacity(0.5))
-            
-            Text("没有打开的终端")
-                .font(.headline)
-                .foregroundColor(.secondary)
-            
-            Text("按 ⌘T 创建新终端")
-                .font(.subheadline)
-                .foregroundColor(.secondary.opacity(0.7))
-            
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

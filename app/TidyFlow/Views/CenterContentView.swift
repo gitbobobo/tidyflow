@@ -29,7 +29,7 @@ struct CenterContentView: View {
                     .background(shouldShowWebView ? Color.clear : Color(NSColor.windowBackgroundColor))
                 } else {
                     // 未选择 workspace 时显示欢迎/提示视图
-                    NoWorkspaceSelectedView()
+                    NoActiveTabView()
                 }
             } // ZStack
         } // VStack

@@ -143,26 +143,24 @@ struct NewTerminalButton: View {
     }
 }
 
-// MARK: - 菜单图标视图
+// MARK: - 菜单图标视图（品牌图标用 FixedSizeAssetImage，与项目侧栏/工具栏菜单一致，macOS 按 intrinsic size 显示需在绘制时缩放到目标尺寸）
 
 struct CommandMenuIcon: View {
     let iconName: String
     
+    /// 菜单项图标尺寸（与 ProjectsSidebarView、TopToolbarView 的 menuIconSize 一致）
+    private let menuIconSize: CGFloat = 16
+    
     var body: some View {
         Group {
             if iconName.hasPrefix("brand:") {
-                // 品牌图标
                 let brandName = String(iconName.dropFirst(6))
                 if let brand = BrandIcon(rawValue: brandName) {
-                    Image(brand.assetName)
-                        .resizable()
-                        .scaledToFit()
+                    FixedSizeAssetImage(name: brand.assetName, targetSize: menuIconSize)
                 }
             } else if iconName.hasPrefix("custom:") {
-                // 自定义图标 - 菜单中暂时用默认图标
                 Image(systemName: "terminal")
             } else {
-                // SF Symbol
                 Image(systemName: iconName)
             }
         }

@@ -201,8 +201,6 @@ struct CommandEditSheet: View {
                 Text(isNew ? "添加命令" : "编辑命令")
                     .font(.headline)
                 Spacer()
-                Button("取消") { dismiss() }
-                    .keyboardShortcut(.escape, modifiers: [])
             }
             .padding()
             
@@ -263,7 +261,7 @@ struct CommandEditSheet: View {
             }
             .padding()
         }
-        .frame(width: 450, height: 350)
+        .frame(width: 450, height: 420)
         .sheet(isPresented: $showIconPicker) {
             IconPickerSheet(selectedIcon: $command.icon)
         }
@@ -426,6 +424,7 @@ struct IconPickerSheet: View {
                     .frame(width: 40, height: 40)
                 
                 Image(brand.assetName)
+                    .renderingMode(.original)
                     .resizable()
                     .scaledToFit()
                     .frame(width: 24, height: 24)
@@ -497,6 +496,7 @@ struct CommandIconView: View {
                 let brandName = String(iconName.dropFirst(6))
                 if let brand = BrandIcon(rawValue: brandName) {
                     Image(brand.assetName)
+                        .renderingMode(.original)
                         .resizable()
                         .scaledToFit()
                         .frame(width: size, height: size)

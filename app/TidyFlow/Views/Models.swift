@@ -503,10 +503,6 @@ class AppState: ObservableObject {
         guard let workspaceName = selectedWorkspaceKey else {
             return nil
         }
-        // 设置页面使用特殊的 workspace key，不需要 project 前缀
-        if workspaceName == "__settings__" {
-            return workspaceName
-        }
         return globalWorkspaceKey(projectName: selectedProjectName, workspaceName: workspaceName)
     }
 
@@ -2319,41 +2315,6 @@ class AppState: ObservableObject {
     }
 
     // MARK: - 设置页面
-
-    /// 打开设置页面（使用特殊的全局 key）
-    func openSettingsTab() {
-        let settingsKey = "__settings__"
-        
-        // 检查是否已有设置 tab
-        if let tabs = workspaceTabs[settingsKey],
-           let existingTab = tabs.first(where: { $0.kind == .settings }) {
-            // 激活已有的设置 tab
-            activeTabIdByWorkspace[settingsKey] = existingTab.id
-            // 切换到设置 workspace
-            selectedWorkspaceKey = settingsKey
-            selectedProjectId = nil
-            return
-        }
-
-        // 创建新的设置 tab
-        let newTab = TabModel(
-            id: UUID(),
-            title: "设置",
-            kind: .settings,
-            workspaceKey: settingsKey,
-            payload: ""
-        )
-
-        if workspaceTabs[settingsKey] == nil {
-            workspaceTabs[settingsKey] = []
-        }
-        workspaceTabs[settingsKey]?.append(newTab)
-        activeTabIdByWorkspace[settingsKey] = newTab.id
-        
-        // 切换到设置 workspace
-        selectedWorkspaceKey = settingsKey
-        selectedProjectId = nil
-    }
 
     /// 从服务端加载客户端设置
     func loadClientSettings() {
