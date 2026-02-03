@@ -28,6 +28,7 @@ struct TabContentHostView: View {
                         webBridge: webBridge,
                         webViewVisible: $webViewVisible
                     )
+                    .id(activeTab.payload) // 不同 path 视为不同 View，确保切换时触发 onAppear
                 case .diff:
                     DiffContentView(
                         path: activeTab.payload,
@@ -306,9 +307,9 @@ struct EditorContentView: View {
         }
         .onAppear {
             webViewVisible = true
-            // Send open_file event when editor tab becomes active
+            // 延后到下一 run loop 再发，确保 activeTabIdByWorkspace 已更新（避免切换 tab 时 guard 读到旧值）
             if appState.editorWebReady {
-                sendOpenFile()
+                DispatchQueue.main.async { sendOpenFile() }
             }
         }
         .onDisappear {
@@ -316,18 +317,20 @@ struct EditorContentView: View {
         }
         .onChange(of: appState.editorWebReady) { ready in
             if ready {
-                sendOpenFile()
+                DispatchQueue.main.async { sendOpenFile() }
             }
         }
         .onChange(of: path) { newPath in
             if appState.editorWebReady {
-                sendOpenFile()
+                DispatchQueue.main.async { sendOpenFile() }
             }
         }
     }
 
     private func sendOpenFile() {
         guard let ws = appState.selectedWorkspaceKey else { return }
+        // 仅当当前活跃的 editor tab 仍是本 path 时才发送，避免切换 tab 后旧视图仍触发 sendOpenFile 导致乱序
+        guard appState.getActiveTab()?.kind == .editor && appState.getActiveTab()?.payload == path else { return }
         // 先切换到编辑器模式，否则 Web 端可能仍在 terminal/diff 模式，编辑器 pane 被隐藏
         webBridge.enterMode("editor", project: appState.selectedProjectName, workspace: ws)
         webBridge.openFile(

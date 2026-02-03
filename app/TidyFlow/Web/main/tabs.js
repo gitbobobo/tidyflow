@@ -374,6 +374,17 @@
   function openFileInEditor(filePath) {
     if (!TF.currentProject || !TF.currentWorkspace) return;
 
+    const wsKey = TF.getCurrentWorkspaceKey();
+    const tabId = "editor-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
+    const tabSet = wsKey ? TF.workspaceTabs.get(wsKey) : null;
+    const tabExists = !!(tabSet && tabSet.tabs.has(tabId));
+
+    // 若该 path 的 tab 已存在，仅切换显示，不重复发 file_read
+    if (tabExists) {
+      TF.switchToTab(tabId);
+      return;
+    }
+
     // 如果 WebSocket 未连接，先连接再发送文件读取请求
     if (!TF.transport || !TF.transport.isConnected) {
       console.log("[openFileInEditor] WebSocket not connected, connecting first...");
