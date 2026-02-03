@@ -516,31 +516,7 @@ class WSClient: NSObject, ObservableObject {
             }
 
         case "git_status_result":
-            // #region agent log
-            let rawItems = json["items"] as? [[String: Any]]
-            let rawCount = rawItems?.count ?? 0
-            let firstItemKeys = (rawItems?.first?.keys).map { Array($0).sorted().joined(separator: ",") } ?? ""
-            let result = GitStatusResult.from(json: json)
-            let parsedCount = result?.items.count ?? -1
-            let payload: [String: Any] = [
-                "location": "WSClient.swift:git_status_result",
-                "message": "git_status_result",
-                "data": ["rawCount": rawCount, "parsedCount": parsedCount, "firstItemKeys": firstItemKeys],
-                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-                "sessionId": "debug-session",
-                "hypothesisId": (result != nil && parsedCount == 0 && rawCount > 0) ? "H3" : (result == nil ? "H2" : "H5")
-            ]
-            if let body = try? JSONSerialization.data(withJSONObject: payload),
-               let bodyStr = String(data: body, encoding: .utf8) {
-                let url = URL(string: "http://127.0.0.1:7246/ingest/32320cbc-e53a-472d-b913-91a971c9bee7")!
-                var req = URLRequest(url: url)
-                req.httpMethod = "POST"
-                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                req.httpBody = bodyStr.data(using: .utf8)
-                URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
-            }
-            // #endregion
-            if let result = result {
+            if let result = GitStatusResult.from(json: json) {
                 onGitStatusResult?(result)
             }
 

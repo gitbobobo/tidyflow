@@ -798,25 +798,6 @@ class AppState: ObservableObject {
 
     /// Handle git status result from WebSocket
     private func handleGitStatusResult(_ result: GitStatusResult) {
-        // #region agent log
-        let payload: [String: Any] = [
-            "location": "Models.swift:handleGitStatusResult",
-            "message": "handleGitStatusResult",
-            "data": ["workspace": result.workspace, "itemsCount": result.items.count, "selectedWorkspaceKey": selectedWorkspaceKey ?? ""],
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-            "sessionId": "debug-session",
-            "hypothesisId": "H5"
-        ]
-        if let body = try? JSONSerialization.data(withJSONObject: payload),
-           let bodyStr = String(data: body, encoding: .utf8) {
-            let url = URL(string: "http://127.0.0.1:7246/ingest/32320cbc-e53a-472d-b913-91a971c9bee7")!
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = bodyStr.data(using: .utf8)
-            URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
-        }
-        // #endregion
         let cache = GitStatusCache(
             items: result.items,
             isLoading: false,

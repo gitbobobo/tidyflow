@@ -24,11 +24,17 @@ struct NativeGitPanelView: View {
                     GitCommitInputSection()
                         .environmentObject(appState)
                     
-                    // 3. 可折叠的更改区域
+                    // 3. 暂存的更改（顶层，仅在有暂存时显示）
+                    if hasStagedChangesInWorkspace {
+                        GitStagedChangesSection()
+                            .environmentObject(appState)
+                    }
+                    
+                    // 4. 更改（顶层，未暂存）
                     GitChangesSection(showDiscardAllConfirm: $showDiscardAllConfirm)
                         .environmentObject(appState)
                     
-                    // 4. 可折叠的图形/历史区域
+                    // 5. 可折叠的图形/历史区域
                     GitGraphSection()
                         .environmentObject(appState)
                     
@@ -74,6 +80,13 @@ struct NativeGitPanelView: View {
     private func discardAll() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         appState.gitDiscard(workspaceKey: ws, path: nil, scope: "all")
+    }
+
+    /// 当前工作区是否存在暂存的更改（用于决定是否显示「暂存的更改」顶层区）
+    private var hasStagedChangesInWorkspace: Bool {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+        return cache.hasStagedChanges
     }
 }
 
@@ -370,7 +383,59 @@ struct CollapsibleSection<Content: View>: View {
     }
 }
 
-// MARK: - 更改区域
+// MARK: - 暂存的更改（顶层）
+
+struct GitStagedChangesSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isExpanded: Bool = true
+
+    var body: some View {
+        CollapsibleSection(
+            title: "暂存的更改",
+            count: stagedCount,
+            isExpanded: $isExpanded,
+            headerActions: {
+                AnyView(
+                    HStack(spacing: 4) {
+                        Button(action: unstageAll) {
+                            Image(systemName: "minus")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("取消暂存所有")
+                    }
+                )
+            }
+        ) {
+            VStack(spacing: 0) {
+                ForEach(stagedItems) { item in
+                    GitStatusRow(item: item, isStaged: true)
+                        .environmentObject(appState)
+                }
+            }
+        }
+    }
+
+    private var stagedCount: Int {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return 0 }
+        return cache.items.filter { $0.staged == true }.count
+    }
+
+    private var stagedItems: [GitStatusItem] {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return [] }
+        return cache.items.filter { $0.staged == true }
+    }
+
+    private func unstageAll() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        appState.gitUnstage(workspaceKey: ws, path: nil, scope: "all")
+    }
+}
+
+// MARK: - 更改区域（仅未暂存）
 
 struct GitChangesSection: View {
     @EnvironmentObject var appState: AppState
@@ -380,12 +445,11 @@ struct GitChangesSection: View {
     var body: some View {
         CollapsibleSection(
             title: "更改",
-            count: changesCount,
+            count: unstagedCount,
             isExpanded: $isExpanded,
             headerActions: {
                 AnyView(
                     HStack(spacing: 4) {
-                        // Stage All 按钮
                         Button(action: stageAll) {
                             Image(systemName: "plus")
                                 .font(.system(size: 11))
@@ -395,7 +459,6 @@ struct GitChangesSection: View {
                         .help("暂存所有更改")
                         .disabled(!hasUnstagedChanges || isStageAllInFlight)
                         
-                        // Discard All 按钮
                         Button(action: { showDiscardAllConfirm = true }) {
                             Image(systemName: "arrow.uturn.backward")
                                 .font(.system(size: 11))
@@ -415,35 +478,29 @@ struct GitChangesSection: View {
                             LoadingRow()
                         } else if !cache.isGitRepo {
                             EmptyRow(text: "非 Git 仓库")
-                        } else if cache.items.isEmpty {
-                            EmptyRow(text: "没有更改")
                         } else {
-                            // 暂存的更改
-                            if cache.hasStagedChanges {
-                                StagedChangesSubsection(items: stagedItems(cache.items))
-                                    .environmentObject(appState)
-                            }
-                            
-                            // 未暂存的更改
                             let unstaged = unstagedItems(cache.items)
-                            if !unstaged.isEmpty {
-                                UnstagedChangesSubsection(items: unstaged)
-                                    .environmentObject(appState)
+                            if unstaged.isEmpty {
+                                EmptyRow(text: "没有更改")
+                            } else {
+                                ForEach(unstaged) { item in
+                                    GitStatusRow(item: item, isStaged: false)
+                                        .environmentObject(appState)
+                                }
                             }
                         }
                     } else {
                         LoadingRow()
                     }
                 }
-                // 未选中 workspace 时不显示任何内容
             }
         }
     }
 
-    private var changesCount: Int {
+    private var unstagedCount: Int {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = appState.getGitStatusCache(workspaceKey: ws) else { return 0 }
-        return cache.items.count
+        return cache.items.filter { $0.staged != true }.count
     }
 
     private var hasUnstagedChanges: Bool {
@@ -463,10 +520,6 @@ struct GitChangesSection: View {
         return appState.isGitOpInFlight(workspaceKey: ws, path: nil, op: "stage")
     }
 
-    private func stagedItems(_ items: [GitStatusItem]) -> [GitStatusItem] {
-        items.filter { $0.staged == true }
-    }
-
     private func unstagedItems(_ items: [GitStatusItem]) -> [GitStatusItem] {
         items.filter { $0.staged != true }
     }
@@ -474,110 +527,6 @@ struct GitChangesSection: View {
     private func stageAll() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         appState.gitStage(workspaceKey: ws, path: nil, scope: "all")
-    }
-}
-
-// MARK: - 暂存的更改子区域
-
-struct StagedChangesSubsection: View {
-    @EnvironmentObject var appState: AppState
-    let items: [GitStatusItem]
-    @State private var isExpanded: Bool = true
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // 子标题
-            HStack(spacing: 4) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-                
-                Text("暂存的更改")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                
-                Text("\(items.count)")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                // Unstage All
-                Button(action: unstageAll) {
-                    Image(systemName: "minus")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("取消暂存所有")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            }
-            
-            if isExpanded {
-                ForEach(items) { item in
-                    GitStatusRow(item: item, isStaged: true)
-                        .environmentObject(appState)
-                }
-            }
-        }
-    }
-
-    private func unstageAll() {
-        guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitUnstage(workspaceKey: ws, path: nil, scope: "all")
-    }
-}
-
-// MARK: - 未暂存的更改子区域
-
-struct UnstagedChangesSubsection: View {
-    @EnvironmentObject var appState: AppState
-    let items: [GitStatusItem]
-    @State private var isExpanded: Bool = true
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // 子标题
-            HStack(spacing: 4) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-                
-                Text("更改")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                
-                Text("\(items.count)")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            }
-            
-            if isExpanded {
-                ForEach(items) { item in
-                    GitStatusRow(item: item, isStaged: false)
-                        .environmentObject(appState)
-                }
-            }
-        }
     }
 }
 

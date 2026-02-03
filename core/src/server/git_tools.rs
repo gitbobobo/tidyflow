@@ -234,18 +234,6 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     // Check for staged changes
     let (has_staged_changes, staged_count) = check_staged_changes(workspace_root);
 
-    // #region agent log
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Users/godbobo/work/projects/tidyflow/.cursor/debug.log") {
-        use std::io::Write;
-        let first_code = items.first().map(|e| e.code.as_str()).unwrap_or("");
-        let first_path = items.first().map(|e| e.path.len()).unwrap_or(0);
-        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-        let line = format!("{{\"location\":\"git_tools.rs:git_status\",\"message\":\"git_status exit\",\"data\":{{\"items_len\":{},\"first_code\":\"{}\",\"first_path_len\":{}}},\"timestamp\":{},\"sessionId\":\"debug-session\",\"hypothesisId\":\"H4\"}}\n",
-            items.len(), first_code.replace('\\', "\\\\").replace('"', "\\\""), first_path, ts);
-        let _ = f.write_all(line.as_bytes());
-    }
-    // #endregion
-
     Ok(GitStatusResult { repo_root, items, has_staged_changes, staged_count })
 }
 
