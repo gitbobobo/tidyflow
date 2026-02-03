@@ -100,7 +100,7 @@ struct TabModel: Identifiable, Codable, Equatable {
     var title: String
     let kind: TabKind
     let workspaceKey: String
-    let payload: String
+    var payload: String  // 使用 var 以便执行后清空自定义命令
 
     // Phase C1-2: Terminal session ID (only for terminal tabs)
     // Stored separately from payload to maintain Codable compatibility
@@ -2702,6 +2702,10 @@ class AppState: ObservableObject {
             if !payload.isEmpty, let bridge = webBridge {
                 print("[AppState] Executing custom command: \(payload)")
                 bridge.terminalSendInput(sessionId: sessionId, input: payload)
+                
+                // 清空 payload，防止 attach 时重复执行命令
+                tabs[index].payload = ""
+                workspaceTabs[globalKey] = tabs
             }
         }
 
