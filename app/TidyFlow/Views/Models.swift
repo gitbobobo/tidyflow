@@ -21,11 +21,13 @@ enum RightTool: String, CaseIterable {
 enum ExternalEditor: String, CaseIterable {
     case vscode = "VSCode"
     case cursor = "Cursor"
+    case trae = "Trae"
 
     var bundleId: String {
         switch self {
         case .vscode: return "com.microsoft.VSCode"
         case .cursor: return "com.todesktop.230313mzl4w4u92"
+        case .trae: return "com.trae.app"
         }
     }
 
@@ -33,6 +35,7 @@ enum ExternalEditor: String, CaseIterable {
         switch self {
         case .vscode: return "vscode-icon"
         case .cursor: return "cursor-icon"
+        case .trae: return "trae-icon"
         }
     }
 
@@ -40,6 +43,7 @@ enum ExternalEditor: String, CaseIterable {
         switch self {
         case .vscode: return "chevron.left.forwardslash.chevron.right"
         case .cursor: return "cursorarrow.rays"
+        case .trae: return "sparkles"
         }
     }
 

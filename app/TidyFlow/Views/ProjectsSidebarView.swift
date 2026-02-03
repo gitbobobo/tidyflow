@@ -99,6 +99,13 @@ struct ProjectRowView: View {
     /// 项目路径（项目根目录），用于复制与在编辑器中打开
     private var projectPath: String? { project.path }
 
+    /// 菜单项图标尺寸
+    private let menuIconSize: CGFloat = 16
+
+    private func editorMenuIcon(_ editor: ExternalEditor) -> some View {
+        FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
+    }
+
     var body: some View {
         // 仅项目头行；工作空间行由 List 中单独渲染，保证各自右键菜单独立
         HStack(spacing: 6) {
@@ -137,13 +144,21 @@ struct ProjectRowView: View {
                 } label: {
                     Label("复制路径", systemImage: "doc.on.doc")
                 }
-                Menu("在编辑器中打开") {
+                Menu {
                     ForEach(ExternalEditor.allCases, id: \.self) { editor in
-                        Button(editor.rawValue) {
+                        Button {
                             _ = appState.openPathInEditor(path, editor: editor)
+                        } label: {
+                            Label {
+                                Text(editor.rawValue)
+                            } icon: {
+                                editorMenuIcon(editor)
+                            }
                         }
                         .disabled(!editor.isInstalled)
                     }
+                } label: {
+                    Label("在编辑器中打开", systemImage: "square.and.arrow.up")
                 }
             }
             Button {
@@ -191,6 +206,13 @@ struct WorkspaceRowView: View {
     /// 工作空间路径，用于复制与在编辑器中打开
     private var workspacePath: String? { workspace.root }
 
+    /// 菜单项图标尺寸
+    private let menuIconSize: CGFloat = 16
+
+    private func editorMenuIcon(_ editor: ExternalEditor) -> some View {
+        FixedSizeAssetImage(name: editor.assetName, targetSize: menuIconSize)
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "square.grid.2x2")
@@ -223,13 +245,21 @@ struct WorkspaceRowView: View {
                 } label: {
                     Label("复制路径", systemImage: "doc.on.doc")
                 }
-                Menu("在编辑器中打开") {
+                Menu {
                     ForEach(ExternalEditor.allCases, id: \.self) { editor in
-                        Button(editor.rawValue) {
+                        Button {
                             _ = appState.openPathInEditor(path, editor: editor)
+                        } label: {
+                            Label {
+                                Text(editor.rawValue)
+                            } icon: {
+                                editorMenuIcon(editor)
+                            }
                         }
                         .disabled(!editor.isInstalled)
                     }
+                } label: {
+                    Label("在编辑器中打开", systemImage: "square.and.arrow.up")
                 }
             }
             Divider()

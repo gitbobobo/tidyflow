@@ -124,14 +124,14 @@ struct ExplorerView: View {
                     .environmentObject(appState)
             } else {
                 // 未选择工作空间
-                NoWorkspaceSelectedView()
+                RightPanelNoWorkspaceView()
             }
         }
     }
 }
 
-/// 未选择工作空间提示
-struct NoWorkspaceSelectedView: View {
+/// 右侧面板 - 未选择工作空间提示
+struct RightPanelNoWorkspaceView: View {
     var body: some View {
         VStack(spacing: 12) {
             Spacer()

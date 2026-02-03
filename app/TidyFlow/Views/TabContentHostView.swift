@@ -5,15 +5,22 @@ struct TabContentHostView: View {
     let webBridge: WebBridge
     @Binding var webViewVisible: Bool
 
+    /// 是否有需要展示 WebView 的活跃 tab（只读，用于驱动 webViewVisible）
+    private var hasActiveContent: Bool {
+        guard let workspaceKey = appState.selectedWorkspaceKey,
+              let activeId = appState.activeTabIdByWorkspace[workspaceKey],
+              let tabs = appState.workspaceTabs[workspaceKey],
+              let activeTab = tabs.first(where: { $0.id == activeId })
+        else { return false }
+        return true
+    }
+
     var body: some View {
         Group {
             if let workspaceKey = appState.selectedWorkspaceKey,
                let activeId = appState.activeTabIdByWorkspace[workspaceKey],
                let tabs = appState.workspaceTabs[workspaceKey],
                let activeTab = tabs.first(where: { $0.id == activeId }) {
-
-                // 有活跃的 terminal/editor/diff tab 时，确保 WebView 可见
-                let _ = { webViewVisible = true }()
 
                 switch activeTab.kind {
                 case .terminal:
@@ -38,11 +45,50 @@ struct TabContentHostView: View {
                 }
 
             } else {
-                // 没有活跃标签时，显示空白提示并隐藏 WebView
-                let _ = { webViewVisible = false }()
                 NoActiveTabView()
             }
         }
+        .onAppear { webViewVisible = hasActiveContent }
+        .onChange(of: hasActiveContent) { _, newValue in webViewVisible = newValue }
+    }
+}
+
+// MARK: - No Workspace Selected View（未选择工作区时的欢迎提示）
+
+struct NoWorkspaceSelectedView: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            Image(systemName: "folder.badge.plus")
+                .font(.system(size: 56))
+                .foregroundColor(.secondary.opacity(0.6))
+
+            Text("选择或添加项目开始")
+                .font(.title2)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+
+            Text("在左侧边栏选择项目和工作区，或使用 ⌘⇧P 添加新项目")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            Button(action: {
+                appState.addProjectSheetPresented = true
+            }) {
+                Label("添加项目", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 8)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(NSColor.windowBackgroundColor))
     }
 }
 

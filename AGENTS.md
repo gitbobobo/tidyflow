@@ -4,6 +4,7 @@
 2. 经验总结：获取到经验教训后，如果它属于可复用的项目开发流程，就用简洁的语言记录到 AGENTS.md 中
 
 ## 经验总结
+ - Trae macOS 的 bundleId 为 `com.trae.app`（Homebrew cask 信息）。
 
 
 ## Project Overview
