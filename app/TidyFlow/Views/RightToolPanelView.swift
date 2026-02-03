@@ -12,34 +12,41 @@ struct CapsuleSegmentedControl: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach([RightTool.explorer, .search, .git], id: \.self) { tool in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selection = tool
+        GeometryReader { geo in
+            let segmentW = max(0, geo.size.width) / 3
+            let fullH = max(24, geo.size.height - 4)
+
+            HStack(spacing: 0) {
+                ForEach([RightTool.explorer, .search, .git], id: \.self) { tool in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selection = tool
+                        }
+                    } label: {
+                        Image(systemName: iconName(for: tool))
+                            .font(.system(size: 14, weight: .medium))
+                            .symbolRenderingMode(.hierarchical)
+                            .frame(maxWidth: .infinity, minHeight: 24)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Image(systemName: iconName(for: tool))
-                        .font(.system(size: 14, weight: .medium))
-                        .symbolRenderingMode(.hierarchical)
-                        .frame(maxWidth: .infinity, minHeight: 24)
-                        .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 2)
+                    .accessibilityLabel(accessibilityLabel(for: tool))
+                    .matchedGeometryEffect(id: tool, in: capsuleNamespace)
                 }
-                .buttonStyle(.plain)
-                .padding(.vertical, 2)
-                .accessibilityLabel(accessibilityLabel(for: tool))
-                .matchedGeometryEffect(id: tool, in: capsuleNamespace)
             }
+            .background(
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: segmentW, height: fullH)
+                    .matchedGeometryEffect(id: effectiveSelection, in: capsuleNamespace, properties: .position, isSource: false)
+            )
+            .background(
+                Capsule()
+                    .fill(Color(nsColor: .separatorColor).opacity(0.6))
+            )
         }
-        .background(
-            Capsule()
-                .fill(Color.accentColor)
-                .matchedGeometryEffect(id: effectiveSelection, in: capsuleNamespace, isSource: false)
-        )
-        .background(
-            Capsule()
-                .fill(Color(nsColor: .separatorColor).opacity(0.6))
-        )
+        .frame(height: 32)
     }
 
     private func iconName(for tool: RightTool) -> String {
