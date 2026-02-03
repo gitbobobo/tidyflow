@@ -341,6 +341,14 @@
 
         case "error":
           console.error("Server error:", msg.code, msg.message);
+          // 如果有 pending terminal spawn 且错误是 workspace_not_found，通知 Native
+          if (TF.pendingTerminalSpawn && (msg.code === 'workspace_not_found' || msg.code === 'project_not_found')) {
+            TF.postToNative("terminal_error", {
+              tab_id: TF.pendingTerminalSpawn.tabId,
+              message: msg.message || msg.code
+            });
+            TF.pendingTerminalSpawn = null;
+          }
           TF.notifySwift("error", { code: msg.code, message: msg.message });
           break;
 

@@ -95,7 +95,7 @@ struct AddProjectSheet: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle")
                         .foregroundColor(.blue)
-                    Text("The project will be added with a default workspace. You can add more workspaces later.")
+                    Text("项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间，请确保项目已配置 Git 远程仓库。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -238,8 +238,7 @@ struct AddProjectSheet: View {
         print("[AddProjectSheet] Sending import request: name=\(trimmedName), path=\(path.path)")
         appState.wsClient.requestImportProject(
             name: trimmedName,
-            path: path.path,
-            createDefaultWorkspace: true
+            path: path.path
         )
     }
 }

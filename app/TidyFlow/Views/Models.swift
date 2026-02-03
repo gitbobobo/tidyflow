@@ -150,6 +150,7 @@ struct WorkspaceModel: Identifiable, Equatable {
     let name: String
     var root: String?  // 工作空间路径
     var status: String?
+    var isDefault: Bool = false  // 是否为默认工作空间（虚拟，指向项目根目录）
 }
 
 /// Represents a project containing multiple workspaces
@@ -379,23 +380,51 @@ class AppState: ObservableObject {
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
         print("[AppState] selectWorkspace called: projectId=\(projectId), workspaceName=\(workspaceName)")
+        
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
-        print("[AppState] selectedWorkspaceKey set to: \(workspaceName)")
-        ensureDefaultTab(for: workspaceName)
-
+        
         // Update selectedProjectName for WS protocol
         // 注意：使用原始项目名称，不进行格式转换，因为服务端使用原始名称索引项目
         if let project = projects.first(where: { $0.id == projectId }) {
             selectedProjectName = project.name
         }
+        
+        // 使用全局工作空间键（包含项目名称）来区分不同项目的同名工作空间
+        guard let globalKey = currentGlobalWorkspaceKey else {
+            print("[AppState] Warning: Could not generate global workspace key")
+            return
+        }
+        print("[AppState] Global workspace key: \(globalKey)")
+        
+        // 确保有默认 Tab（使用全局键）
+        ensureDefaultTab(for: globalKey)
 
-        // 自动请求根目录文件列表（如果缓存不存在或已过期）
+        // 连接后请求数据（使用原始 workspaceName，因为 fetchXXX 方法内部会用 selectedProjectName 构建完整键）
         if connectionState == .connected {
+            // 请求根目录文件列表（如果缓存不存在）
             if getFileListCache(workspaceKey: workspaceName, path: ".") == nil {
                 fetchFileList(workspaceKey: workspaceName, path: ".")
             }
+            // 请求 Git 状态（如果缓存不存在）
+            if getGitStatusCache(workspaceKey: workspaceName) == nil {
+                fetchGitStatus(workspaceKey: workspaceName)
+            }
         }
+    }
+    
+    /// 生成全局唯一的工作空间键（包含项目名称）
+    /// 用于所有需要区分不同项目同名工作空间的缓存
+    func globalWorkspaceKey(projectName: String, workspaceName: String) -> String {
+        return "\(projectName):\(workspaceName)"
+    }
+    
+    /// 获取当前选中的全局工作空间键
+    var currentGlobalWorkspaceKey: String? {
+        guard let workspaceName = selectedWorkspaceKey else {
+            return nil
+        }
+        return globalWorkspaceKey(projectName: selectedProjectName, workspaceName: workspaceName)
     }
 
     /// Refresh projects and workspaces from Core
@@ -648,14 +677,14 @@ class AppState: ObservableObject {
 
     // MARK: - 文件列表 API
 
-    /// 生成文件列表缓存键
-    private func fileListCacheKey(workspace: String, path: String) -> String {
-        return "\(workspace):\(path)"
+    /// 生成文件列表缓存键（包含项目名称以区分不同项目的同名工作空间）
+    private func fileListCacheKey(project: String, workspace: String, path: String) -> String {
+        return "\(project):\(workspace):\(path)"
     }
 
     /// 处理文件列表结果
     private func handleFileListResult(_ result: FileListResult) {
-        let key = fileListCacheKey(workspace: result.workspace, path: result.path)
+        let key = fileListCacheKey(project: result.project, workspace: result.workspace, path: result.path)
         let cache = FileListCache(
             items: result.items,
             isLoading: false,
@@ -667,16 +696,16 @@ class AppState: ObservableObject {
 
     /// 获取目录文件列表
     func fetchFileList(workspaceKey: String, path: String = ".") {
+        let projectName = selectedProjectName
+        let key = fileListCacheKey(project: projectName, workspace: workspaceKey, path: path)
+        
         guard connectionState == .connected else {
-            let key = fileListCacheKey(workspace: workspaceKey, path: path)
             var cache = fileListCache[key] ?? FileListCache.empty()
             cache.error = "未连接"
             cache.isLoading = false
             fileListCache[key] = cache
             return
         }
-
-        let key = fileListCacheKey(workspace: workspaceKey, path: path)
 
         // 设置加载状态
         var cache = fileListCache[key] ?? FileListCache.empty()
@@ -685,12 +714,12 @@ class AppState: ObservableObject {
         fileListCache[key] = cache
 
         // 发送请求
-        wsClient.requestFileList(project: selectedProjectName, workspace: workspaceKey, path: path)
+        wsClient.requestFileList(project: projectName, workspace: workspaceKey, path: path)
     }
 
     /// 获取缓存的文件列表
     func getFileListCache(workspaceKey: String, path: String) -> FileListCache? {
-        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+        let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
         return fileListCache[key]
     }
 
@@ -702,7 +731,7 @@ class AppState: ObservableObject {
 
     /// 切换目录展开状态
     func toggleDirectoryExpanded(workspaceKey: String, path: String) {
-        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+        let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
         let currentState = directoryExpandState[key] ?? false
         directoryExpandState[key] = !currentState
         
@@ -716,7 +745,7 @@ class AppState: ObservableObject {
 
     /// 检查目录是否展开
     func isDirectoryExpanded(workspaceKey: String, path: String) -> Bool {
-        let key = fileListCacheKey(workspace: workspaceKey, path: path)
+        let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
         return directoryExpandState[key] ?? false
     }
 
@@ -797,7 +826,13 @@ class AppState: ObservableObject {
     // MARK: - Phase C3-1: Git Status API
 
     /// Handle git status result from WebSocket
+    /// 生成 Git 状态缓存键（包含项目名称）
+    private func gitStatusCacheKey(project: String, workspace: String) -> String {
+        return "\(project):\(workspace)"
+    }
+
     private func handleGitStatusResult(_ result: GitStatusResult) {
+        let key = gitStatusCacheKey(project: result.project, workspace: result.workspace)
         let cache = GitStatusCache(
             items: result.items,
             isLoading: false,
@@ -807,27 +842,30 @@ class AppState: ObservableObject {
             hasStagedChanges: result.hasStagedChanges,
             stagedCount: result.stagedCount
         )
-        gitStatusCache[result.workspace] = cache
+        gitStatusCache[key] = cache
     }
 
     /// Fetch git status for a workspace
     func fetchGitStatus(workspaceKey: String) {
+        let projectName = selectedProjectName
+        let key = gitStatusCacheKey(project: projectName, workspace: workspaceKey)
+        
         guard connectionState == .connected else {
-            var cache = gitStatusCache[workspaceKey] ?? GitStatusCache.empty()
+            var cache = gitStatusCache[key] ?? GitStatusCache.empty()
             cache.error = "Disconnected"
             cache.isLoading = false
-            gitStatusCache[workspaceKey] = cache
+            gitStatusCache[key] = cache
             return
         }
 
         // Set loading state
-        var cache = gitStatusCache[workspaceKey] ?? GitStatusCache.empty()
+        var cache = gitStatusCache[key] ?? GitStatusCache.empty()
         cache.isLoading = true
         cache.error = nil
-        gitStatusCache[workspaceKey] = cache
+        gitStatusCache[key] = cache
 
         // Send request
-        wsClient.requestGitStatus(project: selectedProjectName, workspace: workspaceKey)
+        wsClient.requestGitStatus(project: projectName, workspace: workspaceKey)
     }
 
     /// Refresh git status for current workspace
@@ -838,46 +876,57 @@ class AppState: ObservableObject {
 
     /// Get cached git status for a workspace
     func getGitStatusCache(workspaceKey: String) -> GitStatusCache? {
-        return gitStatusCache[workspaceKey]
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        return gitStatusCache[key]
     }
 
     /// Check if git status cache is empty or expired
     func shouldFetchGitStatus(workspaceKey: String) -> Bool {
-        guard let cache = gitStatusCache[workspaceKey] else { return true }
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        guard let cache = gitStatusCache[key] else { return true }
         return cache.isExpired && !cache.isLoading
     }
 
     // MARK: - Git Log (Commit History) API
 
+    /// 生成 Git Log 缓存键（包含项目名称）
+    private func gitLogCacheKey(project: String, workspace: String) -> String {
+        return "\(project):\(workspace)"
+    }
+
     /// Handle git log result from WebSocket
     private func handleGitLogResult(_ result: GitLogResult) {
+        let key = gitLogCacheKey(project: result.project, workspace: result.workspace)
         let cache = GitLogCache(
             entries: result.entries,
             isLoading: false,
             error: nil,
             updatedAt: Date()
         )
-        gitLogCache[result.workspace] = cache
+        gitLogCache[key] = cache
     }
 
     /// Fetch git log for a workspace
     func fetchGitLog(workspaceKey: String, limit: Int = 50) {
+        let projectName = selectedProjectName
+        let key = gitLogCacheKey(project: projectName, workspace: workspaceKey)
+        
         guard connectionState == .connected else {
-            var cache = gitLogCache[workspaceKey] ?? GitLogCache.empty()
+            var cache = gitLogCache[key] ?? GitLogCache.empty()
             cache.error = "Disconnected"
             cache.isLoading = false
-            gitLogCache[workspaceKey] = cache
+            gitLogCache[key] = cache
             return
         }
 
         // Set loading state
-        var cache = gitLogCache[workspaceKey] ?? GitLogCache.empty()
+        var cache = gitLogCache[key] ?? GitLogCache.empty()
         cache.isLoading = true
         cache.error = nil
-        gitLogCache[workspaceKey] = cache
+        gitLogCache[key] = cache
 
         // Send request
-        wsClient.requestGitLog(project: selectedProjectName, workspace: workspaceKey, limit: limit)
+        wsClient.requestGitLog(project: projectName, workspace: workspaceKey, limit: limit)
     }
 
     /// Refresh git log for current workspace
@@ -888,12 +937,14 @@ class AppState: ObservableObject {
 
     /// Get cached git log for a workspace
     func getGitLogCache(workspaceKey: String) -> GitLogCache? {
-        return gitLogCache[workspaceKey]
+        let key = gitLogCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        return gitLogCache[key]
     }
 
     /// Check if git log cache is empty or expired
     func shouldFetchGitLog(workspaceKey: String) -> Bool {
-        guard let cache = gitLogCache[workspaceKey] else { return true }
+        let key = gitLogCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        guard let cache = gitLogCache[key] else { return true }
         return cache.isExpired && !cache.isLoading
     }
 
@@ -1743,8 +1794,14 @@ class AppState: ObservableObject {
         print("[AppState] Received workspaces for project: \(result.project) (\(result.items.count) items)")
         
         if let index = projects.firstIndex(where: { $0.name == result.project }) {
+            // 服务端现在会返回 "default" 虚拟工作空间，将其标记为 isDefault
             let newWorkspaces = result.items.map { item in
-                WorkspaceModel(name: item.name, root: item.root, status: item.status)
+                WorkspaceModel(
+                    name: item.name,
+                    root: item.root,
+                    status: item.status,
+                    isDefault: item.name == "default"
+                )
             }
             
             projects[index].workspaces = newWorkspaces
@@ -1756,30 +1813,30 @@ class AppState: ObservableObject {
         projectImportInFlight = false
         projectImportError = nil
 
-        // Create local ProjectModel
-        var workspaces: [WorkspaceModel] = []
-        if let ws = result.workspace {
-            workspaces.append(WorkspaceModel(name: ws.name, root: ws.root, status: ws.status))
-        }
+        // 创建默认工作空间（虚拟，指向项目根目录）
+        let defaultWs = WorkspaceModel(
+            name: "default",
+            root: result.root,
+            status: "ready",
+            isDefault: true
+        )
 
         let newProject = ProjectModel(
             id: UUID(),
             name: result.name,
             path: result.root,
-            workspaces: workspaces,
+            workspaces: [defaultWs],
             isExpanded: true
         )
 
         // Add to state
         projects.append(newProject)
 
-        // Auto-select the new workspace if created
-        if let ws = result.workspace {
-            selectWorkspace(projectId: newProject.id, workspaceName: ws.name)
-        }
+        // 自动选中默认工作空间
+        selectWorkspace(projectId: newProject.id, workspaceName: defaultWs.name)
 
         // Show success toast
-        gitOpToast = "Project '\(result.name)' imported"
+        gitOpToast = "项目 '\(result.name)' 已导入"
         gitOpToastIsError = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.gitOpToast = nil
@@ -1793,7 +1850,8 @@ class AppState: ObservableObject {
             let newWorkspace = WorkspaceModel(
                 name: result.workspace.name,
                 root: result.workspace.root,
-                status: result.workspace.status
+                status: result.workspace.status,
+                isDefault: false
             )
             projects[index].workspaces.append(newWorkspace)
 
@@ -1802,7 +1860,7 @@ class AppState: ObservableObject {
         }
 
         // Show success toast
-        gitOpToast = "Workspace '\(result.workspace.name)' created"
+        gitOpToast = "工作空间 '\(result.workspace.name)' 已创建"
         gitOpToastIsError = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.gitOpToast = nil
@@ -1830,7 +1888,7 @@ class AppState: ObservableObject {
     }
 
     /// Import a project from local path
-    func importProject(name: String, path: String, createDefaultWorkspace: Bool = true) {
+    func importProject(name: String, path: String) {
         guard connectionState == .connected else {
             projectImportError = "Disconnected"
             return
@@ -1841,8 +1899,7 @@ class AppState: ObservableObject {
 
         wsClient.requestImportProject(
             name: name,
-            path: path,
-            createDefaultWorkspace: createDefaultWorkspace
+            path: path
         )
     }
 
@@ -2223,7 +2280,7 @@ class AppState: ObservableObject {
     }
 
     func nextTab() {
-        guard let ws = selectedWorkspaceKey,
+        guard let ws = currentGlobalWorkspaceKey,
               let tabs = workspaceTabs[ws], !tabs.isEmpty,
               let activeId = activeTabIdByWorkspace[ws],
               let index = tabs.firstIndex(where: { $0.id == activeId }) else { return }
@@ -2233,7 +2290,7 @@ class AppState: ObservableObject {
     }
     
     func prevTab() {
-        guard let ws = selectedWorkspaceKey,
+        guard let ws = currentGlobalWorkspaceKey,
               let tabs = workspaceTabs[ws], !tabs.isEmpty,
               let activeId = activeTabIdByWorkspace[ws],
               let index = tabs.firstIndex(where: { $0.id == activeId }) else { return }
@@ -2246,7 +2303,7 @@ class AppState: ObservableObject {
 
     /// Get the active tab for the current workspace
     func getActiveTab() -> TabModel? {
-        guard let ws = selectedWorkspaceKey,
+        guard let ws = currentGlobalWorkspaceKey,
               let activeId = activeTabIdByWorkspace[ws],
               let tabs = workspaceTabs[ws] else { return nil }
         return tabs.first { $0.id == activeId }
@@ -2315,7 +2372,7 @@ class AppState: ObservableObject {
 
     /// Update diff mode for active diff tab
     func setActiveDiffMode(_ mode: DiffMode) {
-        guard let ws = selectedWorkspaceKey,
+        guard let ws = currentGlobalWorkspaceKey,
               var tabs = workspaceTabs[ws],
               let activeId = activeTabIdByWorkspace[ws],
               let index = tabs.firstIndex(where: { $0.id == activeId && $0.kind == .diff }) else { return }
@@ -2334,7 +2391,7 @@ class AppState: ObservableObject {
 
     /// Update diff view mode for active diff tab
     func setActiveDiffViewMode(_ mode: DiffViewMode) {
-        guard let ws = selectedWorkspaceKey,
+        guard let ws = currentGlobalWorkspaceKey,
               var tabs = workspaceTabs[ws],
               let activeId = activeTabIdByWorkspace[ws],
               let index = tabs.firstIndex(where: { $0.id == activeId && $0.kind == .diff }) else { return }
@@ -2373,17 +2430,17 @@ class AppState: ObservableObject {
         staleTerminalTabs.remove(uuid)
         pendingSpawnTabs.remove(uuid)  // 移除 pending 标记
 
-        // Update tab's terminalSessionId
-        if let ws = selectedWorkspaceKey,
-           var tabs = workspaceTabs[ws],
+        // Update tab's terminalSessionId（使用服务端返回的 project 和 workspace 生成全局键）
+        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        if var tabs = workspaceTabs[globalKey],
            let index = tabs.firstIndex(where: { $0.id == uuid }) {
             tabs[index].terminalSessionId = sessionId
-            workspaceTabs[ws] = tabs
+            workspaceTabs[globalKey] = tabs
         }
 
         // Update global terminal state for status bar
         terminalState = .ready(sessionId: sessionId)
-        print("[AppState] Terminal ready: tabId=\(tabId), sessionId=\(sessionId)")
+        print("[AppState] Terminal ready: tabId=\(tabId), sessionId=\(sessionId), globalKey=\(globalKey)")
     }
 
     /// Handle terminal closed event from WebBridge
@@ -2393,12 +2450,13 @@ class AppState: ObservableObject {
         // Remove session mapping
         terminalSessionByTabId.removeValue(forKey: uuid)
 
-        // Update tab's terminalSessionId
-        if let ws = selectedWorkspaceKey,
-           var tabs = workspaceTabs[ws],
-           let index = tabs.firstIndex(where: { $0.id == uuid }) {
-            tabs[index].terminalSessionId = nil
-            workspaceTabs[ws] = tabs
+        // Update tab's terminalSessionId（搜索所有工作空间的 tabs）
+        for (globalKey, var tabs) in workspaceTabs {
+            if let index = tabs.firstIndex(where: { $0.id == uuid }) {
+                tabs[index].terminalSessionId = nil
+                workspaceTabs[globalKey] = tabs
+                break
+            }
         }
 
         print("[AppState] Terminal closed: tabId=\(tabId), code=\(code ?? -1)")

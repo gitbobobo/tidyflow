@@ -400,12 +400,11 @@ class WSClient: NSObject, ObservableObject {
     }
 
     // UX-2: Request import project
-    func requestImportProject(name: String, path: String, createDefaultWorkspace: Bool = true) {
+    func requestImportProject(name: String, path: String) {
         sendJSON([
             "type": "import_project",
             "name": name,
-            "path": path,
-            "create_default_workspace": createDefaultWorkspace
+            "path": path
         ])
     }
 

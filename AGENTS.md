@@ -5,6 +5,7 @@
 
 ## 经验总结
  - Trae macOS 的 bundleId 为 `com.trae.app`（Homebrew cask 信息）。
+ - 默认工作空间是客户端虚拟概念，不存储在服务端状态中，由 Swift App 在 `handleWorkspacesList` 和 `handleProjectImported` 中动态生成。
 
 
 ## Project Overview

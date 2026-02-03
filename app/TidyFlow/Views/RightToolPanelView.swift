@@ -411,8 +411,10 @@ struct FileRowView: View {
             // 目录：切换展开状态
             appState.toggleDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
         } else {
-            // 文件：打开编辑器
-            appState.addEditorTab(workspaceKey: workspaceKey, path: item.path)
+            // 文件：打开编辑器（使用全局工作空间键）
+            if let globalKey = appState.currentGlobalWorkspaceKey {
+                appState.addEditorTab(workspaceKey: globalKey, path: item.path)
+            }
         }
     }
     

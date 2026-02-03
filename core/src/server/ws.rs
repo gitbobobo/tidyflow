@@ -25,9 +25,19 @@ use crate::server::protocol::{
     ClientMessage, FileEntryInfo, GitBranchInfo, GitStatusEntry, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
     v1_capabilities,
 };
-use crate::workspace::state::{AppState, WorkspaceStatus};
+use crate::workspace::state::{AppState, Project, WorkspaceStatus};
 use crate::workspace::project::ProjectManager;
 use crate::workspace::workspace::WorkspaceManager;
+
+/// 获取工作空间的根路径，支持 "default" 虚拟工作空间
+/// 如果 workspace 是 "default"，返回项目根目录
+fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
+    if workspace == "default" {
+        Some(project.root_path.clone())
+    } else {
+        project.get_workspace(workspace).map(|w| w.worktree_path.clone())
+    }
+}
 
 /// Shared application state for the WebSocket server
 pub type SharedAppState = Arc<Mutex<AppState>>;
@@ -504,7 +514,8 @@ async fn handle_client_message(
             let state = app_state.lock().await;
             match state.get_project(&project) {
                 Some(p) => {
-                    let items: Vec<WorkspaceInfo> = p
+                    // 收集所有真实的工作空间
+                    let mut items: Vec<WorkspaceInfo> = p
                         .workspaces
                         .values()
                         .map(|w| WorkspaceInfo {
@@ -520,6 +531,16 @@ async fn handle_client_message(
                             },
                         })
                         .collect();
+                    
+                    // 在列表开头添加虚拟的 "default" 工作空间，指向项目根目录
+                    let default_ws = WorkspaceInfo {
+                        name: "default".to_string(),
+                        root: p.root_path.to_string_lossy().to_string(),
+                        branch: p.default_branch.clone(),
+                        status: "ready".to_string(),
+                    };
+                    items.insert(0, default_ws);
+                    
                     send_message(
                         socket,
                         &ServerMessage::Workspaces {
@@ -545,59 +566,66 @@ async fn handle_client_message(
         ClientMessage::SelectWorkspace { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root_path = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    // 处理默认工作空间：如果 workspace 是 "default"，使用项目根目录
+                    let (root_path, branch) = if workspace == "default" {
+                        (p.root_path.clone(), p.default_branch.clone())
+                    } else {
+                        match p.get_workspace(&workspace) {
+                            Some(w) => (w.worktree_path.clone(), w.branch.clone()),
+                            None => {
+                                drop(state);
+                                send_message(
+                                    socket,
+                                    &ServerMessage::Error {
+                                        code: "workspace_not_found".to_string(),
+                                        message: format!(
+                                            "Workspace '{}' not found in project '{}'",
+                                            workspace, project
+                                        ),
+                                    },
+                                )
+                                .await?;
+                                return Ok(());
+                            }
+                        }
+                    };
+                    drop(state);
 
-                        // v1.2: Create new terminal in workspace WITHOUT closing existing terminals
-                        // This enables multi-workspace parallel support
-                        let (session_id, shell_name) = {
-                            let mut mgr = manager.lock().await;
-                            mgr.spawn(
-                                Some(root_path.clone()),
-                                Some(project.clone()),
-                                Some(workspace.clone()),
-                                tx_output.clone(),
-                                tx_exit.clone(),
-                            )
-                            .map_err(|e| format!("Spawn error: {}", e))?
-                        };
-
-                        info!(
-                            project = %project,
-                            workspace = %workspace,
-                            root = %root_path.display(),
-                            term_id = %session_id,
-                            "Terminal spawned in workspace"
-                        );
-
-                        send_message(
-                            socket,
-                            &ServerMessage::SelectedWorkspace {
-                                project: project.clone(),
-                                workspace: workspace.clone(),
-                                root: root_path.to_string_lossy().to_string(),
-                                session_id,
-                                shell: shell_name,
-                            },
+                    // v1.2: Create new terminal in workspace WITHOUT closing existing terminals
+                    // This enables multi-workspace parallel support
+                    let (session_id, shell_name) = {
+                        let mut mgr = manager.lock().await;
+                        mgr.spawn(
+                            Some(root_path.clone()),
+                            Some(project.clone()),
+                            Some(workspace.clone()),
+                            tx_output.clone(),
+                            tx_exit.clone(),
                         )
-                        .await?;
-                    }
-                    None => {
-                        send_message(
-                            socket,
-                            &ServerMessage::Error {
-                                code: "workspace_not_found".to_string(),
-                                message: format!(
-                                    "Workspace '{}' not found in project '{}'",
-                                    workspace, project
-                                ),
-                            },
-                        )
-                        .await?;
-                    }
-                },
+                        .map_err(|e| format!("Spawn error: {}", e))?
+                    };
+
+                    info!(
+                        project = %project,
+                        workspace = %workspace,
+                        root = %root_path.display(),
+                        term_id = %session_id,
+                        "Terminal spawned in workspace"
+                    );
+
+                    send_message(
+                        socket,
+                        &ServerMessage::SelectedWorkspace {
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            root: root_path.to_string_lossy().to_string(),
+                            session_id,
+                            shell: shell_name,
+                        },
+                    )
+                    .await?;
+                }
                 None => {
                     send_message(
                         socket,
@@ -666,58 +694,67 @@ async fn handle_client_message(
 
         // v1.2: Multi-workspace extension
         ClientMessage::TermCreate { project, workspace } => {
+            info!(project = %project, workspace = %workspace, "TermCreate request received");
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root_path = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    // 处理默认工作空间：如果 workspace 是 "default"，使用项目根目录
+                    let root_path = if workspace == "default" {
+                        info!(project = %project, "Using project root for default workspace");
+                        p.root_path.clone()
+                    } else {
+                        match p.get_workspace(&workspace) {
+                            Some(w) => w.worktree_path.clone(),
+                            None => {
+                                drop(state);
+                                send_message(
+                                    socket,
+                                    &ServerMessage::Error {
+                                        code: "workspace_not_found".to_string(),
+                                        message: format!(
+                                            "Workspace '{}' not found in project '{}'",
+                                            workspace, project
+                                        ),
+                                    },
+                                )
+                                .await?;
+                                return Ok(());
+                            }
+                        }
+                    };
+                    drop(state);
 
-                        let (term_id, shell_name) = {
-                            let mut mgr = manager.lock().await;
-                            mgr.spawn(
-                                Some(root_path.clone()),
-                                Some(project.clone()),
-                                Some(workspace.clone()),
-                                tx_output.clone(),
-                                tx_exit.clone(),
-                            )
-                            .map_err(|e| format!("Spawn error: {}", e))?
-                        };
-
-                        info!(
-                            project = %project,
-                            workspace = %workspace,
-                            term_id = %term_id,
-                            "New terminal created in workspace"
-                        );
-
-                        send_message(
-                            socket,
-                            &ServerMessage::TermCreated {
-                                term_id,
-                                project: project.clone(),
-                                workspace: workspace.clone(),
-                                cwd: root_path.to_string_lossy().to_string(),
-                                shell: shell_name,
-                            },
+                    let (term_id, shell_name) = {
+                        let mut mgr = manager.lock().await;
+                        mgr.spawn(
+                            Some(root_path.clone()),
+                            Some(project.clone()),
+                            Some(workspace.clone()),
+                            tx_output.clone(),
+                            tx_exit.clone(),
                         )
-                        .await?;
-                    }
-                    None => {
-                        send_message(
-                            socket,
-                            &ServerMessage::Error {
-                                code: "workspace_not_found".to_string(),
-                                message: format!(
-                                    "Workspace '{}' not found in project '{}'",
-                                    workspace, project
-                                ),
-                            },
-                        )
-                        .await?;
-                    }
-                },
+                        .map_err(|e| format!("Spawn error: {}", e))?
+                    };
+
+                    info!(
+                        project = %project,
+                        workspace = %workspace,
+                        term_id = %term_id,
+                        "New terminal created in workspace"
+                    );
+
+                    send_message(
+                        socket,
+                        &ServerMessage::TermCreated {
+                            term_id,
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            cwd: root_path.to_string_lossy().to_string(),
+                            shell: shell_name,
+                        },
+                    )
+                    .await?;
+                }
                 None => {
                     send_message(
                         socket,
@@ -767,42 +804,43 @@ async fn handle_client_message(
         ClientMessage::FileList { project, workspace, path } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let path_str = if path.is_empty() { ".".to_string() } else { path };
-                        match file_api::list_files(&root, &path_str) {
-                            Ok(entries) => {
-                                let items: Vec<FileEntryInfo> = entries
-                                    .into_iter()
-                                    .map(|e| FileEntryInfo {
-                                        name: e.name,
-                                        is_dir: e.is_dir,
-                                        size: e.size,
-                                    })
-                                    .collect();
-                                send_message(socket, &ServerMessage::FileListResult {
-                                    project,
-                                    workspace,
-                                    path: path_str,
-                                    items,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                let (code, message) = file_error_to_response(&e);
-                                send_message(socket, &ServerMessage::Error { code, message }).await?;
+                            let path_str = if path.is_empty() { ".".to_string() } else { path };
+                            match file_api::list_files(&root, &path_str) {
+                                Ok(entries) => {
+                                    let items: Vec<FileEntryInfo> = entries
+                                        .into_iter()
+                                        .map(|e| FileEntryInfo {
+                                            name: e.name,
+                                            is_dir: e.is_dir,
+                                            size: e.size,
+                                        })
+                                        .collect();
+                                    send_message(socket, &ServerMessage::FileListResult {
+                                        project,
+                                        workspace,
+                                        path: path_str,
+                                        items,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    let (code, message) = file_error_to_response(&e);
+                                    send_message(socket, &ServerMessage::Error { code, message }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -815,35 +853,36 @@ async fn handle_client_message(
         ClientMessage::FileRead { project, workspace, path } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        match file_api::read_file(&root, &path) {
-                            Ok((content, size)) => {
-                                let content_b64 = BASE64.encode(content.as_bytes());
-                                send_message(socket, &ServerMessage::FileReadResult {
-                                    project,
-                                    workspace,
-                                    path,
-                                    content_b64,
-                                    size,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                let (code, message) = file_error_to_response(&e);
-                                send_message(socket, &ServerMessage::Error { code, message }).await?;
+                            match file_api::read_file(&root, &path) {
+                                Ok((content, size)) => {
+                                    let content_b64 = BASE64.encode(content.as_bytes());
+                                    send_message(socket, &ServerMessage::FileReadResult {
+                                        project,
+                                        workspace,
+                                        path,
+                                        content_b64,
+                                        size,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    let (code, message) = file_error_to_response(&e);
+                                    send_message(socket, &ServerMessage::Error { code, message }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -856,55 +895,56 @@ async fn handle_client_message(
         ClientMessage::FileWrite { project, workspace, path, content_b64 } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        // Decode base64 content
-                        match BASE64.decode(&content_b64) {
-                            Ok(bytes) => {
-                                match String::from_utf8(bytes) {
-                                    Ok(content) => {
-                                        match file_api::write_file(&root, &path, &content) {
-                                            Ok(size) => {
-                                                send_message(socket, &ServerMessage::FileWriteResult {
-                                                    project,
-                                                    workspace,
-                                                    path,
-                                                    success: true,
-                                                    size,
-                                                }).await?;
-                                            }
-                                            Err(e) => {
-                                                let (code, message) = file_error_to_response(&e);
-                                                send_message(socket, &ServerMessage::Error { code, message }).await?;
+                            // Decode base64 content
+                            match BASE64.decode(&content_b64) {
+                                Ok(bytes) => {
+                                    match String::from_utf8(bytes) {
+                                        Ok(content) => {
+                                            match file_api::write_file(&root, &path, &content) {
+                                                Ok(size) => {
+                                                    send_message(socket, &ServerMessage::FileWriteResult {
+                                                        project,
+                                                        workspace,
+                                                        path,
+                                                        success: true,
+                                                        size,
+                                                    }).await?;
+                                                }
+                                                Err(e) => {
+                                                    let (code, message) = file_error_to_response(&e);
+                                                    send_message(socket, &ServerMessage::Error { code, message }).await?;
+                                                }
                                             }
                                         }
-                                    }
-                                    Err(_) => {
-                                        send_message(socket, &ServerMessage::Error {
-                                            code: "invalid_utf8".to_string(),
-                                            message: "Content is not valid UTF-8".to_string(),
-                                        }).await?;
+                                        Err(_) => {
+                                            send_message(socket, &ServerMessage::Error {
+                                                code: "invalid_utf8".to_string(),
+                                                message: "Content is not valid UTF-8".to_string(),
+                                            }).await?;
+                                        }
                                     }
                                 }
-                            }
-                            Err(_) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "invalid_base64".to_string(),
-                                    message: "Invalid base64 encoding".to_string(),
-                                }).await?;
+                                Err(_) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "invalid_base64".to_string(),
+                                        message: "Invalid base64 encoding".to_string(),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -918,46 +958,47 @@ async fn handle_client_message(
         ClientMessage::FileIndex { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        // Run indexing in blocking task to avoid blocking async runtime
-                        let result = tokio::task::spawn_blocking(move || {
-                            file_index::index_files(&root)
-                        }).await;
+                            // Run indexing in blocking task to avoid blocking async runtime
+                            let result = tokio::task::spawn_blocking(move || {
+                                file_index::index_files(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(index_result)) => {
-                                send_message(socket, &ServerMessage::FileIndexResult {
-                                    project,
-                                    workspace,
-                                    items: index_result.items,
-                                    truncated: index_result.truncated,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "io_error".to_string(),
-                                    message: format!("Failed to index files: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Index task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(index_result)) => {
+                                    send_message(socket, &ServerMessage::FileIndexResult {
+                                        project,
+                                        workspace,
+                                        items: index_result.items,
+                                        truncated: index_result.truncated,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "io_error".to_string(),
+                                        message: format!("Failed to index files: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Index task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -971,58 +1012,59 @@ async fn handle_client_message(
         ClientMessage::GitStatus { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        // Run git status in blocking task
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_status(&root)
-                        }).await;
+                            // Run git status in blocking task
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_status(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(status_result)) => {
-                                let items: Vec<GitStatusEntry> = status_result.items
-                                    .into_iter()
-                                    .map(|e| GitStatusEntry {
-                                        path: e.path,
-                                        code: e.code,
-                                        orig_path: e.orig_path,
-                                        staged: e.staged,
-                                    })
-                                    .collect();
+                            match result {
+                                Ok(Ok(status_result)) => {
+                                    let items: Vec<GitStatusEntry> = status_result.items
+                                        .into_iter()
+                                        .map(|e| GitStatusEntry {
+                                            path: e.path,
+                                            code: e.code,
+                                            orig_path: e.orig_path,
+                                            staged: e.staged,
+                                        })
+                                        .collect();
 
-                                send_message(socket, &ServerMessage::GitStatusResult {
-                                    project,
-                                    workspace,
-                                    repo_root: status_result.repo_root,
-                                    items,
-                                    has_staged_changes: status_result.has_staged_changes,
-                                    staged_count: status_result.staged_count,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Git status failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git status task failed: {}", e),
-                                }).await?;
+                                    send_message(socket, &ServerMessage::GitStatusResult {
+                                        project,
+                                        workspace,
+                                        repo_root: status_result.repo_root,
+                                        items,
+                                        has_staged_changes: status_result.has_staged_changes,
+                                        staged_count: status_result.staged_count,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "git_error".to_string(),
+                                        message: format!("Git status failed: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git status task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1036,53 +1078,54 @@ async fn handle_client_message(
         ClientMessage::GitDiff { project, workspace, path, base, mode } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        // Run git diff in blocking task
-                        let path_clone = path.clone();
-                        let mode_clone = mode.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_diff(&root, &path_clone, base.as_deref(), &mode_clone)
-                        }).await;
+                            // Run git diff in blocking task
+                            let path_clone = path.clone();
+                            let mode_clone = mode.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_diff(&root, &path_clone, base.as_deref(), &mode_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(diff_result)) => {
-                                send_message(socket, &ServerMessage::GitDiffResult {
-                                    project,
-                                    workspace,
-                                    path,
-                                    code: diff_result.code,
-                                    format: diff_result.format,
-                                    text: diff_result.text,
-                                    is_binary: diff_result.is_binary,
-                                    truncated: diff_result.truncated,
-                                    mode: diff_result.mode,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Git diff failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git diff task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(diff_result)) => {
+                                    send_message(socket, &ServerMessage::GitDiffResult {
+                                        project,
+                                        workspace,
+                                        path,
+                                        code: diff_result.code,
+                                        format: diff_result.format,
+                                        text: diff_result.text,
+                                        is_binary: diff_result.is_binary,
+                                        truncated: diff_result.truncated,
+                                        mode: diff_result.mode,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "git_error".to_string(),
+                                        message: format!("Git diff failed: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git diff task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1096,55 +1139,56 @@ async fn handle_client_message(
         ClientMessage::GitStage { project, workspace, path, scope } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let path_clone = path.clone();
-                        let scope_clone = scope.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_stage(&root, path_clone.as_deref(), &scope_clone)
-                        }).await;
+                            let path_clone = path.clone();
+                            let scope_clone = scope.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_stage(&root, path_clone.as_deref(), &scope_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(op_result)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: op_result.op,
-                                    ok: op_result.ok,
-                                    message: op_result.message,
-                                    path: op_result.path,
-                                    scope: op_result.scope,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: "stage".to_string(),
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    path,
-                                    scope,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git stage task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(op_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: op_result.op,
+                                        ok: op_result.ok,
+                                        message: op_result.message,
+                                        path: op_result.path,
+                                        scope: op_result.scope,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: "stage".to_string(),
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        path,
+                                        scope,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git stage task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1158,55 +1202,56 @@ async fn handle_client_message(
         ClientMessage::GitUnstage { project, workspace, path, scope } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let path_clone = path.clone();
-                        let scope_clone = scope.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_unstage(&root, path_clone.as_deref(), &scope_clone)
-                        }).await;
+                            let path_clone = path.clone();
+                            let scope_clone = scope.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_unstage(&root, path_clone.as_deref(), &scope_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(op_result)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: op_result.op,
-                                    ok: op_result.ok,
-                                    message: op_result.message,
-                                    path: op_result.path,
-                                    scope: op_result.scope,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: "unstage".to_string(),
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    path,
-                                    scope,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git unstage task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(op_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: op_result.op,
+                                        ok: op_result.ok,
+                                        message: op_result.message,
+                                        path: op_result.path,
+                                        scope: op_result.scope,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: "unstage".to_string(),
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        path,
+                                        scope,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git unstage task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1220,55 +1265,56 @@ async fn handle_client_message(
         ClientMessage::GitDiscard { project, workspace, path, scope } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let path_clone = path.clone();
-                        let scope_clone = scope.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_discard(&root, path_clone.as_deref(), &scope_clone)
-                        }).await;
+                            let path_clone = path.clone();
+                            let scope_clone = scope.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_discard(&root, path_clone.as_deref(), &scope_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(op_result)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: op_result.op,
-                                    ok: op_result.ok,
-                                    message: op_result.message,
-                                    path: op_result.path,
-                                    scope: op_result.scope,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: "discard".to_string(),
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    path,
-                                    scope,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git discard task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(op_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: op_result.op,
+                                        ok: op_result.ok,
+                                        message: op_result.message,
+                                        path: op_result.path,
+                                        scope: op_result.scope,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: "discard".to_string(),
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        path,
+                                        scope,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git discard task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1282,50 +1328,51 @@ async fn handle_client_message(
         ClientMessage::GitBranches { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_branches(&root)
-                        }).await;
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_branches(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(branches_result)) => {
-                                let branches: Vec<GitBranchInfo> = branches_result.branches
-                                    .into_iter()
-                                    .map(|b| GitBranchInfo { name: b.name })
-                                    .collect();
+                            match result {
+                                Ok(Ok(branches_result)) => {
+                                    let branches: Vec<GitBranchInfo> = branches_result.branches
+                                        .into_iter()
+                                        .map(|b| GitBranchInfo { name: b.name })
+                                        .collect();
 
-                                send_message(socket, &ServerMessage::GitBranchesResult {
-                                    project,
-                                    workspace,
-                                    current: branches_result.current,
-                                    branches,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Git branches failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git branches task failed: {}", e),
-                                }).await?;
+                                    send_message(socket, &ServerMessage::GitBranchesResult {
+                                        project,
+                                        workspace,
+                                        current: branches_result.current,
+                                        branches,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "git_error".to_string(),
+                                        message: format!("Git branches failed: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git branches task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1339,54 +1386,55 @@ async fn handle_client_message(
         ClientMessage::GitSwitchBranch { project, workspace, branch } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let branch_clone = branch.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_switch_branch(&root, &branch_clone)
-                        }).await;
+                            let branch_clone = branch.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_switch_branch(&root, &branch_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(op_result)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: op_result.op,
-                                    ok: op_result.ok,
-                                    message: op_result.message,
-                                    path: op_result.path,
-                                    scope: op_result.scope,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: "switch_branch".to_string(),
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    path: Some(branch),
-                                    scope: "branch".to_string(),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git switch branch task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(op_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: op_result.op,
+                                        ok: op_result.ok,
+                                        message: op_result.message,
+                                        path: op_result.path,
+                                        scope: op_result.scope,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: "switch_branch".to_string(),
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        path: Some(branch),
+                                        scope: "branch".to_string(),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git switch branch task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1400,54 +1448,55 @@ async fn handle_client_message(
         ClientMessage::GitCreateBranch { project, workspace, branch } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let branch_clone = branch.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_create_branch(&root, &branch_clone)
-                        }).await;
+                            let branch_clone = branch.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_create_branch(&root, &branch_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(op_result)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: op_result.op,
-                                    ok: op_result.ok,
-                                    message: op_result.message,
-                                    path: op_result.path,
-                                    scope: op_result.scope,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: "create_branch".to_string(),
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    path: Some(branch),
-                                    scope: "branch".to_string(),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git create branch task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(op_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: op_result.op,
+                                        ok: op_result.ok,
+                                        message: op_result.message,
+                                        path: op_result.path,
+                                        scope: op_result.scope,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: "create_branch".to_string(),
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        path: Some(branch),
+                                        scope: "branch".to_string(),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git create branch task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1461,50 +1510,51 @@ async fn handle_client_message(
         ClientMessage::GitCommit { project, workspace, message } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let message_clone = message.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_commit(&root, &message_clone)
-                        }).await;
+                            let message_clone = message.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_commit(&root, &message_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(commit_result)) => {
-                                send_message(socket, &ServerMessage::GitCommitResult {
-                                    project,
-                                    workspace,
-                                    ok: commit_result.ok,
-                                    message: commit_result.message,
-                                    sha: commit_result.sha,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitCommitResult {
-                                    project,
-                                    workspace,
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    sha: None,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git commit task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(commit_result)) => {
+                                    send_message(socket, &ServerMessage::GitCommitResult {
+                                        project,
+                                        workspace,
+                                        ok: commit_result.ok,
+                                        message: commit_result.message,
+                                        sha: commit_result.sha,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitCommitResult {
+                                        project,
+                                        workspace,
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        sha: None,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git commit task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1518,53 +1568,54 @@ async fn handle_client_message(
         ClientMessage::GitFetch { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_fetch(&root)
-                        }).await;
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_fetch(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(op_result)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: op_result.op,
-                                    ok: op_result.ok,
-                                    message: op_result.message,
-                                    path: op_result.path,
-                                    scope: op_result.scope,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitOpResult {
-                                    project,
-                                    workspace,
-                                    op: "fetch".to_string(),
-                                    ok: false,
-                                    message: Some(format!("{}", e)),
-                                    path: None,
-                                    scope: "all".to_string(),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git fetch task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(op_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: op_result.op,
+                                        ok: op_result.ok,
+                                        message: op_result.message,
+                                        path: op_result.path,
+                                        scope: op_result.scope,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitOpResult {
+                                        project,
+                                        workspace,
+                                        op: "fetch".to_string(),
+                                        ok: false,
+                                        message: Some(format!("{}", e)),
+                                        path: None,
+                                        scope: "all".to_string(),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git fetch task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1578,52 +1629,53 @@ async fn handle_client_message(
         ClientMessage::GitRebase { project, workspace, onto_branch } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let onto_clone = onto_branch.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_rebase(&root, &onto_clone)
-                        }).await;
+                            let onto_clone = onto_branch.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_rebase(&root, &onto_clone)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(rebase_result)) => {
-                                send_message(socket, &ServerMessage::GitRebaseResult {
-                                    project,
-                                    workspace,
-                                    ok: rebase_result.ok,
-                                    state: rebase_result.state,
-                                    message: rebase_result.message,
-                                    conflicts: rebase_result.conflicts,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitRebaseResult {
-                                    project,
-                                    workspace,
-                                    ok: false,
-                                    state: "error".to_string(),
-                                    message: Some(format!("{}", e)),
-                                    conflicts: vec![],
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git rebase task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(rebase_result)) => {
+                                    send_message(socket, &ServerMessage::GitRebaseResult {
+                                        project,
+                                        workspace,
+                                        ok: rebase_result.ok,
+                                        state: rebase_result.state,
+                                        message: rebase_result.message,
+                                        conflicts: rebase_result.conflicts,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitRebaseResult {
+                                        project,
+                                        workspace,
+                                        ok: false,
+                                        state: "error".to_string(),
+                                        message: Some(format!("{}", e)),
+                                        conflicts: vec![],
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git rebase task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1637,51 +1689,52 @@ async fn handle_client_message(
         ClientMessage::GitRebaseContinue { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_rebase_continue(&root)
-                        }).await;
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_rebase_continue(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(rebase_result)) => {
-                                send_message(socket, &ServerMessage::GitRebaseResult {
-                                    project,
-                                    workspace,
-                                    ok: rebase_result.ok,
-                                    state: rebase_result.state,
-                                    message: rebase_result.message,
-                                    conflicts: rebase_result.conflicts,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitRebaseResult {
-                                    project,
-                                    workspace,
-                                    ok: false,
-                                    state: "error".to_string(),
-                                    message: Some(format!("{}", e)),
-                                    conflicts: vec![],
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git rebase continue task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(rebase_result)) => {
+                                    send_message(socket, &ServerMessage::GitRebaseResult {
+                                        project,
+                                        workspace,
+                                        ok: rebase_result.ok,
+                                        state: rebase_result.state,
+                                        message: rebase_result.message,
+                                        conflicts: rebase_result.conflicts,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitRebaseResult {
+                                        project,
+                                        workspace,
+                                        ok: false,
+                                        state: "error".to_string(),
+                                        message: Some(format!("{}", e)),
+                                        conflicts: vec![],
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git rebase continue task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1695,51 +1748,52 @@ async fn handle_client_message(
         ClientMessage::GitRebaseAbort { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_rebase_abort(&root)
-                        }).await;
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_rebase_abort(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(rebase_result)) => {
-                                send_message(socket, &ServerMessage::GitRebaseResult {
-                                    project,
-                                    workspace,
-                                    ok: rebase_result.ok,
-                                    state: rebase_result.state,
-                                    message: rebase_result.message,
-                                    conflicts: rebase_result.conflicts,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitRebaseResult {
-                                    project,
-                                    workspace,
-                                    ok: false,
-                                    state: "error".to_string(),
-                                    message: Some(format!("{}", e)),
-                                    conflicts: vec![],
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git rebase abort task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(rebase_result)) => {
+                                    send_message(socket, &ServerMessage::GitRebaseResult {
+                                        project,
+                                        workspace,
+                                        ok: rebase_result.ok,
+                                        state: rebase_result.state,
+                                        message: rebase_result.message,
+                                        conflicts: rebase_result.conflicts,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::GitRebaseResult {
+                                        project,
+                                        workspace,
+                                        ok: false,
+                                        state: "error".to_string(),
+                                        message: Some(format!("{}", e)),
+                                        conflicts: vec![],
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git rebase abort task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1753,47 +1807,48 @@ async fn handle_client_message(
         ClientMessage::GitOpStatus { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_op_status(&root)
-                        }).await;
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_op_status(&root)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(status_result)) => {
-                                send_message(socket, &ServerMessage::GitOpStatusResult {
-                                    project,
-                                    workspace,
-                                    state: status_result.state.as_str().to_string(),
-                                    conflicts: status_result.conflicts,
-                                    head: status_result.head,
-                                    onto: status_result.onto,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Git op status failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git op status task failed: {}", e),
-                                }).await?;
+                            match result {
+                                Ok(Ok(status_result)) => {
+                                    send_message(socket, &ServerMessage::GitOpStatusResult {
+                                        project,
+                                        workspace,
+                                        state: status_result.state.as_str().to_string(),
+                                        conflicts: status_result.conflicts,
+                                        head: status_result.head,
+                                        onto: status_result.onto,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "git_error".to_string(),
+                                        message: format!("Git op status failed: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git op status task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -1862,70 +1917,77 @@ async fn handle_client_message(
         ClientMessage::GitMergeToDefault { project, workspace, default_branch } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = p.root_path.clone();
-                        let project_name = p.name.clone();
-                        let source_branch = w.branch.clone();
-                        drop(state);
+                Some(p) => {
+                    // 获取源分支：如果是默认工作空间，使用项目默认分支
+                    let source_branch = if workspace == "default" {
+                        p.default_branch.clone()
+                    } else {
+                        match p.get_workspace(&workspace) {
+                            Some(w) => w.branch.clone(),
+                            None => {
+                                drop(state);
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "workspace_not_found".to_string(),
+                                    message: format!("Workspace '{}' not found", workspace),
+                                }).await?;
+                                return Ok(());
+                            }
+                        }
+                    };
+                    let root = p.root_path.clone();
+                    let project_name = p.name.clone();
+                    drop(state);
 
-                        // Check if workspace is on a branch (not detached HEAD)
-                        if source_branch == "HEAD" || source_branch.is_empty() {
+                    // Check if workspace is on a branch (not detached HEAD)
+                    if source_branch == "HEAD" || source_branch.is_empty() {
+                        send_message(socket, &ServerMessage::GitMergeToDefaultResult {
+                            project,
+                            ok: false,
+                            state: "failed".to_string(),
+                            message: Some("Workspace is in detached HEAD state. Create/switch to a branch first.".to_string()),
+                            conflicts: vec![],
+                            head_sha: None,
+                            integration_path: None,
+                        }).await?;
+                        return Ok(());
+                    }
+
+                    let default_branch_clone = default_branch.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        git_tools::merge_to_default(&root, &project_name, &source_branch, &default_branch_clone)
+                    }).await;
+
+                    match result {
+                        Ok(Ok(merge_result)) => {
+                            send_message(socket, &ServerMessage::GitMergeToDefaultResult {
+                                project,
+                                ok: merge_result.ok,
+                                state: merge_result.state,
+                                message: merge_result.message,
+                                conflicts: merge_result.conflicts,
+                                head_sha: merge_result.head_sha,
+                                integration_path: merge_result.integration_path,
+                            }).await?;
+                        }
+                        Ok(Err(e)) => {
                             send_message(socket, &ServerMessage::GitMergeToDefaultResult {
                                 project,
                                 ok: false,
                                 state: "failed".to_string(),
-                                message: Some("Workspace is in detached HEAD state. Create/switch to a branch first.".to_string()),
+                                message: Some(format!("{}", e)),
                                 conflicts: vec![],
                                 head_sha: None,
                                 integration_path: None,
                             }).await?;
-                            return Ok(());
                         }
-
-                        let default_branch_clone = default_branch.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::merge_to_default(&root, &project_name, &source_branch, &default_branch_clone)
-                        }).await;
-
-                        match result {
-                            Ok(Ok(merge_result)) => {
-                                send_message(socket, &ServerMessage::GitMergeToDefaultResult {
-                                    project,
-                                    ok: merge_result.ok,
-                                    state: merge_result.state,
-                                    message: merge_result.message,
-                                    conflicts: merge_result.conflicts,
-                                    head_sha: merge_result.head_sha,
-                                    integration_path: merge_result.integration_path,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitMergeToDefaultResult {
-                                    project,
-                                    ok: false,
-                                    state: "failed".to_string(),
-                                    message: Some(format!("{}", e)),
-                                    conflicts: vec![],
-                                    head_sha: None,
-                                    integration_path: None,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Merge to default task failed: {}", e),
-                                }).await?;
-                            }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "internal_error".to_string(),
+                                message: format!("Merge to default task failed: {}", e),
+                            }).await?;
                         }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -2095,70 +2157,77 @@ async fn handle_client_message(
         ClientMessage::GitRebaseOntoDefault { project, workspace, default_branch } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = p.root_path.clone();
-                        let project_name = p.name.clone();
-                        let source_branch = w.branch.clone();
-                        drop(state);
+                Some(p) => {
+                    // 获取源分支：如果是默认工作空间，使用项目默认分支
+                    let source_branch = if workspace == "default" {
+                        p.default_branch.clone()
+                    } else {
+                        match p.get_workspace(&workspace) {
+                            Some(w) => w.branch.clone(),
+                            None => {
+                                drop(state);
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "workspace_not_found".to_string(),
+                                    message: format!("Workspace '{}' not found", workspace),
+                                }).await?;
+                                return Ok(());
+                            }
+                        }
+                    };
+                    let root = p.root_path.clone();
+                    let project_name = p.name.clone();
+                    drop(state);
 
-                        // Check if workspace is on a branch (not detached HEAD)
-                        if source_branch == "HEAD" || source_branch.is_empty() {
+                    // Check if workspace is on a branch (not detached HEAD)
+                    if source_branch == "HEAD" || source_branch.is_empty() {
+                        send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                            project,
+                            ok: false,
+                            state: "failed".to_string(),
+                            message: Some("Workspace is in detached HEAD state. Create/switch to a branch first.".to_string()),
+                            conflicts: vec![],
+                            head_sha: None,
+                            integration_path: None,
+                        }).await?;
+                        return Ok(());
+                    }
+
+                    let default_branch_clone = default_branch.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        git_tools::rebase_onto_default(&root, &project_name, &source_branch, &default_branch_clone)
+                    }).await;
+
+                    match result {
+                        Ok(Ok(rebase_result)) => {
+                            send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
+                                project,
+                                ok: rebase_result.ok,
+                                state: rebase_result.state,
+                                message: rebase_result.message,
+                                conflicts: rebase_result.conflicts,
+                                head_sha: rebase_result.head_sha,
+                                integration_path: rebase_result.integration_path,
+                            }).await?;
+                        }
+                        Ok(Err(e)) => {
                             send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
                                 project,
                                 ok: false,
                                 state: "failed".to_string(),
-                                message: Some("Workspace is in detached HEAD state. Create/switch to a branch first.".to_string()),
+                                message: Some(format!("{}", e)),
                                 conflicts: vec![],
                                 head_sha: None,
                                 integration_path: None,
                             }).await?;
-                            return Ok(());
                         }
-
-                        let default_branch_clone = default_branch.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::rebase_onto_default(&root, &project_name, &source_branch, &default_branch_clone)
-                        }).await;
-
-                        match result {
-                            Ok(Ok(rebase_result)) => {
-                                send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
-                                    project,
-                                    ok: rebase_result.ok,
-                                    state: rebase_result.state,
-                                    message: rebase_result.message,
-                                    conflicts: rebase_result.conflicts,
-                                    head_sha: rebase_result.head_sha,
-                                    integration_path: rebase_result.integration_path,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::GitRebaseOntoDefaultResult {
-                                    project,
-                                    ok: false,
-                                    state: "failed".to_string(),
-                                    message: Some(format!("{}", e)),
-                                    conflicts: vec![],
-                                    head_sha: None,
-                                    integration_path: None,
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Rebase onto default task failed: {}", e),
-                                }).await?;
-                            }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "internal_error".to_string(),
+                                message: format!("Rebase onto default task failed: {}", e),
+                            }).await?;
                         }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -2329,111 +2398,117 @@ async fn handle_client_message(
         ClientMessage::GitCheckBranchUpToDate { project, workspace } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        let current_branch = w.branch.clone();
-                        let project_name = p.name.clone();
-                        drop(state);
-
-                        // Check if workspace is on a branch (not detached HEAD)
-                        if current_branch == "HEAD" || current_branch.is_empty() {
-                            send_message(socket, &ServerMessage::GitIntegrationStatusResult {
-                                project,
-                                state: "idle".to_string(),
-                                conflicts: vec![],
-                                head: None,
-                                default_branch: "main".to_string(),
-                                path: root.to_string_lossy().to_string(),
-                                is_clean: true,
-                                branch_ahead_by: None,
-                                branch_behind_by: None,
-                                compared_branch: None,
-                            }).await?;
-                            return Ok(());
+                Some(p) => {
+                    // 获取工作空间信息：如果是默认工作空间，使用项目根目录和默认分支
+                    let (root, current_branch) = if workspace == "default" {
+                        (p.root_path.clone(), p.default_branch.clone())
+                    } else {
+                        match p.get_workspace(&workspace) {
+                            Some(w) => (w.worktree_path.clone(), w.branch.clone()),
+                            None => {
+                                drop(state);
+                                send_message(socket, &ServerMessage::Error {
+                                    code: "workspace_not_found".to_string(),
+                                    message: format!("Workspace '{}' not found", workspace),
+                                }).await?;
+                                return Ok(());
+                            }
                         }
+                    };
+                    let project_name = p.name.clone();
+                    drop(state);
 
-                        // Default to "main" branch for comparison
-                        let default_branch = "main".to_string();
-                        let default_branch_clone = default_branch.clone();
-                        let current_branch_clone = current_branch.clone();
+                    // Check if workspace is on a branch (not detached HEAD)
+                    if current_branch == "HEAD" || current_branch.is_empty() {
+                        send_message(socket, &ServerMessage::GitIntegrationStatusResult {
+                            project,
+                            state: "idle".to_string(),
+                            conflicts: vec![],
+                            head: None,
+                            default_branch: "main".to_string(),
+                            path: root.to_string_lossy().to_string(),
+                            is_clean: true,
+                            branch_ahead_by: None,
+                            branch_behind_by: None,
+                            compared_branch: None,
+                        }).await?;
+                        return Ok(());
+                    }
 
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::check_branch_divergence(&root, &current_branch_clone, &default_branch_clone)
-                        }).await;
+                    // Default to "main" branch for comparison
+                    let default_branch = "main".to_string();
+                    let default_branch_clone = default_branch.clone();
+                    let current_branch_clone = current_branch.clone();
 
-                        match result {
-                            Ok(Ok(divergence_result)) => {
-                                // Get integration status for the full response
-                                let integration_result = tokio::task::spawn_blocking({
-                                    let project_name = project_name.clone();
-                                    let default_branch = default_branch.clone();
-                                    move || {
-                                        git_tools::integration_status(&project_name, &default_branch)
-                                    }
-                                }).await;
+                    let result = tokio::task::spawn_blocking(move || {
+                        git_tools::check_branch_divergence(&root, &current_branch_clone, &default_branch_clone)
+                    }).await;
 
-                                match integration_result {
-                                    Ok(Ok(status_result)) => {
-                                        send_message(socket, &ServerMessage::GitIntegrationStatusResult {
-                                            project,
-                                            state: status_result.state.as_str().to_string(),
-                                            conflicts: status_result.conflicts,
-                                            head: status_result.head,
-                                            default_branch: status_result.default_branch,
-                                            path: status_result.path,
-                                            is_clean: status_result.is_clean,
-                                            branch_ahead_by: Some(divergence_result.ahead_by),
-                                            branch_behind_by: Some(divergence_result.behind_by),
-                                            compared_branch: Some(divergence_result.compared_branch),
-                                        }).await?;
-                                    }
-                                    Ok(Err(e)) => {
-                                        // Integration status failed, but we still have divergence info
-                                        send_message(socket, &ServerMessage::GitIntegrationStatusResult {
-                                            project,
-                                            state: "idle".to_string(),
-                                            conflicts: vec![],
-                                            head: None,
-                                            default_branch,
-                                            path: String::new(),
-                                            is_clean: true,
-                                            branch_ahead_by: Some(divergence_result.ahead_by),
-                                            branch_behind_by: Some(divergence_result.behind_by),
-                                            compared_branch: Some(divergence_result.compared_branch),
-                                        }).await?;
-                                        warn!("Integration status failed: {}", e);
-                                    }
-                                    Err(e) => {
-                                        send_message(socket, &ServerMessage::Error {
-                                            code: "internal_error".to_string(),
-                                            message: format!("Integration status task failed: {}", e),
-                                        }).await?;
-                                    }
+                    match result {
+                        Ok(Ok(divergence_result)) => {
+                            // Get integration status for the full response
+                            let integration_result = tokio::task::spawn_blocking({
+                                let project_name = project_name.clone();
+                                let default_branch = default_branch.clone();
+                                move || {
+                                    git_tools::integration_status(&project_name, &default_branch)
+                                }
+                            }).await;
+
+                            match integration_result {
+                                Ok(Ok(status_result)) => {
+                                    send_message(socket, &ServerMessage::GitIntegrationStatusResult {
+                                        project,
+                                        state: status_result.state.as_str().to_string(),
+                                        conflicts: status_result.conflicts,
+                                        head: status_result.head,
+                                        default_branch: status_result.default_branch,
+                                        path: status_result.path,
+                                        is_clean: status_result.is_clean,
+                                        branch_ahead_by: Some(divergence_result.ahead_by),
+                                        branch_behind_by: Some(divergence_result.behind_by),
+                                        compared_branch: Some(divergence_result.compared_branch),
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    // Integration status failed, but we still have divergence info
+                                    send_message(socket, &ServerMessage::GitIntegrationStatusResult {
+                                        project,
+                                        state: "idle".to_string(),
+                                        conflicts: vec![],
+                                        head: None,
+                                        default_branch,
+                                        path: String::new(),
+                                        is_clean: true,
+                                        branch_ahead_by: Some(divergence_result.ahead_by),
+                                        branch_behind_by: Some(divergence_result.behind_by),
+                                        compared_branch: Some(divergence_result.compared_branch),
+                                    }).await?;
+                                    warn!("Integration status failed: {}", e);
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Integration status task failed: {}", e),
+                                    }).await?;
                                 }
                             }
-                            Ok(Err(e)) => {
-                                // Divergence check failed, return error
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Branch divergence check failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Branch divergence task failed: {}", e),
-                                }).await?;
-                            }
+                        }
+                        Ok(Err(e)) => {
+                            // Divergence check failed, return error
+                            send_message(socket, &ServerMessage::Error {
+                                code: "git_error".to_string(),
+                                message: format!("Branch divergence check failed: {}", e),
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "internal_error".to_string(),
+                                message: format!("Branch divergence task failed: {}", e),
+                            }).await?;
                         }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -2444,8 +2519,8 @@ async fn handle_client_message(
         }
 
         // v1.16: Import project
-        ClientMessage::ImportProject { name, path, create_default_workspace } => {
-            info!("ImportProject request: name={}, path={}, create_default_workspace={}", name, path, create_default_workspace);
+        ClientMessage::ImportProject { name, path } => {
+            info!("ImportProject request: name={}, path={}", name, path);
             let path_buf = PathBuf::from(&path);
             info!("Acquiring app_state lock...");
             let mut state = app_state.lock().await;
@@ -2457,48 +2532,12 @@ async fn handle_client_message(
                     let default_branch = project.default_branch.clone();
                     let root = project.root_path.to_string_lossy().to_string();
 
-                    // Optionally create default workspace
-                    let workspace_info = if create_default_workspace {
-                        info!("Creating default workspace...");
-                        match WorkspaceManager::create(&mut state, &name, None, false) {
-                            Ok(ws) => {
-                                info!("Default workspace created: {}", ws.name);
-                                Some(WorkspaceInfo {
-                                    name: ws.name,
-                                    root: ws.worktree_path.to_string_lossy().to_string(),
-                                    branch: ws.branch,
-                                    status: match ws.status {
-                                        WorkspaceStatus::Ready => "ready".to_string(),
-                                        WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
-                                        WorkspaceStatus::Creating => "creating".to_string(),
-                                        WorkspaceStatus::Initializing => "initializing".to_string(),
-                                        WorkspaceStatus::Destroying => "destroying".to_string(),
-                                    },
-                                })
-                            }
-                            Err(e) => {
-                                warn!("Failed to create default workspace: {}", e);
-                                // 回滚：移除已导入的项目
-                                state.remove_project(&name);
-                                let _ = state.save();
-                                // 发送错误消息
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "workspace_creation_failed".to_string(),
-                                    message: e.to_string(),
-                                }).await?;
-                                return Ok(());
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
                     info!("Sending ProjectImported response...");
                     send_message(socket, &ServerMessage::ProjectImported {
                         name,
                         root,
                         default_branch,
-                        workspace: workspace_info,
+                        workspace: None, // 不再自动创建工作空间
                     }).await?;
                     info!("ProjectImported response sent successfully");
                 }
@@ -2613,57 +2652,58 @@ async fn handle_client_message(
         ClientMessage::GitLog { project, workspace, limit } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        // Run git log in blocking task
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_log(&root, limit)
-                        }).await;
+                            // Run git log in blocking task
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_log(&root, limit)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(log_result)) => {
-                                use crate::server::protocol::GitLogEntryInfo;
-                                let entries: Vec<GitLogEntryInfo> = log_result.entries
-                                    .into_iter()
-                                    .map(|e| GitLogEntryInfo {
-                                        sha: e.sha,
-                                        message: e.message,
-                                        author: e.author,
-                                        date: e.date,
-                                        refs: e.refs,
-                                    })
-                                    .collect();
+                            match result {
+                                Ok(Ok(log_result)) => {
+                                    use crate::server::protocol::GitLogEntryInfo;
+                                    let entries: Vec<GitLogEntryInfo> = log_result.entries
+                                        .into_iter()
+                                        .map(|e| GitLogEntryInfo {
+                                            sha: e.sha,
+                                            message: e.message,
+                                            author: e.author,
+                                            date: e.date,
+                                            refs: e.refs,
+                                        })
+                                        .collect();
 
-                                send_message(socket, &ServerMessage::GitLogResult {
-                                    project,
-                                    workspace,
-                                    entries,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Git log failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git log task failed: {}", e),
-                                }).await?;
+                                    send_message(socket, &ServerMessage::GitLogResult {
+                                        project,
+                                        workspace,
+                                        entries,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "git_error".to_string(),
+                                        message: format!("Git log failed: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git log task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
@@ -2677,61 +2717,62 @@ async fn handle_client_message(
         ClientMessage::GitShow { project, workspace, sha } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
-                Some(p) => match p.get_workspace(&workspace) {
-                    Some(w) => {
-                        let root = w.worktree_path.clone();
-                        drop(state);
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
 
-                        // Run git show in blocking task
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_tools::git_show(&root, &sha)
-                        }).await;
+                            // Run git show in blocking task
+                            let result = tokio::task::spawn_blocking(move || {
+                                git_tools::git_show(&root, &sha)
+                            }).await;
 
-                        match result {
-                            Ok(Ok(show_result)) => {
-                                use crate::server::protocol::GitShowFileInfo;
-                                let files: Vec<GitShowFileInfo> = show_result.files
-                                    .into_iter()
-                                    .map(|f| GitShowFileInfo {
-                                        status: f.status,
-                                        path: f.path,
-                                        old_path: f.old_path,
-                                    })
-                                    .collect();
+                            match result {
+                                Ok(Ok(show_result)) => {
+                                    use crate::server::protocol::GitShowFileInfo;
+                                    let files: Vec<GitShowFileInfo> = show_result.files
+                                        .into_iter()
+                                        .map(|f| GitShowFileInfo {
+                                            status: f.status,
+                                            path: f.path,
+                                            old_path: f.old_path,
+                                        })
+                                        .collect();
 
-                                send_message(socket, &ServerMessage::GitShowResult {
-                                    project,
-                                    workspace,
-                                    sha: show_result.sha,
-                                    full_sha: show_result.full_sha,
-                                    message: show_result.message,
-                                    author: show_result.author,
-                                    author_email: show_result.author_email,
-                                    date: show_result.date,
-                                    files,
-                                }).await?;
-                            }
-                            Ok(Err(e)) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "git_error".to_string(),
-                                    message: format!("Git show failed: {}", e),
-                                }).await?;
-                            }
-                            Err(e) => {
-                                send_message(socket, &ServerMessage::Error {
-                                    code: "internal_error".to_string(),
-                                    message: format!("Git show task failed: {}", e),
-                                }).await?;
+                                    send_message(socket, &ServerMessage::GitShowResult {
+                                        project,
+                                        workspace,
+                                        sha: show_result.sha,
+                                        full_sha: show_result.full_sha,
+                                        message: show_result.message,
+                                        author: show_result.author,
+                                        author_email: show_result.author_email,
+                                        date: show_result.date,
+                                        files,
+                                    }).await?;
+                                }
+                                Ok(Err(e)) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "git_error".to_string(),
+                                        message: format!("Git show failed: {}", e),
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    send_message(socket, &ServerMessage::Error {
+                                        code: "internal_error".to_string(),
+                                        message: format!("Git show task failed: {}", e),
+                                    }).await?;
+                                }
                             }
                         }
+                        None => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "workspace_not_found".to_string(),
+                                message: format!("Workspace '{}' not found", workspace),
+                            }).await?;
+                        }
                     }
-                    None => {
-                        send_message(socket, &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!("Workspace '{}' not found", workspace),
-                        }).await?;
-                    }
-                },
+                }
                 None => {
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),

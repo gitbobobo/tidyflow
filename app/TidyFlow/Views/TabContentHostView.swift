@@ -7,9 +7,10 @@ struct TabContentHostView: View {
 
     /// 是否有需要展示 WebView 的活跃 tab（只读，用于驱动 webViewVisible）
     private var hasActiveContent: Bool {
-        guard let workspaceKey = appState.selectedWorkspaceKey,
-              let activeId = appState.activeTabIdByWorkspace[workspaceKey],
-              let tabs = appState.workspaceTabs[workspaceKey],
+        // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
+        guard let globalKey = appState.currentGlobalWorkspaceKey,
+              let activeId = appState.activeTabIdByWorkspace[globalKey],
+              let tabs = appState.workspaceTabs[globalKey],
               let activeTab = tabs.first(where: { $0.id == activeId })
         else { return false }
         return true
@@ -17,9 +18,10 @@ struct TabContentHostView: View {
 
     var body: some View {
         Group {
-            if let workspaceKey = appState.selectedWorkspaceKey,
-               let activeId = appState.activeTabIdByWorkspace[workspaceKey],
-               let tabs = appState.workspaceTabs[workspaceKey],
+            // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
+            if let globalKey = appState.currentGlobalWorkspaceKey,
+               let activeId = appState.activeTabIdByWorkspace[globalKey],
+               let tabs = appState.workspaceTabs[globalKey],
                let activeTab = tabs.first(where: { $0.id == activeId }) {
 
                 switch activeTab.kind {
@@ -203,13 +205,13 @@ struct TerminalContentView: View {
                 }
             }
         }
-        .onChange(of: appState.selectedWorkspaceKey) { newWsKey in
-            // 当 workspace 切换时，重新发送 terminal mode 命令
-            guard let newWsKey = newWsKey else { return }
+        .onChange(of: appState.currentGlobalWorkspaceKey) { newGlobalKey in
+            // 当全局工作空间键切换时（包括项目切换），重新发送 terminal mode 命令
+            guard let newGlobalKey = newGlobalKey else { return }
             guard appState.editorWebReady else { return }
             guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
             
-            print("[TerminalContentView] workspace changed to: \(newWsKey), re-sending terminal mode")
+            print("[TerminalContentView] global workspace key changed to: \(newGlobalKey), re-sending terminal mode")
             currentTabId = tab.id
             sendTerminalMode()
         }
@@ -370,6 +372,13 @@ struct EditorContentView: View {
             if appState.editorWebReady {
                 DispatchQueue.main.async { sendOpenFile() }
             }
+        }
+        .onChange(of: appState.currentGlobalWorkspaceKey) { newGlobalKey in
+            // 当全局工作空间键切换时（包括项目切换），重新加载编辑器内容
+            // 即使文件路径相同，不同工作空间的文件内容可能不同
+            guard newGlobalKey != nil else { return }
+            guard appState.editorWebReady else { return }
+            DispatchQueue.main.async { sendOpenFile() }
         }
     }
 

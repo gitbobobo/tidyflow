@@ -46,6 +46,13 @@ impl WorkspaceManager {
             .get_project(project_name)
             .ok_or_else(|| WorkspaceError::ProjectNotFound(project_name.to_string()))?;
 
+        // 检查项目是否有 remote URL，没有则不允许创建工作空间
+        if project.remote_url.is_none() {
+            return Err(WorkspaceError::GitError(
+                "项目没有配置 Git 远程仓库，无法创建工作空间。请先运行 git remote add origin <url> 添加远程仓库。".to_string()
+            ));
+        }
+
         let project_root = project.root_path.clone();
         let default_branch = project.default_branch.clone();
 

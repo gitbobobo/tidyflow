@@ -5,20 +5,21 @@ struct TabStripView: View {
     
     var body: some View {
         HStack(spacing: 0) {
-            if let workspaceKey = appState.selectedWorkspaceKey,
-               let tabs = appState.workspaceTabs[workspaceKey] {
+            // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
+            if let globalKey = appState.currentGlobalWorkspaceKey,
+               let tabs = appState.workspaceTabs[globalKey] {
                 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 1) {
                         ForEach(tabs) { tab in
                             TabItemView(
                                 tab: tab,
-                                isActive: appState.activeTabIdByWorkspace[workspaceKey] == tab.id,
+                                isActive: appState.activeTabIdByWorkspace[globalKey] == tab.id,
                                 onClose: {
-                                    appState.closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+                                    appState.closeTab(workspaceKey: globalKey, tabId: tab.id)
                                 },
                                 onActivate: {
-                                    appState.activateTab(workspaceKey: workspaceKey, tabId: tab.id)
+                                    appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
                                 }
                             )
                         }
@@ -28,7 +29,7 @@ struct TabStripView: View {
                 
                 // 新建终端按钮
                 Button(action: {
-                    appState.addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Terminal", payload: "")
+                    appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 12))

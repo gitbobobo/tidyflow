@@ -99,7 +99,7 @@ struct ProjectsSidebarView: View {
                             workspace: workspace,
                             projectId: projectId,
                             projectName: projectName,
-                            isSelected: appState.selectedWorkspaceKey == workspace.name
+                            isSelected: appState.selectedProjectId == projectId && appState.selectedWorkspaceKey == workspace.name
                         )
                         .environmentObject(appState)
                     }
@@ -234,7 +234,7 @@ struct WorkspaceRowView: View {
             }
         )
         .tag(workspace.name)
-        // 工作空间右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、删除（与项目菜单不同，无「新建工作空间/移除项目」）
+        // 工作空间右键菜单：复制路径、在编辑器中打开(VSCode/Cursor)、删除（默认工作空间不可删除）
         .contextMenu {
             if let path = workspacePath {
                 Button {
@@ -259,11 +259,14 @@ struct WorkspaceRowView: View {
                     Label("在编辑器中打开", systemImage: "square.and.arrow.up")
                 }
             }
-            Divider()
-            Button(role: .destructive) {
-                showDeleteConfirmation = true
-            } label: {
-                Label("删除", systemImage: "trash")
+            // 只有非默认工作空间才显示删除选项
+            if !workspace.isDefault {
+                Divider()
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
             }
         }
         .alert("删除工作空间", isPresented: $showDeleteConfirmation) {

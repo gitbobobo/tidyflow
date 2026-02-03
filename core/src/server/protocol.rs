@@ -218,8 +218,6 @@ pub enum ClientMessage {
     ImportProject {
         name: String,
         path: String,
-        #[serde(default = "default_true")]
-        create_default_workspace: bool,
     },
     CreateWorkspace {
         project: String,
@@ -260,10 +258,6 @@ fn default_diff_mode() -> String {
 
 fn default_git_scope() -> String {
     "file".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_git_log_limit() -> usize {
@@ -661,18 +655,13 @@ mod tests {
 
     #[test]
     fn test_parse_import_project() {
-        let json = r#"{"type":"import_project","name":"ly_tech","path":"/Users/godbobo/work/projects/ly_tech","create_default_workspace":true}"#;
+        let json = r#"{"type":"import_project","name":"ly_tech","path":"/Users/godbobo/work/projects/ly_tech"}"#;
 
         let result: Result<ClientMessage, _> = serde_json::from_str(json);
         match result {
-            Ok(ClientMessage::ImportProject {
-                name,
-                path,
-                create_default_workspace,
-            }) => {
+            Ok(ClientMessage::ImportProject { name, path }) => {
                 assert_eq!(name, "ly_tech");
                 assert_eq!(path, "/Users/godbobo/work/projects/ly_tech");
-                assert!(create_default_workspace);
             }
             Ok(other) => panic!("Unexpected message type: {:?}", other),
             Err(e) => panic!("Parse error: {}", e),
