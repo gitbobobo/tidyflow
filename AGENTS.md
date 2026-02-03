@@ -4,9 +4,6 @@
 2. 经验总结：获取到经验教训后，如果它属于可复用的项目开发流程，就用简洁的语言记录到 AGENTS.md 中
 
 ## 经验总结
- - Trae macOS 的 bundleId 为 `com.trae.app`（Homebrew cask 信息）。
- - 默认工作空间是客户端虚拟概念，不存储在服务端状态中，由 Swift App 在 `handleWorkspacesList` 和 `handleProjectImported` 中动态生成。
-
 
 ## Project Overview
 

@@ -157,6 +157,58 @@
     let compositionDataSent = false;  // onData 是否已发送 composition 数据
     const textarea = container.querySelector("textarea");
     if (textarea) {
+      // FIX: 处理中文输入法下 keyCode=229 但没有 composition 事件的情况
+      // 当 input 事件触发且 inputType 为 insertText，且非 composition 状态时，
+      // xterm.js 可能因为 keyCode=229 而不触发 onData，需要手动发送
+      let pendingInputTimer = null;
+      let lastOnDataTime = 0;  // onData 最后触发的时间戳
+      let lastOnDataChar = ""; // onData 最后处理的字符
+      
+      textarea.addEventListener("input", (e) => {
+        // 只处理 insertText 类型，且非 composition 状态
+        if (e.inputType === "insertText" && e.data && !isComposing && !e.isComposing) {
+          const inputData = e.data;
+          const inputTime = Date.now();
+          
+          // 检查 onData 是否最近已经处理过相同的字符（50ms 内）
+          // 如果是，说明 xterm.js 已经处理了，不需要 fallback
+          if (inputData === lastOnDataChar && (inputTime - lastOnDataTime) < 50) {
+            return;
+          }
+          
+          // 清除之前的定时器
+          if (pendingInputTimer) {
+            clearTimeout(pendingInputTimer);
+          }
+          
+          // 设置短暂超时，检查 onData 是否触发
+          pendingInputTimer = setTimeout(() => {
+            // 再次检查 onData 是否在这段时间内处理过
+            const checkTime = Date.now();
+            if (inputData === lastOnDataChar && (checkTime - lastOnDataTime) < 50) {
+              return;
+            }
+            
+            // onData 没有触发，手动发送
+            if (TF.transport && TF.transport.isConnected) {
+              const encoder = new TextEncoder();
+              const bytes = encoder.encode(inputData);
+              TF.transport.send(JSON.stringify({
+                type: "input",
+                term_id: termId,
+                data_b64: TF.encodeBase64(bytes),
+              }));
+            }
+            pendingInputTimer = null;
+          }, 20); // 20ms 足够让 onData 触发
+        }
+      });
+      
+      // 在 onData 处理中记录时间和字符
+      term._inputFallbackMarker = (data) => {
+        lastOnDataTime = Date.now();
+        lastOnDataChar = data;
+      };
       textarea.addEventListener("compositionstart", () => {
         isComposing = true;
         compositionJustEnded = false;
@@ -218,8 +270,14 @@
     TF.tabBar.insertBefore(tabEl, tabActions);
 
     term.onData((data) => {
+      // 标记 onData 已触发，用于 input 事件的 fallback 逻辑
+      if (term._inputFallbackMarker) {
+        term._inputFallbackMarker(data);
+      }
       // composition 期间不发送（避免重复）
-      if (isComposing) return;
+      if (isComposing) {
+        return;
+      }
       
       // composition 刚结束后，标记 onData 已触发，避免 compositionend 超时重复发送
       if (compositionJustEnded) {
