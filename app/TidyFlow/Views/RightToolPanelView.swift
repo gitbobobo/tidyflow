@@ -1,5 +1,64 @@
 import SwiftUI
 
+// MARK: - Xcode 风格胶囊分段控件（仅图标）
+
+/// 胶囊形分段控件，选中项带滑动高亮（参考 Xcode Inspector、matchedGeometryEffect 实现）
+struct CapsuleSegmentedControl: View {
+    @Binding var selection: RightTool?
+    @Namespace private var capsuleNamespace
+
+    private var effectiveSelection: RightTool {
+        selection ?? .explorer
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach([RightTool.explorer, .search, .git], id: \.self) { tool in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selection = tool
+                    }
+                } label: {
+                    Image(systemName: iconName(for: tool))
+                        .font(.system(size: 14, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 2)
+                .accessibilityLabel(accessibilityLabel(for: tool))
+                .matchedGeometryEffect(id: tool, in: capsuleNamespace)
+            }
+        }
+        .background(
+            Capsule()
+                .fill(Color.accentColor)
+                .matchedGeometryEffect(id: effectiveSelection, in: capsuleNamespace, isSource: false)
+        )
+        .background(
+            Capsule()
+                .fill(Color(nsColor: .separatorColor).opacity(0.6))
+        )
+    }
+
+    private func iconName(for tool: RightTool) -> String {
+        switch tool {
+        case .explorer: return "folder"
+        case .search: return "magnifyingglass"
+        case .git: return "arrow.triangle.branch"
+        }
+    }
+
+    private func accessibilityLabel(for tool: RightTool) -> String {
+        switch tool {
+        case .explorer: return "文件"
+        case .search: return "搜索"
+        case .git: return "Git"
+        }
+    }
+}
+
 // MARK: - Inspector Content View（符合苹果 HIG 规范）
 
 /// 右侧检查器内容视图
@@ -9,21 +68,9 @@ struct InspectorContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 工具选择器（使用 Picker 符合 HIG 规范）
-            Picker("工具", selection: $appState.activeRightTool) {
-                Label("文件", systemImage: "folder")
-                    .tag(RightTool?.some(.explorer))
-                Label("搜索", systemImage: "magnifyingglass")
-                    .tag(RightTool?.some(.search))
-                Label("Git", systemImage: "arrow.triangle.branch")
-                    .tag(RightTool?.some(.git))
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-
-            Divider()
+            // 工具选择器：Xcode 风格胶囊、仅图标（自定义 CapsuleSegmentedControl）
+            CapsuleSegmentedControl(selection: $appState.activeRightTool)
+                .padding(.horizontal, 12)
 
             // 内容区域
             Group {
@@ -42,8 +89,6 @@ struct InspectorContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Inspector 自动使用 grouped 样式背景
-        .background(Color(NSColor.windowBackgroundColor))
     }
 }
 
