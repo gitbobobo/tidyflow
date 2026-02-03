@@ -83,12 +83,14 @@ enum TabKind: String, Codable {
     case terminal
     case editor
     case diff
+    case settings
     
     var iconName: String {
         switch self {
         case .terminal: return "terminal"
         case .editor: return "doc.text"
         case .diff: return "arrow.left.arrow.right"
+        case .settings: return "gearshape"
         }
     }
 }
@@ -120,6 +122,68 @@ enum DiffMode: String, Codable {
 }
 
 typealias TabSet = [TabModel]
+
+// MARK: - 自定义终端命令
+
+/// 自定义终端命令配置
+struct CustomCommand: Identifiable, Codable, Equatable {
+    var id: String
+    var name: String
+    var icon: String  // SF Symbol 名称或 "custom:filename" 格式的自定义图标
+    var command: String
+    
+    /// 创建新命令时生成唯一 ID
+    init(id: String = UUID().uuidString, name: String = "", icon: String = "terminal", command: String = "") {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.command = command
+    }
+}
+
+/// 客户端设置
+struct ClientSettings: Codable {
+    var customCommands: [CustomCommand]
+    
+    init(customCommands: [CustomCommand] = []) {
+        self.customCommands = customCommands
+    }
+}
+
+/// 品牌图标枚举（用于自定义命令图标选择）
+enum BrandIcon: String, CaseIterable {
+    case cursor = "cursor"
+    case vscode = "vscode"
+    case trae = "trae"
+    case claude = "claude"
+    case codex = "codex"
+    case gemini = "gemini"
+    case opencode = "opencode"
+    
+    var assetName: String {
+        switch self {
+        case .cursor: return "cursor-icon"
+        case .vscode: return "vscode-icon"
+        case .trae: return "trae-icon"
+        case .claude: return "claude-icon"
+        case .codex: return "codex-icon"
+        case .gemini: return "gemini-icon"
+        case .opencode: return "opencode-icon"
+        }
+    }
+    
+    var displayName: String {
+        switch self {
+        case .cursor: return "Cursor"
+        case .vscode: return "VS Code"
+        case .trae: return "Trae"
+        case .claude: return "Claude Code"
+        case .codex: return "Codex CLI"
+        case .gemini: return "Gemini CLI"
+        case .opencode: return "OpenCode"
+        }
+    }
+}
 
 // MARK: - Command Palette Models
 
@@ -314,6 +378,11 @@ class AppState: ObservableObject {
     // Phase UX-4: Rebase onto default in-flight (workspace key -> true)
     @Published var rebaseOntoDefaultInFlight: [String: Bool] = [:]
 
+    // 客户端设置（自定义命令等）
+    @Published var clientSettings: ClientSettings = ClientSettings()
+    // 设置是否已从服务端加载
+    @Published var clientSettingsLoaded: Bool = false
+
     // Phase C2-2a: Flag to use native diff (set to false to fallback to Web diff)
     var useNativeDiff: Bool = true
 
@@ -434,6 +503,10 @@ class AppState: ObservableObject {
         guard let workspaceName = selectedWorkspaceKey else {
             return nil
         }
+        // 设置页面使用特殊的 workspace key，不需要 project 前缀
+        if workspaceName == "__settings__" {
+            return workspaceName
+        }
         return globalWorkspaceKey(projectName: selectedProjectName, workspaceName: workspaceName)
     }
 
@@ -510,8 +583,9 @@ class AppState: ObservableObject {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
             if connected {
-                print("[AppState] WebSocket connected, requesting project list")
+                print("[AppState] WebSocket connected, requesting project list and client settings")
                 self?.wsClient.requestListProjects()
+                self?.wsClient.requestGetClientSettings()
             }
         }
 
@@ -626,6 +700,26 @@ class AppState: ObservableObject {
         // Handle workspace removed results
         wsClient.onWorkspaceRemoved = { [weak self] result in
             self?.handleWorkspaceRemoved(result)
+        }
+
+        // 处理客户端设置结果
+        wsClient.onClientSettingsResult = { [weak self] commands in
+            self?.clientSettings.customCommands = commands
+            self?.clientSettingsLoaded = true
+            print("[AppState] 已加载 \(commands.count) 个自定义命令")
+        }
+
+        wsClient.onClientSettingsSaved = { [weak self] ok, message in
+            if ok {
+                print("[AppState] 客户端设置已保存")
+            } else {
+                print("[AppState] 保存设置失败: \(message ?? "未知错误")")
+                self?.gitOpToast = message ?? "保存设置失败"
+                self?.gitOpToastIsError = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    self?.gitOpToast = nil
+                }
+            }
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -2202,6 +2296,93 @@ class AppState: ObservableObject {
     
     func addTerminalTab(workspaceKey: String) {
         addTab(workspaceKey: workspaceKey, kind: .terminal, title: "Terminal", payload: "")
+    }
+
+    /// 创建终端并执行自定义命令
+    func addTerminalWithCustomCommand(workspaceKey: String, command: CustomCommand) {
+        // 创建终端 tab，使用命令名称作为标题，命令内容存入 payload
+        let newTab = TabModel(
+            id: UUID(),
+            title: command.name,
+            kind: .terminal,
+            workspaceKey: workspaceKey,
+            payload: command.command  // 存储命令以便终端就绪后执行
+        )
+
+        if workspaceTabs[workspaceKey] == nil {
+            workspaceTabs[workspaceKey] = []
+        }
+        workspaceTabs[workspaceKey]?.append(newTab)
+        activeTabIdByWorkspace[workspaceKey] = newTab.id
+
+        // 终端视图会在 spawn 后检查 payload 并执行命令
+    }
+
+    // MARK: - 设置页面
+
+    /// 打开设置页面（使用特殊的全局 key）
+    func openSettingsTab() {
+        let settingsKey = "__settings__"
+        
+        // 检查是否已有设置 tab
+        if let tabs = workspaceTabs[settingsKey],
+           let existingTab = tabs.first(where: { $0.kind == .settings }) {
+            // 激活已有的设置 tab
+            activeTabIdByWorkspace[settingsKey] = existingTab.id
+            // 切换到设置 workspace
+            selectedWorkspaceKey = settingsKey
+            selectedProjectId = nil
+            return
+        }
+
+        // 创建新的设置 tab
+        let newTab = TabModel(
+            id: UUID(),
+            title: "设置",
+            kind: .settings,
+            workspaceKey: settingsKey,
+            payload: ""
+        )
+
+        if workspaceTabs[settingsKey] == nil {
+            workspaceTabs[settingsKey] = []
+        }
+        workspaceTabs[settingsKey]?.append(newTab)
+        activeTabIdByWorkspace[settingsKey] = newTab.id
+        
+        // 切换到设置 workspace
+        selectedWorkspaceKey = settingsKey
+        selectedProjectId = nil
+    }
+
+    /// 从服务端加载客户端设置
+    func loadClientSettings() {
+        wsClient.requestGetClientSettings()
+    }
+
+    /// 保存客户端设置到服务端
+    func saveClientSettings() {
+        wsClient.requestSaveClientSettings(customCommands: clientSettings.customCommands)
+    }
+
+    /// 添加自定义命令
+    func addCustomCommand(_ command: CustomCommand) {
+        clientSettings.customCommands.append(command)
+        saveClientSettings()
+    }
+
+    /// 更新自定义命令
+    func updateCustomCommand(_ command: CustomCommand) {
+        if let index = clientSettings.customCommands.firstIndex(where: { $0.id == command.id }) {
+            clientSettings.customCommands[index] = command
+            saveClientSettings()
+        }
+    }
+
+    /// 删除自定义命令
+    func deleteCustomCommand(id: String) {
+        clientSettings.customCommands.removeAll { $0.id == id }
+        saveClientSettings()
     }
 
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)

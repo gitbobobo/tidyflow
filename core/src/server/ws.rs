@@ -22,7 +22,7 @@ use crate::server::file_api::{self, FileApiError};
 use crate::server::file_index;
 use crate::server::git_tools;
 use crate::server::protocol::{
-    ClientMessage, FileEntryInfo, GitBranchInfo, GitStatusEntry, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
+    ClientMessage, CustomCommandInfo, FileEntryInfo, GitBranchInfo, GitStatusEntry, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
     v1_capabilities,
 };
 use crate::workspace::state::{AppState, Project, WorkspaceStatus};
@@ -2777,6 +2777,51 @@ async fn handle_client_message(
                     send_message(socket, &ServerMessage::Error {
                         code: "project_not_found".to_string(),
                         message: format!("Project '{}' not found", project),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.21: Client settings
+        ClientMessage::GetClientSettings => {
+            let state = app_state.lock().await;
+            let commands: Vec<CustomCommandInfo> = state.client_settings.custom_commands
+                .iter()
+                .map(|c| CustomCommandInfo {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    icon: c.icon.clone(),
+                    command: c.command.clone(),
+                })
+                .collect();
+            send_message(socket, &ServerMessage::ClientSettingsResult {
+                custom_commands: commands,
+            }).await?;
+        }
+
+        ClientMessage::SaveClientSettings { custom_commands } => {
+            let mut state = app_state.lock().await;
+            state.client_settings.custom_commands = custom_commands
+                .into_iter()
+                .map(|c| crate::workspace::state::CustomCommand {
+                    id: c.id,
+                    name: c.name,
+                    icon: c.icon,
+                    command: c.command,
+                })
+                .collect();
+            
+            match state.save() {
+                Ok(_) => {
+                    send_message(socket, &ServerMessage::ClientSettingsSaved {
+                        ok: true,
+                        message: None,
+                    }).await?;
+                }
+                Err(e) => {
+                    send_message(socket, &ServerMessage::ClientSettingsSaved {
+                        ok: false,
+                        message: Some(format!("保存设置失败: {}", e)),
                     }).await?;
                 }
             }

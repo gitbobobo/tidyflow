@@ -50,6 +50,16 @@ struct ContentView: View {
                         .environmentObject(appState)
                 }
                 // 右侧面板切换按钮（保留手动控制）
+                // 设置按钮
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: {
+                        appState.openSettingsTab()
+                    }) {
+                        Image(systemName: "gearshape")
+                    }
+                    .help("设置")
+                }
+                // 右侧面板切换按钮
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.25)) {

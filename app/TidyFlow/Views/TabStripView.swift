@@ -27,17 +27,10 @@ struct TabStripView: View {
                     .padding(.leading, 1)
                 }
                 
-                // 新建终端按钮
-                Button(action: {
-                    appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
-                }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("新建终端 (⌘T)")
-                .padding(.horizontal, 8)
+                // 新建终端按钮（根据是否有自定义命令显示不同UI）
+                NewTerminalButton(globalKey: globalKey)
+                    .environmentObject(appState)
+                    .padding(.horizontal, 8)
             } else {
                 Spacer()
             }
@@ -92,6 +85,86 @@ struct TabItemView: View {
         }
         .onHover { hovering in
             isHovered = hovering
+        }
+    }
+}
+
+// MARK: - 新建终端按钮（支持自定义命令下拉菜单）
+
+struct NewTerminalButton: View {
+    @EnvironmentObject var appState: AppState
+    let globalKey: String
+    
+    var body: some View {
+        if appState.clientSettings.customCommands.isEmpty {
+            // 没有自定义命令时，显示普通按钮
+            Button(action: {
+                appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
+            }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("新建终端 (⌘T)")
+        } else {
+            // 有自定义命令时，显示下拉菜单
+            Menu {
+                // 新建空白终端
+                Button(action: {
+                    appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
+                }) {
+                    Label("新建终端", systemImage: "terminal")
+                }
+                
+                Divider()
+                
+                // 自定义命令列表
+                ForEach(appState.clientSettings.customCommands) { command in
+                    Button(action: {
+                        appState.addTerminalWithCustomCommand(workspaceKey: globalKey, command: command)
+                    }) {
+                        Label {
+                            Text(command.name)
+                        } icon: {
+                            CommandMenuIcon(iconName: command.icon)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("新建终端 (⌘T)")
+        }
+    }
+}
+
+// MARK: - 菜单图标视图
+
+struct CommandMenuIcon: View {
+    let iconName: String
+    
+    var body: some View {
+        Group {
+            if iconName.hasPrefix("brand:") {
+                // 品牌图标
+                let brandName = String(iconName.dropFirst(6))
+                if let brand = BrandIcon(rawValue: brandName) {
+                    Image(brand.assetName)
+                        .resizable()
+                        .scaledToFit()
+                }
+            } else if iconName.hasPrefix("custom:") {
+                // 自定义图标 - 菜单中暂时用默认图标
+                Image(systemName: "terminal")
+            } else {
+                // SF Symbol
+                Image(systemName: iconName)
+            }
         }
     }
 }

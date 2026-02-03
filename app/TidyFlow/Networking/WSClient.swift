@@ -40,6 +40,9 @@ class WSClient: NSObject, ObservableObject {
     var onWorkspacesList: ((WorkspacesListResult) -> Void)?
     var onProjectRemoved: ((ProjectRemovedResult) -> Void)?
     var onWorkspaceRemoved: ((WorkspaceRemovedResult) -> Void)?
+    // 客户端设置
+    var onClientSettingsResult: (([CustomCommand]) -> Void)?
+    var onClientSettingsSaved: ((Bool, String?) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -452,6 +455,31 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // MARK: - 客户端设置
+
+    /// 请求获取客户端设置
+    func requestGetClientSettings() {
+        sendJSON([
+            "type": "get_client_settings"
+        ])
+    }
+
+    /// 保存客户端设置
+    func requestSaveClientSettings(customCommands: [CustomCommand]) {
+        let commandsData = customCommands.map { cmd -> [String: Any] in
+            return [
+                "id": cmd.id,
+                "name": cmd.name,
+                "icon": cmd.icon,
+                "command": cmd.command
+            ]
+        }
+        sendJSON([
+            "type": "save_client_settings",
+            "custom_commands": commandsData
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -608,6 +636,26 @@ class WSClient: NSObject, ObservableObject {
             if let result = WorkspaceRemovedResult.from(json: json) {
                 onWorkspaceRemoved?(result)
             }
+
+        case "client_settings_result":
+            // 解析自定义命令列表
+            if let commandsJson = json["custom_commands"] as? [[String: Any]] {
+                let commands = commandsJson.compactMap { cmdJson -> CustomCommand? in
+                    guard let id = cmdJson["id"] as? String,
+                          let name = cmdJson["name"] as? String,
+                          let icon = cmdJson["icon"] as? String,
+                          let command = cmdJson["command"] as? String else {
+                        return nil
+                    }
+                    return CustomCommand(id: id, name: name, icon: icon, command: command)
+                }
+                onClientSettingsResult?(commands)
+            }
+
+        case "client_settings_saved":
+            let ok = json["ok"] as? Bool ?? false
+            let message = json["message"] as? String
+            onClientSettingsSaved?(ok, message)
 
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"

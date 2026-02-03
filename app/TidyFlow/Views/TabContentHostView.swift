@@ -44,6 +44,11 @@ struct TabContentHostView: View {
                         webBridge: webBridge,
                         webViewVisible: $webViewVisible
                     )
+                case .settings:
+                    // 设置页面不需要 WebView
+                    SettingsContentView()
+                        .environmentObject(appState)
+                        .onAppear { webViewVisible = false }
                 }
 
             } else {

@@ -21,6 +21,22 @@ pub enum StateError {
     WorkspaceNotFound(String),
 }
 
+/// 自定义终端命令
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomCommand {
+    pub id: String,
+    pub name: String,
+    pub icon: String,  // SF Symbol 名称或自定义图标路径
+    pub command: String,
+}
+
+/// 客户端设置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClientSettings {
+    #[serde(default)]
+    pub custom_commands: Vec<CustomCommand>,
+}
+
 /// Application state - persisted to JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
@@ -28,6 +44,8 @@ pub struct AppState {
     pub projects: HashMap<String, Project>,
     #[serde(default)]
     pub last_updated: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub client_settings: ClientSettings,
 }
 
 impl Default for AppState {
@@ -36,6 +54,7 @@ impl Default for AppState {
             version: 1,
             projects: HashMap::new(),
             last_updated: Some(Utc::now()),
+            client_settings: ClientSettings::default(),
         }
     }
 }
@@ -86,7 +105,7 @@ impl AppState {
     /// Get the state file path
     pub fn state_path() -> PathBuf {
         let home = dirs::home_dir().expect("Cannot find home directory");
-        home.join(".tidyflow").join("state.json")
+        home.join(".tidyflow").join("tidyflow.json")
     }
 
     /// Load state from disk

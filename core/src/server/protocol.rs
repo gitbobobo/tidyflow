@@ -250,6 +250,12 @@ pub enum ClientMessage {
         workspace: String,
         sha: String,
     },
+
+    // v1.21: Client settings
+    GetClientSettings,
+    SaveClientSettings {
+        custom_commands: Vec<CustomCommandInfo>,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -551,6 +557,16 @@ pub enum ServerMessage {
         date: String,
         files: Vec<GitShowFileInfo>,
     },
+
+    // v1.21: Client settings result
+    ClientSettingsResult {
+        custom_commands: Vec<CustomCommandInfo>,
+    },
+    ClientSettingsSaved {
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -622,6 +638,15 @@ pub struct GitShowFileInfo {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_path: Option<String>,
+}
+
+/// 自定义命令信息（用于协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomCommandInfo {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub command: String,
 }
 
 // ============================================================================
