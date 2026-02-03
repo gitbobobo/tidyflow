@@ -168,13 +168,10 @@
           if (tabSet.tabs.has(session_id)) {
             const tab = tabSet.tabs.get(session_id);
             if (tab.term) {
-              tab.term.clear();
-              const session = TF.terminalSessions.get(session_id);
-              if (session && session.buffer.length > 0) {
-                for (const line of session.buffer) {
-                  tab.term.write(line);
-                }
-              }
+              // 不再 clear + 重放 session.buffer：
+              // 1. xterm 本身有 scrollback 缓冲，内容已保留
+              // 2. session.buffer 用 TextDecoder 解码，会把二进制转义序列变成乱码文本
+              // 3. 重放乱码文本会导致切换 Tab 后屏幕出现 "rgb:..." 等可见字符
               tab.term.focus();
               if (tab.fitAddon) {
                 tab.fitAddon.fit();

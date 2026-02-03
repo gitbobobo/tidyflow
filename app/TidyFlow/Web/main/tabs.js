@@ -6,6 +6,63 @@
 
   const TF = window.TidyFlowApp;
 
+  /**
+   * 检测 xterm.js 生成的终端查询响应，避免发送到服务器被 shell 回显
+   * 
+   * 当 TUI 应用（如 opencode、vim）查询终端属性时，xterm.js 会生成响应并通过 onData 发出。
+   * 这些响应如果发送到服务器，会被 shell 当作普通输入回显，导致屏幕出现 "rgb:..." 等乱码。
+   * 
+   * 常见的查询响应模式：
+   * - OSC 4/10/11/12 颜色查询响应: ESC ] N ; rgb:RRRR/GGGG/BBBB BEL/ST
+   * - Primary DA 响应: ESC [ ? ... c
+   * - Secondary DA 响应: ESC [ > ... c
+   * - DECRQSS 响应: ESC P ... ESC \
+   * - XTVERSION 响应: ESC P > | ... ESC \
+   */
+  function isTerminalQueryResponse(data) {
+    if (!data || data.length === 0) return false;
+    
+    const firstChar = data.charCodeAt(0);
+    
+    // OSC 响应 (ESC ] ...) - 颜色查询等
+    // ESC = 0x1b = 27, ] = 0x5d = 93
+    if (firstChar === 0x1b && data.length > 1) {
+      const secondChar = data.charCodeAt(1);
+      // OSC: ESC ]
+      if (secondChar === 0x5d) {
+        // 检测颜色响应模式: 包含 rgb: 或 以数字开头
+        if (/rgb:/i.test(data) || /^\x1b\]\d+;/.test(data)) {
+          return true;
+        }
+      }
+      // CSI 响应: ESC [
+      if (secondChar === 0x5b) {
+        // Primary DA: ESC [ ? ... c
+        // Secondary DA: ESC [ > ... c
+        if (/^\x1b\[\?[\d;]*c/.test(data) || /^\x1b\[>[\d;]*c/.test(data)) {
+          return true;
+        }
+      }
+      // DCS 响应: ESC P ... (用于 DECRQSS, XTVERSION 等)
+      if (secondChar === 0x50) {
+        return true;
+      }
+    }
+    
+    // 有些响应可能不以 ESC 开头（被截断或合并的数据）
+    // 检测常见的颜色响应片段
+    if (/^\d+;rgb:[\da-f]{4}\/[\da-f]{4}\/[\da-f]{4}/i.test(data)) {
+      return true;
+    }
+    
+    // 检测 $y 响应 (DECRQSS)
+    if (/\$y/.test(data) && /^\d/.test(data)) {
+      return true;
+    }
+    
+    return false;
+  }
+
   function createTerminalTab(termId, cwd, project, workspace) {
     TF.tabCounter++;
     const wsKey = TF.getWorkspaceKey(project, workspace);
@@ -137,12 +194,26 @@
     TF.tabBar.insertBefore(tabEl, tabActions);
 
     term.onData((data) => {
-      // composition 期间不发送（避免重复）
-      if (isComposing) return;
+      // composition 期间：只阻止看起来像拼音中间态的输入
+      // 允许直接输入的中文字符和标点符号通过（如 `？`、`（`、`）`）
+      if (isComposing) {
+        // 如果是纯 ASCII 字母或数字（拼音输入中间态），阻止发送
+        if (/^[a-zA-Z0-9]+$/.test(data)) {
+          return;
+        }
+        // 其他字符（如中文标点）允许通过
+      }
       
       // composition 刚结束时，处理拼音残留（如 "o p" -> "op"）
       if (compositionJustEnded && /^[a-z](\s+[a-z])+$/i.test(data)) {
         data = data.replace(/\s+/g, '');
+      }
+
+      // 过滤 xterm.js 生成的终端查询响应，避免被 shell 回显
+      // 这些响应通常是 xterm.js 回应 shell/应用程序的查询序列
+      if (isTerminalQueryResponse(data)) {
+        // console.log("[Terminal] Filtered query response:", data.length, "bytes");
+        return;
       }
 
       if (TF.transport && TF.transport.isConnected) {

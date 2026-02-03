@@ -108,3 +108,7 @@ git push origin v1.0.0
 发布后用户可直接从 GitHub Releases 下载，双击运行无 Gatekeeper 警告。
 
 详见 `design/50-github-release-d5-3c.md`。
+
+## 许可证
+
+本项目使用 `LGPL-3.0-only`。完整许可证文本见 `LICENSE`，并附带 `COPYING`（GNU GPL v3）供引用。
