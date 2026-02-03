@@ -142,6 +142,18 @@
       webglAddon = null;
     }
 
+    // Unicode11 addon - 正确处理 CJK 等宽字符
+    try {
+      if (typeof Unicode11Addon !== 'undefined' && Unicode11Addon.Unicode11Addon) {
+        const unicode11Addon = new Unicode11Addon.Unicode11Addon();
+        term.loadAddon(unicode11Addon);
+        // 激活 Unicode 11 版本
+        term.unicode.activeVersion = '11';
+      }
+    } catch (e) {
+      console.warn("Unicode11 addon failed:", e.message);
+    }
+
     const pane = document.createElement("div");
     pane.className = "tab-pane terminal-pane";
     pane.id = "pane-" + termId;
