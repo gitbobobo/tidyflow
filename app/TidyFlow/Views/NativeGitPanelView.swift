@@ -115,50 +115,26 @@ struct GitOpToast: View {
     }
 }
 
-// MARK: - 顶部工具栏
+// MARK: - 顶部工具栏（使用与文件树一致的 PanelHeaderView）
 
 struct GitPanelHeader: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("源代码管理")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            // 刷新按钮
-            Button(action: refreshAll) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+        PanelHeaderView(
+            title: "源代码管理",
+            onRefresh: refreshAll,
+            isRefreshDisabled: isLoading
+        ) {
+            Button("查看提交历史") {
+                refreshLog()
             }
-            .buttonStyle(.plain)
-            .help("刷新")
-            .disabled(isLoading)
-            
-            // 更多操作（占位）
-            Menu {
-                Button("查看提交历史") {
-                    refreshLog()
-                }
-                Divider()
-                Button("放弃所有更改", role: .destructive) {
-                    // 由外部处理
-                }
-                .disabled(!hasChanges)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+            Divider()
+            Button("放弃所有更改", role: .destructive) {
+                // 由外部处理
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 20)
+            .disabled(!hasChanges)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     private var isLoading: Bool {

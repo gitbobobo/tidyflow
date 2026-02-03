@@ -118,3 +118,6 @@ Temporary Items
 
 # Rust
 **/target/
+
+# Cursor editor debug logs
+.cursor/debug.log

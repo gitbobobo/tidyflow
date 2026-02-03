@@ -111,6 +111,50 @@ struct RightToolPanelView: View {
     }
 }
 
+// MARK: - 面板标题（与源代码管理标题样式一致，可复用）
+
+/// 与源代码管理面板标题一致的通用标题栏：左侧标题、右侧刷新 + 三点菜单
+struct PanelHeaderView<MenuContent: View>: View {
+    let title: String
+    var onRefresh: (() -> Void)?
+    var isRefreshDisabled: Bool = false
+    @ViewBuilder var menuContent: () -> MenuContent
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            if let onRefresh = onRefresh {
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("刷新")
+                .disabled(isRefreshDisabled)
+            }
+
+            Menu {
+                menuContent()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 20)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+}
+
 // MARK: - 文件浏览器视图
 
 struct ExplorerView: View {
@@ -159,29 +203,16 @@ struct FileTreeView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 工具栏
-            HStack {
-                Text(workspaceKey)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                
-                Spacer()
-                
-                Button(action: {
+            // 与源代码管理一致的面板标题
+            PanelHeaderView(
+                title: "资源管理器",
+                onRefresh: { appState.fetchFileList(workspaceKey: workspaceKey, path: ".") },
+                isRefreshDisabled: false
+            ) {
+                Button("刷新") {
                     appState.fetchFileList(workspaceKey: workspaceKey, path: ".")
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption)
                 }
-                .buttonStyle(.borderless)
-                .help("刷新文件列表")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            
-            Divider()
             
             // 文件列表
             ScrollView {
