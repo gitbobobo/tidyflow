@@ -26,11 +26,12 @@ struct ContentView: View {
                     .environmentObject(appState)
             }
             // 使用苹果官方 Inspector API 实现右侧面板
+            // inspectorColumnWidth(min:ideal:max:) 加在内容视图上，macOS 下支持用户拖拽调整宽度，系统会持久化用户设置（WWDC23 10161）
             .inspector(isPresented: inspectorPresented) {
                 InspectorContentView()
                     .environmentObject(appState)
+                    .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
             }
-            .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 12) {
