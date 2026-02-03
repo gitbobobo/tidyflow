@@ -358,36 +358,21 @@ pub fn git_log(workspace_root: &Path, limit: usize) -> Result<GitLogResult, GitE
         return Err(GitError::NotAGitRepo);
     }
 
-    // 使用特定格式获取日志：SHA%x00消息%x00作者%x00日期%x00引用%x1e
-    // %x00 = NUL 字符用于分隔字段
-    // %x1e = Record Separator 用于分隔条目
-    let format = "%h%x00%s%x00%an%x00%aI%x00%D%x1e";
+    // 使用特定格式获取日志：SHA%x00subject%x00body%x00作者%x00日期%x00引用%x1e
+    // %s=subject(首行) %b=body(正文，可含换行)，弹出层需要完整 message
+    // %x00 = NUL 分隔字段，%x1e = Record Separator 分隔条目
+    // 不使用 --no-walk，否则 git 不遍历历史，只显示 HEAD（1 条）
+    let format = "%h%x00%s%x00%b%x00%an%x00%aI%x00%D%x1e";
     
     let output = Command::new("git")
         .args([
             "log",
             &format!("--pretty=format:{}", format),
             &format!("-{}", limit),
-            "--no-walk=unsorted",
         ])
         .current_dir(workspace_root)
         .output()
         .map_err(GitError::IoError)?;
-
-    // 如果 --no-walk 失败（旧版本 git），尝试不带该参数
-    let output = if !output.status.success() {
-        Command::new("git")
-            .args([
-                "log",
-                &format!("--pretty=format:{}", format),
-                &format!("-{}", limit),
-            ])
-            .current_dir(workspace_root)
-            .output()
-            .map_err(GitError::IoError)?
-    } else {
-        output
-    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -409,15 +394,21 @@ pub fn git_log(workspace_root: &Path, limit: usize) -> Result<GitLogResult, GitE
         }
 
         let fields: Vec<&str> = record.split('\x00').collect();
-        if fields.len() >= 4 {
+        // 6 字段：hash, subject, body, author, date, refs
+        if fields.len() >= 6 {
             let sha = fields[0].to_string();
-            let message = fields[1].to_string();
-            let author = fields[2].to_string();
-            let date = fields[3].to_string();
-            
+            let subject = fields[1].trim();
+            let body = fields[2].trim();
+            let message = if body.is_empty() {
+                subject.to_string()
+            } else {
+                format!("{}\n\n{}", subject, body)
+            };
+            let author = fields[3].to_string();
+            let date = fields[4].to_string();
             // 解析引用（如 "HEAD -> main, origin/main, tag: v1.0"）
-            let refs: Vec<String> = if fields.len() > 4 && !fields[4].is_empty() {
-                fields[4]
+            let refs: Vec<String> = if !fields[5].is_empty() {
+                fields[5]
                     .split(", ")
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
@@ -473,27 +464,43 @@ pub fn git_show(workspace_root: &Path, sha: &str) -> Result<GitShowResult, GitEr
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    
-    if lines.is_empty() {
-        return Err(GitError::CommandFailed("Empty output from git show".to_string()));
-    }
+    let s = stdout.as_ref();
 
-    // 第一行是格式化的元信息
-    let first_line = lines[0];
-    let fields: Vec<&str> = first_line.split('\x00').collect();
-    
-    if fields.len() < 7 {
-        return Err(GitError::CommandFailed("Invalid git show output format".to_string()));
+    // 元信息格式：%H\0%h\0%s\0%b\0%an\0%ae\0%aI\n，其中 %b 可能含换行，不能按「第一行」解析
+    // 定位第 6 个 NUL，其前为 6 个字段（full_sha, short_sha, subject, body, author, author_email），其后到 \n 为 date
+    let mut nul_count = 0u32;
+    let mut pos_after_6th_nul = None::<usize>;
+    for (i, c) in s.char_indices() {
+        if c == '\x00' {
+            nul_count += 1;
+            if nul_count == 6 {
+                pos_after_6th_nul = Some(i + 1);
+                break;
+            }
+        }
     }
+    let pos_after_6th_nul = pos_after_6th_nul
+        .ok_or_else(|| GitError::CommandFailed("Invalid git show output: missing NULs".to_string()))?;
+    let rest = &s[pos_after_6th_nul..];
+    let newline_pos = rest
+        .find('\n')
+        .ok_or_else(|| GitError::CommandFailed("Invalid git show output: missing newline after date".to_string()))?;
+    let date = rest[..newline_pos].trim().to_string();
+    let file_list_start = pos_after_6th_nul + newline_pos + 1;
 
+    let header_part = &s[..pos_after_6th_nul - 1];
+    let fields: Vec<&str> = header_part.split('\x00').collect();
+    if fields.len() < 6 {
+        return Err(GitError::CommandFailed(
+            "Invalid git show output format (header fields)".to_string(),
+        ));
+    }
     let full_sha = fields[0].to_string();
     let short_sha = fields[1].to_string();
     let subject = fields[2].to_string();
     let body = fields[3].trim().to_string();
     let author = fields[4].to_string();
     let author_email = fields[5].to_string();
-    let date = fields[6].to_string();
 
     // 组合完整消息
     let message = if body.is_empty() {
@@ -502,13 +509,9 @@ pub fn git_show(workspace_root: &Path, sha: &str) -> Result<GitShowResult, GitEr
         format!("{}\n\n{}", subject, body)
     };
 
-    // 解析文件变更列表
-    // 注意：git show --name-status 输出中，如果 body 为空，文件列表可能直接跟在元数据行后面（无空行分隔）
-    // 文件变更格式：STATUS\tPATH 或 STATUS\tOLD_PATH\tNEW_PATH（重命名）
-    // STATUS 可以是：M(修改), A(新增), D(删除), R(重命名), C(复制) 等
+    // 解析文件变更列表：STATUS\tPATH 或 STATUS\tOLD_PATH\tNEW_PATH（重命名）
     let mut files = Vec::new();
-    
-    for line in lines.iter().skip(1) {
+    for line in s[file_list_start..].lines() {
         let line = line.trim();
         
         // 跳过空行

@@ -755,7 +755,7 @@ struct GitLogRow: View {
                     .fill(isHead ? Color.accentColor : Color.secondary.opacity(0.5))
                     .frame(width: 8, height: 8)
                 
-                // 提交消息（单行）
+                // 提交消息（列表只显示一行）
                 Text(entry.message)
                     .font(.system(size: 12))
                     .foregroundColor(.primary)
@@ -783,9 +783,9 @@ struct GitLogRow: View {
             }
             .onHover { hovering in
                 isHovered = hovering
-                // 悬浮一段时间后显示 popover
                 if hovering {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // 2 秒延迟后显示 popover，避免误触
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         if isHovered {
                             showPopover = true
                         }
