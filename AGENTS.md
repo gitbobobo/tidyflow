@@ -3,8 +3,6 @@
 1. 使用中文交流、编写代码注释、文档
 2. 经验总结：获取到经验教训后，如果它属于可复用的项目开发流程，就用简洁的语言记录到 AGENTS.md 中
 
-## 经验总结
-
 ## Project Overview
 
 TidyFlow is a macOS-native multi-project development tool with VS Code-level terminal experience and Git worktree-based workspace isolation.
@@ -14,6 +12,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - **Backend**: Rust core engine (in `/core/`)
 - **Terminal**: xterm.js in WKWebView
 - **Communication**: JSON-RPC 2.0 over WebSocket (default port 47999)
+
+## 经验总结
 
 ## Build Commands
 
