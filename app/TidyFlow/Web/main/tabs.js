@@ -6,6 +6,10 @@
 
   const TF = window.TidyFlowApp;
 
+  // 渲染器类型建议（参考 VS Code 策略）
+  // undefined = 尚未检测，'dom' = 建议使用 DOM 渲染器
+  let suggestedRendererType = undefined;
+
   /**
    * 检测 xterm.js 生成的终端查询响应，避免发送到服务器被 shell 回显
    * 
@@ -128,46 +132,58 @@
       console.warn("WebLinks addon failed:", e.message);
     }
 
-    // WebGL addon - 启用 GPU 加速渲染
-    // 增强的 context loss 处理：自动尝试恢复 WebGL 渲染
+    // WebGL addon - GPU 加速渲染（参考 VS Code 策略）
+    // 策略：WebGL 失败时直接回退到 DOM 渲染器，不再尝试恢复
     let webglAddon = null;
-    let webglRecoveryAttempts = 0;
-    const MAX_WEBGL_RECOVERY_ATTEMPTS = 3;
 
-    function loadWebglAddon() {
-      if (webglAddon) {
-        try {
-          webglAddon.dispose();
-        } catch (e) {
-          // ignore
-        }
-        webglAddon = null;
+    /**
+     * 判断是否应该加载 WebGL 渲染器
+     * 参考 VS Code: gpuAcceleration === 'auto' && suggestedRendererType === undefined
+     */
+    function shouldLoadWebgl() {
+      return suggestedRendererType === undefined;
+    }
+
+    /**
+     * 释放 WebGL 渲染器
+     */
+    function disposeWebglAddon() {
+      if (!webglAddon) return;
+      try {
+        webglAddon.dispose();
+      } catch (e) {
+        // ignore
       }
+      webglAddon = null;
+    }
+
+    /**
+     * 尝试加载 WebGL 渲染器
+     * 失败时设置 suggestedRendererType = 'dom'，后续终端将直接使用 DOM 渲染器
+     */
+    function loadWebglAddon() {
+      if (!shouldLoadWebgl()) {
+        console.log("[WebGL] Skipped, using DOM renderer (suggested)");
+        return false;
+      }
+
+      disposeWebglAddon();
 
       try {
         webglAddon = new WebglAddon.WebglAddon();
         webglAddon.onContextLoss(() => {
-          console.warn("[WebGL] Context lost, attempting recovery...");
-          webglAddon.dispose();
-          webglAddon = null;
-
-          // 延迟尝试恢复 WebGL
-          if (webglRecoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
-            webglRecoveryAttempts++;
-            setTimeout(() => {
-              console.log(`[WebGL] Recovery attempt ${webglRecoveryAttempts}/${MAX_WEBGL_RECOVERY_ATTEMPTS}`);
-              loadWebglAddon();
-            }, 500 * webglRecoveryAttempts); // 递增延迟
-          } else {
-            console.warn("[WebGL] Max recovery attempts reached, falling back to DOM renderer");
-          }
+          // 参考 VS Code: context loss 时直接回退到 DOM，不尝试恢复
+          console.warn("[WebGL] Context lost, falling back to DOM renderer");
+          disposeWebglAddon();
+          // 不设置 suggestedRendererType，允许其他终端继续尝试 WebGL
         });
         term.loadAddon(webglAddon);
-        webglRecoveryAttempts = 0; // 成功加载后重置计数
         console.log("[WebGL] Addon loaded successfully");
         return true;
       } catch (e) {
-        console.warn("[WebGL] Addon failed:", e.message);
+        // 参考 VS Code: 加载失败时设置建议类型为 DOM
+        console.warn("[WebGL] Addon failed, falling back to DOM renderer:", e.message);
+        suggestedRendererType = 'dom';
         webglAddon = null;
         return false;
       }
@@ -408,8 +424,10 @@
       fitAddon,
       // 使用 getter 获取当前的 webglAddon 状态
       get webglAddon() { return webglAddon; },
-      // 提供重新加载 WebGL 的方法
-      reloadWebgl: loadWebglAddon,
+      // 检查是否使用 GPU 加速
+      get isGpuAccelerated() { return !!webglAddon; },
+      // 释放 WebGL 渲染器
+      disposeWebgl: disposeWebglAddon,
       pane,
       tabEl,
       cwd: cwd || "",
@@ -773,12 +791,6 @@
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (tab.type === "terminal" && tab.term) {
-          // 检查 WebGL 是否丢失，如果丢失则尝试恢复
-          if (!tab.webglAddon && tab.reloadWebgl) {
-            console.log("[Terminal] WebGL addon lost on tab switch, reloading...");
-            tab.reloadWebgl();
-          }
-
           // 清除 WebGL 纹理图集以修复 visibility:hidden 后的渲染问题
           if (tab.term.clearTextureAtlas) {
             tab.term.clearTextureAtlas();
@@ -859,8 +871,9 @@
   }
 
   /**
-   * 刷新当前活跃的终端，清除 WebGL 纹理图集并触发重绘
+   * 刷新当前活跃的终端，清除纹理图集并触发重绘
    * 用于解决应用切换后的花屏问题
+   * 参考 VS Code 策略：不强制重建 WebGL，仅清除纹理和刷新显示
    */
   function refreshActiveTerminal() {
     const wsKey = TF.getCurrentWorkspaceKey();
@@ -875,14 +888,7 @@
     // 使用双重 requestAnimationFrame 确保浏览器完成布局更新
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        // 强制重建 WebGL addon，而不是仅检查是否为 null
-        // WebGL context 可能处于损坏状态但不是 null
-        if (tab.reloadWebgl) {
-          console.log("[Terminal] Force reloading WebGL addon...");
-          tab.reloadWebgl();
-        }
-
-        // 清除 WebGL 纹理图集以修复渲染问题
+        // 清除纹理图集以修复渲染问题
         if (tab.term.clearTextureAtlas) {
           tab.term.clearTextureAtlas();
         }
@@ -900,18 +906,14 @@
   }
 
   /**
-   * 刷新所有终端的 WebGL 状态
-   * 用于处理全局的 WebGL context 问题
+   * 刷新所有终端的显示状态
+   * 用于处理全局的渲染问题
    */
   function refreshAllTerminals() {
-    console.log("[Terminal] Force refreshing all terminals...");
+    console.log("[Terminal] Refreshing all terminals...");
     TF.workspaceTabs.forEach((tabSet) => {
       tabSet.tabs.forEach((tab) => {
         if (tab.type === "terminal" && tab.term) {
-          // 强制重建 WebGL，而不是仅检查是否为 null
-          if (tab.reloadWebgl) {
-            tab.reloadWebgl();
-          }
           // 清除纹理图集
           if (tab.term.clearTextureAtlas) {
             tab.term.clearTextureAtlas();
