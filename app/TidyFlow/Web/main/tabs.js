@@ -798,6 +798,47 @@
     }
   }
 
+  /**
+   * 刷新当前活跃的终端，清除 WebGL 纹理图集并触发重绘
+   * 用于解决应用切换后的花屏问题
+   */
+  function refreshActiveTerminal() {
+    const wsKey = TF.getCurrentWorkspaceKey();
+    if (!wsKey) return;
+
+    const tabSet = TF.workspaceTabs.get(wsKey);
+    if (!tabSet || !tabSet.activeTabId) return;
+
+    const tab = tabSet.tabs.get(tabSet.activeTabId);
+    if (!tab || tab.type !== "terminal" || !tab.term) return;
+
+    // 使用双重 requestAnimationFrame 确保浏览器完成布局更新
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        // 清除 WebGL 纹理图集以修复渲染问题
+        if (tab.term.clearTextureAtlas) {
+          tab.term.clearTextureAtlas();
+        }
+
+        tab.fitAddon.fit();
+        const cols = tab.term.cols;
+        const rows = tab.term.rows;
+        tab.term.refresh(0, rows - 1);
+        tab.term.focus();
+
+        // 发送 resize 信号，触发 TUI 应用重绘
+        TF.sendResize(tab.termId, cols, rows);
+      });
+    });
+  }
+
+  // 监听页面可见性变化，解决应用切换后的花屏问题
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      refreshActiveTerminal();
+    }
+  });
+
   TF.createTerminalTab = createTerminalTab;
   TF.createEditorTab = createEditorTab;
   TF.updateTabDirtyState = updateTabDirtyState;
@@ -810,4 +851,5 @@
   TF.switchToTab = switchToTab;
   TF.closeTab = closeTab;
   TF.removeTabFromUI = removeTabFromUI;
+  TF.refreshActiveTerminal = refreshActiveTerminal;
 })();

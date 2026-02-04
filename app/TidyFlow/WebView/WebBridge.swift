@@ -273,6 +273,19 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         ])
     }
 
+    // MARK: - Terminal Refresh
+
+    /// 刷新当前活跃的终端，用于解决应用切换后的花屏问题
+    func refreshActiveTerminal() {
+        guard let webView = webView else { return }
+        let js = "window.TidyFlowApp && window.TidyFlowApp.refreshActiveTerminal && window.TidyFlowApp.refreshActiveTerminal()"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                print("[WebBridge] refreshActiveTerminal error: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Phase C2-1: Diff Methods
 
     /// Open a diff view for a file
