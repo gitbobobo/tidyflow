@@ -35,9 +35,6 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 12) {
-                        AddProjectButtonView()
-                            .environmentObject(appState)
-
                         CoreStatusView(coreManager: appState.coreProcessManager)
                             .environmentObject(appState)
 
@@ -107,7 +104,10 @@ struct ContentView: View {
         }
         // 监听应用激活事件，刷新终端以解决花屏问题
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            webBridge.refreshActiveTerminal()
+            // 延迟执行，等待 WKWebView 完全恢复
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                webBridge.refreshAllTerminals()
+            }
         }
     }
 }

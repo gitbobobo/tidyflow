@@ -129,18 +129,51 @@
     }
 
     // WebGL addon - 启用 GPU 加速渲染
+    // 增强的 context loss 处理：自动尝试恢复 WebGL 渲染
     let webglAddon = null;
-    try {
-      webglAddon = new WebglAddon.WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
+    let webglRecoveryAttempts = 0;
+    const MAX_WEBGL_RECOVERY_ATTEMPTS = 3;
+
+    function loadWebglAddon() {
+      if (webglAddon) {
+        try {
+          webglAddon.dispose();
+        } catch (e) {
+          // ignore
+        }
         webglAddon = null;
-      });
-      term.loadAddon(webglAddon);
-    } catch (e) {
-      console.warn("WebGL addon failed:", e.message);
-      webglAddon = null;
+      }
+
+      try {
+        webglAddon = new WebglAddon.WebglAddon();
+        webglAddon.onContextLoss(() => {
+          console.warn("[WebGL] Context lost, attempting recovery...");
+          webglAddon.dispose();
+          webglAddon = null;
+
+          // 延迟尝试恢复 WebGL
+          if (webglRecoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
+            webglRecoveryAttempts++;
+            setTimeout(() => {
+              console.log(`[WebGL] Recovery attempt ${webglRecoveryAttempts}/${MAX_WEBGL_RECOVERY_ATTEMPTS}`);
+              loadWebglAddon();
+            }, 500 * webglRecoveryAttempts); // 递增延迟
+          } else {
+            console.warn("[WebGL] Max recovery attempts reached, falling back to DOM renderer");
+          }
+        });
+        term.loadAddon(webglAddon);
+        webglRecoveryAttempts = 0; // 成功加载后重置计数
+        console.log("[WebGL] Addon loaded successfully");
+        return true;
+      } catch (e) {
+        console.warn("[WebGL] Addon failed:", e.message);
+        webglAddon = null;
+        return false;
+      }
     }
+
+    loadWebglAddon();
 
     // Unicode11 addon - 正确处理 CJK 等宽字符
     try {
@@ -373,7 +406,10 @@
       termId: termId,
       term,
       fitAddon,
-      webglAddon,
+      // 使用 getter 获取当前的 webglAddon 状态
+      get webglAddon() { return webglAddon; },
+      // 提供重新加载 WebGL 的方法
+      reloadWebgl: loadWebglAddon,
       pane,
       tabEl,
       cwd: cwd || "",
@@ -719,6 +755,12 @@
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (tab.type === "terminal" && tab.term) {
+          // 检查 WebGL 是否丢失，如果丢失则尝试恢复
+          if (!tab.webglAddon && tab.reloadWebgl) {
+            console.log("[Terminal] WebGL addon lost on tab switch, reloading...");
+            tab.reloadWebgl();
+          }
+
           // 清除 WebGL 纹理图集以修复 visibility:hidden 后的渲染问题
           if (tab.term.clearTextureAtlas) {
             tab.term.clearTextureAtlas();
@@ -729,7 +771,7 @@
           const rows = tab.term.rows;
           tab.term.refresh(0, rows - 1);
           tab.term.focus();
-          
+
           // 发送 resize 信号，触发 TUI 应用重绘
           // 这是让切换回来后界面正确显示的关键
           TF.sendResize(tab.termId, cols, rows);
@@ -815,6 +857,12 @@
     // 使用双重 requestAnimationFrame 确保浏览器完成布局更新
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        // 检查 WebGL 是否丢失，如果丢失则尝试恢复
+        if (!tab.webglAddon && tab.reloadWebgl) {
+          console.log("[Terminal] WebGL addon lost, attempting to reload...");
+          tab.reloadWebgl();
+        }
+
         // 清除 WebGL 纹理图集以修复渲染问题
         if (tab.term.clearTextureAtlas) {
           tab.term.clearTextureAtlas();
@@ -832,11 +880,44 @@
     });
   }
 
+  /**
+   * 刷新所有终端的 WebGL 状态
+   * 用于处理全局的 WebGL context 问题
+   */
+  function refreshAllTerminals() {
+    TF.workspaceTabs.forEach((tabSet) => {
+      tabSet.tabs.forEach((tab) => {
+        if (tab.type === "terminal" && tab.term) {
+          // 检查并恢复 WebGL
+          if (!tab.webglAddon && tab.reloadWebgl) {
+            tab.reloadWebgl();
+          }
+          // 清除纹理图集
+          if (tab.term.clearTextureAtlas) {
+            tab.term.clearTextureAtlas();
+          }
+          // 刷新显示
+          tab.term.refresh(0, tab.term.rows - 1);
+        }
+      });
+    });
+  }
+
   // 监听页面可见性变化，解决应用切换后的花屏问题
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      refreshActiveTerminal();
+      // 延迟执行，等待 WKWebView 完全恢复
+      setTimeout(() => {
+        refreshActiveTerminal();
+      }, 100);
     }
+  });
+
+  // 监听窗口焦点变化，作为 visibilitychange 的补充
+  window.addEventListener("focus", () => {
+    setTimeout(() => {
+      refreshActiveTerminal();
+    }, 50);
   });
 
   TF.createTerminalTab = createTerminalTab;
@@ -852,4 +933,5 @@
   TF.closeTab = closeTab;
   TF.removeTabFromUI = removeTabFromUI;
   TF.refreshActiveTerminal = refreshActiveTerminal;
+  TF.refreshAllTerminals = refreshAllTerminals;
 })();

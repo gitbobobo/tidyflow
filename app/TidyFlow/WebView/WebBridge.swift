@@ -286,6 +286,17 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         }
     }
 
+    /// 刷新所有终端的 WebGL 状态，用于处理全局的 WebGL context 问题
+    func refreshAllTerminals() {
+        guard let webView = webView else { return }
+        let js = "window.TidyFlowApp && window.TidyFlowApp.refreshAllTerminals && window.TidyFlowApp.refreshAllTerminals()"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                print("[WebBridge] refreshAllTerminals error: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Phase C2-1: Diff Methods
 
     /// Open a diff view for a file

@@ -27,6 +27,16 @@ struct ProjectsSidebarView: View {
             }
         }
         .frame(minWidth: 200)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: {
+                    appState.addProjectSheetPresented = true
+                }) {
+                    Image(systemName: "plus")
+                }
+                .help("添加项目")
+            }
+        }
     }
 
     // MARK: - Empty State
