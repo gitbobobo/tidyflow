@@ -31,17 +31,26 @@
     connect() {
       try {
         this.ws = new WebSocket(this.url);
+        this.ws.binaryType = 'arraybuffer';
         this.ws.onopen = () => this.callbacks.onOpen();
         this.ws.onclose = () => this.callbacks.onClose();
         this.ws.onerror = (e) => this.callbacks.onError(e);
-        this.ws.onmessage = (e) => this.callbacks.onMessage(e.data);
+        this.ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) {
+            const decoded = MessagePack.decode(new Uint8Array(e.data));
+            this.callbacks.onMessage(decoded);
+          } else {
+            this.callbacks.onMessage(e.data);
+          }
+        };
       } catch (err) {
         this.callbacks.onError(err);
       }
     }
     send(data) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(data);
+        const encoded = MessagePack.encode(data);
+        this.ws.send(encoded.buffer);
       }
     }
     close() {

@@ -255,15 +255,15 @@
               return;
             }
             
-            // onData 没有触发，手动发送
+            // onData 没有触发,手动发送
             if (TF.transport && TF.transport.isConnected) {
               const encoder = new TextEncoder();
               const bytes = encoder.encode(inputData);
-              TF.transport.send(JSON.stringify({
+              TF.transport.send({
                 type: "input",
                 term_id: termId,
-                data_b64: TF.encodeBase64(bytes),
-              }));
+                data: bytes,
+              });
             }
             pendingInputTimer = null;
           }, 20); // 20ms 足够让 onData 触发
@@ -290,15 +290,14 @@
         // 设置短暂超时：如果 onData 没有触发（中文标点的情况），手动发送数据
         setTimeout(() => {
           if (!compositionDataSent && compositionEndData.length > 0) {
-            // onData 没有发送数据，手动发送 compositionend 的内容
             if (TF.transport && TF.transport.isConnected) {
               const encoder = new TextEncoder();
               const bytes = encoder.encode(compositionEndData);
-              TF.transport.send(JSON.stringify({
+              TF.transport.send({
                 type: "input",
                 term_id: termId,
-                data_b64: TF.encodeBase64(bytes),
-              }));
+                data: bytes,
+              });
             }
           }
           compositionJustEnded = false;
@@ -389,11 +388,11 @@
       if (TF.transport && TF.transport.isConnected) {
         const encoder = new TextEncoder();
         const bytes = encoder.encode(data);
-        TF.transport.send(JSON.stringify({
+        TF.transport.send({
           type: "input",
           term_id: termId,
-          data_b64: TF.encodeBase64(bytes),
-        }));
+          data: bytes,
+        });
       }
     });
 
@@ -629,7 +628,7 @@
     const content = tab.editorView.state.doc.toString();
     const encoder = new TextEncoder();
     const bytes = encoder.encode(content);
-    TF.sendFileWrite(tab.project, tab.workspace, tab.filePath, TF.encodeBase64(bytes));
+    TF.sendFileWrite(tab.project, tab.workspace, tab.filePath, bytes);
   }
 
   function saveCurrentEditor() {
@@ -829,7 +828,7 @@
 
     if (tab.type === "terminal") {
       if (TF.transport && TF.transport.isConnected) {
-        TF.transport.send(JSON.stringify({ type: "term_close", term_id: tab.termId }));
+        TF.transport.send({ type: "term_close", term_id: tab.termId });
       }
     }
 

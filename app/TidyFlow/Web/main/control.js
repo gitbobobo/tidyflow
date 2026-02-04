@@ -8,7 +8,7 @@
 
   function sendControlMessage(msg) {
     if (TF.transport && TF.transport.isConnected) {
-      TF.transport.send(JSON.stringify(msg));
+      TF.transport.send(msg);
     }
   }
 
@@ -110,8 +110,8 @@
     sendControlMessage({ type: "file_read", project, workspace, path });
   }
 
-  function sendFileWrite(project, workspace, path, content_b64) {
-    sendControlMessage({ type: "file_write", project, workspace, path, content_b64 });
+  function sendFileWrite(project, workspace, path, content) {
+    sendControlMessage({ type: "file_write", project, workspace, path, content });
   }
 
   function sendFileIndex(project, workspace) {
@@ -131,12 +131,12 @@
     }
 
     lastSentSize.set(termId, { cols, rows });
-    TF.transport.send(JSON.stringify({
+    TF.transport.send({
       type: "resize",
       term_id: termId,
       cols: cols,
       rows: rows,
-    }));
+    });
   }
 
   TF.sendControlMessage = sendControlMessage;

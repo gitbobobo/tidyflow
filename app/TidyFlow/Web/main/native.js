@@ -201,7 +201,7 @@
         if (TF.activeSessionId === session_id) TF.activeSessionId = null;
 
         if (TF.transport && TF.transport.isConnected) {
-          TF.transport.send(JSON.stringify({ type: "term_kill", term_id: session_id }));
+          TF.transport.send({ type: "term_kill", term_id: session_id });
         }
 
         postToNative("terminal_closed", { tab_id: tab_id, session_id: session_id, code: 0 });
@@ -214,13 +214,12 @@
 
         if (TF.transport && TF.transport.isConnected) {
           const encoder = new TextEncoder();
-          // 添加换行符以执行命令
           const bytes = encoder.encode(input + "\n");
-          TF.transport.send(JSON.stringify({
+          TF.transport.send({
             type: "input",
             term_id: session_id,
-            data_b64: TF.encodeBase64(bytes),
-          }));
+            data: bytes,
+          });
         }
         break;
       }
