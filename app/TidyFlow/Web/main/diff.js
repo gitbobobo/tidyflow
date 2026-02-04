@@ -414,13 +414,13 @@
     const lines = [];
     const lineMetadata = [];
 
-    // Flatten hunks into lines
-    data.headers.forEach((header) => {
-      lines.push(header);
-      lineMetadata.push({ type: "header" });
-    });
-
-    data.hunks.forEach((hunk) => {
+    // 不再渲染 headers，直接从 hunks 开始
+    data.hunks.forEach((hunk, hunkIndex) => {
+      // 只在第一个 hunk 之后添加分隔符
+      if (hunkIndex > 0) {
+        lines.push("");
+        lineMetadata.push({ type: "separator" });
+      }
       lines.push(hunk.header);
       lineMetadata.push({ type: "hunk-header" });
 
@@ -448,7 +448,6 @@
     const diffTheme = EditorView.theme({
       ".cm-diff-add": { backgroundColor: "rgba(16, 185, 129, 0.15)" }, // Green background
       ".cm-diff-del": { backgroundColor: "rgba(239, 68, 68, 0.15)" }, // Red background
-      ".cm-diff-header": { backgroundColor: "#1f2937", color: "#9ca3af" }, // Dark header
       ".cm-diff-hunk": {
         backgroundColor: "#1f2937",
         color: "#60a5fa",
@@ -477,7 +476,6 @@
           let className = "";
           if (meta.type === "add") className = "cm-diff-add";
           else if (meta.type === "del") className = "cm-diff-del";
-          else if (meta.type === "header") className = "cm-diff-header";
           else if (meta.type === "hunk-header") className = "cm-diff-hunk";
 
           if (className) {
@@ -505,7 +503,7 @@
         const meta = lineMetadata[index];
 
         if (meta && meta.newLine && tab.code !== "D") {
-          TF.openFileAtLine(meta.path, meta.newLine);
+          TF.openFileAtLineFromDiff(meta.path, meta.newLine, tab.id);
         }
       },
     });
@@ -549,13 +547,7 @@
     const pre = document.createElement("pre");
     pre.className = "diff-text";
 
-    data.headers.forEach((line) => {
-      const lineEl = document.createElement("div");
-      lineEl.className = "diff-line diff-header";
-      lineEl.textContent = line;
-      pre.appendChild(lineEl);
-    });
-
+    // 不再渲染 headers，直接从 hunks 开始
     data.hunks.forEach((hunk) => {
       const hunkEl = document.createElement("div");
       hunkEl.className = "diff-line diff-hunk";
@@ -596,7 +588,7 @@
       const targetLine = parseInt(lineEl.dataset.lineNew, 10);
       const targetPath = lineEl.dataset.path;
       if (targetPath && !isNaN(targetLine) && tab.code !== "D") {
-        TF.openFileAtLine(targetPath, targetLine);
+        TF.openFileAtLineFromDiff(targetPath, targetLine, tab.id);
       }
     });
 
@@ -609,18 +601,7 @@
     const container = document.createElement("div");
     container.className = "diff-split-container";
 
-    if (data.headers.length > 0) {
-      const headersEl = document.createElement("div");
-      headersEl.className = "diff-split-headers";
-      data.headers.forEach((line) => {
-        const lineEl = document.createElement("div");
-        lineEl.className = "diff-line diff-header";
-        lineEl.textContent = line;
-        headersEl.appendChild(lineEl);
-      });
-      container.appendChild(headersEl);
-    }
-
+    // 不再渲染 headers，直接从 hunks 开始
     data.hunks.forEach((hunk) => {
       const hunkHeaderEl = document.createElement("div");
       hunkHeaderEl.className = "diff-split-hunk-header diff-hunk";
@@ -715,7 +696,7 @@
       const targetLine = parseInt(row.dataset.lineNew, 10);
       const targetPath = row.dataset.path;
       if (targetPath && !isNaN(targetLine) && tab.code !== "D") {
-        TF.openFileAtLine(targetPath, targetLine);
+        TF.openFileAtLineFromDiff(targetPath, targetLine, tab.id);
       }
     });
 
@@ -775,13 +756,10 @@
 
   function updateDiffStatusBar(tab) {
     if (!tab.statusBar) return;
-    let status = "Click any line to jump to that location in the file";
-    if (tab.viewMode === "split")
-      status =
-        "Split view: Click left (old) or right (new) to jump | " + status;
-    if (tab.truncated)
-      status = "⚠️ Diff too large, truncated to 1MB | " + status;
-    if (tab.code === "D") status = "File deleted - navigation disabled";
+    let status = "Click a line to open in editor";
+    if (tab.viewMode === "split") status = "Split view | " + status;
+    if (tab.truncated) status = "⚠️ Truncated | " + status;
+    if (tab.code === "D") status = "File deleted";
     tab.statusBar.textContent = status;
   }
 
@@ -789,8 +767,31 @@
     TF.sendControlMessage({ type: "git_diff", project, workspace, path, mode });
   }
 
+  // 从 diff 视图跳转到文件，记录来源以便返回
+  function openFileAtLineFromDiff(filePath, lineNumber, sourceDiffTabId) {
+    TF.lastDiffTabId = sourceDiffTabId;
+    TF.openFileAtLine(filePath, lineNumber);
+  }
+
+  // 返回到上一个 diff 视图
+  function goBackToDiff() {
+    if (TF.lastDiffTabId) {
+      const wsKey = TF.getCurrentWorkspaceKey();
+      if (wsKey && TF.workspaceTabs.has(wsKey)) {
+        const tabSet = TF.workspaceTabs.get(wsKey);
+        if (tabSet.tabs.has(TF.lastDiffTabId)) {
+          TF.switchToTab(TF.lastDiffTabId);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   TF.createDiffTab = createDiffTab;
   TF.openDiffTab = openDiffTab;
   TF.renderDiffContent = renderDiffContent;
   TF.sendGitDiff = sendGitDiff;
+  TF.openFileAtLineFromDiff = openFileAtLineFromDiff;
+  TF.goBackToDiff = goBackToDiff;
 })();

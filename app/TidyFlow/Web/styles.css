@@ -218,6 +218,18 @@ body.renderer-only #tab-content {
   color: #808080;
   cursor: default;
 }
+.editor-back-diff-btn {
+  padding: 4px 12px;
+  background: #3c3c3c;
+  border: none;
+  border-radius: 3px;
+  color: #cccccc;
+  font-size: 12px;
+  cursor: pointer;
+}
+.editor-back-diff-btn:hover {
+  background: #4c4c4c;
+}
 .editor-container {
   flex: 1;
   min-height: 0;

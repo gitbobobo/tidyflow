@@ -456,6 +456,19 @@
     pathEl.textContent = filePath;
     toolbar.appendChild(pathEl);
 
+    // 返回 Diff 按钮（仅当从 diff 跳转过来时显示）
+    const backToDiffBtn = document.createElement("button");
+    backToDiffBtn.className = "editor-back-diff-btn";
+    backToDiffBtn.textContent = "← Back to Diff";
+    backToDiffBtn.title = "Return to diff view";
+    backToDiffBtn.style.display = "none";
+    backToDiffBtn.addEventListener("click", () => {
+      if (TF.goBackToDiff && TF.goBackToDiff()) {
+        backToDiffBtn.style.display = "none";
+      }
+    });
+    toolbar.appendChild(backToDiffBtn);
+
     const saveBtn = document.createElement("button");
     saveBtn.className = "editor-save-btn";
     saveBtn.textContent = "Save";
@@ -560,6 +573,7 @@
       pane,
       tabEl,
       saveBtn,
+      backToDiffBtn,
       statusBar,
       dirtyIndicator,
       isDirty: false,
@@ -652,6 +666,10 @@
         const tab = tabSet.tabs.get(tabId);
         TF.switchToTab(tabId);
         TF.scrollToLineAndHighlight(tab, lineNumber);
+        // 如果从 diff 跳转过来，显示返回按钮
+        if (TF.lastDiffTabId && tab.backToDiffBtn) {
+          tab.backToDiffBtn.style.display = "inline-block";
+        }
         return;
       }
     }

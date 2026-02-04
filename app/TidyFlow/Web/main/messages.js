@@ -247,6 +247,10 @@
                   TF.pendingLineNavigation = null;
                   setTimeout(() => {
                     TF.scrollToLineAndHighlight(tabInfo, lineNumber);
+                    // 如果从 diff 跳转过来，显示返回按钮
+                    if (TF.lastDiffTabId && tabInfo.backToDiffBtn) {
+                      tabInfo.backToDiffBtn.style.display = "inline-block";
+                    }
                   }, 50);
                 }
               }
