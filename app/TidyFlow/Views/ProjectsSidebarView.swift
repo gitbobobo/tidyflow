@@ -252,11 +252,7 @@ struct WorkspaceRowView: View {
 
     /// 工作空间全局键，用于获取终端数量
     private var globalWorkspaceKey: String {
-        if workspace.isDefault {
-            return "\(projectName)/(default)"
-        } else {
-            return "\(projectName)/\(workspace.name)"
-        }
+        return "\(projectName):\(workspace.name)"
     }
 
     /// 当前工作空间的终端数量

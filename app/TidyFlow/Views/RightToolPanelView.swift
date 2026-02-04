@@ -257,6 +257,36 @@ extension TreeRowView where CustomIcon == EmptyView {
     }
 }
 
+// MARK: - TreeRowView 初始化（带自定义图标）
+
+extension TreeRowView {
+    init(
+        isExpandable: Bool,
+        isExpanded: Bool,
+        iconName: String,
+        iconColor: Color,
+        title: String,
+        depth: Int = 0,
+        isSelected: Bool = false,
+        selectedBackgroundColor: Color? = nil,
+        trailingText: String? = nil,
+        customIconView: CustomIcon,
+        onTap: @escaping () -> Void
+    ) {
+        self.isExpandable = isExpandable
+        self.isExpanded = isExpanded
+        self.iconName = iconName
+        self.iconColor = iconColor
+        self.title = title
+        self.depth = depth
+        self.isSelected = isSelected
+        self.selectedBackgroundColor = selectedBackgroundColor
+        self.trailingText = trailingText
+        self.customIconView = customIconView
+        self.onTap = onTap
+    }
+}
+
 // MARK: - 文件浏览器视图
 
 struct ExplorerView: View {
