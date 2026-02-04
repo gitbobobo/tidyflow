@@ -10,24 +10,14 @@ struct SettingsContentView: View {
     @EnvironmentObject var appState: AppState
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                // 页面标题
-                Text("设置")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .padding(.bottom, 8)
-                
-                // 自定义命令部分
-                CustomCommandsSection()
-                    .environmentObject(appState)
-                
-                Spacer()
-            }
-            .padding(24)
+        TabView {
+            CustomCommandsSection()
+                .tabItem {
+                    Label("设置", systemImage: "gear")
+                }
+                .environmentObject(appState)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.windowBackgroundColor))
+        .frame(width: 550, height: 400)
     }
 }
 
@@ -39,35 +29,33 @@ struct CustomCommandsSection: View {
     @State private var showingAddSheet = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // 标题和添加按钮
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("自定义终端命令")
-                        .font(.headline)
-                    Text("配置快捷命令，在新建终端时快速执行")
-                        .font(.caption)
+        Form {
+            Section {
+                if appState.clientSettings.customCommands.isEmpty {
+                    Text("暂无自定义命令")
                         .foregroundColor(.secondary)
+                } else {
+                    ForEach(appState.clientSettings.customCommands) { command in
+                        CustomCommandRow(
+                            command: command,
+                            onEdit: { editingCommand = command },
+                            onDelete: { appState.deleteCustomCommand(id: command.id) }
+                        )
+                    }
                 }
                 
-                Spacer()
-                
+                // 新增按钮
                 Button(action: { showingAddSheet = true }) {
                     Label("添加命令", systemImage: "plus")
+                        .foregroundColor(.accentColor)
                 }
-                .buttonStyle(.borderedProminent)
-            }
-            
-            // 命令列表
-            if appState.clientSettings.customCommands.isEmpty {
-                emptyStateView
-            } else {
-                commandListView
+            } header: {
+                Text("终端命令")
+            } footer: {
+                Text("配置快捷命令，在新建终端时快速执行")
             }
         }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .formStyle(.grouped)
         .sheet(isPresented: $showingAddSheet) {
             CommandEditSheet(
                 command: CustomCommand(),
@@ -90,33 +78,7 @@ struct CustomCommandsSection: View {
         }
     }
     
-    private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "terminal")
-                .font(.system(size: 36))
-                .foregroundColor(.secondary.opacity(0.5))
-            Text("暂无自定义命令")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Text("点击「添加命令」创建你的第一个快捷命令")
-                .font(.caption)
-                .foregroundColor(.secondary.opacity(0.8))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-    }
-    
-    private var commandListView: some View {
-        VStack(spacing: 8) {
-            ForEach(appState.clientSettings.customCommands) { command in
-                CustomCommandRow(
-                    command: command,
-                    onEdit: { editingCommand = command },
-                    onDelete: { appState.deleteCustomCommand(id: command.id) }
-                )
-            }
-        }
-    }
+    // Helper views removed as they are simplified into the Form or not needed
 }
 
 // MARK: - 命令行视图
@@ -149,24 +111,26 @@ struct CustomCommandRow: View {
             HStack(spacing: 8) {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help("编辑")
                 
                 Button(action: { showDeleteConfirm = true }) {
                     Image(systemName: "trash")
-                        .font(.system(size: 12))
-                        .foregroundColor(.red)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.red.opacity(0.8))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help("删除")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(NSColor.textBackgroundColor))
-        .cornerRadius(6)
+        .padding(.vertical, 4)
         .alert("删除命令", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) { }
             Button("删除", role: .destructive) { onDelete() }
@@ -196,61 +160,41 @@ struct CommandEditSheet: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 标题栏
-            HStack {
-                Text(isNew ? "添加命令" : "编辑命令")
-                    .font(.headline)
-                Spacer()
-            }
-            .padding()
-            
-            Divider()
-            
-            // 表单内容
             Form {
-                // 图标选择
-                HStack {
-                    Text("图标")
-                    Spacer()
-                    Button(action: { showIconPicker = true }) {
-                        HStack(spacing: 8) {
-                            CommandIconView(iconName: command.icon, size: 20)
-                            Text("选择图标")
-                                .font(.system(size: 12))
+                Section {
+                    TextField("名称", text: $command.name)
+                    
+                    LabeledContent("图标") {
+                        Button(action: { showIconPicker = true }) {
+                            HStack(spacing: 4) {
+                                CommandIconView(iconName: command.icon, size: 16)
+                                Text("选择...")
+                                    .font(.subheadline)
+                            }
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .cornerRadius(4)
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.plain)
                 }
                 
-                // 名称
-                TextField("名称", text: $command.name)
-                    .textFieldStyle(.roundedBorder)
-                
-                // 命令
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("命令")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                Section("命令") {
                     TextEditor(text: $command.command)
                         .font(.system(size: 12, design: .monospaced))
-                        .frame(height: 80)
-                        .border(Color(NSColor.separatorColor), width: 1)
+                        .frame(height: 100)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.1), lineWidth: 1)
+                        )
                 }
             }
             .formStyle(.grouped)
-            .padding()
-            
-            Divider()
             
             // 底部按钮
             HStack {
-                Spacer()
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.escape, modifiers: [])
+                
+                Spacer()
+                
                 Button(isNew ? "添加" : "保存") {
                     onSave(command)
                     dismiss()
@@ -260,8 +204,9 @@ struct CommandEditSheet: View {
                 .disabled(command.name.isEmpty || command.command.isEmpty)
             }
             .padding()
+            .background(Color(NSColor.windowBackgroundColor))
         }
-        .frame(width: 450, height: 420)
+        .frame(width: 450, height: 350)
         .sheet(isPresented: $showIconPicker) {
             IconPickerSheet(selectedIcon: $command.icon)
         }
