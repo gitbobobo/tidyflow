@@ -322,6 +322,28 @@ body.renderer-only #tab-content {
 .diff-line {
   padding: 0 8px;
   white-space: pre;
+  display: flex;
+}
+.diff-line-nums-fallback {
+  display: inline-flex;
+  width: 80px;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  padding-right: 8px;
+  color: #666;
+  font-size: 12px;
+  user-select: none;
+}
+.diff-line-nums-fallback .diff-line-num-old,
+.diff-line-nums-fallback .diff-line-num-new {
+  width: 36px;
+  text-align: right;
+}
+.diff-line-nums-fallback .diff-line-num-old.diff-del {
+  color: #ef4444;
+}
+.diff-line-nums-fallback .diff-line-num-new.diff-add {
+  color: #10b981;
 }
 .diff-line[data-clickable="true"] {
   cursor: pointer;

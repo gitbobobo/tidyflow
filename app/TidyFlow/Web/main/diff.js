@@ -419,10 +419,10 @@
       // 只在第一个 hunk 之后添加分隔符
       if (hunkIndex > 0) {
         lines.push("");
-        lineMetadata.push({ type: "separator" });
+        lineMetadata.push({ type: "separator", oldLine: null, newLine: null });
       }
       lines.push(hunk.header);
-      lineMetadata.push({ type: "hunk-header" });
+      lineMetadata.push({ type: "hunk-header", oldLine: null, newLine: null });
 
       hunk.lines.forEach((line) => {
         let text = line.text;
@@ -436,6 +436,7 @@
         lines.push(text);
         lineMetadata.push({
           type: type,
+          oldLine: line.oldLine,
           newLine: line.newLine,
           path: data.path,
         });
@@ -446,24 +447,53 @@
 
     // Custom theme for diff colors
     const diffTheme = EditorView.theme({
-      ".cm-diff-add": { backgroundColor: "rgba(16, 185, 129, 0.15)" }, // Green background
-      ".cm-diff-del": { backgroundColor: "rgba(239, 68, 68, 0.15)" }, // Red background
+      ".cm-diff-add": { backgroundColor: "rgba(16, 185, 129, 0.15)" },
+      ".cm-diff-del": { backgroundColor: "rgba(239, 68, 68, 0.15)" },
       ".cm-diff-hunk": {
         backgroundColor: "#1f2937",
         color: "#60a5fa",
         fontStyle: "italic",
-      }, // Blueish hunk header
+      },
       ".cm-content": {
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontFamily: 'Menlo, Monaco, "Courier New\", monospace',
         fontSize: "13px",
       },
       ".cm-gutters": {
         backgroundColor: "#1e1e1e",
         borderRight: "1px solid #333",
         color: "#666",
+        minWidth: "80px",
+      },
+      // 隐藏默认行号，使用自定义双列行号
+      ".cm-lineNumbers": {
+        minWidth: "80px",
+      },
+      ".cm-lineNumbers .cm-gutterElement": {
+        display: "flex",
+        justifyContent: "flex-end",
+        paddingRight: "8px",
+        minWidth: "80px",
       },
       ".cm-activeLine": { backgroundColor: "transparent" },
       ".cm-activeLineGutter": { backgroundColor: "transparent" },
+      // 双列行号样式
+      ".diff-gutter-old": {
+        width: "36px",
+        textAlign: "right",
+        paddingRight: "4px",
+        color: "#666",
+      },
+      ".diff-gutter-new": {
+        width: "36px",
+        textAlign: "right",
+        color: "#666",
+      },
+      ".diff-gutter-old.diff-del": {
+        color: "#ef4444",
+      },
+      ".diff-gutter-new.diff-add": {
+        color: "#10b981",
+      },
     });
 
     // Line decorations
@@ -483,7 +513,8 @@
               Decoration.line({ attributes: { class: className } }).range(pos),
             );
           }
-          pos += lineText.length + 1; // +1 for newline
+
+          pos += lineText.length + 1;
         });
         return Decoration.set(ranges);
       },
@@ -491,6 +522,51 @@
         return deco;
       },
       provide: (f) => EditorView.decorations.from(f),
+    });
+
+    // 更新 gutter 中的行号为双列格式
+    function updateGutterLineNumbers(view) {
+      const gutterElements = view.dom.querySelectorAll(
+        ".cm-lineNumbers .cm-gutterElement",
+      );
+      gutterElements.forEach((el) => {
+        // 获取原始行号（CodeMirror 默认显示的行号）
+        const originalLineNum = parseInt(el.textContent, 10);
+        if (isNaN(originalLineNum)) return;
+
+        const lineIndex = originalLineNum - 1;
+        if (lineIndex < 0 || lineIndex >= lineMetadata.length) return;
+
+        const meta = lineMetadata[lineIndex];
+        if (!meta) return;
+
+        // 检查是否已经更新过
+        if (el.querySelector(".diff-gutter-old")) return;
+
+        // 清空现有内容
+        el.textContent = "";
+
+        // 创建双列行号
+        const oldSpan = document.createElement("span");
+        oldSpan.className = "diff-gutter-old";
+        if (meta.type === "del") oldSpan.classList.add("diff-del");
+        oldSpan.textContent = meta.oldLine != null ? String(meta.oldLine) : "";
+
+        const newSpan = document.createElement("span");
+        newSpan.className = "diff-gutter-new";
+        if (meta.type === "add") newSpan.classList.add("diff-add");
+        newSpan.textContent = meta.newLine != null ? String(meta.newLine) : "";
+
+        el.appendChild(oldSpan);
+        el.appendChild(newSpan);
+      });
+    }
+
+    // 监听视图更新，更新行号
+    const gutterUpdater = EditorView.updateListener.of((update) => {
+      if (update.viewportChanged || update.docChanged) {
+        requestAnimationFrame(() => updateGutterLineNumbers(update.view));
+      }
     });
 
     // Click handler for navigation
@@ -516,6 +592,7 @@
       diffTheme,
       diffDecorations,
       clickHandler,
+      gutterUpdater,
     ];
 
     // Attempt to load language mode
@@ -531,11 +608,14 @@
     container.style.height = "100%";
     tab.contentEl.appendChild(container);
 
-    new EditorView({
+    const editorView = new EditorView({
       doc: docContent,
       extensions: extensions,
       parent: container,
     });
+
+    // 初始更新行号
+    requestAnimationFrame(() => updateGutterLineNumbers(editorView));
   }
 
   function renderUnifiedDiff(tab) {
@@ -551,33 +631,61 @@
     data.hunks.forEach((hunk) => {
       const hunkEl = document.createElement("div");
       hunkEl.className = "diff-line diff-hunk";
-      hunkEl.textContent = hunk.header;
+      // hunk header 不显示行号
+      const hunkNums = document.createElement("span");
+      hunkNums.className = "diff-line-nums-fallback";
+      hunkEl.appendChild(hunkNums);
+      const hunkText = document.createElement("span");
+      hunkText.textContent = hunk.header;
+      hunkEl.appendChild(hunkText);
       pre.appendChild(hunkEl);
 
       hunk.lines.forEach((lineInfo) => {
         const lineEl = document.createElement("div");
         lineEl.className = "diff-line";
 
+        // 添加双列行号
+        const lineNums = document.createElement("span");
+        lineNums.className = "diff-line-nums-fallback";
+        const oldNum = document.createElement("span");
+        oldNum.className = "diff-line-num-old";
+        const newNum = document.createElement("span");
+        newNum.className = "diff-line-num-new";
+
         if (lineInfo.type === "add") {
           lineEl.classList.add("diff-add");
           lineEl.dataset.lineNew = lineInfo.newLine;
           lineEl.dataset.path = data.path;
           lineEl.dataset.clickable = "true";
+          oldNum.textContent = "";
+          newNum.textContent = lineInfo.newLine;
+          newNum.classList.add("diff-add");
         } else if (lineInfo.type === "del") {
           lineEl.classList.add("diff-remove");
           const nearestNew = findNearestNewLine(hunk, lineInfo);
           lineEl.dataset.lineNew = nearestNew;
           lineEl.dataset.path = data.path;
           lineEl.dataset.clickable = "true";
+          oldNum.textContent = lineInfo.oldLine;
+          oldNum.classList.add("diff-del");
+          newNum.textContent = "";
         } else if (lineInfo.type === "context") {
           lineEl.dataset.lineNew = lineInfo.newLine;
           lineEl.dataset.path = data.path;
           lineEl.dataset.clickable = "true";
+          oldNum.textContent = lineInfo.oldLine;
+          newNum.textContent = lineInfo.newLine;
         } else if (lineInfo.type === "meta") {
           lineEl.classList.add("diff-meta");
         }
 
-        lineEl.textContent = lineInfo.text;
+        lineNums.appendChild(oldNum);
+        lineNums.appendChild(newNum);
+        lineEl.appendChild(lineNums);
+
+        const textSpan = document.createElement("span");
+        textSpan.textContent = lineInfo.text;
+        lineEl.appendChild(textSpan);
         pre.appendChild(lineEl);
       });
     });
