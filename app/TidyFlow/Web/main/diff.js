@@ -16,7 +16,12 @@
     if (tabSet.tabs.has(tabId)) {
       TF.switchToTab(tabId);
       const existingTab = tabSet.tabs.get(tabId);
-      TF.sendGitDiff(TF.currentProject, TF.currentWorkspace, filePath, existingTab.diffMode || "working");
+      TF.sendGitDiff(
+        TF.currentProject,
+        TF.currentWorkspace,
+        filePath,
+        existingTab.diffMode || "working",
+      );
       return tabSet.tabs.get(tabId);
     }
 
@@ -57,8 +62,14 @@
     refreshBtn.addEventListener("click", () => {
       const tab = tabSet.tabs.get(tabId);
       if (tab) {
-        tab.contentEl.innerHTML = '<div class="diff-loading">Loading diff...</div>';
-        TF.sendGitDiff(tab.project, tab.workspace, tab.filePath, tab.diffMode || "working");
+        tab.contentEl.innerHTML =
+          '<div class="diff-loading">Loading diff...</div>';
+        TF.sendGitDiff(
+          tab.project,
+          tab.workspace,
+          tab.filePath,
+          tab.diffMode || "working",
+        );
       }
     });
     toolbar.appendChild(refreshBtn);
@@ -87,10 +98,13 @@
       const newMode = btn.dataset.mode;
       const tab = tabSet.tabs.get(tabId);
       if (tab && tab.diffMode !== newMode) {
-        modeToggle.querySelectorAll(".diff-mode-btn").forEach((b) => b.classList.remove("active"));
+        modeToggle
+          .querySelectorAll(".diff-mode-btn")
+          .forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         tab.diffMode = newMode;
-        tab.contentEl.innerHTML = '<div class="diff-loading">Loading diff...</div>';
+        tab.contentEl.innerHTML =
+          '<div class="diff-loading">Loading diff...</div>';
         TF.sendGitDiff(tab.project, tab.workspace, tab.filePath, newMode);
       }
     });
@@ -118,7 +132,9 @@
       const mode = btn.dataset.mode;
       const tab = tabSet.tabs.get(tabId);
       if (tab && tab.diffData && tab.viewMode !== mode) {
-        viewToggle.querySelectorAll(".diff-view-btn").forEach((b) => b.classList.remove("active"));
+        viewToggle
+          .querySelectorAll(".diff-view-btn")
+          .forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         tab.viewMode = mode;
         renderDiffView(tab);
@@ -199,7 +215,12 @@
     const tabInfo = createDiffTab(filePath, code);
     if (tabInfo) {
       TF.switchToTab(tabInfo.id);
-      TF.sendGitDiff(TF.currentProject, TF.currentWorkspace, filePath, tabInfo.diffMode);
+      TF.sendGitDiff(
+        TF.currentProject,
+        TF.currentWorkspace,
+        filePath,
+        tabInfo.diffMode,
+      );
     }
   }
 
@@ -231,7 +252,8 @@
     tab.code = code;
 
     if (isBinary) {
-      tab.contentEl.innerHTML = '<div class="diff-binary">Binary file diff not supported</div>';
+      tab.contentEl.innerHTML =
+        '<div class="diff-binary">Binary file diff not supported</div>';
       disableSplitMode(tab);
       return;
     }
@@ -244,10 +266,16 @@
 
     tab.diffData = parseDiffToStructure(text, path);
 
-    const totalLines = tab.diffData.hunks.reduce((sum, h) => sum + h.lines.length, 0);
+    const totalLines = tab.diffData.hunks.reduce(
+      (sum, h) => sum + h.lines.length,
+      0,
+    );
     if (totalLines > 5000) {
       tab.viewMode = "unified";
-      disableSplitMode(tab, "Diff too large for split view (" + totalLines + " lines)");
+      disableSplitMode(
+        tab,
+        "Diff too large for split view (" + totalLines + " lines)",
+      );
     } else {
       enableSplitMode(tab);
     }
@@ -263,7 +291,9 @@
     let currentNewLine = 0;
 
     lines.forEach((line) => {
-      const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+      const hunkMatch = line.match(
+        /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/,
+      );
       if (hunkMatch) {
         if (currentHunk) result.hunks.push(currentHunk);
         currentOldLine = parseInt(hunkMatch[1], 10);
@@ -295,10 +325,20 @@
         const firstChar = line.charAt(0);
 
         if (firstChar === "+") {
-          currentHunk.lines.push({ type: "add", oldLine: null, newLine: currentNewLine, text: line });
+          currentHunk.lines.push({
+            type: "add",
+            oldLine: null,
+            newLine: currentNewLine,
+            text: line,
+          });
           currentNewLine++;
         } else if (firstChar === "-") {
-          currentHunk.lines.push({ type: "del", oldLine: currentOldLine, newLine: null, text: line });
+          currentHunk.lines.push({
+            type: "del",
+            oldLine: currentOldLine,
+            newLine: null,
+            text: line,
+          });
           currentOldLine++;
         } else if (firstChar === " ") {
           currentHunk.lines.push({
@@ -310,7 +350,12 @@
           currentOldLine++;
           currentNewLine++;
         } else if (line === "\\ No newline at end of file") {
-          currentHunk.lines.push({ type: "meta", oldLine: null, newLine: null, text: line });
+          currentHunk.lines.push({
+            type: "meta",
+            oldLine: null,
+            newLine: null,
+            text: line,
+          });
         } else if (line !== "") {
           currentHunk.lines.push({
             type: "context",
@@ -327,19 +372,25 @@
   }
 
   function disableSplitMode(tab, reason) {
-    const splitBtn = tab.pane.querySelector('.diff-view-btn[data-mode="split"]');
+    const splitBtn = tab.pane.querySelector(
+      '.diff-view-btn[data-mode="split"]',
+    );
     if (splitBtn) {
       splitBtn.disabled = true;
       splitBtn.title = reason || "Split view not available";
     }
-    const unifiedBtn = tab.pane.querySelector('.diff-view-btn[data-mode="unified"]');
+    const unifiedBtn = tab.pane.querySelector(
+      '.diff-view-btn[data-mode="unified"]',
+    );
     if (unifiedBtn) unifiedBtn.classList.add("active");
     if (splitBtn) splitBtn.classList.remove("active");
     tab.viewMode = "unified";
   }
 
   function enableSplitMode(tab) {
-    const splitBtn = tab.pane.querySelector('.diff-view-btn[data-mode="split"]');
+    const splitBtn = tab.pane.querySelector(
+      '.diff-view-btn[data-mode="split"]',
+    );
     if (splitBtn) {
       splitBtn.disabled = false;
       splitBtn.title = "Split view (side-by-side)";
@@ -357,7 +408,143 @@
     updateDiffStatusBar(tab);
   }
 
+  function renderUnifiedDiffCodeMirror(tab) {
+    const { EditorView, Decoration, StateField } = window.CodeMirror;
+    const data = tab.diffData;
+    const lines = [];
+    const lineMetadata = [];
+
+    // Flatten hunks into lines
+    data.headers.forEach((header) => {
+      lines.push(header);
+      lineMetadata.push({ type: "header" });
+    });
+
+    data.hunks.forEach((hunk) => {
+      lines.push(hunk.header);
+      lineMetadata.push({ type: "hunk-header" });
+
+      hunk.lines.forEach((line) => {
+        let text = line.text;
+        let type = line.type; // add, del, context, meta
+
+        // Strip diff markers for code highlighting, but keep content
+        if (type === "add" || type === "del" || type === "context") {
+          if (text.length > 0) text = text.substring(1);
+        }
+
+        lines.push(text);
+        lineMetadata.push({
+          type: type,
+          newLine: line.newLine,
+          path: data.path,
+        });
+      });
+    });
+
+    const docContent = lines.join("\n");
+
+    // Custom theme for diff colors
+    const diffTheme = EditorView.theme({
+      ".cm-diff-add": { backgroundColor: "rgba(16, 185, 129, 0.15)" }, // Green background
+      ".cm-diff-del": { backgroundColor: "rgba(239, 68, 68, 0.15)" }, // Red background
+      ".cm-diff-header": { backgroundColor: "#1f2937", color: "#9ca3af" }, // Dark header
+      ".cm-diff-hunk": {
+        backgroundColor: "#1f2937",
+        color: "#60a5fa",
+        fontStyle: "italic",
+      }, // Blueish hunk header
+      ".cm-content": {
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontSize: "13px",
+      },
+      ".cm-gutters": {
+        backgroundColor: "#1e1e1e",
+        borderRight: "1px solid #333",
+        color: "#666",
+      },
+      ".cm-activeLine": { backgroundColor: "transparent" },
+      ".cm-activeLineGutter": { backgroundColor: "transparent" },
+    });
+
+    // Line decorations
+    const diffDecorations = StateField.define({
+      create() {
+        const ranges = [];
+        let pos = 0;
+        lines.forEach((lineText, i) => {
+          const meta = lineMetadata[i];
+          let className = "";
+          if (meta.type === "add") className = "cm-diff-add";
+          else if (meta.type === "del") className = "cm-diff-del";
+          else if (meta.type === "header") className = "cm-diff-header";
+          else if (meta.type === "hunk-header") className = "cm-diff-hunk";
+
+          if (className) {
+            ranges.push(
+              Decoration.line({ attributes: { class: className } }).range(pos),
+            );
+          }
+          pos += lineText.length + 1; // +1 for newline
+        });
+        return Decoration.set(ranges);
+      },
+      update(deco) {
+        return deco;
+      },
+      provide: (f) => EditorView.decorations.from(f),
+    });
+
+    // Click handler for navigation
+    const clickHandler = EditorView.domEventHandlers({
+      click: (event, view) => {
+        const pos = view.posAtDOM(event.target);
+        if (pos === null) return;
+        const line = view.state.doc.lineAt(pos);
+        const index = line.number - 1;
+        const meta = lineMetadata[index];
+
+        if (meta && meta.newLine && tab.code !== "D") {
+          TF.openFileAtLine(meta.path, meta.newLine);
+        }
+      },
+    });
+
+    const extensions = [
+      window.CodeMirror.basicSetup,
+      window.CodeMirror.oneDark,
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+      diffTheme,
+      diffDecorations,
+      clickHandler,
+    ];
+
+    // Attempt to load language mode
+    const langExt = window.CodeMirror.getLanguageExtension(tab.filePath);
+    if (langExt) {
+      extensions.push(langExt);
+    }
+
+    tab.contentEl.innerHTML = "";
+    tab.contentEl.style.padding = "0";
+    const container = document.createElement("div");
+    container.className = "diff-codemirror-wrapper";
+    container.style.height = "100%";
+    tab.contentEl.appendChild(container);
+
+    new EditorView({
+      doc: docContent,
+      extensions: extensions,
+      parent: container,
+    });
+  }
+
   function renderUnifiedDiff(tab) {
+    if (window.CodeMirror) {
+      renderUnifiedDiffCodeMirror(tab);
+      return;
+    }
     const data = tab.diffData;
     const pre = document.createElement("pre");
     pre.className = "diff-text";
@@ -464,13 +651,16 @@
           const textEl = document.createElement("span");
           textEl.className = "diff-line-text";
           if (row.old.type === "del") textEl.classList.add("diff-remove");
-          else if (row.old.type === "context") textEl.classList.add("diff-context");
+          else if (row.old.type === "context")
+            textEl.classList.add("diff-context");
           textEl.textContent = row.old.text.substring(1);
           oldRow.appendChild(textEl);
 
           oldRow.dataset.clickable = "true";
           oldRow.dataset.path = data.path;
-          oldRow.dataset.lineNew = row.new ? row.new.newLine : row.old.newLine || hunk.newStart;
+          oldRow.dataset.lineNew = row.new
+            ? row.new.newLine
+            : row.old.newLine || hunk.newStart;
         } else {
           oldRow.classList.add("diff-split-empty");
           const ln = document.createElement("span");
@@ -494,7 +684,8 @@
           const textEl = document.createElement("span");
           textEl.className = "diff-line-text";
           if (row.new.type === "add") textEl.classList.add("diff-add");
-          else if (row.new.type === "context") textEl.classList.add("diff-context");
+          else if (row.new.type === "context")
+            textEl.classList.add("diff-context");
           textEl.textContent = row.new.text.substring(1);
           newRow.appendChild(textEl);
 
@@ -585,8 +776,11 @@
   function updateDiffStatusBar(tab) {
     if (!tab.statusBar) return;
     let status = "Click any line to jump to that location in the file";
-    if (tab.viewMode === "split") status = "Split view: Click left (old) or right (new) to jump | " + status;
-    if (tab.truncated) status = "⚠️ Diff too large, truncated to 1MB | " + status;
+    if (tab.viewMode === "split")
+      status =
+        "Split view: Click left (old) or right (new) to jump | " + status;
+    if (tab.truncated)
+      status = "⚠️ Diff too large, truncated to 1MB | " + status;
     if (tab.code === "D") status = "File deleted - navigation disabled";
     tab.statusBar.textContent = status;
   }
