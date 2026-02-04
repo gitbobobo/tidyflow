@@ -568,7 +568,7 @@ async fn handle_client_message(
             match state.get_project(&project) {
                 Some(p) => {
                     // 处理默认工作空间：如果 workspace 是 "default"，使用项目根目录
-                    let (root_path, branch) = if workspace == "default" {
+                    let (root_path, _branch) = if workspace == "default" {
                         (p.root_path.clone(), p.default_branch.clone())
                     } else {
                         match p.get_workspace(&workspace) {

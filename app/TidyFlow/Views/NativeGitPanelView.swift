@@ -339,7 +339,7 @@ struct NativeGitPanelView: View {
         .onAppear {
             loadDataIfNeeded()
         }
-        .onChange(of: appState.selectedWorkspaceKey) { _ in
+        .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             loadDataIfNeeded()
         }
         .alert("放弃所有更改？", isPresented: $showDiscardAllConfirm) {

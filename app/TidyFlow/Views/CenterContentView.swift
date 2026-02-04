@@ -130,7 +130,7 @@ struct CenterContentView: View {
         }
 
         // Phase C2-1: Diff callbacks (extended C2-1.5 for line navigation)
-        webBridge.onOpenFile = { [weak appState, weak webBridge] workspace, path, line in
+        webBridge.onOpenFile = { [weak appState] workspace, path, line in
             DispatchQueue.main.async {
                 guard let appState = appState else { return }
                 // Open file in editor tab with optional line
@@ -139,7 +139,7 @@ struct CenterContentView: View {
             }
         }
 
-        webBridge.onDiffError = { [weak appState] message in
+        webBridge.onDiffError = { message in
             DispatchQueue.main.async {
                 print("[CenterContentView] Diff error: \(message)")
                 // Could show an alert or update status
@@ -153,7 +153,7 @@ struct CenterContentView: View {
             forName: .saveEditorFile,
             object: nil,
             queue: .main
-        ) { [weak appState] notification in
+        ) { [weak appState, webBridge] notification in
             guard let path = notification.object as? String,
                   let ws = appState?.selectedWorkspaceKey,
                   let project = appState?.selectedProjectName else { return }

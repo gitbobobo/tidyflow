@@ -1378,7 +1378,7 @@ class AppState: ObservableObject {
 
     /// Close all diff tabs for a workspace (used after branch switch)
     func closeAllDiffTabs(workspaceKey: String) {
-        guard var tabs = workspaceTabs[workspaceKey] else { return }
+        guard let tabs = workspaceTabs[workspaceKey] else { return }
         let diffTabIds = tabs.filter { $0.kind == .diff }.map { $0.id }
         for tabId in diffTabIds {
             closeTab(workspaceKey: workspaceKey, tabId: tabId)

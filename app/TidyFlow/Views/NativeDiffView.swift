@@ -34,10 +34,10 @@ struct NativeDiffView: View {
         .onAppear {
             loadDiffIfNeeded()
         }
-        .onChange(of: currentMode) { _ in
+        .onChange(of: currentMode) { _, _ in
             loadDiffIfNeeded()
         }
-        .onChange(of: path) { _ in
+        .onChange(of: path) { _, _ in
             loadDiffIfNeeded()
         }
     }

@@ -326,7 +326,8 @@ fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
     items
 }
 
-/// Parse XY status code to simplified code (保留供其他调用方)
+/// Parse XY status code to simplified code (保留供测试使用)
+#[cfg(test)]
 fn parse_status_code(xy: &str) -> String {
     let x = xy.chars().next().unwrap_or(' ');
     let y = xy.chars().nth(1).unwrap_or(' ');

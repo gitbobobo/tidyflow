@@ -70,7 +70,7 @@ struct BranchPickerView: View {
         .onAppear {
             loadBranchesIfNeeded()
         }
-        .onChange(of: appState.branchCreateInFlight) { inFlight in
+        .onChange(of: appState.branchCreateInFlight) { _, inFlight in
             // Close picker when create succeeds (inFlight becomes empty)
             if let ws = appState.selectedWorkspaceKey,
                inFlight[ws] == nil && showCreateForm && !newBranchName.isEmpty {

@@ -11,7 +11,7 @@ struct TabContentHostView: View {
         guard let globalKey = appState.currentGlobalWorkspaceKey,
               let activeId = appState.activeTabIdByWorkspace[globalKey],
               let tabs = appState.workspaceTabs[globalKey],
-              let activeTab = tabs.first(where: { $0.id == activeId })
+              tabs.first(where: { $0.id == activeId }) != nil
         else { return false }
         return true
     }
@@ -168,12 +168,12 @@ struct TerminalContentView: View {
                 webBridge.enterMode("editor")
             }
         }
-        .onChange(of: appState.editorWebReady) { ready in
+        .onChange(of: appState.editorWebReady) { _, ready in
             if ready {
                 sendTerminalMode()
             }
         }
-        .onChange(of: appState.activeTabIdByWorkspace) { _ in
+        .onChange(of: appState.activeTabIdByWorkspace) { _, _ in
             // Detect tab switch within terminal tabs
             if let tab = appState.getActiveTab(), tab.kind == .terminal {
                 if currentTabId != tab.id {
@@ -182,7 +182,7 @@ struct TerminalContentView: View {
                 }
             }
         }
-        .onChange(of: appState.currentGlobalWorkspaceKey) { newGlobalKey in
+        .onChange(of: appState.currentGlobalWorkspaceKey) { _, newGlobalKey in
             // 当全局工作空间键切换时（包括项目切换），重新发送 terminal mode 命令
             guard let newGlobalKey = newGlobalKey else { return }
             guard appState.editorWebReady else { return }
@@ -340,17 +340,17 @@ struct EditorContentView: View {
         .onDisappear {
             // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
         }
-        .onChange(of: appState.editorWebReady) { ready in
+        .onChange(of: appState.editorWebReady) { _, ready in
             if ready {
                 DispatchQueue.main.async { sendOpenFile() }
             }
         }
-        .onChange(of: path) { newPath in
+        .onChange(of: path) { _, newPath in
             if appState.editorWebReady {
                 DispatchQueue.main.async { sendOpenFile() }
             }
         }
-        .onChange(of: appState.currentGlobalWorkspaceKey) { newGlobalKey in
+        .onChange(of: appState.currentGlobalWorkspaceKey) { _, newGlobalKey in
             // 当全局工作空间键切换时（包括项目切换），重新加载编辑器内容
             // 即使文件路径相同，不同工作空间的文件内容可能不同
             guard newGlobalKey != nil else { return }
@@ -491,12 +491,12 @@ struct DiffContentView: View {
         .onDisappear {
             // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
         }
-        .onChange(of: appState.editorWebReady) { ready in
+        .onChange(of: appState.editorWebReady) { _, ready in
             if ready {
                 sendDiffOpen()
             }
         }
-        .onChange(of: path) { _ in
+        .onChange(of: path) { _, _ in
             if appState.editorWebReady {
                 sendDiffOpen()
             }
