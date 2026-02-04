@@ -69,10 +69,60 @@ struct ProjectsSidebarView: View {
         }
     }
 
-    /// 将项目和工作空间扁平化为单一列表
+    /// 计算项目的终端总数
+    private func projectTerminalCount(_ project: ProjectModel) -> Int {
+        var count = 0
+        for workspace in project.workspaces {
+            let key = "\(project.name):\(workspace.name)"
+            count += appState.workspaceTabs[key]?.filter { $0.kind == .terminal }.count ?? 0
+        }
+        return count
+    }
+
+    /// 获取项目的最小快捷键编号（用于排序，0视为10以排在最后）
+    private func projectMinShortcutKey(_ project: ProjectModel) -> Int {
+        var minKey = Int.max
+        for workspace in project.workspaces {
+            let workspaceKey = workspace.isDefault
+                ? "\(project.name)/(default)"
+                : "\(project.name)/\(workspace.name)"
+            if let shortcutKey = appState.getWorkspaceShortcutKey(workspaceKey: workspaceKey),
+               let num = Int(shortcutKey) {
+                // 0 视为 10，排在最后
+                let sortValue = num == 0 ? 10 : num
+                minKey = min(minKey, sortValue)
+            }
+        }
+        return minKey
+    }
+
+    /// 将项目和工作空间扁平化为单一列表（按终端数量和快捷键排序）
     private var flattenedRows: [SidebarRow] {
+        // 先对项目进行排序
+        let sortedIndices = appState.projects.indices.sorted { i, j in
+            let projectA = appState.projects[i]
+            let projectB = appState.projects[j]
+
+            // 1. 按终端总数排序（多的在前）
+            let countA = projectTerminalCount(projectA)
+            let countB = projectTerminalCount(projectB)
+            if countA != countB {
+                return countA > countB
+            }
+
+            // 2. 按快捷键编号排序（小的在前，0在最后）
+            let keyA = projectMinShortcutKey(projectA)
+            let keyB = projectMinShortcutKey(projectB)
+            if keyA != keyB {
+                return keyA < keyB
+            }
+
+            // 3. 保持原有顺序
+            return i < j
+        }
+
         var rows: [SidebarRow] = []
-        for index in appState.projects.indices {
+        for index in sortedIndices {
             let projectBinding = $appState.projects[index]
             let project = projectBinding.wrappedValue
             rows.append(.project(projectBinding))
@@ -340,7 +390,8 @@ struct WorkspaceRowView: View {
             // 快捷键配置菜单
             Divider()
             Menu {
-                ForEach(0...9, id: \.self) { num in
+                // 1-9 在前，0 在最后
+                ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, 0], id: \.self) { num in
                     let key = String(num)
                     Button {
                         appState.setWorkspaceShortcut(workspaceKey: workspaceKey, shortcutKey: key)
