@@ -811,13 +811,32 @@ struct GitStatusRow: View {
     @State private var isHovered: Bool = false
     @State private var showDiscardConfirm: Bool = false
 
+    /// 判断当前文件是否被选中（正在查看 Diff）
+    private var isSelected: Bool {
+        guard appState.currentGlobalWorkspaceKey != nil,
+              let activeTab = appState.getActiveTab(),
+              activeTab.kind == .diff,
+              activeTab.payload == item.path else {
+            return false
+        }
+        // 精确匹配 diff 模式（暂存/工作区）
+        let tabMode = activeTab.diffMode ?? "working"
+        return tabMode == (isStaged ? "staged" : "working")
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            // 文件图标
-            Image(systemName: fileIcon)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .frame(width: 16)
+        HStack(spacing: 0) {
+            // 左侧选中指示条
+            Rectangle()
+                .fill(isSelected ? Color.accentColor : Color.clear)
+                .frame(width: 3)
+
+            HStack(spacing: 8) {
+                // 文件图标
+                Image(systemName: fileIcon)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(width: 16)
             
             // 文件名
             VStack(alignment: .leading, spacing: 0) {
@@ -900,10 +919,16 @@ struct GitStatusRow: View {
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(statusColor)
                 .frame(width: 20, alignment: .trailing)
+            }
+            .padding(.leading, 17)
+            .padding(.trailing, 20)
         }
-        .padding(.horizontal, 20)
         .padding(.vertical, 4)
-        .background(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+        .background(
+            isSelected
+                ? Color.accentColor.opacity(0.12)
+                : (isHovered ? Color.primary.opacity(0.05) : Color.clear)
+        )
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
@@ -960,12 +985,12 @@ struct GitStatusRow: View {
     }
 
     private func openFile() {
-        guard let ws = appState.selectedWorkspaceKey else { return }
+        guard let ws = appState.currentGlobalWorkspaceKey else { return }
         appState.addEditorTab(workspaceKey: ws, path: item.path)
     }
 
     private func openDiff() {
-        guard let ws = appState.selectedWorkspaceKey else { return }
+        guard let ws = appState.currentGlobalWorkspaceKey else { return }
         appState.addDiffTab(workspaceKey: ws, path: item.path, mode: isStaged ? .staged : .working)
     }
 

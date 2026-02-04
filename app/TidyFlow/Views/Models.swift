@@ -397,9 +397,6 @@ class AppState: ObservableObject {
     // 设置是否已从服务端加载
     @Published var clientSettingsLoaded: Bool = false
 
-    // Phase C2-2a: Flag to use native diff (set to false to fallback to Web diff)
-    var useNativeDiff: Bool = true
-
     // Editor Bridge State
     @Published var editorWebReady: Bool = false
     @Published var lastEditorPath: String?

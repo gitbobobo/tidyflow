@@ -417,7 +417,7 @@ struct EditorStatusBar: View {
 }
 
 // MARK: - Phase C2-1: Diff Content View (WebView + Mode Toggle)
-// Phase C2-2a: Updated to use Native Diff by default
+// WebView-based Diff View
 
 struct DiffContentView: View {
     let path: String
@@ -426,35 +426,8 @@ struct DiffContentView: View {
     @EnvironmentObject var appState: AppState
 
     @State private var currentMode: DiffMode = .working
-    @State private var currentViewMode: DiffViewMode = .unified
 
     var body: some View {
-        Group {
-            if appState.useNativeDiff {
-                // Phase C2-2a/C2-2b: Native diff rendering with split view support
-                NativeDiffView(
-                    path: path,
-                    currentMode: $currentMode,
-                    currentViewMode: $currentViewMode,
-                    onModeChange: handleModeChange,
-                    onViewModeChange: handleViewModeChange,
-                    onLineClick: handleLineClick
-                )
-                .onAppear {
-                    webViewVisible = false  // Hide WebView for native diff
-                    currentMode = appState.activeDiffMode
-                    currentViewMode = appState.activeDiffViewMode
-                }
-            } else {
-                // Legacy: WebView-based diff (fallback)
-                webDiffContent
-            }
-        }
-    }
-
-    // MARK: - Legacy WebView Diff Content
-
-    private var webDiffContent: some View {
         VStack(spacing: 0) {
             // Diff toolbar with mode toggle
             DiffToolbar(currentMode: $currentMode, onModeChange: handleModeChange)
@@ -488,9 +461,6 @@ struct DiffContentView: View {
                 sendDiffOpen()
             }
         }
-        .onDisappear {
-            // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
-        }
         .onChange(of: appState.editorWebReady) { _, ready in
             if ready {
                 sendDiffOpen()
@@ -519,32 +489,14 @@ struct DiffContentView: View {
         currentMode = newMode
         appState.setActiveDiffMode(newMode)
 
-        // For native diff, the view will auto-reload via onChange
-        // For web diff, send the command
-        if !appState.useNativeDiff {
-            guard let ws = appState.selectedWorkspaceKey else { return }
-            webBridge.diffOpen(
-                project: appState.selectedProjectName,
-                workspace: ws,
-                path: path,
-                mode: newMode.rawValue
-            )
-        }
-    }
-
-    // Phase C2-2b: Handle view mode change (unified/split)
-    private func handleViewModeChange(_ newViewMode: DiffViewMode) {
-        guard newViewMode != currentViewMode else { return }
-        currentViewMode = newViewMode
-        appState.setActiveDiffViewMode(newViewMode)
-    }
-
-    // Phase C2-2a: Handle line click to navigate to editor
-    private func handleLineClick(_ line: Int) {
+        // Send the command to WebView
         guard let ws = appState.selectedWorkspaceKey else { return }
-
-        // Open or activate editor tab and navigate to line
-        appState.addEditorTab(workspaceKey: ws, path: path, line: line)
+        webBridge.diffOpen(
+            project: appState.selectedProjectName,
+            workspace: ws,
+            path: path,
+            mode: newMode.rawValue
+        )
     }
 }
 
