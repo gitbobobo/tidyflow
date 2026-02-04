@@ -2,6 +2,7 @@
 //!
 //! Provides workspace-scoped git operations using system git.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -16,6 +17,10 @@ pub struct GitStatusEntry {
     pub orig_path: Option<String>,
     /// 是否有暂存区变更（X != ' '）
     pub staged: bool,
+    /// 新增行数（None = 二进制文件或新文件）
+    pub additions: Option<i32>,
+    /// 删除行数（None = 二进制文件或新文件）
+    pub deletions: Option<i32>,
 }
 
 /// Git status result
@@ -198,6 +203,44 @@ fn get_git_repo_root(workspace_root: &Path) -> Option<String> {
     }
 }
 
+/// 获取 diff 行数统计
+/// 返回 HashMap<路径, (新增行数, 删除行数)>，二进制文件返回 (None, None)
+fn get_diff_numstat(workspace_root: &Path, staged: bool) -> HashMap<String, (Option<i32>, Option<i32>)> {
+    let mut args = vec!["diff", "--numstat"];
+    if staged {
+        args.push("--cached");
+    }
+
+    let output = match Command::new("git")
+        .args(&args)
+        .current_dir(workspace_root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return HashMap::new(),
+    };
+
+    if !output.status.success() {
+        return HashMap::new();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut result = HashMap::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 3 {
+            let path = parts[2].to_string();
+            // 二进制文件显示为 "-\t-\t<path>"
+            let additions = parts[0].parse::<i32>().ok();
+            let deletions = parts[1].parse::<i32>().ok();
+            result.insert(path, (additions, deletions));
+        }
+    }
+
+    result
+}
+
 /// Get git status for a workspace
 ///
 /// Uses `git status --porcelain=v1 -z` for stable parsing.
@@ -229,7 +272,20 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let items = parse_porcelain_status(&stdout);
+    let mut items = parse_porcelain_status(&stdout);
+
+    // 获取行数统计
+    let unstaged_stats = get_diff_numstat(workspace_root, false);
+    let staged_stats = get_diff_numstat(workspace_root, true);
+
+    // 合并行数统计到每个 entry
+    for item in &mut items {
+        let stats = if item.staged { &staged_stats } else { &unstaged_stats };
+        if let Some((additions, deletions)) = stats.get(&item.path) {
+            item.additions = *additions;
+            item.deletions = *deletions;
+        }
+    }
 
     // Check for staged changes
     let (has_staged_changes, staged_count) = check_staged_changes(workspace_root);
@@ -298,6 +354,8 @@ fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
                 code: if x == '?' { "??".into() } else { "!!".into() },
                 orig_path: orig_path.clone(),
                 staged: false,
+                additions: None,
+                deletions: None,
             });
             i += advance;
             continue;
@@ -310,6 +368,8 @@ fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
                 code: char_to_code(x),
                 orig_path: orig_path.clone(),
                 staged: true,
+                additions: None,
+                deletions: None,
             });
         }
         if y != ' ' {
@@ -318,6 +378,8 @@ fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
                 code: char_to_code(y),
                 orig_path: orig_path.clone(),
                 staged: false,
+                additions: None,
+                deletions: None,
             });
         }
         i += advance;

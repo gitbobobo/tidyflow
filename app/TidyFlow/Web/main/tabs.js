@@ -857,9 +857,10 @@
     // 使用双重 requestAnimationFrame 确保浏览器完成布局更新
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        // 检查 WebGL 是否丢失，如果丢失则尝试恢复
-        if (!tab.webglAddon && tab.reloadWebgl) {
-          console.log("[Terminal] WebGL addon lost, attempting to reload...");
+        // 强制重建 WebGL addon，而不是仅检查是否为 null
+        // WebGL context 可能处于损坏状态但不是 null
+        if (tab.reloadWebgl) {
+          console.log("[Terminal] Force reloading WebGL addon...");
           tab.reloadWebgl();
         }
 
@@ -885,11 +886,12 @@
    * 用于处理全局的 WebGL context 问题
    */
   function refreshAllTerminals() {
+    console.log("[Terminal] Force refreshing all terminals...");
     TF.workspaceTabs.forEach((tabSet) => {
       tabSet.tabs.forEach((tab) => {
         if (tab.type === "terminal" && tab.term) {
-          // 检查并恢复 WebGL
-          if (!tab.webglAddon && tab.reloadWebgl) {
+          // 强制重建 WebGL，而不是仅检查是否为 null
+          if (tab.reloadWebgl) {
             tab.reloadWebgl();
           }
           // 清除纹理图集
@@ -909,7 +911,7 @@
       // 延迟执行，等待 WKWebView 完全恢复
       setTimeout(() => {
         refreshActiveTerminal();
-      }, 100);
+      }, 300);
     }
   });
 
@@ -917,7 +919,7 @@
   window.addEventListener("focus", () => {
     setTimeout(() => {
       refreshActiveTerminal();
-    }, 50);
+    }, 200);
   });
 
   TF.createTerminalTab = createTerminalTab;

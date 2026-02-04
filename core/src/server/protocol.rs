@@ -618,6 +618,12 @@ pub struct GitStatusEntry {
     pub orig_path: Option<String>,
     /// 是否有暂存区变更，用于 UI 区分「暂存的更改」与「未暂存的更改」
     pub staged: bool,
+    /// 新增行数（None = 二进制文件或新文件）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additions: Option<i32>,
+    /// 删除行数（None = 二进制文件或新文件）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

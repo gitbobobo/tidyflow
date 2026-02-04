@@ -1031,6 +1031,8 @@ async fn handle_client_message(
                                             code: e.code,
                                             orig_path: e.orig_path,
                                             staged: e.staged,
+                                            additions: e.additions,
+                                            deletions: e.deletions,
                                         })
                                         .collect();
 

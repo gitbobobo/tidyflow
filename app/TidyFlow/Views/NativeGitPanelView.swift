@@ -878,7 +878,23 @@ struct GitStatusRow: View {
                     }
                 }
             }
-            
+
+            // 行数统计（在操作按钮之后、状态标识之前）
+            if let add = item.additions, let del = item.deletions, (add > 0 || del > 0) {
+                HStack(spacing: 2) {
+                    if add > 0 {
+                        Text("+\(add)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.green)
+                    }
+                    if del > 0 {
+                        Text("-\(del)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+
             // 状态标识
             Text(item.status)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))

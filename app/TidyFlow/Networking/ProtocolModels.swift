@@ -583,6 +583,8 @@ struct GitStatusItem: Identifiable {
     let status: String  // M, A, D, ??, R, C, etc.
     let staged: Bool?   // If core provides staged info
     let renameFrom: String?  // For renamed files
+    let additions: Int?   // 新增行数
+    let deletions: Int?   // 删除行数
 
     /// Human-readable status description
     var statusDescription: String {
@@ -642,12 +644,16 @@ struct GitStatusResult {
                    let status = itemJson["status"] as? String {
                     let staged = itemJson["staged"] as? Bool
                     let renameFrom = itemJson["rename_from"] as? String
+                    let additions = itemJson["additions"] as? Int
+                    let deletions = itemJson["deletions"] as? Int
                     items.append(GitStatusItem(
                         id: path,
                         path: path,
                         status: status,
                         staged: staged,
-                        renameFrom: renameFrom
+                        renameFrom: renameFrom,
+                        additions: additions,
+                        deletions: deletions
                     ))
                 }
             }
