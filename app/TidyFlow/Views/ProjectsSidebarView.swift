@@ -249,21 +249,66 @@ struct WorkspaceRowView: View {
         guard let key = currentShortcutKey else { return nil }
         return "⌘\(key)"
     }
-    
+
+    /// 工作空间全局键，用于获取终端数量
+    private var globalWorkspaceKey: String {
+        if workspace.isDefault {
+            return "\(projectName)/(default)"
+        } else {
+            return "\(projectName)/\(workspace.name)"
+        }
+    }
+
+    /// 当前工作空间的终端数量
+    private var terminalCount: Int {
+        appState.workspaceTabs[globalWorkspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
+    }
+
+    /// 终端数量徽章视图
+    @ViewBuilder
+    private var terminalCountBadge: some View {
+        ZStack {
+            Circle()
+                .fill(Color.accentColor.opacity(0.85))
+            Text("\(terminalCount)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+
     var body: some View {
-        TreeRowView(
-            isExpandable: false,
-            isExpanded: false,
-            iconName: "square.grid.2x2",
-            iconColor: .secondary,
-            title: workspace.name,
-            depth: 1,
-            isSelected: isSelected,
-            trailingText: shortcutDisplayText,
-            onTap: {
-                appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+        Group {
+            if terminalCount > 0 {
+                TreeRowView(
+                    isExpandable: false,
+                    isExpanded: false,
+                    iconName: "",
+                    iconColor: .clear,
+                    title: workspace.name,
+                    depth: 1,
+                    isSelected: isSelected,
+                    trailingText: shortcutDisplayText,
+                    customIconView: terminalCountBadge,
+                    onTap: {
+                        appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                    }
+                )
+            } else {
+                TreeRowView(
+                    isExpandable: false,
+                    isExpanded: false,
+                    iconName: "square.grid.2x2",
+                    iconColor: .secondary,
+                    title: workspace.name,
+                    depth: 1,
+                    isSelected: isSelected,
+                    trailingText: shortcutDisplayText,
+                    onTap: {
+                        appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                    }
+                )
             }
-        )
+        }
         .tag(workspace.name)
         // 工作空间右键菜单：复制路径、在 Finder 中打开、在编辑器中打开(VSCode/Cursor)、快捷键配置、删除（默认工作空间不可删除）
         .contextMenu {

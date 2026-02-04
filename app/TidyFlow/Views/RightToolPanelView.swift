@@ -159,7 +159,7 @@ struct PanelHeaderView<MenuContent: View>: View {
 
 /// 可复用的树行：展开指示器 + 图标 + 标题，无数量/状态等尾部信息
 /// - Parameter selectedBackgroundColor: 选中时的背景色；为 nil 时使用系统 accentColor（如左侧项目树）；可传入更淡的颜色用于资源管理器等
-struct TreeRowView: View {
+struct TreeRowView<CustomIcon: View>: View {
     var isExpandable: Bool
     var isExpanded: Bool
     var iconName: String
@@ -171,6 +171,8 @@ struct TreeRowView: View {
     var selectedBackgroundColor: Color? = nil
     /// 尾部标签文本（如快捷键提示 ⌘1）
     var trailingText: String? = nil
+    /// 自定义图标视图，如果提供则替代默认的 SF Symbol 图标
+    var customIconView: CustomIcon?
     var onTap: () -> Void
 
     @State private var isHovering: Bool = false
@@ -190,10 +192,15 @@ struct TreeRowView: View {
                 Spacer()
                     .frame(width: 12)
             }
-            Image(systemName: iconName)
-                .font(.system(size: 13))
-                .foregroundColor(iconColor)
-                .frame(width: 16)
+            if let custom = customIconView {
+                custom
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: iconName)
+                    .font(.system(size: 13))
+                    .foregroundColor(iconColor)
+                    .frame(width: 16)
+            }
             Text(title)
                 .font(.system(size: 12))
                 .lineLimit(1)
@@ -218,6 +225,35 @@ struct TreeRowView: View {
         if isSelected { return selectedBackgroundColor ?? Color.accentColor }
         if isHovering { return Color.primary.opacity(0.05) }
         return Color.clear
+    }
+}
+
+// MARK: - TreeRowView 便捷初始化（无自定义图标）
+
+extension TreeRowView where CustomIcon == EmptyView {
+    init(
+        isExpandable: Bool,
+        isExpanded: Bool,
+        iconName: String,
+        iconColor: Color,
+        title: String,
+        depth: Int = 0,
+        isSelected: Bool = false,
+        selectedBackgroundColor: Color? = nil,
+        trailingText: String? = nil,
+        onTap: @escaping () -> Void
+    ) {
+        self.isExpandable = isExpandable
+        self.isExpanded = isExpanded
+        self.iconName = iconName
+        self.iconColor = iconColor
+        self.title = title
+        self.depth = depth
+        self.isSelected = isSelected
+        self.selectedBackgroundColor = selectedBackgroundColor
+        self.trailingText = trailingText
+        self.customIconView = nil
+        self.onTap = onTap
     }
 }
 
