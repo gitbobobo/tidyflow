@@ -39,6 +39,130 @@ fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
     }
 }
 
+/// 查找数据末尾不完整的 ANSI 转义序列的起始位置
+/// 返回 Some(index) 表示从 index 开始是不完整的序列，需要保留到下次发送
+/// 返回 None 表示数据完整，可以直接发送
+///
+/// ANSI 转义序列格式：
+/// - CSI (Control Sequence Introducer): ESC [ ... 终止符 (字母)
+/// - OSC (Operating System Command): ESC ] ... BEL 或 ESC \
+/// - DCS (Device Control String): ESC P ... ESC \
+/// - 简单序列: ESC 后跟单个字符
+fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
+    if data.is_empty() {
+        return None;
+    }
+
+    // 从末尾向前查找 ESC (0x1b)
+    // 只检查最后 256 字节，避免性能问题
+    let search_start = data.len().saturating_sub(256);
+
+    for i in (search_start..data.len()).rev() {
+        if data[i] == 0x1b {
+            // 找到 ESC，检查后续序列是否完整
+            let remaining = &data[i..];
+
+            if remaining.len() < 2 {
+                // ESC 后没有字符，不完整
+                return Some(i);
+            }
+
+            match remaining[1] {
+                // CSI 序列: ESC [ ... 终止符
+                b'[' => {
+                    // 查找终止符（字母 0x40-0x7E）
+                    if remaining.len() == 2 {
+                        // 只有 ESC [，缺少参数和终止符
+                        return Some(i);
+                    }
+                    let mut found_terminator = false;
+                    for j in 2..remaining.len() {
+                        let c = remaining[j];
+                        if (0x40..=0x7E).contains(&c) {
+                            // 找到终止符，序列完整
+                            found_terminator = true;
+                            break;
+                        }
+                    }
+                    if !found_terminator {
+                        // 到达末尾仍未找到终止符，不完整
+                        return Some(i);
+                    }
+                }
+                // OSC 序列: ESC ] ... BEL(0x07) 或 ST(ESC \)
+                b']' => {
+                    let mut found_terminator = false;
+                    for j in 2..remaining.len() {
+                        if remaining[j] == 0x07 {
+                            // BEL 终止符
+                            found_terminator = true;
+                            break;
+                        }
+                        if remaining[j] == 0x1b && j + 1 < remaining.len() && remaining[j + 1] == b'\\' {
+                            // ST 终止符 (ESC \)
+                            found_terminator = true;
+                            break;
+                        }
+                    }
+                    if !found_terminator {
+                        return Some(i);
+                    }
+                }
+                // DCS 序列: ESC P ... ESC \
+                b'P' => {
+                    let mut found_terminator = false;
+                    for j in 2..remaining.len() {
+                        if remaining[j] == 0x1b && j + 1 < remaining.len() && remaining[j + 1] == b'\\' {
+                            found_terminator = true;
+                            break;
+                        }
+                    }
+                    if !found_terminator {
+                        return Some(i);
+                    }
+                }
+                // 简单转义序列: ESC 后跟单个字符
+                _ => {
+                    // 已经有第二个字符，序列完整
+                }
+            }
+        }
+    }
+
+    // 检查 UTF-8 多字节字符是否被截断
+    // UTF-8 编码规则：
+    // - 1 字节: 0xxxxxxx
+    // - 2 字节: 110xxxxx 10xxxxxx
+    // - 3 字节: 1110xxxx 10xxxxxx 10xxxxxx
+    // - 4 字节: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    if !data.is_empty() {
+        let last = data[data.len() - 1];
+        // 如果最后一个字节是多字节序列的起始字节，检查是否完整
+        if last >= 0xC0 {
+            // 这是一个多字节序列的起始字节，但后面没有续字节
+            return Some(data.len() - 1);
+        }
+        // 检查倒数第二个字节
+        if data.len() >= 2 {
+            let second_last = data[data.len() - 2];
+            if second_last >= 0xE0 && last >= 0x80 && last < 0xC0 {
+                // 3 字节序列只有 2 字节
+                return Some(data.len() - 2);
+            }
+        }
+        // 检查倒数第三个字节
+        if data.len() >= 3 {
+            let third_last = data[data.len() - 3];
+            if third_last >= 0xF0 && data[data.len() - 2] >= 0x80 && last >= 0x80 {
+                // 4 字节序列只有 3 字节
+                return Some(data.len() - 3);
+            }
+        }
+    }
+
+    None
+}
+
 /// Shared application state for the WebSocket server
 pub type SharedAppState = Arc<Mutex<AppState>>;
 
@@ -155,18 +279,41 @@ impl TerminalManager {
             use std::io::Read;
             let mut reader = reader;
             let mut buf = [0u8; 8192];
+            // 保存不完整的 ANSI 转义序列，避免在缓冲区边界截断导致花屏
+            let mut pending: Vec<u8> = Vec::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         // EOF - terminal closed
+                        // 发送剩余的 pending 数据
+                        if !pending.is_empty() {
+                            let _ = tx_output.blocking_send((reader_term_id.clone(), pending));
+                        }
                         break;
                     }
                     Ok(n) => {
-                        let data = buf[..n].to_vec();
-                        // 使用 blocking send，因为我们在独立线程中
-                        if tx_output.blocking_send((reader_term_id.clone(), data)).is_err() {
-                            // Channel closed, exit
-                            break;
+                        // 合并 pending 数据和新读取的数据
+                        let mut data = if pending.is_empty() {
+                            buf[..n].to_vec()
+                        } else {
+                            let mut combined = std::mem::take(&mut pending);
+                            combined.extend_from_slice(&buf[..n]);
+                            combined
+                        };
+
+                        // 检查数据末尾是否有不完整的 ANSI 转义序列
+                        // ANSI 转义序列以 ESC (0x1b) 开头
+                        if let Some(incomplete_start) = find_incomplete_escape_sequence(&data) {
+                            // 将不完整的序列保存到 pending
+                            pending = data.split_off(incomplete_start);
+                        }
+
+                        // 发送完整的数据
+                        if !data.is_empty() {
+                            if tx_output.blocking_send((reader_term_id.clone(), data)).is_err() {
+                                // Channel closed, exit
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -2833,4 +2980,64 @@ async fn handle_client_message(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_incomplete_escape_sequence_complete() {
+        // 完整的 CSI 序列
+        let data = b"\x1b[31mHello\x1b[0m";
+        assert_eq!(find_incomplete_escape_sequence(data), None);
+
+        // 完整的 OSC 序列 (BEL 终止)
+        let data = b"\x1b]0;Title\x07";
+        assert_eq!(find_incomplete_escape_sequence(data), None);
+
+        // 普通文本
+        let data = b"Hello World";
+        assert_eq!(find_incomplete_escape_sequence(data), None);
+    }
+
+    #[test]
+    fn test_find_incomplete_escape_sequence_incomplete_csi() {
+        // 不完整的 CSI 序列 - 只有 ESC [
+        let data = b"Hello\x1b[";
+        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
+
+        // 不完整的 CSI 序列 - 缺少终止符
+        let data = b"Hello\x1b[38;2;255";
+        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
+    }
+
+    #[test]
+    fn test_find_incomplete_escape_sequence_incomplete_osc() {
+        // 不完整的 OSC 序列
+        let data = b"Hello\x1b]0;Title";
+        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
+    }
+
+    #[test]
+    fn test_find_incomplete_escape_sequence_lone_esc() {
+        // 单独的 ESC
+        let data = b"Hello\x1b";
+        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
+    }
+
+    #[test]
+    fn test_find_incomplete_escape_sequence_utf8() {
+        // 完整的 UTF-8 中文
+        let data = "你好".as_bytes();
+        assert_eq!(find_incomplete_escape_sequence(data), None);
+
+        // 不完整的 UTF-8 - 3 字节字符只有 1 字节
+        let data = b"Hello\xe4";
+        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
+
+        // 不完整的 UTF-8 - 3 字节字符只有 2 字节
+        let data = b"Hello\xe4\xbd";
+        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
+    }
 }
