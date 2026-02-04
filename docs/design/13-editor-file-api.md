@@ -1,8 +1,8 @@
-# Editor File API Protocol (v1.3)
+# Editor File API Protocol (v2.0)
 
 ## Overview
 
-Extension to WebSocket protocol v1.2 for file operations within workspace boundaries.
+Extension to WebSocket protocol v2.0 for file operations within workspace boundaries. Now uses **MessagePack** binary transport.
 
 ## Design Decisions
 
@@ -51,7 +51,7 @@ Write file content.
   "project": "string",
   "workspace": "string",
   "path": "string (relative to workspace root)",
-  "content_b64": "string (base64 encoded UTF-8 content)"
+  "content": "binary (UTF-8 encoded bytes)"
 }
 ```
 
@@ -81,7 +81,7 @@ Write file content.
   "project": "string",
   "workspace": "string",
   "path": "string",
-  "content_b64": "string (base64 encoded)",
+  "content": "binary (UTF-8 encoded bytes)",
   "size": "number"
 }
 ```
@@ -127,9 +127,9 @@ Error codes for file operations:
 - Maximum path length: 4096 characters
 
 ### Content Encoding
-- All file content is base64 encoded for transport
-- Only UTF-8 text files supported
-- Binary files will fail with `invalid_utf8` error
+- All file content is transmitted as **raw binary** in MessagePack frames.
+- Only UTF-8 text files supported for editing.
+- Binary files will fail with `invalid_utf8` error during read/write if they are not valid UTF-8.
 
 ## Implementation Notes
 

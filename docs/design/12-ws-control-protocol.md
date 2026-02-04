@@ -1,23 +1,31 @@
-# WebSocket Control Protocol v1.2 - Multi-Workspace Parallel
+# WebSocket Control Protocol v2.0 - Binary Transport
 
-> Frozen: 2025-01-31
+> Frozen: 2026-02-04 (v2.0)
+> Update: 2025-01-31 (v1.2)
 
 ## Overview
 
-This document defines the WebSocket protocol for TidyFlow terminal communication, including multi-workspace parallel support (v1.2).
+This document defines the WebSocket protocol for TidyFlow terminal communication. 
+
+Starting from **v2.0**, the protocol uses **MessagePack** binary transport instead of JSON text frames to improve performance and support raw binary data without Base64 overhead.
 
 ## Connection
 
 - **Endpoint**: `ws://127.0.0.1:47999/ws`
-- **Protocol Version**: 1 (with multi-workspace extension v1.2)
+- **Protocol Version**: 2 (MessagePack binary transport)
 
 ## Message Format
 
-All messages are JSON objects with a `type` field. Terminal data is Base64-encoded.
+All messages are **MessagePack-encoded binary frames**. 
+
+- **Binary Support**: Direct binary fields (e.g., terminal I/O) are supported without Base64 encoding.
+- **Client Implementation (JS)**: Use `@msgpack/msgpack` or similar. Set `ws.binaryType = 'arraybuffer'`.
+- **Server Implementation (Rust)**: Use `rmp-serde` for serialization/deserialization.
+- **Structure**: Every message is an object with a `type: string` field.
 
 ---
 
-## Core Concepts (v1.2)
+## Core Concepts (v2.0)
 
 ### Workspace Identity
 
@@ -50,12 +58,14 @@ Connection
 
 ---
 
-## v0 Messages (Terminal Data Plane) - Backward Compatible
+## Terminal Data Plane (v0 Compatible Types)
+
+Now uses raw binary `data` field via MessagePack.
 
 ### Client -> Server
 
 ```json
-{"type":"input","data_b64":"<base64>"}
+{"type":"input","data":"<binary>"}
 {"type":"resize","cols":120,"rows":30}
 {"type":"ping"}
 ```
@@ -63,15 +73,15 @@ Connection
 ### Server -> Client
 
 ```json
-{"type":"hello","version":1,"session_id":"<uuid>","shell":"zsh","capabilities":["workspace_management","multi_terminal","multi_workspace","cwd_spawn"]}
-{"type":"output","data_b64":"<base64>"}
+{"type":"hello","version":2,"session_id":"<uuid>","shell":"zsh","capabilities":["workspace_management","multi_terminal","multi_workspace","cwd_spawn"]}
+{"type":"output","data":"<binary>"}
 {"type":"exit","code":0}
 {"type":"pong"}
 ```
 
 ---
 
-## v1 Messages (Control Plane) - Workspace Management
+## v1/v2 Messages (Control Plane) - Workspace Management
 
 ### Client -> Server
 
@@ -96,7 +106,7 @@ Connection
 
 ---
 
-## v1.2 Messages (Multi-Workspace Extension)
+## Multi-Workspace Extension (Unified in v2.0)
 
 ### Design Principles
 
@@ -107,13 +117,13 @@ Connection
 
 ### Client -> Server
 
-#### Create Terminal (v1.2 Enhanced)
+#### Create Terminal (v2.0)
 ```json
 {"type":"term_create","project":"<name>","workspace":"<name>"}
 ```
 Creates a new terminal in the specified workspace. The terminal's cwd is set to the workspace root. Returns `term_created` with workspace info.
 
-#### List Terminals (v1.2 Enhanced)
+#### List Terminals (v2.0)
 ```json
 {"type":"term_list"}
 ```
@@ -133,7 +143,7 @@ Notifies server of client focus change. Server may use for optimization.
 
 #### Input with term_id
 ```json
-{"type":"input","term_id":"<id>","data_b64":"<base64>"}
+{"type":"input","term_id":"<id>","data":"<binary>"}
 ```
 If `term_id` is omitted, routes to default terminal (backward compatible).
 
@@ -145,13 +155,13 @@ If `term_id` is omitted, routes to default terminal (backward compatible).
 
 ### Server -> Client
 
-#### Terminal Created (v1.2 Enhanced)
+#### Terminal Created (v2.0)
 ```json
 {"type":"term_created","term_id":"<id>","project":"<name>","workspace":"<name>","cwd":"<path>","shell":"<shell>"}
 ```
 Now includes `project` and `workspace` fields for workspace binding.
 
-#### Terminal List (v1.2 Enhanced)
+#### Terminal List (v2.0)
 ```json
 {"type":"term_list","items":[{"term_id":"<id>","project":"<name>","workspace":"<name>","cwd":"<path>","status":"running|exited"}]}
 ```
@@ -164,7 +174,7 @@ Now includes `project` and `workspace` fields for each terminal.
 
 #### Output with term_id
 ```json
-{"type":"output","term_id":"<id>","data_b64":"<base64>"}
+{"type":"output","term_id":"<id>","data":"<binary>"}
 ```
 
 #### Exit with term_id
@@ -247,7 +257,23 @@ Terminal B (proj1/ws-b) → PTY cwd = /path/to/proj1/.tidyflow/workspaces/ws-b
 
 ---
 
-## Migration from v1.1
+## Migration from v1 to v2
+
+### Breaking Changes
+
+1.  **Transport Format**: Changed from JSON text frames to **MessagePack binary frames**.
+2.  **Binary Data Encoding**:
+    *   Terminal I/O: `data_b64: string (base64)` -> `data: binary (Vec<u8>)`
+    *   File API (if applicable): `content_b64: string (base64)` -> `content: binary (Vec<u8>)`
+3.  **WebSocket Configuration**: Clients must set `binaryType = 'arraybuffer'`.
+
+### New Fields
+
+- `hello` message now returns `version: 2`.
+
+---
+
+## Migration from v1.1 to v1.2
 
 ### Breaking Changes
 
