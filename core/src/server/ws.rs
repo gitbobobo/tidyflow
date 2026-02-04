@@ -5,8 +5,6 @@ use axum::{
     routing::get,
     Router,
 };
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -473,10 +471,10 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                     Message::Close(_) => "Close".to_string(),
                 })));
                 match msg_result {
-                    Some(Ok(Message::Text(text))) => {
-                        info!("Received client message: {}", &text[..text.len().min(200)]);
+                    Some(Ok(Message::Binary(data))) => {
+                        info!("Received binary client message: {} bytes", data.len());
                         if let Err(e) = handle_client_message(
-                            &text,
+                            &data,
                             &mut socket,
                             &manager,
                             &app_state,
@@ -497,8 +495,8 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                         info!("WebSocket connection closed by client");
                         break;
                     }
-                    Some(Ok(Message::Binary(_))) => {
-                        warn!("Received unexpected binary message");
+                    Some(Ok(Message::Text(_))) => {
+                        warn!("Received deprecated text message, binary MessagePack expected");
                     }
                     Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
                         // Handled automatically by axum
@@ -517,9 +515,8 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
             // Handle PTY output
             Some((term_id, output)) = rx_output.recv() => {
                 debug!("PTY output received for term_id: {}, {} bytes", term_id, output.len());
-                let data_b64 = BASE64.encode(&output);
                 let msg = ServerMessage::Output {
-                    data_b64,
+                    data: output,
                     term_id: Some(term_id),
                 };
                 if let Err(e) = send_message(&mut socket, &msg).await {
@@ -556,9 +553,9 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
 
 /// Send a server message over WebSocket
 async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), String> {
-    let json = serde_json::to_string(msg).map_err(|e| e.to_string())?;
+    let bytes = rmp_serde::to_vec(msg).map_err(|e| e.to_string())?;
     socket
-        .send(Message::Text(json))
+        .send(Message::Binary(bytes))
         .await
         .map_err(|e| e.to_string())
 }
@@ -577,29 +574,25 @@ fn file_error_to_response(e: &FileApiError) -> (String, String) {
 
 /// Handle a client message
 async fn handle_client_message(
-    text: &str,
+    data: &[u8],
     socket: &mut WebSocket,
     manager: &Arc<Mutex<TerminalManager>>,
     app_state: &SharedAppState,
     tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
 ) -> Result<(), String> {
-    info!("handle_client_message called with text length: {}", text.len());
+    info!("handle_client_message called with data length: {}", data.len());
     let client_msg: ClientMessage =
-        serde_json::from_str(text).map_err(|e| {
-            error!("Failed to parse client message: {}, text: {}", e, &text[..text.len().min(500)]);
+        rmp_serde::from_slice(data).map_err(|e| {
+            error!("Failed to parse client message: {}", e);
             format!("Parse error: {}", e)
         })?;
     info!("Parsed client message: {:?}", std::mem::discriminant(&client_msg));
 
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
-        ClientMessage::Input { data_b64, term_id } => {
-            info!("[DEBUG] Input received: term_id={:?}, data_len={}", term_id, data_b64.len());
-            let data = BASE64
-                .decode(&data_b64)
-                .map_err(|e| format!("Base64 decode error: {}", e))?;
-            info!("[DEBUG] Input decoded: {} bytes", data.len());
+        ClientMessage::Input { data, term_id } => {
+            info!("[DEBUG] Input received: term_id={:?}, data_len={}", term_id, data.len());
 
             let mut mgr = manager.lock().await;
             let resolved_id = mgr.resolve_term_id(term_id.as_deref());
@@ -1007,12 +1000,11 @@ async fn handle_client_message(
 
                             match file_api::read_file(&root, &path) {
                                 Ok((content, size)) => {
-                                    let content_b64 = BASE64.encode(content.as_bytes());
                                     send_message(socket, &ServerMessage::FileReadResult {
                                         project,
                                         workspace,
                                         path,
-                                        content_b64,
+                                        content: content.into_bytes(),
                                         size,
                                     }).await?;
                                 }
@@ -1039,7 +1031,7 @@ async fn handle_client_message(
             }
         }
 
-        ClientMessage::FileWrite { project, workspace, path, content_b64 } => {
+        ClientMessage::FileWrite { project, workspace, path, content } => {
             let state = app_state.lock().await;
             match state.get_project(&project) {
                 Some(p) => {
@@ -1047,39 +1039,29 @@ async fn handle_client_message(
                         Some(root) => {
                             drop(state);
 
-                            // Decode base64 content
-                            match BASE64.decode(&content_b64) {
-                                Ok(bytes) => {
-                                    match String::from_utf8(bytes) {
-                                        Ok(content) => {
-                                            match file_api::write_file(&root, &path, &content) {
-                                                Ok(size) => {
-                                                    send_message(socket, &ServerMessage::FileWriteResult {
-                                                        project,
-                                                        workspace,
-                                                        path,
-                                                        success: true,
-                                                        size,
-                                                    }).await?;
-                                                }
-                                                Err(e) => {
-                                                    let (code, message) = file_error_to_response(&e);
-                                                    send_message(socket, &ServerMessage::Error { code, message }).await?;
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            send_message(socket, &ServerMessage::Error {
-                                                code: "invalid_utf8".to_string(),
-                                                message: "Content is not valid UTF-8".to_string(),
+                            // Decode UTF-8 content
+                            match String::from_utf8(content) {
+                                Ok(content_str) => {
+                                    match file_api::write_file(&root, &path, &content_str) {
+                                        Ok(size) => {
+                                            send_message(socket, &ServerMessage::FileWriteResult {
+                                                project,
+                                                workspace,
+                                                path,
+                                                success: true,
+                                                size,
                                             }).await?;
+                                        }
+                                        Err(e) => {
+                                            let (code, message) = file_error_to_response(&e);
+                                            send_message(socket, &ServerMessage::Error { code, message }).await?;
                                         }
                                     }
                                 }
                                 Err(_) => {
                                     send_message(socket, &ServerMessage::Error {
-                                        code: "invalid_base64".to_string(),
-                                        message: "Invalid base64 encoding".to_string(),
+                                        code: "invalid_utf8".to_string(),
+                                        message: "Content is not valid UTF-8".to_string(),
                                     }).await?;
                                 }
                             }

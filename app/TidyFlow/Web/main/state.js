@@ -1,6 +1,6 @@
 /**
  * TidyFlow Main - State & Utilities
- * Shared state variables, WebSocketTransport, base64, notifySwift
+ * Shared state variables, WebSocketTransport, notifySwift
  */
 (function () {
   "use strict";
@@ -61,23 +61,6 @@
     }
   }
 
-  function encodeBase64(uint8Array) {
-    let binary = "";
-    for (let i = 0; i < uint8Array.length; i++) {
-      binary += String.fromCharCode(uint8Array[i]);
-    }
-    return btoa(binary);
-  }
-
-  function decodeBase64(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
-
   function notifySwift(type, data) {
     if (
       window.webkit &&
@@ -120,8 +103,6 @@
   TF.pendingFileOpen = null;  // 待打开的文件（WebSocket 连接后处理）
 
   TF.WebSocketTransport = WebSocketTransport;
-  TF.encodeBase64 = encodeBase64;
-  TF.decodeBase64 = decodeBase64;
   TF.notifySwift = notifySwift;
 
   TF.getWorkspaceKey = function (project, workspace) {

@@ -1,11 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// Protocol version: 1 (backward compatible with v0, with multi-workspace extension v1.2)
-/// v1.11: Git rebase/fetch operations for UX-3a
-/// v1.12: Git merge to default via integration worktree for UX-3b
-/// v1.15: Git check branch up to date (UX-6)
-/// v1.16: Project/Workspace import (UX-2)
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Protocol version: 2 (MessagePack binary encoding)
+/// v2: Switch from JSON+base64 to MessagePack binary encoding
+pub const PROTOCOL_VERSION: u32 = 2;
 
 // ============================================================================
 // v0 Messages (Terminal Data Plane) - Backward Compatible
@@ -16,7 +13,8 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub enum ClientMessage {
     // v0: Terminal data plane (term_id optional for backward compat)
     Input {
-        data_b64: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
         #[serde(skip_serializing_if = "Option::is_none")]
         term_id: Option<String>,
     },
@@ -73,7 +71,8 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
         path: String,
-        content_b64: String,
+        #[serde(with = "serde_bytes")]
+        content: Vec<u8>,
     },
 
     // v1.4: File index for Quick Open
@@ -284,7 +283,8 @@ pub enum ServerMessage {
         capabilities: Option<Vec<String>>,
     },
     Output {
-        data_b64: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
         #[serde(skip_serializing_if = "Option::is_none")]
         term_id: Option<String>,
     },
@@ -345,7 +345,8 @@ pub enum ServerMessage {
         project: String,
         workspace: String,
         path: String,
-        content_b64: String,
+        #[serde(with = "serde_bytes")]
+        content: Vec<u8>,
         size: u64,
     },
     FileWriteResult {

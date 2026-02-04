@@ -8,7 +8,7 @@
 
   function handleMessage(data) {
     try {
-      const msg = JSON.parse(data);
+      const msg = data;
 
       switch (msg.type) {
         case "hello": {
@@ -37,20 +37,17 @@
             !TF.terminalSessions.has(termId) &&
             termId === TF.defaultServerTerminalId
           ) {
-            const bytes = TF.decodeBase64(msg.data_b64);
-            TF.pendingOutputBuffer.push({ termId, bytes });
+            TF.pendingOutputBuffer.push({ termId, bytes: msg.data });
             break;
           }
 
           if (termId) {
-            const bytes = TF.decodeBase64(msg.data_b64);
-
             // 总是将数据写入 xterm.js，它会维护自己的屏幕缓冲区
             // 切换回来时通过 resize 触发 TUI 应用重绘
             for (const [wsKey, tabSet] of TF.workspaceTabs) {
               if (tabSet.tabs.has(termId)) {
                 const tab = tabSet.tabs.get(termId);
-                if (tab.term) tab.term.write(bytes);
+                if (tab.term) tab.term.write(msg.data);
                 break;
               }
             }
@@ -221,7 +218,7 @@
         case "file_read_result":
           if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
             try {
-              const content = new TextDecoder().decode(TF.decodeBase64(msg.content_b64));
+              const content = new TextDecoder().decode(msg.content);
               const tabInfo = TF.createEditorTab(msg.path, content);
               if (tabInfo) {
                 TF.switchToTab(tabInfo.id);
