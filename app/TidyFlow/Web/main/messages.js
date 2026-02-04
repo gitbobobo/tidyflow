@@ -45,22 +45,13 @@
           if (termId) {
             const bytes = TF.decodeBase64(msg.data_b64);
 
-            if (TF.terminalSessions.has(termId)) {
-              const session = TF.terminalSessions.get(termId);
-              const text = new TextDecoder().decode(bytes);
-              session.buffer.push(text);
-              while (session.buffer.length > TF.MAX_BUFFER_LINES) {
-                session.buffer.shift();
-              }
-            }
-
-            if (termId === TF.activeSessionId) {
-              for (const [wsKey, tabSet] of TF.workspaceTabs) {
-                if (tabSet.tabs.has(termId)) {
-                  const tab = tabSet.tabs.get(termId);
-                  if (tab.term) tab.term.write(bytes);
-                  break;
-                }
+            // 总是将数据写入 xterm.js，它会维护自己的屏幕缓冲区
+            // 切换回来时通过 resize 触发 TUI 应用重绘
+            for (const [wsKey, tabSet] of TF.workspaceTabs) {
+              if (tabSet.tabs.has(termId)) {
+                const tab = tabSet.tabs.get(termId);
+                if (tab.term) tab.term.write(bytes);
+                break;
               }
             }
           }

@@ -441,30 +441,41 @@
 
     let editorView = null;
     if (window.CodeMirror) {
-      const { EditorView, basicSetup } = window.CodeMirror;
+      const { EditorView, basicSetup, getLanguageExtension, oneDark } = window.CodeMirror;
+
+      // 构建扩展列表
+      const extensions = [
+        basicSetup,
+        oneDark,
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            const tab = tabSet.tabs.get(tabId);
+            if (tab && !tab.isDirty) {
+              tab.isDirty = true;
+              TF.updateTabDirtyState(tabId, true);
+            }
+          }
+        }),
+        EditorView.theme(
+          {
+            "&": { height: "100%", fontSize: "14px" },
+            ".cm-scroller": { fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
+            ".cm-content": { caretColor: "#d4d4d4" },
+            "&.cm-focused .cm-cursor": { borderLeftColor: "#d4d4d4" },
+          },
+          { dark: true },
+        ),
+      ];
+
+      // 根据文件类型添加语言扩展
+      const langExt = getLanguageExtension(filePath);
+      if (langExt) {
+        extensions.push(langExt);
+      }
+
       editorView = new EditorView({
         doc: content || "",
-        extensions: [
-          basicSetup,
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              const tab = tabSet.tabs.get(tabId);
-              if (tab && !tab.isDirty) {
-                tab.isDirty = true;
-                TF.updateTabDirtyState(tabId, true);
-              }
-            }
-          }),
-          EditorView.theme(
-            {
-              "&": { height: "100%", fontSize: "14px" },
-              ".cm-scroller": { fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
-              ".cm-content": { caretColor: "#d4d4d4" },
-              "&.cm-focused .cm-cursor": { borderLeftColor: "#d4d4d4" },
-            },
-            { dark: true },
-          ),
-        ],
+        extensions,
         parent: editorContainer,
       });
     }
@@ -699,21 +710,9 @@
 
     if (TF.placeholder) TF.placeholder.style.display = "none";
 
-    // 如果是终端 tab，更新 activeSessionId 并应用缓冲数据
+    // 如果是终端 tab，更新 activeSessionId
     if (tab.type === "terminal" && tab.termId) {
       TF.activeSessionId = tab.termId;
-      
-      // 将缓冲区中的数据写入终端
-      // 这解决了切换 tab 期间 TUI 应用输出未显示的问题
-      const session = TF.terminalSessions.get(tab.termId);
-      if (session && session.buffer && session.buffer.length > 0 && tab.term) {
-        // 将所有缓冲数据写入终端
-        for (const text of session.buffer) {
-          tab.term.write(text);
-        }
-        // 清空缓冲区
-        session.buffer = [];
-      }
     }
 
     // 使用 requestAnimationFrame 确保浏览器完成布局更新后再刷新终端
@@ -730,6 +729,9 @@
           const rows = tab.term.rows;
           tab.term.refresh(0, rows - 1);
           tab.term.focus();
+          
+          // 发送 resize 信号，触发 TUI 应用重绘
+          // 这是让切换回来后界面正确显示的关键
           TF.sendResize(tab.termId, cols, rows);
         } else if (tab.type === "editor" && tab.editorView) {
           tab.editorView.focus();

@@ -7,10 +7,7 @@
     background: #1e1e1e;
 }
 
-/* 确保所有子元素继承文字颜色 */
-.cm-editor * {
-    color: inherit;
-}
+/* 确保编辑器基础文字颜色 */
 
 .cm-editor.cm-focused {
     outline: none;
@@ -50,29 +47,24 @@
 .cm-scroller {
     overflow: auto;
     font-family: inherit;
-    display: flex;
-    align-items: stretch;
     height: 100%;
 }
 
 .cm-content {
     padding: 0;
     caret-color: #d4d4d4;
-    flex: 1;
     min-width: 0;
     line-height: 1.5;
     color: #d4d4d4;
-    background: #1e1e1e;
+    width: fit-content;
+    min-width: 100%;
+    position: relative;
 }
 
 .cm-line {
     padding: 0 4px 0 8px;
     line-height: 1.5;
-    color: #d4d4d4 !important;
-}
-
-.cm-line * {
-    color: inherit !important;
+    color: #d4d4d4;
 }
 
 .cm-gutters {
@@ -100,8 +92,26 @@
     background: #2a2d2e;
 }
 
+/* 选中样式 - 强制 GPU 渲染避免残留 */
 .cm-selectionBackground {
     background: #264f78 !important;
+    transform: translateZ(0);
+}
+
+/* 非聚焦时的选中样式（稍暗） */
+.cm-editor:not(.cm-focused) .cm-selectionBackground {
+    background: #3a3d41 !important;
+}
+
+/* 确保选中层正确渲染 */
+.cm-selectionLayer {
+    pointer-events: none;
+    will-change: contents;
+}
+
+/* 限制选中层容器 */
+.cm-layer {
+    contain: layout style;
 }
 
 .cm-cursor {
@@ -109,15 +119,134 @@
 }
 
 /* Syntax highlighting - basic */
-.cm-keyword { color: #569cd6; }
-.cm-string { color: #ce9178; }
-.cm-number { color: #b5cea8; }
-.cm-comment { color: #6a9955; }
-.cm-variableName { color: #9cdcfe; }
-.cm-propertyName { color: #9cdcfe; }
-.cm-operator { color: #d4d4d4; }
-.cm-punctuation { color: #d4d4d4; }
-.cm-bracket { color: #ffd700; }
-.cm-tagName { color: #569cd6; }
-.cm-attributeName { color: #9cdcfe; }
-.cm-attributeValue { color: #ce9178; }
+.cm-keyword { color: #569cd6 !important; }
+.cm-string { color: #ce9178 !important; }
+.cm-string2 { color: #ce9178 !important; }
+.cm-number { color: #b5cea8 !important; }
+.cm-comment { color: #6a9955 !important; font-style: italic; }
+.cm-variableName { color: #9cdcfe !important; }
+.cm-propertyName { color: #9cdcfe !important; }
+.cm-operator { color: #d4d4d4 !important; }
+.cm-punctuation { color: #d4d4d4 !important; }
+.cm-bracket { color: #ffd700 !important; }
+.cm-tagName { color: #569cd6 !important; }
+.cm-attributeName { color: #9cdcfe !important; }
+.cm-attributeValue { color: #ce9178 !important; }
+
+/* 类型、类名、函数名 */
+.cm-typeName { color: #4ec9b0 !important; }
+.cm-className { color: #4ec9b0 !important; }
+.cm-namespace { color: #4ec9b0 !important; }
+.cm-macroName { color: #dcdcaa !important; }
+.cm-function { color: #dcdcaa !important; }
+.cm-definition { color: #dcdcaa !important; }
+.cm-variableName.cm-definition { color: #9cdcfe !important; }
+
+/* 特殊关键字 */
+.cm-bool { color: #569cd6 !important; }
+.cm-null { color: #569cd6 !important; }
+.cm-self { color: #569cd6 !important; }
+.cm-atom { color: #569cd6 !important; }
+
+/* Rust 特有 */
+.cm-lifetime { color: #569cd6 !important; }
+.cm-label { color: #c586c0 !important; }
+
+/* Markdown */
+.cm-heading { color: #569cd6 !important; font-weight: bold; }
+.cm-heading-1 { font-size: 1.6em; }
+.cm-heading-2 { font-size: 1.4em; }
+.cm-heading-3 { font-size: 1.2em; }
+.cm-link { color: #3794ff !important; }
+.cm-url { color: #3794ff !important; text-decoration: underline; }
+.cm-emphasis { font-style: italic; }
+.cm-strong { font-weight: bold; }
+.cm-strikethrough { text-decoration: line-through; }
+.cm-quote { color: #6a9955 !important; }
+.cm-list { color: #569cd6 !important; }
+
+/* HTML/XML */
+.cm-angleBracket { color: #808080 !important; }
+.cm-documentMeta { color: #569cd6 !important; }
+.cm-meta { color: #569cd6 !important; }
+
+/* JSON */
+.cm-propertyName { color: #9cdcfe !important; }
+
+/* 正则表达式 */
+.cm-regexp { color: #d16969 !important; }
+
+/* 错误和无效 */
+.cm-invalid { color: #f44747 !important; text-decoration: wavy underline; }
+
+/* 折叠标记 */
+.cm-foldPlaceholder {
+    background: #3c3c3c;
+    border: none;
+    color: #808080;
+    padding: 0 4px;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+/* 匹配括号高亮 */
+.cm-matchingBracket {
+    background: #0d6939 !important;
+    color: #ffd700 !important;
+}
+
+/* 搜索高亮 */
+.cm-searchMatch {
+    background: #613214 !important;
+}
+
+.cm-searchMatch.cm-searchMatch-selected {
+    background: #9e6a03 !important;
+}
+
+/* 自动补全菜单 */
+.cm-tooltip {
+    background: #252526;
+    border: 1px solid #454545;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.cm-tooltip-autocomplete {
+    max-height: 300px;
+}
+
+.cm-tooltip-autocomplete > ul {
+    font-family: Menlo, Monaco, "Courier New", monospace;
+    font-size: 13px;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+    padding: 4px 8px;
+    color: #d4d4d4;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+    background: #094771;
+    color: #ffffff;
+}
+
+.cm-completionIcon {
+    padding-right: 8px;
+    opacity: 0.8;
+}
+
+.cm-completionLabel {
+    color: #d4d4d4;
+}
+
+.cm-completionMatchedText {
+    color: #18a3ff;
+    font-weight: bold;
+}
+
+.cm-completionDetail {
+    color: #808080;
+    font-size: 12px;
+    margin-left: 8px;
+}
