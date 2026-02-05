@@ -303,11 +303,6 @@ struct NativeGitPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Toast 通知
-            if let toast = appState.gitOpToast {
-                GitOpToast(message: toast, isError: appState.gitOpToastIsError)
-            }
-
             ScrollView {
                 VStack(spacing: 0) {
                     // 1. 顶部工具栏（源代码管理）
@@ -381,31 +376,6 @@ struct NativeGitPanelView: View {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.hasStagedChanges
-    }
-}
-
-// MARK: - Toast 通知
-
-struct GitOpToast: View {
-    let message: String
-    let isError: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundColor(isError ? .red : .green)
-                .font(.system(size: 12))
-            Text(message)
-                .font(.system(size: 12))
-                .foregroundColor(.primary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(6)
-        .shadow(radius: 2)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
     }
 }
 

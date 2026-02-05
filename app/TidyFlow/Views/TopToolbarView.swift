@@ -218,7 +218,7 @@ struct OpenInEditorButtonView: View {
             ForEach(ExternalEditor.allCases, id: \.self) { editor in
                 Button(action: {
                     if let path = appState.selectedWorkspacePath, !appState.openPathInEditor(path, editor: editor) {
-                        alertMessage = appState.gitOpToast ?? "打开失败"
+                        alertMessage = "打开失败"
                         showingAlert = true
                     }
                 }) {

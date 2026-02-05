@@ -364,9 +364,6 @@ class AppState: ObservableObject {
 
     // Phase C3-2a: Git operation in-flight tracking (workspace key -> Set<GitOpInFlight>)
     @Published var gitOpsInFlight: [String: Set<GitOpInFlight>] = [:]
-    // Phase C3-2a: Git operation toast message
-    @Published var gitOpToast: String?
-    @Published var gitOpToastIsError: Bool = false
 
     // Phase C3-3a: Git Branch Cache (workspace key -> GitBranchCache)
     @Published var gitBranchCache: [String: GitBranchCache] = [:]
@@ -685,14 +682,9 @@ class AppState: ObservableObject {
         // Handle project removed results
         wsClient.onProjectRemoved = { [weak self] result in
             if result.ok {
-                self?.gitOpToast = "项目 '\(result.name)' 已移除"
-                self?.gitOpToastIsError = false
+                print("[AppState] 项目 '\(result.name)' 已移除")
             } else {
-                self?.gitOpToast = result.message ?? "移除项目失败"
-                self?.gitOpToastIsError = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.gitOpToast = nil
+                print("[AppState] 移除项目失败: \(result.message ?? "未知错误")")
             }
         }
 
@@ -708,16 +700,11 @@ class AppState: ObservableObject {
             print("[AppState] 已加载 \(settings.customCommands.count) 个自定义命令, \(settings.workspaceShortcuts.count) 个工作空间快捷键")
         }
 
-        wsClient.onClientSettingsSaved = { [weak self] ok, message in
+        wsClient.onClientSettingsSaved = { ok, message in
             if ok {
                 print("[AppState] 客户端设置已保存")
             } else {
                 print("[AppState] 保存设置失败: \(message ?? "未知错误")")
-                self?.gitOpToast = message ?? "保存设置失败"
-                self?.gitOpToastIsError = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                    self?.gitOpToast = nil
-                }
             }
         }
 
@@ -1181,20 +1168,11 @@ class AppState: ObservableObject {
         if result.op == "switch_branch" {
             branchSwitchInFlight.removeValue(forKey: result.workspace)
             if result.ok {
-                gitOpToast = result.message ?? "Switched branch"
-                gitOpToastIsError = false
                 // Refresh branches and status after switch
                 fetchGitBranches(workspaceKey: result.workspace)
                 fetchGitStatus(workspaceKey: result.workspace)
                 // Close any open diff tabs (they're now stale)
                 closeAllDiffTabs(workspaceKey: result.workspace)
-            } else {
-                gitOpToast = result.message ?? "Switch failed"
-                gitOpToastIsError = true
-            }
-            // Auto-dismiss toast after 2 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.gitOpToast = nil
             }
             return
         }
@@ -1203,39 +1181,16 @@ class AppState: ObservableObject {
         if result.op == "create_branch" {
             branchCreateInFlight.removeValue(forKey: result.workspace)
             if result.ok {
-                gitOpToast = result.message ?? "Created branch"
-                gitOpToastIsError = false
                 // Refresh branches and status after create
                 fetchGitBranches(workspaceKey: result.workspace)
                 fetchGitStatus(workspaceKey: result.workspace)
                 // Close any open diff tabs (they're now stale)
                 closeAllDiffTabs(workspaceKey: result.workspace)
-            } else {
-                gitOpToast = result.message ?? "Create branch failed"
-                gitOpToastIsError = true
-            }
-            // Auto-dismiss toast after 2 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.gitOpToast = nil
             }
             return
         }
 
         if result.ok {
-            // Show success toast
-            let pathDesc = result.path ?? "all files"
-            if result.op == "discard" {
-                // Special message for discard
-                if result.message == "File deleted" {
-                    gitOpToast = "Deleted \(pathDesc)"
-                } else {
-                    gitOpToast = "Discarded changes in \(pathDesc)"
-                }
-            } else {
-                gitOpToast = "\(result.op.capitalized)d \(pathDesc)"
-            }
-            gitOpToastIsError = false
-
             // Refresh git status
             fetchGitStatus(workspaceKey: result.workspace)
 
@@ -1250,25 +1205,12 @@ class AppState: ObservableObject {
                     refreshActiveDiff()
                 }
             }
-        } else {
-            // Show error toast
-            gitOpToast = result.message ?? "\(result.op.capitalized) failed"
-            gitOpToastIsError = true
-        }
-
-        // Auto-dismiss toast after 2 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.gitOpToast = nil
         }
     }
 
     /// Stage a file or all files
     func gitStage(workspaceKey: String, path: String?, scope: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         let opKey = GitOpInFlight(op: "stage", path: path, scope: scope)
@@ -1287,11 +1229,7 @@ class AppState: ObservableObject {
 
     /// Unstage a file or all files
     func gitUnstage(workspaceKey: String, path: String?, scope: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         let opKey = GitOpInFlight(op: "unstage", path: path, scope: scope)
@@ -1311,11 +1249,7 @@ class AppState: ObservableObject {
     /// Discard working tree changes for a file or all files
     /// WARNING: This is destructive and cannot be undone!
     func gitDiscard(workspaceKey: String, path: String?, scope: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         let opKey = GitOpInFlight(op: "discard", path: path, scope: scope)
@@ -1391,11 +1325,7 @@ class AppState: ObservableObject {
 
     /// Switch to a different branch
     func gitSwitchBranch(workspaceKey: String, branch: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         branchSwitchInFlight[workspaceKey] = branch
@@ -1409,11 +1339,7 @@ class AppState: ObservableObject {
 
     /// Create and switch to a new branch
     func gitCreateBranch(workspaceKey: String, branch: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         branchCreateInFlight[workspaceKey] = branch
@@ -1455,42 +1381,18 @@ class AppState: ObservableObject {
             // Clear commit message on success
             commitMessage.removeValue(forKey: result.workspace)
 
-            // Show success toast
-            gitOpToast = result.message ?? "Committed"
-            gitOpToastIsError = false
-
             // Refresh git status
             fetchGitStatus(workspaceKey: result.workspace)
-        } else {
-            // Show error toast
-            gitOpToast = result.message ?? "Commit failed"
-            gitOpToastIsError = true
-        }
-
-        // Auto-dismiss toast after 3 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.gitOpToast = nil
         }
     }
 
     /// Commit staged changes
     func gitCommit(workspaceKey: String, message: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Validate message
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedMessage.isEmpty else {
-            gitOpToast = "Commit message cannot be empty"
-            gitOpToastIsError = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.gitOpToast = nil
-            }
-            return
-        }
+        guard !trimmedMessage.isEmpty else { return }
 
         // Track in-flight
         commitInFlight[workspaceKey] = true
@@ -1538,25 +1440,8 @@ class AppState: ObservableObject {
         }
         gitOpStatusCache[result.workspace] = cache
 
-        // Show toast
-        if result.ok {
-            gitOpToast = result.message ?? "Rebase completed"
-            gitOpToastIsError = false
-        } else if result.state == "conflict" {
-            gitOpToast = "Conflicts detected (\(result.conflicts.count) files)"
-            gitOpToastIsError = true
-        } else {
-            gitOpToast = result.message ?? "Rebase failed"
-            gitOpToastIsError = true
-        }
-
         // Refresh git status
         fetchGitStatus(workspaceKey: result.workspace)
-
-        // Auto-dismiss toast after 4 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            self?.gitOpToast = nil
-        }
     }
 
     /// Handle git op status result from WebSocket
@@ -1571,11 +1456,7 @@ class AppState: ObservableObject {
 
     /// Fetch from remote
     func gitFetch(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         wsClient.requestGitFetch(
             project: selectedProjectName,
@@ -1585,11 +1466,7 @@ class AppState: ObservableObject {
 
     /// Rebase current branch onto another branch
     func gitRebase(workspaceKey: String, ontoBranch: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         rebaseInFlight[workspaceKey] = true
@@ -1608,11 +1485,7 @@ class AppState: ObservableObject {
 
     /// Continue a paused rebase
     func gitRebaseContinue(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         rebaseInFlight[workspaceKey] = true
 
@@ -1624,11 +1497,7 @@ class AppState: ObservableObject {
 
     /// Abort a rebase in progress
     func gitRebaseAbort(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         rebaseInFlight[workspaceKey] = true
 
@@ -1683,25 +1552,8 @@ class AppState: ObservableObject {
         }
         gitIntegrationStatusCache[result.project] = cache
 
-        // Show toast
-        if result.ok {
-            gitOpToast = result.message ?? "Merge completed"
-            gitOpToastIsError = false
-        } else if result.state == .conflict {
-            gitOpToast = "Merge conflicts detected (\(result.conflicts.count) files)"
-            gitOpToastIsError = true
-        } else {
-            gitOpToast = result.message ?? "Merge failed"
-            gitOpToastIsError = true
-        }
-
         // Refresh git status
         fetchGitStatus(workspaceKey: result.project)
-
-        // Auto-dismiss toast after 4 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            self?.gitOpToast = nil
-        }
     }
 
     /// Handle git integration status result from WebSocket
@@ -1720,11 +1572,7 @@ class AppState: ObservableObject {
 
     /// Merge current workspace branch to default branch via integration worktree
     func gitMergeToDefault(workspaceKey: String, defaultBranch: String = "main") {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         mergeInFlight[workspaceKey] = true
@@ -1743,11 +1591,7 @@ class AppState: ObservableObject {
 
     /// Continue a paused merge in integration worktree
     func gitMergeContinue(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         mergeInFlight[workspaceKey] = true
 
@@ -1758,11 +1602,7 @@ class AppState: ObservableObject {
 
     /// Abort a merge in progress in integration worktree
     func gitMergeAbort(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         mergeInFlight[workspaceKey] = true
 
@@ -1818,34 +1658,13 @@ class AppState: ObservableObject {
         }
         gitIntegrationStatusCache[result.project] = cache
 
-        // Show toast
-        if result.ok {
-            gitOpToast = result.message ?? "Rebase completed"
-            gitOpToastIsError = false
-        } else if result.state == .rebaseConflict {
-            gitOpToast = "Rebase conflicts detected (\(result.conflicts.count) files)"
-            gitOpToastIsError = true
-        } else {
-            gitOpToast = result.message ?? "Rebase failed"
-            gitOpToastIsError = true
-        }
-
         // Refresh git status
         fetchGitStatus(workspaceKey: result.project)
-
-        // Auto-dismiss toast after 4 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            self?.gitOpToast = nil
-        }
     }
 
     /// Rebase current workspace branch onto default branch via integration worktree
     func gitRebaseOntoDefault(workspaceKey: String, defaultBranch: String = "main") {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // Track in-flight
         rebaseOntoDefaultInFlight[workspaceKey] = true
@@ -1864,11 +1683,7 @@ class AppState: ObservableObject {
 
     /// Continue a paused rebase in integration worktree
     func gitRebaseOntoDefaultContinue(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         rebaseOntoDefaultInFlight[workspaceKey] = true
 
@@ -1879,11 +1694,7 @@ class AppState: ObservableObject {
 
     /// Abort a rebase in progress in integration worktree
     func gitRebaseOntoDefaultAbort(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         rebaseOntoDefaultInFlight[workspaceKey] = true
 
@@ -1915,20 +1726,6 @@ class AppState: ObservableObject {
             cache.integrationPath = path
         }
         gitIntegrationStatusCache[result.project] = cache
-
-        // Show toast
-        if result.ok {
-            gitOpToast = result.message ?? "Integration worktree reset"
-            gitOpToastIsError = false
-        } else {
-            gitOpToast = result.message ?? "Reset failed"
-            gitOpToastIsError = true
-        }
-
-        // Auto-dismiss toast after 4 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            self?.gitOpToast = nil
-        }
     }
 
     // MARK: - UX-2: Project Import API
@@ -2007,13 +1804,6 @@ class AppState: ObservableObject {
 
         // 自动选中默认工作空间
         selectWorkspace(projectId: newProject.id, workspaceName: defaultWs.name)
-
-        // Show success toast
-        gitOpToast = "项目 '\(result.name)' 已导入"
-        gitOpToastIsError = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.gitOpToast = nil
-        }
     }
 
     /// Handle workspace created result from WebSocket
@@ -2031,13 +1821,6 @@ class AppState: ObservableObject {
             // Auto-select the new workspace
             selectWorkspace(projectId: projects[index].id, workspaceName: result.workspace.name)
         }
-
-        // Show success toast
-        gitOpToast = "工作空间 '\(result.workspace.name)' 已创建"
-        gitOpToastIsError = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.gitOpToast = nil
-        }
     }
 
     /// Handle workspace removed result from WebSocket
@@ -2049,14 +1832,6 @@ class AppState: ObservableObject {
                     selectedWorkspaceKey = projects[index].workspaces.first?.name
                 }
             }
-            gitOpToast = "工作空间 '\(result.workspace)' 已删除"
-            gitOpToastIsError = false
-        } else {
-            gitOpToast = result.message ?? "删除工作空间失败"
-            gitOpToastIsError = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.gitOpToast = nil
         }
     }
 
@@ -2079,15 +1854,7 @@ class AppState: ObservableObject {
     /// 移除项目
     func removeProject(id: UUID) {
         guard let project = projects.first(where: { $0.id == id }) else { return }
-
-        guard connectionState == .connected else {
-            gitOpToast = "未连接，无法移除项目"
-            gitOpToastIsError = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.gitOpToast = nil
-            }
-            return
-        }
+        guard connectionState == .connected else { return }
 
         // 先从 UI 移除
         projects.removeAll { $0.id == id }
@@ -2098,22 +1865,14 @@ class AppState: ObservableObject {
 
     /// Create a new workspace in a project（名称由 Core 用 petname 生成）
     func createWorkspace(projectName: String, fromBranch: String? = nil) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         wsClient.requestCreateWorkspace(project: projectName, fromBranch: fromBranch)
     }
 
     /// Remove a workspace from a project
     func removeWorkspace(projectName: String, workspaceName: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
         wsClient.requestRemoveWorkspace(project: projectName, workspace: workspaceName)
     }
 
@@ -2121,9 +1880,7 @@ class AppState: ObservableObject {
     func openPathInEditor(_ path: String, editor: ExternalEditor) -> Bool {
         #if canImport(AppKit)
         guard editor.isInstalled else {
-            gitOpToast = "\(editor.rawValue) 未安装"
-            gitOpToastIsError = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.gitOpToast = nil }
+            print("[AppState] \(editor.rawValue) 未安装")
             return false
         }
         let task = Process()
@@ -2133,16 +1890,12 @@ class AppState: ObservableObject {
             try task.run()
             task.waitUntilExit()
             if task.terminationStatus != 0 {
-                gitOpToast = "无法启动 \(editor.rawValue)"
-                gitOpToastIsError = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.gitOpToast = nil }
+                print("[AppState] 无法启动 \(editor.rawValue)")
                 return false
             }
             return true
         } catch {
-            gitOpToast = "启动失败: \(error.localizedDescription)"
-            gitOpToastIsError = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.gitOpToast = nil }
+            print("[AppState] 启动失败: \(error.localizedDescription)")
             return false
         }
         #else
@@ -2152,11 +1905,7 @@ class AppState: ObservableObject {
 
     /// Reset integration worktree to clean state
     func gitResetIntegrationWorktree(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         wsClient.requestGitResetIntegrationWorktree(
             project: selectedProjectName
@@ -2167,11 +1916,7 @@ class AppState: ObservableObject {
 
     /// Check if branch is up to date with default branch
     func gitCheckBranchUpToDate(workspaceKey: String) {
-        guard connectionState == .connected else {
-            gitOpToast = "Disconnected"
-            gitOpToastIsError = true
-            return
-        }
+        guard connectionState == .connected else { return }
 
         let parts = workspaceKey.split(separator: "/")
         let workspace = parts.count == 2 ? String(parts[1]) : workspaceKey
