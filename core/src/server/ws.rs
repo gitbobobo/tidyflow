@@ -75,7 +75,10 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
                         // 只有 ESC [，缺少参数和终止符
                         return Some(i);
                     }
-                    let found_terminator = remaining.iter().skip(2).any(|&c| (0x40..=0x7E).contains(&c));
+                    let found_terminator = remaining
+                        .iter()
+                        .skip(2)
+                        .any(|&c| (0x40..=0x7E).contains(&c));
                     if !found_terminator {
                         // 到达末尾仍未找到终止符，不完整
                         return Some(i);
@@ -323,10 +326,10 @@ impl TerminalManager {
                             && tx_output
                                 .blocking_send((reader_term_id.clone(), data))
                                 .is_err()
-                            {
-                                // Channel closed, exit
-                                break;
-                            }
+                        {
+                            // Channel closed, exit
+                            break;
+                        }
                     }
                     Err(e) => {
                         debug!("PTY read error for {}: {}", reader_term_id, e);

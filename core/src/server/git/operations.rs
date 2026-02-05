@@ -203,15 +203,13 @@ pub fn git_unstage(
     };
 
     match restore_result {
-        Ok(output) if output.status.success() => {
-            Ok(GitOpResult {
-                op: "unstage".to_string(),
-                ok: true,
-                message: None,
-                path: path_str,
-                scope: scope.to_string(),
-            })
-        }
+        Ok(output) if output.status.success() => Ok(GitOpResult {
+            op: "unstage".to_string(),
+            ok: true,
+            message: None,
+            path: path_str,
+            scope: scope.to_string(),
+        }),
         _ => {
             // Fallback to git reset
             let reset_output = if scope == "all" {
