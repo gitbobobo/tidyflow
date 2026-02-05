@@ -14,6 +14,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - **Communication**: JSON-RPC 2.0 over WebSocket (default port 47999)
 
 ## 经验总结
+- 多终端场景下，为避免 WebGL 上下文占用过多，建议仅在激活终端启用 WebGL，切换时及时释放。
 
 ## Build Commands
 

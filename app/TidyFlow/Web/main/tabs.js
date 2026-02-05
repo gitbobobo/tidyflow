@@ -161,7 +161,7 @@
      * 尝试加载 WebGL 渲染器
      * 失败时设置 suggestedRendererType = 'dom'，后续终端将直接使用 DOM 渲染器
      */
-    function loadWebglAddon() {
+    function enableWebglAddon() {
       if (!shouldLoadWebgl()) {
         console.log("[WebGL] Skipped, using DOM renderer (suggested)");
         return false;
@@ -188,8 +188,6 @@
         return false;
       }
     }
-
-    loadWebglAddon();
 
     // Unicode11 addon - 正确处理 CJK 等宽字符
     try {
@@ -427,6 +425,8 @@
       get isGpuAccelerated() { return !!webglAddon; },
       // 释放 WebGL 渲染器
       disposeWebgl: disposeWebglAddon,
+      // 仅在需要时启用 WebGL（由激活逻辑控制）
+      enableWebgl: enableWebglAddon,
       pane,
       tabEl,
       cwd: cwd || "",
@@ -781,6 +781,9 @@
 
     if (TF.placeholder) TF.placeholder.style.display = "none";
 
+    // 仅在激活的终端启用 WebGL，其他终端释放 WebGL
+    updateWebglForActiveTab(tabId);
+
     // 如果是终端 tab，更新 activeSessionId
     if (tab.type === "terminal" && tab.termId) {
       TF.activeSessionId = tab.termId;
@@ -811,6 +814,23 @@
     });
 
     TF.notifySwift("tab_switched", { tab_id: tabId, type: tab.type });
+  }
+
+  /**
+   * 保证只有当前激活的终端使用 WebGL
+   * 其他终端释放 WebGL 以减少上下文占用
+   */
+  function updateWebglForActiveTab(activeTabId) {
+    TF.workspaceTabs.forEach((tabSet) => {
+      tabSet.tabs.forEach((tab) => {
+        if (tab.type !== "terminal") return;
+        if (tab.id === activeTabId) {
+          if (tab.enableWebgl) tab.enableWebgl();
+        } else {
+          if (tab.disposeWebgl) tab.disposeWebgl();
+        }
+      });
+    });
   }
 
   function closeTab(tabId) {
