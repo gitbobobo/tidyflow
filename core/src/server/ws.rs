@@ -584,13 +584,9 @@ async fn handle_client_message(
     tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
 ) -> Result<(), String> {
     info!("handle_client_message called with data length: {}", data.len());
-    // 打印接收到的原始数据（前100字节）
-    let preview_len = data.len().min(100);
-    info!("Raw data (first {} bytes): {:02x?}", preview_len, &data[..preview_len]);
     let client_msg: ClientMessage =
         rmp_serde::from_slice(data).map_err(|e| {
             error!("Failed to parse client message: {}", e);
-            error!("Raw data hex: {:02x?}", data);
             format!("Parse error: {}", e)
         })?;
     info!("Parsed client message: {:?}", std::mem::discriminant(&client_msg));

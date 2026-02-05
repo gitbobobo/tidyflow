@@ -142,9 +142,6 @@ class WSClient: NSObject, ObservableObject {
         do {
             let codable = AnyCodable.from(dict)
             let data = try msgpackEncoder.encode(codable)
-            // 调试：打印发送的数据
-            let hexString = data.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("[WSClient] Sending MessagePack data (\(data.count) bytes): \(hexString)")
             sendBinary(data)
         } catch {
             print("[WSClient] MessagePack encode failed: \(error)")
@@ -524,18 +521,12 @@ class WSClient: NSObject, ObservableObject {
 
     /// 解析并分发二进制 MessagePack 消息
     private func parseAndDispatchBinary(_ data: Data) {
-        // 调试：打印接收到的数据
-        let hexString = data.prefix(100).map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("[WSClient] Received MessagePack data (\(data.count) bytes): \(hexString)...")
         do {
             let decoded = try msgpackDecoder.decode(AnyCodable.self, from: data)
-            // 调试：打印解码后的类型
-            print("[WSClient] Decoded AnyCodable type: \(decoded)")
             guard let json = decoded.toDictionary else {
                 print("[WSClient] MessagePack decoded value is not a dictionary")
                 return
             }
-            print("[WSClient] Successfully converted to dictionary with keys: \(json.keys)")
             dispatchMessage(json)
         } catch {
             print("[WSClient] MessagePack decode failed: \(error)")
