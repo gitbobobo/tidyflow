@@ -23,6 +23,7 @@ use crate::server::protocol::{
     ClientMessage, CustomCommandInfo, FileEntryInfo, GitBranchInfo, GitStatusEntry, ProjectInfo, ServerMessage, TerminalInfo, WorkspaceInfo, PROTOCOL_VERSION,
     v1_capabilities,
 };
+use crate::server::watcher::{WorkspaceWatcher, WatchEvent};
 use crate::workspace::state::{AppState, Project, WorkspaceStatus};
 use crate::workspace::project::ProjectManager;
 use crate::workspace::workspace::WorkspaceManager;
@@ -402,8 +403,14 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
     let (tx_output, mut rx_output) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(100);
     let (tx_exit, mut rx_exit) = tokio::sync::mpsc::channel::<(String, i32)>(10);
 
+    // Create channel for file watcher events
+    let (tx_watch, mut rx_watch) = tokio::sync::mpsc::channel::<WatchEvent>(100);
+
     // Create terminal manager
     let manager = Arc::new(Mutex::new(TerminalManager::new()));
+
+    // Create file watcher
+    let watcher = Arc::new(Mutex::new(WorkspaceWatcher::new(tx_watch)));
 
     // Auto-spawn a default terminal session
     let (default_term_id, shell_name) = {
@@ -477,6 +484,7 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                             &data,
                             &mut socket,
                             &manager,
+                            &watcher,
                             &app_state,
                             tx_output.clone(),
                             tx_exit.clone(),
@@ -535,6 +543,34 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                 let _ = send_message(&mut socket, &exit_msg).await;
             }
 
+            // Handle file watcher events
+            Some(watch_event) = rx_watch.recv() => {
+                match watch_event {
+                    WatchEvent::FileChanged { project, workspace, paths, kind } => {
+                        debug!("File changed: project={}, workspace={}, paths={:?}", project, workspace, paths);
+                        let msg = ServerMessage::FileChanged {
+                            project,
+                            workspace,
+                            paths,
+                            kind,
+                        };
+                        if let Err(e) = send_message(&mut socket, &msg).await {
+                            error!("Failed to send file changed message: {}", e);
+                        }
+                    }
+                    WatchEvent::GitStatusChanged { project, workspace } => {
+                        debug!("Git status changed: project={}, workspace={}", project, workspace);
+                        let msg = ServerMessage::GitStatusChanged {
+                            project,
+                            workspace,
+                        };
+                        if let Err(e) = send_message(&mut socket, &msg).await {
+                            error!("Failed to send git status changed message: {}", e);
+                        }
+                    }
+                }
+            }
+
             else => {
                 debug!("All channels closed, exiting");
                 break;
@@ -579,6 +615,7 @@ async fn handle_client_message(
     data: &[u8],
     socket: &mut WebSocket,
     manager: &Arc<Mutex<TerminalManager>>,
+    watcher: &Arc<Mutex<WorkspaceWatcher>>,
     app_state: &SharedAppState,
     tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
@@ -2960,6 +2997,51 @@ async fn handle_client_message(
                     }).await?;
                 }
             }
+        }
+
+        // v1.22: File watcher
+        ClientMessage::WatchSubscribe { project, workspace } => {
+            info!("WatchSubscribe: project={}, workspace={}", project, workspace);
+
+            // 获取工作空间路径
+            let state = app_state.lock().await;
+            let watch_path = state.projects.get(&project).and_then(|p| {
+                get_workspace_root(p, &workspace)
+            });
+            drop(state);
+
+            match watch_path {
+                Some(path) => {
+                    let mut w = watcher.lock().await;
+                    match w.subscribe(project.clone(), workspace.clone(), path) {
+                        Ok(_) => {
+                            send_message(socket, &ServerMessage::WatchSubscribed {
+                                project,
+                                workspace,
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_message(socket, &ServerMessage::Error {
+                                code: "watch_subscribe_failed".to_string(),
+                                message: e,
+                            }).await?;
+                        }
+                    }
+                }
+                None => {
+                    send_message(socket, &ServerMessage::Error {
+                        code: "workspace_not_found".to_string(),
+                        message: format!("Workspace '{}' not found in project '{}'", workspace, project),
+                    }).await?;
+                }
+            }
+        }
+
+        ClientMessage::WatchUnsubscribe => {
+            info!("WatchUnsubscribe");
+            let mut w = watcher.lock().await;
+            w.unsubscribe();
+            send_message(socket, &ServerMessage::WatchUnsubscribed).await?;
         }
     }
 

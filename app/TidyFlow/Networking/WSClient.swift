@@ -48,6 +48,11 @@ class WSClient: NSObject, ObservableObject {
     // 客户端设置
     var onClientSettingsResult: ((ClientSettings) -> Void)?
     var onClientSettingsSaved: ((Bool, String?) -> Void)?
+    // v1.22: 文件监控回调
+    var onWatchSubscribed: ((WatchSubscribedResult) -> Void)?
+    var onWatchUnsubscribed: (() -> Void)?
+    var onFileChanged: ((FileChangedNotification) -> Void)?
+    var onGitStatusChanged: ((GitStatusChangedNotification) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -490,6 +495,24 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // MARK: - v1.22: 文件监控
+
+    /// 订阅工作空间文件监控
+    func requestWatchSubscribe(project: String, workspace: String) {
+        send([
+            "type": "watch_subscribe",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    /// 取消文件监控订阅
+    func requestWatchUnsubscribe() {
+        send([
+            "type": "watch_unsubscribe"
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -680,6 +703,25 @@ class WSClient: NSObject, ObservableObject {
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String
             onClientSettingsSaved?(ok, message)
+
+        // v1.22: 文件监控消息
+        case "watch_subscribed":
+            if let result = WatchSubscribedResult.from(json: json) {
+                onWatchSubscribed?(result)
+            }
+
+        case "watch_unsubscribed":
+            onWatchUnsubscribed?()
+
+        case "file_changed":
+            if let notification = FileChangedNotification.from(json: json) {
+                onFileChanged?(notification)
+            }
+
+        case "git_status_changed":
+            if let notification = GitStatusChangedNotification.from(json: json) {
+                onGitStatusChanged?(notification)
+            }
 
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"

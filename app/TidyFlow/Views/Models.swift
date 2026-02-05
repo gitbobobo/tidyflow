@@ -484,6 +484,9 @@ class AppState: ObservableObject {
         // 切换项目但 workspace 名相同时（如 A-default → B-default）selectedWorkspaceKey 不变，onChange 不触发，
         // Git 面板的 loadDataIfNeeded 不会执行，因此这里一并请求分支与提交历史，保证切换后 Git 面板有数据。
         if connectionState == .connected {
+            // 订阅文件监控（切换工作空间时自动切换监控目标）
+            subscribeCurrentWorkspace()
+
             // 请求根目录文件列表（如果缓存不存在）
             if getFileListCache(workspaceKey: workspaceName, path: ".") == nil {
                 fetchFileList(workspaceKey: workspaceName, path: ".")
@@ -729,6 +732,29 @@ class AppState: ObservableObject {
             }
         }
 
+        // v1.22: 文件监控回调
+        wsClient.onWatchSubscribed = { [weak self] result in
+            print("[AppState] 已订阅文件监控: project=\(result.project), workspace=\(result.workspace)")
+        }
+
+        wsClient.onWatchUnsubscribed = {
+            print("[AppState] 已取消文件监控订阅")
+        }
+
+        wsClient.onFileChanged = { [weak self] notification in
+            print("[AppState] 文件变化: \(notification.paths.count) 个文件, kind=\(notification.kind)")
+            // 使相关缓存失效
+            self?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
+        }
+
+        wsClient.onGitStatusChanged = { [weak self] notification in
+            print("[AppState] Git 状态变化: project=\(notification.project), workspace=\(notification.workspace)")
+            // 自动刷新 Git 状态
+            self?.fetchGitStatus(workspaceKey: notification.workspace)
+            // 同时刷新分支信息（可能有新分支创建）
+            self?.fetchGitBranches(workspaceKey: notification.workspace)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -784,6 +810,37 @@ class AppState: ObservableObject {
 
     func reconnectAndRefresh() {
         wsClient.reconnect()
+    }
+
+    // MARK: - v1.22: 文件监控 API
+
+    /// 订阅当前工作空间的文件监控
+    func subscribeCurrentWorkspace() {
+        guard let workspaceKey = selectedWorkspaceKey else { return }
+        wsClient.requestWatchSubscribe(project: selectedProjectName, workspace: workspaceKey)
+    }
+
+    /// 取消文件监控订阅
+    func unsubscribeWatch() {
+        wsClient.requestWatchUnsubscribe()
+    }
+
+    /// 使文件缓存失效（收到文件变化通知时调用）
+    func invalidateFileCache(project: String, workspace: String) {
+        // 使文件列表缓存失效（清除该工作空间下所有路径的缓存）
+        let prefix = "\(project):\(workspace):"
+        let keysToRemove = fileListCache.keys.filter { $0.hasPrefix(prefix) }
+        for key in keysToRemove {
+            fileListCache.removeValue(forKey: key)
+        }
+
+        // 使文件索引缓存失效
+        fileIndexCache.removeValue(forKey: workspace)
+
+        // 如果是当前选中的工作空间，自动刷新根目录
+        if workspace == selectedWorkspaceKey && project == selectedProjectName {
+            fetchFileList(workspaceKey: workspace, path: ".")
+        }
     }
 
     // MARK: - 文件列表 API

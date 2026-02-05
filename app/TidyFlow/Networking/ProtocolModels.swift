@@ -1315,3 +1315,56 @@ struct GitResetIntegrationWorktreeResult {
         )
     }
 }
+
+// MARK: - v1.22: File Watcher Protocol Models
+
+/// 文件监控订阅成功结果
+struct WatchSubscribedResult {
+    let project: String
+    let workspace: String
+
+    static func from(json: [String: Any]) -> WatchSubscribedResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+        return WatchSubscribedResult(project: project, workspace: workspace)
+    }
+}
+
+/// 文件变化通知
+struct FileChangedNotification {
+    let project: String
+    let workspace: String
+    let paths: [String]
+    let kind: String  // "modify", "create", "delete"
+
+    static func from(json: [String: Any]) -> FileChangedNotification? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let paths = json["paths"] as? [String],
+              let kind = json["kind"] as? String else {
+            return nil
+        }
+        return FileChangedNotification(
+            project: project,
+            workspace: workspace,
+            paths: paths,
+            kind: kind
+        )
+    }
+}
+
+/// Git 状态变化通知
+struct GitStatusChangedNotification {
+    let project: String
+    let workspace: String
+
+    static func from(json: [String: Any]) -> GitStatusChangedNotification? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+        return GitStatusChangedNotification(project: project, workspace: workspace)
+    }
+}

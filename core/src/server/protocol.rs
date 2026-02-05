@@ -257,6 +257,13 @@ pub enum ClientMessage {
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
     },
+
+    // v1.22: File watcher
+    WatchSubscribe {
+        project: String,
+        workspace: String,
+    },
+    WatchUnsubscribe,
 }
 
 fn default_diff_mode() -> String {
@@ -571,6 +578,23 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    // v1.22: File watcher notifications
+    WatchSubscribed {
+        project: String,
+        workspace: String,
+    },
+    WatchUnsubscribed,
+    FileChanged {
+        project: String,
+        workspace: String,
+        paths: Vec<String>,
+        kind: String,
+    },
+    GitStatusChanged {
+        project: String,
+        workspace: String,
+    },
 }
 
 // ============================================================================
@@ -681,6 +705,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_merge_integration".to_string(),
         "git_branch_divergence".to_string(),
         "project_import".to_string(),
+        "file_watch".to_string(),
     ]
 }
 

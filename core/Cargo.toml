@@ -26,6 +26,9 @@ toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 petname = "2.0"
+# v1.22: File watcher
+notify = "6.1"
+notify-debouncer-mini = "0.4"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
