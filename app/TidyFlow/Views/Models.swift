@@ -258,6 +258,7 @@ struct GitStatusIndex {
         "R": 3,   // 重命名
         "C": 2,   // 复制
         "??": 1,  // 未跟踪
+        "!!": 0,  // 忽略
     ]
 
     /// 从 GitStatusCache 构建索引
@@ -326,6 +327,7 @@ struct GitStatusIndex {
         case "R": return .blue        // 重命名
         case "C": return .cyan        // 复制
         case "U": return .purple      // 冲突
+        case "!!": return .secondary.opacity(0.5)  // 忽略
         default: return nil
         }
     }

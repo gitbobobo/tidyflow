@@ -261,7 +261,7 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
 
     // Run git status
     let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-z"])
+        .args(["status", "--porcelain=v1", "-z", "--ignored"])
         .current_dir(workspace_root)
         .output()
         .map_err(GitError::IoError)?;
