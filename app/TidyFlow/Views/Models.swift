@@ -815,20 +815,25 @@ class AppState: ObservableObject {
     }
 
     /// 使文件缓存失效（收到文件变化通知时调用）
+    /// 采用增量更新策略：不清除缓存，直接获取新数据覆盖旧数据，避免界面闪烁
     func invalidateFileCache(project: String, workspace: String) {
-        // 使文件列表缓存失效（清除该工作空间下所有路径的缓存）
         let prefix = "\(project):\(workspace):"
-        let keysToRemove = fileListCache.keys.filter { $0.hasPrefix(prefix) }
-        for key in keysToRemove {
-            fileListCache.removeValue(forKey: key)
-        }
 
-        // 使文件索引缓存失效
+        // 收集所有展开的目录路径
+        let expandedPaths = directoryExpandState
+            .filter { $0.key.hasPrefix(prefix) && $0.value }
+            .map { String($0.key.dropFirst(prefix.count)) }
+
+        // 清除文件索引缓存（搜索用）
         fileIndexCache.removeValue(forKey: workspace)
 
-        // 如果是当前选中的工作空间，自动刷新根目录
+        // 如果是当前选中的工作空间，刷新根目录和所有展开的目录
+        // 注意：不清除文件列表缓存，新数据会直接覆盖旧数据
         if workspace == selectedWorkspaceKey && project == selectedProjectName {
             fetchFileList(workspaceKey: workspace, path: ".")
+            for path in expandedPaths {
+                fetchFileList(workspaceKey: workspace, path: path)
+            }
         }
     }
 
@@ -880,10 +885,21 @@ class AppState: ObservableObject {
         return fileListCache[key]
     }
 
-    /// 刷新当前工作空间的根目录文件列表
+    /// 刷新当前工作空间的文件列表（包括根目录和所有展开的目录）
     func refreshFileList() {
         guard let ws = selectedWorkspaceKey else { return }
+        let prefix = "\(selectedProjectName):\(ws):"
+
+        // 收集所有展开的目录路径
+        let expandedPaths = directoryExpandState
+            .filter { $0.key.hasPrefix(prefix) && $0.value }
+            .map { String($0.key.dropFirst(prefix.count)) }
+
+        // 刷新根目录和所有展开的目录
         fetchFileList(workspaceKey: ws, path: ".")
+        for path in expandedPaths {
+            fetchFileList(workspaceKey: ws, path: path)
+        }
     }
 
     /// 切换目录展开状态

@@ -381,17 +381,7 @@ struct FileListContent: View {
     
     var body: some View {
         if let cache = cache {
-            if cache.isLoading && cache.items.isEmpty {
-                // 加载中
-                HStack {
-                    Spacer()
-                    ProgressView()
-                        .scaleEffect(0.7)
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-                .padding(.leading, CGFloat(depth * 16 + 8))
-            } else if let error = cache.error {
+            if let error = cache.error, cache.items.isEmpty {
                 // 错误状态
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
