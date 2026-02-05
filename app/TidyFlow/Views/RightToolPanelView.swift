@@ -171,6 +171,10 @@ struct TreeRowView<CustomIcon: View>: View {
     var selectedBackgroundColor: Color? = nil
     /// 尾部标签文本（如快捷键提示 ⌘1）
     var trailingText: String? = nil
+    /// 标题文字颜色；nil 表示使用默认 .primary
+    var titleColor: Color? = nil
+    /// 尾部文字颜色；nil 表示使用默认 .secondary
+    var trailingTextColor: Color? = nil
     /// 自定义图标视图，如果提供则替代默认的 SF Symbol 图标
     var customIconView: CustomIcon?
     var onTap: () -> Void
@@ -203,13 +207,14 @@ struct TreeRowView<CustomIcon: View>: View {
             }
             Text(title)
                 .font(.system(size: 12))
+                .foregroundColor(titleColor ?? .primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
             if let trailing = trailingText {
                 Text(trailing)
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(trailingTextColor ?? .secondary)
             }
         }
         .padding(.vertical, 4)
@@ -241,6 +246,8 @@ extension TreeRowView where CustomIcon == EmptyView {
         isSelected: Bool = false,
         selectedBackgroundColor: Color? = nil,
         trailingText: String? = nil,
+        titleColor: Color? = nil,
+        trailingTextColor: Color? = nil,
         onTap: @escaping () -> Void
     ) {
         self.isExpandable = isExpandable
@@ -252,6 +259,8 @@ extension TreeRowView where CustomIcon == EmptyView {
         self.isSelected = isSelected
         self.selectedBackgroundColor = selectedBackgroundColor
         self.trailingText = trailingText
+        self.titleColor = titleColor
+        self.trailingTextColor = trailingTextColor
         self.customIconView = nil
         self.onTap = onTap
     }
@@ -270,6 +279,8 @@ extension TreeRowView {
         isSelected: Bool = false,
         selectedBackgroundColor: Color? = nil,
         trailingText: String? = nil,
+        titleColor: Color? = nil,
+        trailingTextColor: Color? = nil,
         customIconView: CustomIcon,
         onTap: @escaping () -> Void
     ) {
@@ -282,6 +293,8 @@ extension TreeRowView {
         self.isSelected = isSelected
         self.selectedBackgroundColor = selectedBackgroundColor
         self.trailingText = trailingText
+        self.titleColor = titleColor
+        self.trailingTextColor = trailingTextColor
         self.customIconView = customIconView
         self.onTap = onTap
     }
@@ -434,12 +447,32 @@ struct FileRowView: View {
         }
     }
 
+    /// 获取当前项的 Git 状态
+    private var gitStatus: String? {
+        let index = appState.getGitStatusIndex(workspaceKey: workspaceKey)
+        return index.getStatus(path: item.path, isDir: item.isDir)
+    }
+
+    /// 根据 Git 状态返回颜色
+    private var gitStatusColor: Color? {
+        GitStatusIndex.colorForStatus(gitStatus)
+    }
+
     private var iconColor: Color {
+        // 如果有 Git 状态颜色，使用它；否则使用默认颜色
+        if let statusColor = gitStatusColor {
+            return statusColor
+        }
         if item.isDir {
             return .accentColor
         } else {
             return .secondary
         }
+    }
+
+    /// 标题颜色：有 Git 状态时使用状态颜色
+    private var titleColor: Color? {
+        gitStatusColor
     }
 
     /// 当前文件是否为资源管理器中应高亮的"当前打开文件"（与活动编辑器标签一致）
@@ -460,6 +493,9 @@ struct FileRowView: View {
                 depth: depth,
                 isSelected: isSelected,
                 selectedBackgroundColor: Color.accentColor.opacity(0.35),
+                trailingText: gitStatus,
+                titleColor: titleColor,
+                trailingTextColor: gitStatusColor,
                 onTap: { handleTap() }
             )
             .contextMenu {
@@ -525,7 +561,7 @@ struct FileRowView: View {
             }
         }
     }
-    
+
     /// 根据文件扩展名返回图标名称
     private func fileIconName(for filename: String) -> String {
         let ext = (filename as NSString).pathExtension.lowercased()

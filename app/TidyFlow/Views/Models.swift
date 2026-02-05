@@ -240,6 +240,97 @@ struct ProjectModel: Identifiable, Equatable {
     var isExpanded: Bool = true
 }
 
+// MARK: - Git 状态索引（资源管理器用）
+
+/// Git 状态索引，支持 O(1) 路径查找和文件夹状态聚合
+struct GitStatusIndex {
+    /// 文件路径 -> 状态码（M, A, D, ??, R, C, U）
+    private var fileStatus: [String: String] = [:]
+    /// 文件夹路径 -> 聚合状态码（子文件中优先级最高的状态）
+    private var folderStatus: [String: String] = [:]
+
+    /// 状态优先级（数字越大优先级越高）
+    private static let statusPriority: [String: Int] = [
+        "U": 7,   // 冲突
+        "M": 6,   // 修改
+        "A": 5,   // 新增
+        "D": 4,   // 删除
+        "R": 3,   // 重命名
+        "C": 2,   // 复制
+        "??": 1,  // 未跟踪
+    ]
+
+    /// 从 GitStatusCache 构建索引
+    init(from cache: GitStatusCache) {
+        // 1. 索引所有文件状态
+        for item in cache.items {
+            fileStatus[item.path] = item.status
+        }
+
+        // 2. 向上传播状态到父目录
+        for item in cache.items {
+            propagateToParents(path: item.path, status: item.status)
+        }
+    }
+
+    /// 空索引
+    init() {}
+
+    /// 向上传播状态到所有父目录
+    private mutating func propagateToParents(path: String, status: String) {
+        var currentPath = path
+        while let lastSlash = currentPath.lastIndex(of: "/") {
+            currentPath = String(currentPath[..<lastSlash])
+            if currentPath.isEmpty { break }
+
+            // 比较优先级，保留更高优先级的状态
+            if let existing = folderStatus[currentPath] {
+                let existingPriority = Self.statusPriority[existing] ?? 0
+                let newPriority = Self.statusPriority[status] ?? 0
+                if newPriority > existingPriority {
+                    folderStatus[currentPath] = status
+                }
+            } else {
+                folderStatus[currentPath] = status
+            }
+        }
+    }
+
+    /// 获取文件的 Git 状态
+    func getFileStatus(_ path: String) -> String? {
+        return fileStatus[path]
+    }
+
+    /// 获取文件夹的聚合 Git 状态
+    func getFolderStatus(_ path: String) -> String? {
+        return folderStatus[path]
+    }
+
+    /// 获取任意路径的状态（文件或文件夹）
+    func getStatus(path: String, isDir: Bool) -> String? {
+        if isDir {
+            return folderStatus[path]
+        } else {
+            return fileStatus[path]
+        }
+    }
+
+    /// 根据状态码返回对应颜色
+    static func colorForStatus(_ status: String?) -> Color? {
+        guard let status = status else { return nil }
+        switch status {
+        case "M": return .orange      // 修改
+        case "A": return .green       // 新增
+        case "D": return .red         // 删除
+        case "??": return .gray       // 未跟踪
+        case "R": return .blue        // 重命名
+        case "C": return .cyan        // 复制
+        case "U": return .purple      // 冲突
+        default: return nil
+        }
+    }
+}
+
 // MARK: - 文件浏览器模型
 
 /// 文件条目信息（对应 Core 的 FileEntryInfo）
@@ -355,6 +446,9 @@ class AppState: ObservableObject {
 
     // Phase C3-1: Git Status Cache (workspace key -> GitStatusCache)
     @Published var gitStatusCache: [String: GitStatusCache] = [:]
+
+    // Git 状态索引缓存（资源管理器用，workspace key -> GitStatusIndex）
+    private var gitStatusIndexCache: [String: GitStatusIndex] = [:]
 
     // Git Log Cache (workspace key -> GitLogCache)
     @Published var gitLogCache: [String: GitLogCache] = [:]
@@ -1096,6 +1190,8 @@ class AppState: ObservableObject {
             stagedCount: result.stagedCount
         )
         gitStatusCache[key] = cache
+        // 清除索引缓存，下次访问时重新构建
+        gitStatusIndexCache.removeValue(forKey: key)
     }
 
     /// Fetch git status for a workspace
@@ -1131,6 +1227,23 @@ class AppState: ObservableObject {
     func getGitStatusCache(workspaceKey: String) -> GitStatusCache? {
         let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
         return gitStatusCache[key]
+    }
+
+    /// 获取 Git 状态索引（资源管理器用，懒加载）
+    func getGitStatusIndex(workspaceKey: String) -> GitStatusIndex {
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        // 如果已有缓存，直接返回
+        if let index = gitStatusIndexCache[key] {
+            return index
+        }
+        // 从 GitStatusCache 构建索引
+        if let cache = gitStatusCache[key] {
+            let index = GitStatusIndex(from: cache)
+            gitStatusIndexCache[key] = index
+            return index
+        }
+        // 没有状态数据，返回空索引
+        return GitStatusIndex()
     }
 
     /// Check if git status cache is empty or expired
