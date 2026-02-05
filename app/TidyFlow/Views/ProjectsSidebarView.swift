@@ -282,19 +282,10 @@ struct WorkspaceRowView: View {
 
     /// 工作空间路径，用于复制与在编辑器中打开
     private var workspacePath: String? { workspace.root }
-    
-    /// 工作空间唯一标识，用于快捷键配置
-    private var workspaceKey: String {
-        if workspace.isDefault {
-            return "\(projectName)/(default)"
-        } else {
-            return "\(projectName)/\(workspace.name)"
-        }
-    }
-    
-    /// 当前工作空间绑定的快捷键
+
+    /// 当前工作空间绑定的快捷键（基于终端打开时间自动分配）
     private var currentShortcutKey: String? {
-        appState.getWorkspaceShortcutKey(workspaceKey: workspaceKey)
+        appState.getWorkspaceShortcutKey(workspaceKey: globalWorkspaceKey)
     }
 
     /// 菜单项图标尺寸
@@ -396,41 +387,7 @@ struct WorkspaceRowView: View {
                     Label("在编辑器中打开", systemImage: "square.and.arrow.up")
                 }
             }
-            
-            // 快捷键配置菜单
-            Divider()
-            Menu {
-                // 1-9 在前，0 在最后
-                ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, 0], id: \.self) { num in
-                    let key = String(num)
-                    Button {
-                        appState.setWorkspaceShortcut(workspaceKey: workspaceKey, shortcutKey: key)
-                    } label: {
-                        HStack {
-                            Text("⌘\(num)")
-                            if currentShortcutKey == key {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-                if currentShortcutKey != nil {
-                    Divider()
-                    Button {
-                        appState.clearWorkspaceShortcut(workspaceKey: workspaceKey)
-                    } label: {
-                        Label("清除快捷键", systemImage: "xmark.circle")
-                    }
-                }
-            } label: {
-                if let key = currentShortcutKey {
-                    Label("快捷键 ⌘\(key)", systemImage: "command")
-                } else {
-                    Label("设置快捷键", systemImage: "command")
-                }
-            }
-            
+
             // 只有非默认工作空间才显示删除选项
             if !workspace.isDefault {
                 Divider()

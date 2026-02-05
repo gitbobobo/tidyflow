@@ -513,6 +513,10 @@ class AppState: ObservableObject {
     @Published var terminalSessionByTabId: [UUID: String] = [:]
     // Track stale sessions (disconnected but tab still exists)
     @Published var staleTerminalTabs: Set<UUID> = []
+
+    /// 工作空间首次打开终端的时间记录（内存中，不持久化）
+    /// key: globalWorkspaceKey (如 "projectName:workspaceName")
+    @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     // Track tabs that are pending spawn (to skip handleTabSwitch)
     var pendingSpawnTabs: Set<UUID> = []
     // Callback for terminal kill (set by CenterContentView)
@@ -2276,6 +2280,14 @@ class AppState: ObservableObject {
                 activeTabIdByWorkspace[workspaceKey] = tabs[newIndex].id
             }
         }
+
+        // 关闭终端后检查是否需要清除时间记录（用于自动快捷键）
+        if tab.kind == .terminal {
+            let remainingTerminals = workspaceTabs[workspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
+            if remainingTerminals == 0 {
+                workspaceTerminalOpenTime.removeValue(forKey: workspaceKey)
+            }
+        }
     }
     
     func addTab(workspaceKey: String, kind: TabKind, title: String, payload: String) {
@@ -2297,7 +2309,12 @@ class AppState: ObservableObject {
         
         workspaceTabs[workspaceKey]?.append(newTab)
         activeTabIdByWorkspace[workspaceKey] = newTab.id
-        
+
+        // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
+        if kind == .terminal && workspaceTerminalOpenTime[workspaceKey] == nil {
+            workspaceTerminalOpenTime[workspaceKey] = Date()
+        }
+
         // 当创建终端 Tab 且已有其他终端时，直接通知 WebBridge spawn 新终端
         // （第一个终端由 TerminalContentView.onAppear 处理）
         if kind == .terminal && hasExistingTerminalTab {
@@ -2373,91 +2390,69 @@ class AppState: ObservableObject {
         saveClientSettings()
     }
     
-    // MARK: - 工作空间快捷键
-    
-    /// 为工作空间设置快捷键（Cmd+0-9）
-    /// - Parameters:
-    ///   - workspaceKey: 工作空间标识（"projectName/workspaceName" 或 "projectName/(default)"）
-    ///   - shortcutKey: 快捷键数字 "0"-"9"
-    func setWorkspaceShortcut(workspaceKey: String, shortcutKey: String) {
-        // 移除之前绑定到此快捷键的工作空间
-        clientSettings.workspaceShortcuts[shortcutKey] = workspaceKey
-        saveClientSettings()
+    // MARK: - 自动工作空间快捷键
+
+    /// 获取按终端打开时间排序的工作空间快捷键映射
+    /// 最早打开终端的工作空间获得 ⌘1，依次类推
+    var autoWorkspaceShortcuts: [String: String] {
+        let sortedWorkspaces = workspaceTerminalOpenTime
+            .sorted { $0.value < $1.value }
+            .prefix(10)
+
+        let shortcutKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+        var result: [String: String] = [:]
+        for (index, (workspaceKey, _)) in sortedWorkspaces.enumerated() {
+            result[shortcutKeys[index]] = workspaceKey
+        }
+        return result
     }
-    
-    /// 清除工作空间的快捷键
+
+    /// 获取工作空间的快捷键（基于终端打开时间自动分配）
     /// - Parameter workspaceKey: 工作空间标识
-    func clearWorkspaceShortcut(workspaceKey: String) {
-        // 找到并移除此工作空间的快捷键
-        for (key, value) in clientSettings.workspaceShortcuts {
-            if value == workspaceKey {
-                clientSettings.workspaceShortcuts.removeValue(forKey: key)
-                break
+    /// - Returns: 快捷键数字 "1"-"9" 或 "0"，如果没有打开终端则返回 nil
+    func getWorkspaceShortcutKey(workspaceKey: String) -> String? {
+        // 将 "project/workspace" 格式转换为 "project:workspace"
+        let globalKey: String
+        if workspaceKey.contains(":") {
+            globalKey = workspaceKey
+        } else {
+            let components = workspaceKey.split(separator: "/", maxSplits: 1)
+            if components.count == 2 {
+                var wsName = String(components[1])
+                if wsName == "(default)" { wsName = "default" }
+                globalKey = "\(components[0]):\(wsName)"
+            } else {
+                globalKey = workspaceKey
             }
         }
-        saveClientSettings()
-    }
-    
-    /// 获取工作空间的快捷键
-    /// - Parameter workspaceKey: 工作空间标识
-    /// - Returns: 快捷键数字 "0"-"9"，如果没有设置则返回 nil
-    func getWorkspaceShortcutKey(workspaceKey: String) -> String? {
-        for (key, value) in clientSettings.workspaceShortcuts {
-            if value == workspaceKey {
-                return key
+
+        for (shortcutKey, wsKey) in autoWorkspaceShortcuts {
+            if wsKey == globalKey {
+                return shortcutKey
             }
         }
         return nil
     }
-    
+
     /// 根据快捷键切换工作空间
-    /// - Parameter shortcutKey: 快捷键数字 "0"-"9"
+    /// - Parameter shortcutKey: 快捷键数字 "1"-"9" 或 "0"
     func switchToWorkspaceByShortcut(shortcutKey: String) {
-        guard let workspaceKey = clientSettings.workspaceShortcuts[shortcutKey] else {
+        guard let workspaceKey = autoWorkspaceShortcuts[shortcutKey] else {
             return
         }
-        
-        // 解析 workspaceKey: "projectName/workspaceName" 或 "projectName/(default)"
-        let components = workspaceKey.split(separator: "/", maxSplits: 1)
+
+        // workspaceKey 格式为 "projectName:workspaceName"
+        let components = workspaceKey.split(separator: ":", maxSplits: 1)
         guard components.count == 2 else { return }
-        
+
         let projectName = String(components[0])
-        var workspaceName = String(components[1])
-        
-        // 默认工作空间的名称映射：(default) -> default
-        if workspaceName == "(default)" {
-            workspaceName = "default"
-        }
-        
-        // 验证项目是否存在
+        let workspaceName = String(components[1])
+
         guard let project = projects.first(where: { $0.name == projectName }) else {
-            print("[AppState] 快捷键切换失败：项目 \(projectName) 不存在")
-            // 清除无效的快捷键配置
-            clientSettings.workspaceShortcuts.removeValue(forKey: shortcutKey)
-            saveClientSettings()
             return
         }
-        
-        // 检查工作空间是否存在
-        let workspaceExists: Bool
-        if workspaceName == "default" {
-            // 默认工作空间总是存在的
-            workspaceExists = true
-        } else {
-            workspaceExists = project.workspaces.contains { $0.name == workspaceName }
-        }
-        
-        guard workspaceExists else {
-            print("[AppState] 快捷键切换失败：工作空间 \(workspaceName) 不存在")
-            // 清除无效的快捷键配置
-            clientSettings.workspaceShortcuts.removeValue(forKey: shortcutKey)
-            saveClientSettings()
-            return
-        }
-        
-        // 调用 selectWorkspace，与鼠标点击行为一致（会创建终端 Tab 等）
+
         selectWorkspace(projectId: project.id, workspaceName: workspaceName)
-        print("[AppState] 快捷键 ⌘\(shortcutKey) 切换到工作空间: \(projectName)/\(workspaceName)")
     }
 
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)
