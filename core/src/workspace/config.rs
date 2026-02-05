@@ -97,15 +97,18 @@ impl ProjectConfig {
             return Ok(Self::default());
         }
 
-        let content = fs::read_to_string(&config_path)
-            .map_err(|e| ConfigError::ReadError(e.to_string()))?;
+        let content =
+            fs::read_to_string(&config_path).map_err(|e| ConfigError::ReadError(e.to_string()))?;
 
         toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))
     }
 
     /// Get the effective project name
     pub fn effective_name(&self, fallback: &str) -> String {
-        self.project.name.clone().unwrap_or_else(|| fallback.to_string())
+        self.project
+            .name
+            .clone()
+            .unwrap_or_else(|| fallback.to_string())
     }
 }
 
@@ -123,13 +126,11 @@ pub fn check_condition(condition: &str, working_dir: &Path) -> bool {
         "dir_exists" => working_dir.join(arg).is_dir(),
         "env_set" => std::env::var(arg).is_ok(),
         "env_not_set" => std::env::var(arg).is_err(),
-        "command_exists" => {
-            std::process::Command::new("which")
-                .arg(arg)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
+        "command_exists" => std::process::Command::new("which")
+            .arg(arg)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false),
         _ => false,
     }
 }

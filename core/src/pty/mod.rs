@@ -1,5 +1,5 @@
-pub mod session;
 pub mod resize;
+pub mod session;
 
-pub use session::PtySession;
 pub use resize::resize_pty;
+pub use session::PtySession;

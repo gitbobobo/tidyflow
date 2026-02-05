@@ -24,10 +24,7 @@ pub enum WatchEvent {
         kind: String,
     },
     /// Git 状态变化（.git/index 或 .git/HEAD 变化）
-    GitStatusChanged {
-        project: String,
-        workspace: String,
-    },
+    GitStatusChanged { project: String, workspace: String },
 }
 
 /// 需要忽略的目录列表
@@ -169,13 +166,7 @@ impl WorkspaceWatcher {
         loop {
             match rx.recv() {
                 Ok(Ok(events)) => {
-                    Self::process_events(
-                        events,
-                        &event_tx,
-                        &project,
-                        &workspace,
-                        &root_path,
-                    );
+                    Self::process_events(events, &event_tx, &project, &workspace, &root_path);
                 }
                 Ok(Err(e)) => {
                     warn!("Watch error: {}", e);
@@ -379,4 +370,3 @@ mod tests {
         ));
     }
 }
-

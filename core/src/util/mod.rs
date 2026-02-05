@@ -1,3 +1,3 @@
 pub mod log;
 
-pub use log::{init_logging, flush_logs};
+pub use log::{flush_logs, init_logging};

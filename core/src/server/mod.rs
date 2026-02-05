@@ -1,14 +1,16 @@
-pub mod protocol;
-pub mod ws;
 pub mod file_api;
 pub mod file_index;
 pub mod git;
-pub mod watcher;
 pub mod handlers;
+pub mod protocol;
+pub mod watcher;
+pub mod ws;
 
-pub use protocol::{ClientMessage, ServerMessage, ProjectInfo, WorkspaceInfo, GitStatusEntry, PROTOCOL_VERSION};
+pub use file_api::{list_files, read_file, resolve_safe_path, write_file, FileApiError, FileEntry};
+pub use file_index::{index_files, FileIndexResult, DEFAULT_IGNORE_DIRS, MAX_FILE_COUNT};
+pub use git::{git_diff, git_status, GitDiffResult, GitError, GitStatusResult, MAX_DIFF_SIZE};
+pub use protocol::{
+    ClientMessage, GitStatusEntry, ProjectInfo, ServerMessage, WorkspaceInfo, PROTOCOL_VERSION,
+};
+pub use watcher::{WatchEvent, WorkspaceWatcher};
 pub use ws::run_server;
-pub use file_api::{FileEntry, FileApiError, list_files, read_file, write_file, resolve_safe_path};
-pub use file_index::{index_files, FileIndexResult, MAX_FILE_COUNT, DEFAULT_IGNORE_DIRS};
-pub use git::{git_status, git_diff, GitStatusResult, GitDiffResult, GitError, MAX_DIFF_SIZE};
-pub use watcher::{WorkspaceWatcher, WatchEvent};

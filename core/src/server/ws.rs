@@ -16,16 +16,15 @@ use uuid::Uuid;
 use std::os::unix::process::parent_id;
 
 use crate::pty::PtySession;
-use crate::server::handlers::terminal;
 use crate::server::handlers::file;
 use crate::server::handlers::git;
 use crate::server::handlers::project;
-use crate::server::handlers::settings;
+use crate::server::handlers::terminal;
 use crate::server::protocol::{
-    ClientMessage, CustomCommandInfo, ServerMessage, TerminalInfo, PROTOCOL_VERSION,
-    v1_capabilities,
+    v1_capabilities, ClientMessage, CustomCommandInfo, ServerMessage, TerminalInfo,
+    PROTOCOL_VERSION,
 };
-use crate::server::watcher::{WorkspaceWatcher, WatchEvent};
+use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
 use crate::workspace::state::{AppState, Project};
 
 /// 获取工作空间的根路径，支持 "default" 虚拟工作空间
@@ -34,7 +33,9 @@ fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
     if workspace == "default" {
         Some(project.root_path.clone())
     } else {
-        project.get_workspace(workspace).map(|w| w.worktree_path.clone())
+        project
+            .get_workspace(workspace)
+            .map(|w| w.worktree_path.clone())
     }
 }
 
@@ -74,15 +75,7 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
                         // 只有 ESC [，缺少参数和终止符
                         return Some(i);
                     }
-                    let mut found_terminator = false;
-                    for j in 2..remaining.len() {
-                        let c = remaining[j];
-                        if (0x40..=0x7E).contains(&c) {
-                            // 找到终止符，序列完整
-                            found_terminator = true;
-                            break;
-                        }
-                    }
+                    let found_terminator = remaining.iter().skip(2).any(|&c| (0x40..=0x7E).contains(&c));
                     if !found_terminator {
                         // 到达末尾仍未找到终止符，不完整
                         return Some(i);
@@ -97,7 +90,10 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
                             found_terminator = true;
                             break;
                         }
-                        if remaining[j] == 0x1b && j + 1 < remaining.len() && remaining[j + 1] == b'\\' {
+                        if remaining[j] == 0x1b
+                            && j + 1 < remaining.len()
+                            && remaining[j + 1] == b'\\'
+                        {
                             // ST 终止符 (ESC \)
                             found_terminator = true;
                             break;
@@ -111,7 +107,10 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
                 b'P' => {
                     let mut found_terminator = false;
                     for j in 2..remaining.len() {
-                        if remaining[j] == 0x1b && j + 1 < remaining.len() && remaining[j + 1] == b'\\' {
+                        if remaining[j] == 0x1b
+                            && j + 1 < remaining.len()
+                            && remaining[j + 1] == b'\\'
+                        {
                             found_terminator = true;
                             break;
                         }
@@ -144,7 +143,7 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
         // 检查倒数第二个字节
         if data.len() >= 2 {
             let second_last = data[data.len() - 2];
-            if second_last >= 0xE0 && last >= 0x80 && last < 0xC0 {
+            if second_last >= 0xE0 && (0x80..0xC0).contains(&last) {
                 // 3 字节序列只有 2 字节
                 return Some(data.len() - 2);
             }
@@ -184,7 +183,10 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    info!("Listening on ws://{}/ws (protocol v{})", addr, PROTOCOL_VERSION);
+    info!(
+        "Listening on ws://{}/ws (protocol v{})",
+        addr, PROTOCOL_VERSION
+    );
 
     axum::serve(listener, app).await?;
 
@@ -245,6 +247,12 @@ pub struct TerminalManager {
     pub default_term_id: Option<String>,
 }
 
+impl Default for TerminalManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
@@ -262,18 +270,21 @@ impl TerminalManager {
         _tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
     ) -> Result<(String, String), String> {
         let term_id = Uuid::new_v4().to_string();
-        let cwd_path = cwd.unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string())));
+        let cwd_path = cwd.unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string()))
+        });
 
         let mut session = PtySession::new(Some(cwd_path.clone()))
             .map_err(|e| format!("Failed to create PTY: {}", e))?;
 
         let shell_name = session.shell_name().to_string();
-        
+
         // 为这个终端创建独立的读取线程
         let reader_term_id = term_id.clone();
-        let reader = session.take_reader()
+        let reader = session
+            .take_reader()
             .map_err(|e| format!("Failed to take reader: {}", e))?;
-        
+
         std::thread::spawn(move || {
             use std::io::Read;
             let mut reader = reader;
@@ -308,12 +319,14 @@ impl TerminalManager {
                         }
 
                         // 发送完整的数据
-                        if !data.is_empty() {
-                            if tx_output.blocking_send((reader_term_id.clone(), data)).is_err() {
+                        if !data.is_empty()
+                            && tx_output
+                                .blocking_send((reader_term_id.clone(), data))
+                                .is_err()
+                            {
                                 // Channel closed, exit
                                 break;
                             }
-                        }
                     }
                     Err(e) => {
                         debug!("PTY read error for {}: {}", reader_term_id, e);
@@ -352,7 +365,7 @@ impl TerminalManager {
     pub fn resolve_term_id(&self, term_id: Option<&str>) -> Option<String> {
         match term_id {
             Some(id) if self.terminals.contains_key(id) => Some(id.to_string()),
-            Some(_) => None, // Invalid term_id
+            Some(_) => None,                      // Invalid term_id
             None => self.default_term_id.clone(), // Use default
         }
     }
@@ -608,16 +621,30 @@ async fn handle_client_message(
     tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
 ) -> Result<(), String> {
-    info!("handle_client_message called with data length: {}", data.len());
-    let client_msg: ClientMessage =
-        rmp_serde::from_slice(data).map_err(|e| {
-            error!("Failed to parse client message: {}", e);
-            format!("Parse error: {}", e)
-        })?;
-    info!("Parsed client message: {:?}", std::mem::discriminant(&client_msg));
+    info!(
+        "handle_client_message called with data length: {}",
+        data.len()
+    );
+    let client_msg: ClientMessage = rmp_serde::from_slice(data).map_err(|e| {
+        error!("Failed to parse client message: {}", e);
+        format!("Parse error: {}", e)
+    })?;
+    info!(
+        "Parsed client message: {:?}",
+        std::mem::discriminant(&client_msg)
+    );
 
     // Try terminal handler first
-    if terminal::handle_terminal_message(&client_msg, socket, manager, app_state, tx_output.clone(), tx_exit.clone()).await? {
+    if terminal::handle_terminal_message(
+        &client_msg,
+        socket,
+        manager,
+        app_state,
+        tx_output.clone(),
+        tx_exit.clone(),
+    )
+    .await?
+    {
         return Ok(());
     }
 
@@ -632,7 +659,16 @@ async fn handle_client_message(
     }
 
     // Try project handler
-    if project::handle_project_message(&client_msg, socket, manager, app_state, tx_output.clone(), tx_exit.clone()).await? {
+    if project::handle_project_message(
+        &client_msg,
+        socket,
+        manager,
+        app_state,
+        tx_output.clone(),
+        tx_exit.clone(),
+    )
+    .await?
+    {
         return Ok(());
     }
 
@@ -644,7 +680,9 @@ async fn handle_client_message(
         // v1.21: Client settings
         ClientMessage::GetClientSettings => {
             let state = app_state.lock().await;
-            let commands: Vec<CustomCommandInfo> = state.client_settings.custom_commands
+            let commands: Vec<CustomCommandInfo> = state
+                .client_settings
+                .custom_commands
                 .iter()
                 .map(|c| CustomCommandInfo {
                     id: c.id.clone(),
@@ -653,13 +691,20 @@ async fn handle_client_message(
                     command: c.command.clone(),
                 })
                 .collect();
-            send_message(socket, &ServerMessage::ClientSettingsResult {
-                custom_commands: commands,
-                workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
-            }).await?;
+            send_message(
+                socket,
+                &ServerMessage::ClientSettingsResult {
+                    custom_commands: commands,
+                    workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
+                },
+            )
+            .await?;
         }
 
-        ClientMessage::SaveClientSettings { custom_commands, workspace_shortcuts } => {
+        ClientMessage::SaveClientSettings {
+            custom_commands,
+            workspace_shortcuts,
+        } => {
             let mut state = app_state.lock().await;
             state.client_settings.custom_commands = custom_commands
                 .into_iter()
@@ -671,32 +716,44 @@ async fn handle_client_message(
                 })
                 .collect();
             state.client_settings.workspace_shortcuts = workspace_shortcuts;
-            
+
             match state.save() {
                 Ok(_) => {
-                    send_message(socket, &ServerMessage::ClientSettingsSaved {
-                        ok: true,
-                        message: None,
-                    }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::ClientSettingsSaved {
+                            ok: true,
+                            message: None,
+                        },
+                    )
+                    .await?;
                 }
                 Err(e) => {
-                    send_message(socket, &ServerMessage::ClientSettingsSaved {
-                        ok: false,
-                        message: Some(format!("保存设置失败: {}", e)),
-                    }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::ClientSettingsSaved {
+                            ok: false,
+                            message: Some(format!("保存设置失败: {}", e)),
+                        },
+                    )
+                    .await?;
                 }
             }
         }
 
         // v1.22: File watcher
         ClientMessage::WatchSubscribe { project, workspace } => {
-            info!("WatchSubscribe: project={}, workspace={}", project, workspace);
+            info!(
+                "WatchSubscribe: project={}, workspace={}",
+                project, workspace
+            );
 
             // 获取工作空间路径
             let state = app_state.lock().await;
-            let watch_path = state.projects.get(&project).and_then(|p| {
-                get_workspace_root(p, &workspace)
-            });
+            let watch_path = state
+                .projects
+                .get(&project)
+                .and_then(|p| get_workspace_root(p, &workspace));
             drop(state);
 
             match watch_path {
@@ -704,24 +761,36 @@ async fn handle_client_message(
                     let mut w = watcher.lock().await;
                     match w.subscribe(project.clone(), workspace.clone(), path) {
                         Ok(_) => {
-                            send_message(socket, &ServerMessage::WatchSubscribed {
-                                project,
-                                workspace,
-                            }).await?;
+                            send_message(
+                                socket,
+                                &ServerMessage::WatchSubscribed { project, workspace },
+                            )
+                            .await?;
                         }
                         Err(e) => {
-                            send_message(socket, &ServerMessage::Error {
-                                code: "watch_subscribe_failed".to_string(),
-                                message: e,
-                            }).await?;
+                            send_message(
+                                socket,
+                                &ServerMessage::Error {
+                                    code: "watch_subscribe_failed".to_string(),
+                                    message: e,
+                                },
+                            )
+                            .await?;
                         }
                     }
                 }
                 None => {
-                    send_message(socket, &ServerMessage::Error {
-                        code: "workspace_not_found".to_string(),
-                        message: format!("Workspace '{}' not found in project '{}'", workspace, project),
-                    }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::Error {
+                            code: "workspace_not_found".to_string(),
+                            message: format!(
+                                "Workspace '{}' not found in project '{}'",
+                                workspace, project
+                            ),
+                        },
+                    )
+                    .await?;
                 }
             }
         }
@@ -733,62 +802,62 @@ async fn handle_client_message(
             send_message(socket, &ServerMessage::WatchUnsubscribed).await?;
         }
 
-        ClientMessage::Input { .. } |
-        ClientMessage::Resize { .. } |
-        ClientMessage::SpawnTerminal { .. } |
-        ClientMessage::KillTerminal |
-        ClientMessage::TermCreate { .. } |
-        ClientMessage::TermList |
-        ClientMessage::TermClose { .. } |
-        ClientMessage::TermFocus { .. } => {
+        ClientMessage::Input { .. }
+        | ClientMessage::Resize { .. }
+        | ClientMessage::SpawnTerminal { .. }
+        | ClientMessage::KillTerminal
+        | ClientMessage::TermCreate { .. }
+        | ClientMessage::TermList
+        | ClientMessage::TermClose { .. }
+        | ClientMessage::TermFocus { .. } => {
             unreachable!("Terminal messages should be handled by terminal handler");
         }
 
-        ClientMessage::FileList { .. } |
-        ClientMessage::FileRead { .. } |
-        ClientMessage::FileWrite { .. } |
-        ClientMessage::FileIndex { .. } |
-        ClientMessage::FileRename { .. } |
-        ClientMessage::FileDelete { .. } => {
+        ClientMessage::FileList { .. }
+        | ClientMessage::FileRead { .. }
+        | ClientMessage::FileWrite { .. }
+        | ClientMessage::FileIndex { .. }
+        | ClientMessage::FileRename { .. }
+        | ClientMessage::FileDelete { .. } => {
             unreachable!("File messages should be handled by file handler");
         }
 
-        ClientMessage::GitStatus { .. } |
-        ClientMessage::GitDiff { .. } |
-        ClientMessage::GitStage { .. } |
-        ClientMessage::GitUnstage { .. } |
-        ClientMessage::GitDiscard { .. } |
-        ClientMessage::GitBranches { .. } |
-        ClientMessage::GitSwitchBranch { .. } |
-        ClientMessage::GitCreateBranch { .. } |
-        ClientMessage::GitCommit { .. } |
-        ClientMessage::GitFetch { .. } |
-        ClientMessage::GitRebase { .. } |
-        ClientMessage::GitRebaseContinue { .. } |
-        ClientMessage::GitRebaseAbort { .. } |
-        ClientMessage::GitOpStatus { .. } |
-        ClientMessage::GitEnsureIntegrationWorktree { .. } |
-        ClientMessage::GitMergeToDefault { .. } |
-        ClientMessage::GitMergeContinue { .. } |
-        ClientMessage::GitMergeAbort { .. } |
-        ClientMessage::GitIntegrationStatus { .. } |
-        ClientMessage::GitRebaseOntoDefault { .. } |
-        ClientMessage::GitRebaseOntoDefaultContinue { .. } |
-        ClientMessage::GitRebaseOntoDefaultAbort { .. } |
-        ClientMessage::GitResetIntegrationWorktree { .. } |
-        ClientMessage::GitCheckBranchUpToDate { .. } |
-        ClientMessage::GitLog { .. } |
-        ClientMessage::GitShow { .. } => {
+        ClientMessage::GitStatus { .. }
+        | ClientMessage::GitDiff { .. }
+        | ClientMessage::GitStage { .. }
+        | ClientMessage::GitUnstage { .. }
+        | ClientMessage::GitDiscard { .. }
+        | ClientMessage::GitBranches { .. }
+        | ClientMessage::GitSwitchBranch { .. }
+        | ClientMessage::GitCreateBranch { .. }
+        | ClientMessage::GitCommit { .. }
+        | ClientMessage::GitFetch { .. }
+        | ClientMessage::GitRebase { .. }
+        | ClientMessage::GitRebaseContinue { .. }
+        | ClientMessage::GitRebaseAbort { .. }
+        | ClientMessage::GitOpStatus { .. }
+        | ClientMessage::GitEnsureIntegrationWorktree { .. }
+        | ClientMessage::GitMergeToDefault { .. }
+        | ClientMessage::GitMergeContinue { .. }
+        | ClientMessage::GitMergeAbort { .. }
+        | ClientMessage::GitIntegrationStatus { .. }
+        | ClientMessage::GitRebaseOntoDefault { .. }
+        | ClientMessage::GitRebaseOntoDefaultContinue { .. }
+        | ClientMessage::GitRebaseOntoDefaultAbort { .. }
+        | ClientMessage::GitResetIntegrationWorktree { .. }
+        | ClientMessage::GitCheckBranchUpToDate { .. }
+        | ClientMessage::GitLog { .. }
+        | ClientMessage::GitShow { .. } => {
             unreachable!("Git messages should be handled by git handler");
         }
 
-        ClientMessage::ListProjects |
-        ClientMessage::ListWorkspaces { .. } |
-        ClientMessage::SelectWorkspace { .. } |
-        ClientMessage::ImportProject { .. } |
-        ClientMessage::CreateWorkspace { .. } |
-        ClientMessage::RemoveProject { .. } |
-        ClientMessage::RemoveWorkspace { .. } => {
+        ClientMessage::ListProjects
+        | ClientMessage::ListWorkspaces { .. }
+        | ClientMessage::SelectWorkspace { .. }
+        | ClientMessage::ImportProject { .. }
+        | ClientMessage::CreateWorkspace { .. }
+        | ClientMessage::RemoveProject { .. }
+        | ClientMessage::RemoveWorkspace { .. } => {
             unreachable!("Project messages should be handled by project handler");
         }
     }

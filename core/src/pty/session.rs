@@ -27,7 +27,7 @@ impl PtySession {
         } else {
             "/bin/bash"
         };
-        let shell_name = shell_path.split('/').last().unwrap_or("shell").to_string();
+        let shell_name = shell_path.split('/').next_back().unwrap_or("shell").to_string();
 
         debug!(session_id = %session_id, shell = %shell_path, "Selected shell");
 
@@ -97,8 +97,7 @@ impl PtySession {
     ) -> Result<Box<dyn Read + Send>, Box<dyn std::error::Error + Send + Sync>> {
         // 使用 master 克隆一个新的 reader
         self.master.try_clone_reader().map_err(|e| {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Box::new(std::io::Error::other(
                 e.to_string(),
             )) as Box<dyn std::error::Error + Send + Sync>
         })

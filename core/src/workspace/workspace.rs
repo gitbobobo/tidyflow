@@ -61,7 +61,11 @@ impl WorkspaceManager {
 
         // Check if source branch exists locally
         let branch_check = Command::new("git")
-            .args(["rev-parse", "--verify", &format!("refs/heads/{}", source_branch)])
+            .args([
+                "rev-parse",
+                "--verify",
+                &format!("refs/heads/{}", source_branch),
+            ])
             .current_dir(&project_root)
             .output();
 

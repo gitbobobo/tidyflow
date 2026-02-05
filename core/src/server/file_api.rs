@@ -66,7 +66,10 @@ impl From<std::io::Error> for FileApiError {
 
 /// Validate and resolve path within workspace root
 /// Returns canonical path if valid, error if path escapes root
-pub fn resolve_safe_path(workspace_root: &Path, relative_path: &str) -> Result<PathBuf, FileApiError> {
+pub fn resolve_safe_path(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, FileApiError> {
     // Check path length
     if relative_path.len() > MAX_PATH_LENGTH {
         return Err(FileApiError::PathTooLong);
@@ -100,7 +103,10 @@ pub fn resolve_safe_path(workspace_root: &Path, relative_path: &str) -> Result<P
         let canonical = full_path.canonicalize()?;
         let root_canonical = workspace_root.canonicalize()?;
         if !canonical.starts_with(&root_canonical) {
-            warn!("Path escape attempt: {:?} not under {:?}", canonical, root_canonical);
+            warn!(
+                "Path escape attempt: {:?} not under {:?}",
+                canonical, root_canonical
+            );
             return Err(FileApiError::PathEscape);
         }
         Ok(canonical)
@@ -120,7 +126,10 @@ pub fn resolve_safe_path(workspace_root: &Path, relative_path: &str) -> Result<P
 }
 
 /// List files in a directory within workspace
-pub fn list_files(workspace_root: &Path, relative_path: &str) -> Result<Vec<FileEntry>, FileApiError> {
+pub fn list_files(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<Vec<FileEntry>, FileApiError> {
     let dir_path = if relative_path.is_empty() || relative_path == "." {
         workspace_root.to_path_buf()
     } else {
@@ -143,24 +152,29 @@ pub fn list_files(workspace_root: &Path, relative_path: &str) -> Result<Vec<File
         entries.push(FileEntry {
             name,
             is_dir: metadata.is_dir(),
-            size: if metadata.is_file() { metadata.len() } else { 0 },
+            size: if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            },
         });
     }
 
     // Sort: directories first, then alphabetically
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(entries)
 }
 
 /// Read file content as UTF-8 string
-pub fn read_file(workspace_root: &Path, relative_path: &str) -> Result<(String, u64), FileApiError> {
+pub fn read_file(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<(String, u64), FileApiError> {
     let file_path = resolve_safe_path(workspace_root, relative_path)?;
 
     debug!("Reading file: {:?}", file_path);
@@ -184,7 +198,11 @@ pub fn read_file(workspace_root: &Path, relative_path: &str) -> Result<(String, 
 }
 
 /// Write file content atomically
-pub fn write_file(workspace_root: &Path, relative_path: &str, content: &str) -> Result<u64, FileApiError> {
+pub fn write_file(
+    workspace_root: &Path,
+    relative_path: &str,
+    content: &str,
+) -> Result<u64, FileApiError> {
     let file_path = resolve_safe_path(workspace_root, relative_path)?;
 
     debug!("Writing file: {:?}", file_path);
@@ -222,22 +240,32 @@ fn validate_filename(name: &str) -> Result<(), FileApiError> {
     }
     // 不能包含路径分隔符
     if name.contains('/') || name.contains('\\') {
-        return Err(FileApiError::InvalidName("文件名不能包含路径分隔符".to_string()));
+        return Err(FileApiError::InvalidName(
+            "文件名不能包含路径分隔符".to_string(),
+        ));
     }
     // 不能是 . 或 ..
     if name == "." || name == ".." {
-        return Err(FileApiError::InvalidName("文件名不能是 . 或 ..".to_string()));
+        return Err(FileApiError::InvalidName(
+            "文件名不能是 . 或 ..".to_string(),
+        ));
     }
     // 不能包含空字符
     if name.contains('\0') {
-        return Err(FileApiError::InvalidName("文件名不能包含空字符".to_string()));
+        return Err(FileApiError::InvalidName(
+            "文件名不能包含空字符".to_string(),
+        ));
     }
     Ok(())
 }
 
 /// v1.23: 重命名文件或目录
 /// 返回新的相对路径
-pub fn rename_file(workspace_root: &Path, old_path: &str, new_name: &str) -> Result<String, FileApiError> {
+pub fn rename_file(
+    workspace_root: &Path,
+    old_path: &str,
+    new_name: &str,
+) -> Result<String, FileApiError> {
     // 验证新文件名
     validate_filename(new_name)?;
 

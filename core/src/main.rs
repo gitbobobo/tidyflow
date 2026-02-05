@@ -120,7 +120,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Starting TidyFlow Core server on port {}", port);
             tidyflow_core::server::run_server(port).await?;
         }
-        Some(Commands::Import { name, path, git, branch }) => {
+        Some(Commands::Import {
+            name,
+            path,
+            git,
+            branch,
+        }) => {
             let mut state = AppState::load()?;
 
             if let Some(local_path) = path {
@@ -129,13 +134,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Path: {}", project.root_path.display());
                 println!("  Branch: {}", project.default_branch);
             } else if let Some(url) = git {
-                let project = ProjectManager::import_git(
-                    &mut state,
-                    &name,
-                    &url,
-                    branch.as_deref(),
-                    None,
-                )?;
+                let project =
+                    ProjectManager::import_git(&mut state, &name, &url, branch.as_deref(), None)?;
                 println!("Project cloned and imported: {}", project.name);
                 println!("  Path: {}", project.root_path.display());
                 println!("  Branch: {}", project.default_branch);
@@ -145,7 +145,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::Ws { action }) => match action {
-            WsCommands::Create { project, from_branch, no_setup } => {
+            WsCommands::Create {
+                project,
+                from_branch,
+                no_setup,
+            } => {
                 let mut state = AppState::load()?;
                 let ws = WorkspaceManager::create(
                     &mut state,
@@ -173,7 +177,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Branch: {}", ws.branch);
                 eprintln!("Status: {:?}", ws.status);
                 if let Some(ref result) = ws.setup_result {
-                    eprintln!("Setup: {}/{} steps completed", result.steps_completed, result.steps_total);
+                    eprintln!(
+                        "Setup: {}/{} steps completed",
+                        result.steps_completed, result.steps_total
+                    );
                 }
             }
             WsCommands::Setup { project, workspace } => {
@@ -221,7 +228,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Workspaces for {}:", project);
                     for name in workspaces {
                         let ws = proj.get_workspace(name).unwrap();
-                        println!("  {} [{:?}] -> {}", name, ws.status, ws.worktree_path.display());
+                        println!(
+                            "  {} [{:?}] -> {}",
+                            name,
+                            ws.status,
+                            ws.worktree_path.display()
+                        );
                     }
                 }
             }

@@ -117,7 +117,7 @@ pub fn index_files(workspace_root: &Path) -> Result<FileIndexResult, std::io::Er
     }
 
     // Sort for consistent ordering
-    items.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    items.sort_by_key(|a| a.to_lowercase());
 
     debug!(
         "Indexed {} files from {:?} (truncated: {})",

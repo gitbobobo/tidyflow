@@ -6,11 +6,15 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 /// Log level can be controlled via RUST_LOG env var.
 /// Default level is "info".
 pub fn init_logging() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(true).with_thread_ids(false).with_ansi(false))
+        .with(
+            fmt::layer()
+                .with_target(true)
+                .with_thread_ids(false)
+                .with_ansi(false),
+        )
         .with(filter)
         .init();
 }

@@ -26,7 +26,7 @@ pub enum StateError {
 pub struct CustomCommand {
     pub id: String,
     pub name: String,
-    pub icon: String,  // SF Symbol 名称或自定义图标路径
+    pub icon: String, // SF Symbol 名称或自定义图标路径
     pub command: String,
 }
 

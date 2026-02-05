@@ -145,7 +145,11 @@ impl SetupExecutor {
         // Check condition
         if let Some(condition) = &step.condition {
             if !check_condition(condition, working_dir) {
-                info!(step = step.name, condition = condition, "Step skipped (condition not met)");
+                info!(
+                    step = step.name,
+                    condition = condition,
+                    "Step skipped (condition not met)"
+                );
                 return StepResult {
                     name: step.name.clone(),
                     command: step.run.clone(),
@@ -207,8 +211,16 @@ impl SetupExecutor {
                     command: step.run.clone(),
                     success,
                     exit_code,
-                    stdout: if stdout.is_empty() { None } else { Some(stdout) },
-                    stderr: if stderr.is_empty() { None } else { Some(stderr) },
+                    stdout: if stdout.is_empty() {
+                        None
+                    } else {
+                        Some(stdout)
+                    },
+                    stderr: if stderr.is_empty() {
+                        None
+                    } else {
+                        Some(stderr)
+                    },
                     skipped: false,
                     skip_reason: None,
                     started_at,

@@ -3,4 +3,4 @@ pub mod server;
 pub mod util;
 pub mod workspace;
 
-pub use pty::{PtySession, resize_pty};
+pub use pty::{resize_pty, PtySession};

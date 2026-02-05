@@ -4,10 +4,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::server::ws::{TerminalManager, send_message, SharedAppState};
-use crate::server::protocol::{ClientMessage, ServerMessage, ProjectInfo, WorkspaceInfo};
-use crate::workspace::state::WorkspaceStatus;
+use crate::server::protocol::{ClientMessage, ProjectInfo, ServerMessage, WorkspaceInfo};
+use crate::server::ws::{send_message, SharedAppState, TerminalManager};
 use crate::workspace::project::ProjectManager;
+use crate::workspace::state::WorkspaceStatus;
 use crate::workspace::workspace::WorkspaceManager;
 
 /// 处理项目和工作空间相关的客户端消息
@@ -39,7 +39,7 @@ pub async fn handle_project_message(
         // v1: List workspaces for a project
         ClientMessage::ListWorkspaces { project } => {
             let state = app_state.lock().await;
-            match state.get_project(&project) {
+            match state.get_project(project) {
                 Some(p) => {
                     // 收集所有真实的工作空间
                     let mut items: Vec<WorkspaceInfo> = p
@@ -58,7 +58,7 @@ pub async fn handle_project_message(
                             },
                         })
                         .collect();
-                    
+
                     // 在列表开头添加虚拟的 "default" 工作空间，指向项目根目录
                     let default_ws = WorkspaceInfo {
                         name: "default".to_string(),
@@ -67,7 +67,7 @@ pub async fn handle_project_message(
                         status: "ready".to_string(),
                     };
                     items.insert(0, default_ws);
-                    
+
                     send_message(
                         socket,
                         &ServerMessage::Workspaces {
@@ -94,13 +94,13 @@ pub async fn handle_project_message(
         // v1.2: Select workspace and spawn terminal
         ClientMessage::SelectWorkspace { project, workspace } => {
             let state = app_state.lock().await;
-            match state.get_project(&project) {
+            match state.get_project(project) {
                 Some(p) => {
                     // 处理默认工作空间：如果 workspace 是 "default"，使用项目根目录
                     let (root_path, _branch) = if workspace == "default" {
                         (p.root_path.clone(), p.default_branch.clone())
                     } else {
-                        match p.get_workspace(&workspace) {
+                        match p.get_workspace(workspace) {
                             Some(w) => (w.worktree_path.clone(), w.branch.clone()),
                             None => {
                                 drop(state);
@@ -177,19 +177,23 @@ pub async fn handle_project_message(
             let mut state = app_state.lock().await;
             info!("app_state lock acquired, calling ProjectManager::import_local");
 
-            match ProjectManager::import_local(&mut state, &name, &path_buf) {
+            match ProjectManager::import_local(&mut state, name, &path_buf) {
                 Ok(project) => {
                     info!("Project imported successfully: {}", project.name);
                     let default_branch = project.default_branch.clone();
                     let root = project.root_path.to_string_lossy().to_string();
 
                     info!("Sending ProjectImported response...");
-                    send_message(socket, &ServerMessage::ProjectImported {
-                        name: name.clone(),
-                        root,
-                        default_branch,
-                        workspace: None, // 不再自动创建工作空间
-                    }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::ProjectImported {
+                            name: name.clone(),
+                            root,
+                            default_branch,
+                            workspace: None, // 不再自动创建工作空间
+                        },
+                    )
+                    .await?;
                     info!("ProjectImported response sent successfully");
                 }
                 Err(e) => {
@@ -212,26 +216,33 @@ pub async fn handle_project_message(
         }
 
         // v1.16: Create workspace（名称由 Core 用 petname 生成）
-        ClientMessage::CreateWorkspace { project, from_branch } => {
+        ClientMessage::CreateWorkspace {
+            project,
+            from_branch,
+        } => {
             let mut state = app_state.lock().await;
 
-            match WorkspaceManager::create(&mut state, &project, from_branch.as_deref(), false) {
+            match WorkspaceManager::create(&mut state, project, from_branch.as_deref(), false) {
                 Ok(ws) => {
-                    send_message(socket, &ServerMessage::WorkspaceCreated {
-                        project: project.clone(),
-                        workspace: WorkspaceInfo {
-                            name: ws.name,
-                            root: ws.worktree_path.to_string_lossy().to_string(),
-                            branch: ws.branch,
-                            status: match ws.status {
-                                WorkspaceStatus::Ready => "ready".to_string(),
-                                WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
-                                WorkspaceStatus::Creating => "creating".to_string(),
-                                WorkspaceStatus::Initializing => "initializing".to_string(),
-                                WorkspaceStatus::Destroying => "destroying".to_string(),
+                    send_message(
+                        socket,
+                        &ServerMessage::WorkspaceCreated {
+                            project: project.clone(),
+                            workspace: WorkspaceInfo {
+                                name: ws.name,
+                                root: ws.worktree_path.to_string_lossy().to_string(),
+                                branch: ws.branch,
+                                status: match ws.status {
+                                    WorkspaceStatus::Ready => "ready".to_string(),
+                                    WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
+                                    WorkspaceStatus::Creating => "creating".to_string(),
+                                    WorkspaceStatus::Initializing => "initializing".to_string(),
+                                    WorkspaceStatus::Destroying => "destroying".to_string(),
+                                },
                             },
                         },
-                    }).await?;
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     let (code, message) = match &e {
@@ -254,22 +265,30 @@ pub async fn handle_project_message(
             info!("RemoveProject request: name={}", name);
             let mut state = app_state.lock().await;
 
-            match ProjectManager::remove(&mut state, &name) {
+            match ProjectManager::remove(&mut state, name) {
                 Ok(_) => {
                     info!("Project removed successfully: {}", name);
-                    send_message(socket, &ServerMessage::ProjectRemoved {
-                        name: name.clone(),
-                        ok: true,
-                        message: Some("项目已移除".to_string()),
-                    }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::ProjectRemoved {
+                            name: name.clone(),
+                            ok: true,
+                            message: Some("项目已移除".to_string()),
+                        },
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     warn!("Failed to remove project: {}, error: {}", name, e);
-                    send_message(socket, &ServerMessage::ProjectRemoved {
-                        name: name.clone(),
-                        ok: false,
-                        message: Some(e.to_string()),
-                    }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::ProjectRemoved {
+                            name: name.clone(),
+                            ok: false,
+                            message: Some(e.to_string()),
+                        },
+                    )
+                    .await?;
                 }
             }
             Ok(true)
@@ -277,27 +296,44 @@ pub async fn handle_project_message(
 
         // v1.18: Remove workspace
         ClientMessage::RemoveWorkspace { project, workspace } => {
-            info!("RemoveWorkspace request: project={}, workspace={}", project, workspace);
+            info!(
+                "RemoveWorkspace request: project={}, workspace={}",
+                project, workspace
+            );
             let mut state = app_state.lock().await;
 
-            match WorkspaceManager::remove(&mut state, &project, &workspace) {
+            match WorkspaceManager::remove(&mut state, project, workspace) {
                 Ok(_) => {
-                    info!("Workspace removed successfully: {} / {}", project, workspace);
-                    send_message(socket, &ServerMessage::WorkspaceRemoved {
-                        project: project.clone(),
-                        workspace: workspace.clone(),
-                        ok: true,
-                        message: Some("工作空间已删除".to_string()),
-                    }).await?;
+                    info!(
+                        "Workspace removed successfully: {} / {}",
+                        project, workspace
+                    );
+                    send_message(
+                        socket,
+                        &ServerMessage::WorkspaceRemoved {
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            ok: true,
+                            message: Some("工作空间已删除".to_string()),
+                        },
+                    )
+                    .await?;
                 }
                 Err(e) => {
-                    warn!("Failed to remove workspace: {} / {}, error: {}", project, workspace, e);
-                    send_message(socket, &ServerMessage::WorkspaceRemoved {
-                        project: project.clone(),
-                        workspace: workspace.clone(),
-                        ok: false,
-                        message: Some(e.to_string()),
-                    }).await?;
+                    warn!(
+                        "Failed to remove workspace: {} / {}, error: {}",
+                        project, workspace, e
+                    );
+                    send_message(
+                        socket,
+                        &ServerMessage::WorkspaceRemoved {
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            ok: false,
+                            message: Some(e.to_string()),
+                        },
+                    )
+                    .await?;
                 }
             }
             Ok(true)
