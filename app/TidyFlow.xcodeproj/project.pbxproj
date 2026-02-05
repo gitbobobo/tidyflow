@@ -24,6 +24,7 @@
 		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
+		B3A00007 /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* AnyCodable.swift */; };
 		B3A00008 /* NativeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00018 /* NativeGitPanelView.swift */; };
 		B3A00009 /* BranchPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00019 /* BranchPickerView.swift */; };
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
@@ -35,6 +36,7 @@
 		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
 		UX100001 /* ProjectsSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100011 /* ProjectsSidebarView.swift */; };
 		UX100002 /* AddProjectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100012 /* AddProjectSheet.swift */; };
+		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -71,6 +73,7 @@
 		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
+		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
 		B3A00018 /* NativeGitPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGitPanelView.swift; sourceTree = "<group>"; };
 		B3A00019 /* BranchPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BranchPickerView.swift; sourceTree = "<group>"; };
 		D3900011 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
@@ -89,6 +92,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				MSGPK001 /* MessagePacker in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -164,6 +168,7 @@
 		B3A00020 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
+				B3A00017 /* AnyCodable.swift */,
 				B3A00015 /* WSClient.swift */,
 				B3A00016 /* ProtocolModels.swift */,
 			);
@@ -214,6 +219,9 @@
 			dependencies = (
 			);
 			name = TidyFlow;
+			packageProductDependencies = (
+				MSGPK002 /* MessagePacker */,
+			);
 			productName = TidyFlow;
 			productReference = A1000010 /* TidyFlow-Debug.app */;
 			productType = "com.apple.product-type.application";
@@ -242,6 +250,9 @@
 				Base,
 			);
 			mainGroup = A1000007;
+			packageReferences = (
+				MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */,
+			);
 			productRefGroup = A100000F /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -315,6 +326,7 @@
 				SET00001 /* SettingsView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
+				B3A00007 /* AnyCodable.swift in Sources */,
 				D3900001 /* AppConfig.swift in Sources */,
 				D3900002 /* CoreProcessManager.swift in Sources */,
 				D3900003 /* PortAllocator.swift in Sources */,
@@ -531,6 +543,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/hirotakan/MessagePacker.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.4.7;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		MSGPK002 /* MessagePacker */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */;
+			productName = MessagePacker;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A1000008 /* Project object */;
 }

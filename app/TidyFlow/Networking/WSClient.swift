@@ -1,7 +1,12 @@
 import Foundation
+import MessagePacker
 
 /// Minimal WebSocket client for Core communication
+/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v2）
 class WSClient: NSObject, ObservableObject {
+    // MARK: - MessagePack 编解码器
+    private let msgpackEncoder = MessagePackEncoder()
+    private let msgpackDecoder = MessagePackDecoder()
     @Published private(set) var isConnected: Bool = false
 
     private var webSocketTask: URLSessionWebSocketTask?
@@ -113,15 +118,16 @@ class WSClient: NSObject, ObservableObject {
 
     // MARK: - Send Messages
 
-    func send(_ message: String) {
+    /// 发送二进制 MessagePack 数据
+    func sendBinary(_ data: Data) {
         guard isConnected else {
             print("[WSClient] Cannot send - not connected")
             onError?("Not connected")
             return
         }
 
-        print("[WSClient] Sending message: \(message.prefix(200))...")
-        webSocketTask?.send(.string(message)) { [weak self] error in
+        print("[WSClient] Sending binary message (\(data.count) bytes)")
+        webSocketTask?.send(.data(data)) { [weak self] error in
             if let error = error {
                 print("[WSClient] Send failed: \(error.localizedDescription)")
                 self?.onError?("Send failed: \(error.localizedDescription)")
@@ -131,17 +137,23 @@ class WSClient: NSObject, ObservableObject {
         }
     }
 
-    func sendJSON(_ dict: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: dict),
-              let jsonString = String(data: data, encoding: .utf8) else {
-            onError?("Failed to serialize JSON")
-            return
+    /// 发送消息，使用 MessagePack 编码
+    func send(_ dict: [String: Any]) {
+        do {
+            let codable = AnyCodable.from(dict)
+            let data = try msgpackEncoder.encode(codable)
+            // 调试：打印发送的数据
+            let hexString = data.map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("[WSClient] Sending MessagePack data (\(data.count) bytes): \(hexString)")
+            sendBinary(data)
+        } catch {
+            print("[WSClient] MessagePack encode failed: \(error)")
+            onError?("Failed to encode message: \(error.localizedDescription)")
         }
-        send(jsonString)
     }
 
     func requestFileIndex(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "file_index",
             "project": project,
             "workspace": workspace
@@ -150,7 +162,7 @@ class WSClient: NSObject, ObservableObject {
 
     /// 请求文件列表（目录浏览）
     func requestFileList(project: String, workspace: String, path: String = ".") {
-        sendJSON([
+        send([
             "type": "file_list",
             "project": project,
             "workspace": workspace,
@@ -160,7 +172,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase C2-2a: Request git diff
     func requestGitDiff(project: String, workspace: String, path: String, mode: String) {
-        sendJSON([
+        send([
             "type": "git_diff",
             "project": project,
             "workspace": workspace,
@@ -171,7 +183,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase C3-1: Request git status
     func requestGitStatus(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_status",
             "project": project,
             "workspace": workspace
@@ -180,7 +192,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Git Log: Request commit history
     func requestGitLog(project: String, workspace: String, limit: Int = 50) {
-        sendJSON([
+        send([
             "type": "git_log",
             "project": project,
             "workspace": workspace,
@@ -190,7 +202,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Git Show: Request single commit details
     func requestGitShow(project: String, workspace: String, sha: String) {
-        sendJSON([
+        send([
             "type": "git_show",
             "project": project,
             "workspace": workspace,
@@ -209,7 +221,7 @@ class WSClient: NSObject, ObservableObject {
         if let path = path {
             msg["path"] = path
         }
-        sendJSON(msg)
+        send(msg)
     }
 
     // Phase C3-2a: Request git unstage
@@ -223,7 +235,7 @@ class WSClient: NSObject, ObservableObject {
         if let path = path {
             msg["path"] = path
         }
-        sendJSON(msg)
+        send(msg)
     }
 
     // Phase C3-2b: Request git discard
@@ -237,12 +249,12 @@ class WSClient: NSObject, ObservableObject {
         if let path = path {
             msg["path"] = path
         }
-        sendJSON(msg)
+        send(msg)
     }
 
     // Phase C3-3a: Request git branches
     func requestGitBranches(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_branches",
             "project": project,
             "workspace": workspace
@@ -251,7 +263,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase C3-3a: Request git switch branch
     func requestGitSwitchBranch(project: String, workspace: String, branch: String) {
-        sendJSON([
+        send([
             "type": "git_switch_branch",
             "project": project,
             "workspace": workspace,
@@ -261,7 +273,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase C3-3b: Request git create branch
     func requestGitCreateBranch(project: String, workspace: String, branch: String) {
-        sendJSON([
+        send([
             "type": "git_create_branch",
             "project": project,
             "workspace": workspace,
@@ -271,7 +283,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase C3-4a: Request git commit
     func requestGitCommit(project: String, workspace: String, message: String) {
-        sendJSON([
+        send([
             "type": "git_commit",
             "project": project,
             "workspace": workspace,
@@ -281,7 +293,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3a: Request git fetch
     func requestGitFetch(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_fetch",
             "project": project,
             "workspace": workspace
@@ -290,7 +302,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3a: Request git rebase
     func requestGitRebase(project: String, workspace: String, ontoBranch: String) {
-        sendJSON([
+        send([
             "type": "git_rebase",
             "project": project,
             "workspace": workspace,
@@ -300,7 +312,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3a: Request git rebase continue
     func requestGitRebaseContinue(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_rebase_continue",
             "project": project,
             "workspace": workspace
@@ -309,7 +321,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3a: Request git rebase abort
     func requestGitRebaseAbort(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_rebase_abort",
             "project": project,
             "workspace": workspace
@@ -318,7 +330,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3a: Request git operation status
     func requestGitOpStatus(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_op_status",
             "project": project,
             "workspace": workspace
@@ -327,7 +339,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3b: Request git merge to default
     func requestGitMergeToDefault(project: String, workspace: String, defaultBranch: String) {
-        sendJSON([
+        send([
             "type": "git_merge_to_default",
             "project": project,
             "workspace": workspace,
@@ -337,7 +349,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3b: Request git merge continue
     func requestGitMergeContinue(project: String) {
-        sendJSON([
+        send([
             "type": "git_merge_continue",
             "project": project
         ])
@@ -345,7 +357,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3b: Request git merge abort
     func requestGitMergeAbort(project: String) {
-        sendJSON([
+        send([
             "type": "git_merge_abort",
             "project": project
         ])
@@ -353,7 +365,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-3b: Request git integration status
     func requestGitIntegrationStatus(project: String) {
-        sendJSON([
+        send([
             "type": "git_integration_status",
             "project": project
         ])
@@ -361,7 +373,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-4: Request git rebase onto default
     func requestGitRebaseOntoDefault(project: String, workspace: String, defaultBranch: String) {
-        sendJSON([
+        send([
             "type": "git_rebase_onto_default",
             "project": project,
             "workspace": workspace,
@@ -371,7 +383,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-4: Request git rebase onto default continue
     func requestGitRebaseOntoDefaultContinue(project: String) {
-        sendJSON([
+        send([
             "type": "git_rebase_onto_default_continue",
             "project": project
         ])
@@ -379,7 +391,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-4: Request git rebase onto default abort
     func requestGitRebaseOntoDefaultAbort(project: String) {
-        sendJSON([
+        send([
             "type": "git_rebase_onto_default_abort",
             "project": project
         ])
@@ -387,7 +399,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-5: Request git reset integration worktree
     func requestGitResetIntegrationWorktree(project: String) {
-        sendJSON([
+        send([
             "type": "git_reset_integration_worktree",
             "project": project
         ])
@@ -395,7 +407,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Phase UX-6: Request git check branch up to date
     func requestGitCheckBranchUpToDate(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "git_check_branch_up_to_date",
             "project": project,
             "workspace": workspace
@@ -404,7 +416,7 @@ class WSClient: NSObject, ObservableObject {
 
     // UX-2: Request import project
     func requestImportProject(name: String, path: String) {
-        sendJSON([
+        send([
             "type": "import_project",
             "name": name,
             "path": path
@@ -413,14 +425,14 @@ class WSClient: NSObject, ObservableObject {
 
     // UX-2: Request list projects
     func requestListProjects() {
-        sendJSON([
+        send([
             "type": "list_projects"
         ])
     }
 
     // Request list workspaces
     func requestListWorkspaces(project: String) {
-        sendJSON([
+        send([
             "type": "list_workspaces",
             "project": project
         ])
@@ -435,12 +447,12 @@ class WSClient: NSObject, ObservableObject {
         if let branch = fromBranch {
             msg["from_branch"] = branch
         }
-        sendJSON(msg)
+        send(msg)
     }
 
     // Remove project
     func requestRemoveProject(name: String) {
-        sendJSON([
+        send([
             "type": "remove_project",
             "name": name
         ])
@@ -448,7 +460,7 @@ class WSClient: NSObject, ObservableObject {
 
     // Remove workspace
     func requestRemoveWorkspace(project: String, workspace: String) {
-        sendJSON([
+        send([
             "type": "remove_workspace",
             "project": project,
             "workspace": workspace
@@ -459,7 +471,7 @@ class WSClient: NSObject, ObservableObject {
 
     /// 请求获取客户端设置
     func requestGetClientSettings() {
-        sendJSON([
+        send([
             "type": "get_client_settings"
         ])
     }
@@ -474,7 +486,7 @@ class WSClient: NSObject, ObservableObject {
                 "command": cmd.command
             ]
         }
-        sendJSON([
+        send([
             "type": "save_client_settings",
             "custom_commands": commandsData,
             "workspace_shortcuts": settings.workspaceShortcuts
@@ -501,23 +513,39 @@ class WSClient: NSObject, ObservableObject {
 
     private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
         switch message {
-        case .string(let text):
-            parseAndDispatch(text)
         case .data(let data):
-            if let text = String(data: data, encoding: .utf8) {
-                parseAndDispatch(text)
-            }
+            parseAndDispatchBinary(data)
+        case .string:
+            print("[WSClient] Error: Received unexpected text message, v2 protocol requires binary")
         @unknown default:
             break
         }
     }
 
-    private func parseAndDispatch(_ text: String) {
-        print("[WSClient] Received raw message: \(text.prefix(300))...")
-        guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else {
-            print("[WSClient] Failed to parse message as JSON")
+    /// 解析并分发二进制 MessagePack 消息
+    private func parseAndDispatchBinary(_ data: Data) {
+        // 调试：打印接收到的数据
+        let hexString = data.prefix(100).map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("[WSClient] Received MessagePack data (\(data.count) bytes): \(hexString)...")
+        do {
+            let decoded = try msgpackDecoder.decode(AnyCodable.self, from: data)
+            // 调试：打印解码后的类型
+            print("[WSClient] Decoded AnyCodable type: \(decoded)")
+            guard let json = decoded.toDictionary else {
+                print("[WSClient] MessagePack decoded value is not a dictionary")
+                return
+            }
+            print("[WSClient] Successfully converted to dictionary with keys: \(json.keys)")
+            dispatchMessage(json)
+        } catch {
+            print("[WSClient] MessagePack decode failed: \(error)")
+        }
+    }
+
+    /// 分发解析后的消息到对应的处理器
+    private func dispatchMessage(_ json: [String: Any]) {
+        guard let type = json["type"] as? String else {
+            print("[WSClient] Message missing 'type' field")
             return
         }
 
