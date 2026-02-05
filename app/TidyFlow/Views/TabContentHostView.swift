@@ -51,6 +51,9 @@ struct TabContentHostView: View {
                         .onAppear { webViewVisible = false }
                 }
 
+            } else if appState.currentGlobalWorkspaceKey != nil {
+                // 已选择工作空间但没有活跃 Tab，显示快捷操作视图
+                QuickActionsView()
             } else {
                 NoActiveTabView()
             }

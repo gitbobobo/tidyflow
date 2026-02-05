@@ -2218,19 +2218,9 @@ class AppState: ObservableObject {
     
     func ensureDefaultTab(for workspaceKey: String) {
         print("[AppState] ensureDefaultTab called for: \(workspaceKey)")
-        if workspaceTabs[workspaceKey]?.isEmpty ?? true {
-            let newTab = TabModel(
-                id: UUID(),
-                title: "Terminal",
-                kind: .terminal,
-                workspaceKey: workspaceKey,
-                payload: ""
-            )
-            workspaceTabs[workspaceKey] = [newTab]
-            activeTabIdByWorkspace[workspaceKey] = newTab.id
-            print("[AppState] Created default terminal tab: \(newTab.id) for workspace: \(workspaceKey)")
-        } else {
-            print("[AppState] Workspace already has tabs: \(workspaceTabs[workspaceKey]?.count ?? 0)")
+        // 不再自动创建终端，仅确保字典有对应的键
+        if workspaceTabs[workspaceKey] == nil {
+            workspaceTabs[workspaceKey] = []
         }
     }
     

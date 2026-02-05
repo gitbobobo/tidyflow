@@ -34,6 +34,7 @@
 		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
 		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
 		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
+		QAV00001 /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = QAV00011 /* QuickActionsView.swift */; };
 		UX100001 /* ProjectsSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100011 /* ProjectsSidebarView.swift */; };
 		UX100002 /* AddProjectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100012 /* AddProjectSheet.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
@@ -83,6 +84,7 @@
 		F5D00011 /* DebugPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPanelView.swift; sourceTree = "<group>"; };
 		F5D00012 /* LogTailReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTailReader.swift; sourceTree = "<group>"; };
 		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
 		UX100011 /* ProjectsSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsSidebarView.swift; sourceTree = "<group>"; };
 		UX100012 /* AddProjectSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddProjectSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -111,6 +113,7 @@
 				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
 				B3A00018 /* NativeGitPanelView.swift */,
 				UX100011 /* ProjectsSidebarView.swift */,
+				QAV00011 /* QuickActionsView.swift */,
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
 				SET00011 /* SettingsView.swift */,
 				B3A00014 /* TabContentHostView.swift */,
@@ -324,6 +327,7 @@
 				B3A00008 /* NativeGitPanelView.swift in Sources */,
 				B3A00009 /* BranchPickerView.swift in Sources */,
 				SET00001 /* SettingsView.swift in Sources */,
+				QAV00001 /* QuickActionsView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				B3A00007 /* AnyCodable.swift in Sources */,
