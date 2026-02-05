@@ -487,22 +487,11 @@ class AppState: ObservableObject {
             // 订阅文件监控（切换工作空间时自动切换监控目标）
             subscribeCurrentWorkspace()
 
-            // 请求根目录文件列表（如果缓存不存在）
-            if getFileListCache(workspaceKey: workspaceName, path: ".") == nil {
-                fetchFileList(workspaceKey: workspaceName, path: ".")
-            }
-            // 请求 Git 状态（如果缓存不存在）
-            if getGitStatusCache(workspaceKey: workspaceName) == nil {
-                fetchGitStatus(workspaceKey: workspaceName)
-            }
-            // 请求分支信息（若未缓存）
-            if getGitBranchCache(workspaceKey: workspaceName) == nil {
-                fetchGitBranches(workspaceKey: workspaceName)
-            }
-            // 请求 Git 日志（若应拉取：无缓存或已过期且未在加载中）
-            if shouldFetchGitLog(workspaceKey: workspaceName) {
-                fetchGitLog(workspaceKey: workspaceName)
-            }
+            // 每次切换都请求最新数据（保留旧缓存先显示，新数据返回后自动刷新 UI）
+            fetchFileList(workspaceKey: workspaceName, path: ".")
+            fetchGitStatus(workspaceKey: workspaceName)
+            fetchGitBranches(workspaceKey: workspaceName)
+            fetchGitLog(workspaceKey: workspaceName)
         }
     }
     
