@@ -62,25 +62,85 @@ struct CoreStatusView: View {
     }
 }
 
+/// 连接状态指示器（仅显示圆点）
 struct ConnectionStatusView: View {
     @EnvironmentObject var appState: AppState
 
+    private var statusColor: Color {
+        appState.connectionState == .connected ? .green : .red
+    }
+
+    private var helpText: String {
+        appState.connectionState == .connected ? "已连接" : "未连接"
+    }
+
     var body: some View {
-        HStack {
-            Circle()
-                .fill(appState.connectionState == .connected ? Color.green : Color.red)
-                .frame(width: 8, height: 8)
+        Circle()
+            .fill(statusColor)
+            .frame(width: 8, height: 8)
+            .help(helpText)
+    }
+}
 
-            Text(appState.connectionState == .connected ? "Connected" : "Disconnected")
-                .font(.caption)
+/// 显示当前项目名称和分支（格式：● project:branch）
+struct ProjectBranchView: View {
+    @EnvironmentObject var appState: AppState
 
-            Button(action: {
-                appState.restartCore()
-            }) {
-                Image(systemName: "arrow.clockwise")
-            }
-            .help("Restart Core (Cmd+R)")
+    /// 连接状态颜色
+    private var statusColor: Color {
+        appState.connectionState == .connected ? .green : .red
+    }
+
+    /// 当前分支名称
+    private var currentBranch: String? {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitBranchCache(workspaceKey: ws),
+              !cache.current.isEmpty else {
+            return nil
         }
+        return cache.current
+    }
+
+    var body: some View {
+        if appState.selectedWorkspaceKey != nil {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                    .help(appState.connectionState == .connected ? "已连接" : "未连接")
+
+                Text(appState.selectedProjectName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
+
+                if let branch = currentBranch {
+                    Text(":")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Text(branch)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+    }
+}
+
+/// 应用标题视图（未选择工作空间时显示）
+struct AppTitleView: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            if let appIcon = NSApp.applicationIconImage {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .frame(width: 18, height: 18)
+            }
+            Text("TidyFlow")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.primary)
+        }
+        .padding(.horizontal, 8)
     }
 }
 

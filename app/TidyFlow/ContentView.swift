@@ -33,20 +33,21 @@ struct ContentView: View {
                     .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
             }
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 12) {
-                        CoreStatusView(coreManager: appState.coreProcessManager)
-                            .environmentObject(appState)
-
-                        ConnectionStatusView()
+                // 根据是否选中工作空间显示不同内容
+                if appState.selectedWorkspaceKey != nil {
+                    ToolbarItem(placement: .principal) {
+                        ProjectBranchView()
                             .environmentObject(appState)
                     }
+                    ToolbarItem(placement: .principal) {
+                        OpenInEditorButtonView()
+                            .environmentObject(appState)
+                    }
+                } else {
+                    ToolbarItem(placement: .principal) {
+                        AppTitleView()
+                    }
                 }
-                ToolbarItem(placement: .principal) {
-                    OpenInEditorButtonView()
-                        .environmentObject(appState)
-                }
-                // 右侧面板切换按钮（保留手动控制）
                 // 设置按钮
                 ToolbarItem(placement: .primaryAction) {
                     SettingsLink {
