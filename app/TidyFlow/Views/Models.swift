@@ -308,8 +308,10 @@ struct GitStatusIndex {
 
     /// 向上传播状态到所有父目录
     private mutating func propagateToParents(path: String, status: String) {
-        // 被忽略的文件（!!）不传播到父目录，因为用户关心的是有变更的文件
-        if status == "!!" { return }
+        // 被忽略的文件（!!）和被删除的文件（D）不传播到父目录
+        // 忽略文件：用户关心的是有变更的文件
+        // 删除文件：删除状态无需向上传递，避免父目录显示删除标记
+        if status == "!!" || status == "D" { return }
 
         var currentPath = path
         while let lastSlash = currentPath.lastIndex(of: "/") {
@@ -2203,11 +2205,11 @@ class AppState: ObservableObject {
                 app.refreshFileIndex()
             },
             Command(id: "workspace.newTerminal", title: "New Terminal", subtitle: nil, scope: .workspace, keyHint: "Cmd+T") { app in
-                guard let ws = app.selectedWorkspaceKey else { return }
+                guard let ws = app.currentGlobalWorkspaceKey else { return }
                 app.addTerminalTab(workspaceKey: ws)
             },
             Command(id: "workspace.closeTab", title: "Close Active Tab", subtitle: nil, scope: .workspace, keyHint: "Cmd+W") { app in
-                guard let ws = app.selectedWorkspaceKey,
+                guard let ws = app.currentGlobalWorkspaceKey,
                       let tabId = app.activeTabIdByWorkspace[ws] else { return }
                 app.closeTab(workspaceKey: ws, tabId: tabId)
             },
@@ -2238,7 +2240,7 @@ class AppState: ObservableObject {
                 app.gitRebaseAbort(workspaceKey: ws)
             },
             Command(id: "git.aiResolve", title: "Git: Resolve Conflicts with AI", subtitle: "Open terminal with opencode", scope: .workspace, keyHint: nil) { app in
-                guard let ws = app.selectedWorkspaceKey else { return }
+                guard let ws = app.currentGlobalWorkspaceKey else { return }
                 app.spawnTerminalWithCommand(workspaceKey: ws, command: "opencode")
             },
             // UX-4: Git rebase onto default (integration worktree) commands
@@ -2500,6 +2502,11 @@ class AppState: ObservableObject {
         }
         workspaceTabs[workspaceKey]?.append(newTab)
         activeTabIdByWorkspace[workspaceKey] = newTab.id
+
+        // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
+        if workspaceTerminalOpenTime[workspaceKey] == nil {
+            workspaceTerminalOpenTime[workspaceKey] = Date()
+        }
 
         // The terminal view will check payload and execute the command after spawn
         // This is handled by the terminal bridge when it detects a non-empty payload
