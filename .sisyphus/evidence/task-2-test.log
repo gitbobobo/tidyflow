@@ -1,0 +1,41 @@
+   Compiling tidyflow-core v0.1.0 (/Users/godbobo/work/projects/tidyflow/core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.60s
+     Running unittests src/lib.rs (target/debug/deps/tidyflow_core-b67a783dba31d15c)
+
+running 18 tests
+test server::git_tools::tests::test_truncate_if_needed ... ok
+test server::git_tools::tests::test_parse_status_code ... ok
+test server::git_tools::tests::test_parse_porcelain_status ... ok
+test server::ws::tests::test_find_incomplete_escape_sequence_complete ... ok
+test server::watcher::tests::test_should_ignore ... ok
+test server::watcher::tests::test_is_git_status_file ... ok
+test server::ws::tests::test_find_incomplete_escape_sequence_incomplete_csi ... ok
+test server::ws::tests::test_find_incomplete_escape_sequence_incomplete_osc ... ok
+test server::protocol::tests::test_parse_import_project ... ok
+test server::ws::tests::test_find_incomplete_escape_sequence_lone_esc ... ok
+test server::ws::tests::test_find_incomplete_escape_sequence_utf8 ... ok
+test server::file_api::tests::test_path_escape_prevention ... ok
+test workspace::config::tests::test_default_config ... FAILED
+test workspace::config::tests::test_parse_config ... ok
+test server::file_index::tests::test_index_files_ignores_hidden ... ok
+test server::file_index::tests::test_index_files_basic ... ok
+test server::file_index::tests::test_index_files_ignores_dirs ... ok
+test server::file_api::tests::test_file_operations ... ok
+
+failures:
+
+---- workspace::config::tests::test_default_config stdout ----
+
+thread 'workspace::config::tests::test_default_config' (2009410) panicked at src/workspace/config.rs:144:9:
+assertion `left == right` failed
+  left: ""
+ right: "main"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    workspace::config::tests::test_default_config
+
+test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--lib`

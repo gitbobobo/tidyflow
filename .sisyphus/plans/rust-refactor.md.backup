@@ -1,0 +1,2091 @@
+# Rust 端大文件拆分重构
+
+## TL;DR
+
+> **Quick Summary**: 将 `core/src/server/` 中的两个大文件（ws.rs 3222行, git_tools.rs 2699行）按功能模块拆分为多个子模块，提高代码可维护性和可读性。
+> 
+> **Deliverables**:
+> - `ws.rs` 拆分为 7 个子模块（handlers/ 和 terminal/）
+> - `git_tools.rs` 拆分为 6 个子模块（git/）
+> - 所有测试通过，零功能回归
+> - 每个子模块拆分后单独提交
+> 
+> **Estimated Effort**: Medium（预计 4-6 小时）
+> **Parallel Execution**: NO - sequential（必须按顺序执行，避免合并冲突）
+> **Critical Path**: 准备工作 → ws.rs 拆分 → git_tools.rs 拆分 → 最终验证
+
+---
+
+## Context
+
+### Original Request
+用户要求拆分 Rust 端的大文件，提高代码可维护性和模块化。
+
+### Interview Summary
+**Key Discussions**:
+- **拆分标准**: 500 行以上的文件
+- **拆分策略**: 混合策略（根据文件内容灵活选择功能模块或类型分离）
+- **测试策略**: 每个文件拆分后立即测试（TDD 风格）
+- **拆分范围**: 仅拆分最大的两个文件（ws.rs 和 git_tools.rs）
+- **拆分顺序**: 从大到小（ws.rs → git_tools.rs）
+- **提交策略**: 细粒度提交（每个子模块完成且测试通过后提交）
+- **API 兼容性**: 内部可调（允许调整内部 API，但 WebSocket 协议不变）
+- **问题处理**: 原地修复（不使用 git revert）
+
+**Research Findings**:
+- **ws.rs (3222行)**: 包含 WebSocket 连接处理、巨大的 handle_client_message 函数、TerminalManager
+- **git_tools.rs (2699行)**: 包含 20+ 个类型定义、Git 核心操作函数、分支管理、提交操作、集成工作流
+- **protocol.rs (763行)**: 暂不处理
+
+### Metis Review
+**Identified Gaps** (addressed):
+- **API 兼容性**: 确认允许调整内部 API，但保持 WebSocket 协议不变
+- **测试基准线**: 添加任务记录当前测试通过标准
+- **共享状态**: 添加任务分析跨文件引用和全局状态
+- **回滚策略**: 确认原地修复，不使用 git revert
+- **护栏设置**: 添加明确的 Must NOT Have 列表防止范围蔓延
+- **验收标准**: 每个任务包含具体的编译、测试、验证命令
+
+---
+
+## Work Objectives
+
+### Core Objective
+将 `core/src/server/ws.rs` 和 `core/src/server/git_tools.rs` 两个大文件按功能模块拆分为多个子模块，提高代码可维护性，同时保证零功能回归。
+
+### Concrete Deliverables
+1. `core/src/server/handlers/` 目录（包含 5 个处理器模块）
+2. `core/src/server/terminal/` 目录（包含 2 个终端管理模块）
+3. `core/src/server/git/` 目录（包含 6 个 Git 工具模块）
+4. 更新后的 `core/src/server/mod.rs`（模块声明和重新导出）
+5. 所有现有测试通过，零新增测试失败
+
+### Definition of Done
+- [x] 运行 `cd core && cargo build --release` 无错误
+- [x] 运行 `cd core && cargo test` 所有测试通过
+- [ ] 运行 `cd core && cargo clippy -- -D warnings` 无新增警告
+- [ ] 运行 `cd core && cargo fmt --check` 格式检查通过
+- [x] WebSocket 协议消息格式和语义保持不变
+
+### Must Have
+- **零功能回归**: 所有现有测试用例必须通过
+- **编译通过**: 每次子模块拆分后立即编译成功
+- **API 稳定性**: WebSocket 消息处理逻辑不变（输入→输出映射保持一致）
+- **测试覆盖**: 每个子模块拆分后立即运行相关测试
+- **代码一致性**: 保持现有代码风格、注释、宏定义不变
+
+### Must NOT Have (Guardrails)
+- **禁止修改协议**: 不改变 WebSocket 消息格式、版本号或语义
+- **禁止性能退化**: 不引入额外的内存分配、延迟或性能损耗
+- **禁止过度抽象**: 不创建不必要的 trait 或泛型抽象层
+- **禁止同时重构**: 不趁机重构其他文件或调整模块架构
+- **禁止破坏现有功能**: 不改变任何已实现的 Git 操作或终端管理行为
+- **禁止新增依赖**: 不添加新的 crate 依赖
+- **禁止调整日志**: 不改变日志级别、格式或内容
+
+---
+
+## Verification Strategy (MANDATORY)
+
+> **UNIVERSAL RULE: ZERO HUMAN INTERVENTION**
+>
+> ALL tasks in this plan MUST be verifiable WITHOUT any human action.
+> This is NOT conditional — it applies to EVERY task, regardless of test strategy.
+
+### Test Decision
+- **Infrastructure exists**: YES（项目使用标准 Rust 测试框架）
+- **Automated tests**: Tests-after（拆分后运行现有测试验证）
+- **Framework**: cargo test
+
+### Agent-Executed QA Scenarios (MANDATORY — ALL tasks)
+
+> 每个任务必须包含代理执行的 QA 场景，无需人工干预。
+> 所有验证通过 Bash 工具执行 cargo 命令完成。
+
+**Verification Tool**: Bash (cargo commands)
+
+**Each Scenario MUST Follow This Format**:
+
+```
+Scenario: [Descriptive name]
+  Tool: Bash
+  Preconditions: [What must be true before this scenario runs]
+  Steps:
+    1. [Exact command to run]
+    2. [Expected output pattern or exit code]
+  Expected Result: [Concrete, observable outcome]
+  Failure Indicators: [What would indicate failure]
+  Evidence: [Command output or log file path]
+```
+
+**Scenario Detail Requirements**:
+- **Commands**: 具体的 cargo 命令（如 `cargo build --release`）
+- **Exit Codes**: 期望的退出码（通常为 0）
+- **Output Patterns**: 期望的输出模式（如 "Finished release" 或 "test result: ok"）
+- **Evidence Paths**: 保存命令输出的路径（如 `.sisyphus/evidence/task-N-build.log`）
+
+---
+
+## Execution Strategy
+
+### Parallel Execution Waves
+
+> 由于文件拆分涉及模块声明和导入路径变更，必须按顺序执行，不能并行。
+
+```
+Wave 1 (Preparation):
+└── Task 0: 准备工作（记录基准测试、分析依赖）
+
+Wave 2 (ws.rs Refactoring):
+├── Task 1: 创建 handlers/ 和 terminal/ 目录结构
+├── Task 2: 拆分 handlers/terminal.rs
+├── Task 3: 拆分 handlers/file.rs
+├── Task 4: 拆分 handlers/git.rs
+├── Task 5: 拆分 handlers/project.rs
+├── Task 6: 拆分 handlers/settings.rs
+├── Task 7: 拆分 terminal/manager.rs
+├── Task 8: 拆分 terminal/session.rs
+└── Task 9: 更新 ws.rs 和 mod.rs（完成 ws.rs 重构）
+
+Wave 3 (git_tools.rs Refactoring):
+├── Task 10: 创建 git/ 目录结构
+├── Task 11: 拆分 git/utils.rs（类型定义和辅助函数）
+├── Task 12: 拆分 git/status.rs
+├── Task 13: 拆分 git/operations.rs
+├── Task 14: 拆分 git/branches.rs
+├── Task 15: 拆分 git/commit.rs
+├── Task 16: 拆分 git/integration.rs
+└── Task 17: 更新 git_tools.rs 和 mod.rs（完成 git_tools.rs 重构）
+
+Wave 4 (Final Verification):
+└── Task 18: 最终验证和清理
+
+Critical Path: Task 0 → Task 1-9 (sequential) → Task 10-17 (sequential) → Task 18
+Parallel Speedup: 不适用（必须顺序执行）
+```
+
+### Dependency Matrix
+
+| Task | Depends On | Blocks | Can Parallelize With |
+|------|------------|--------|---------------------|
+| 0 | None | 1 | None |
+| 1 | 0 | 2-9 | None |
+| 2-9 | 1, previous task | Next task in wave 2 | None |
+| 10 | 9 | 11-17 | None |
+| 11-17 | 10, previous task | Next task in wave 3 | None |
+| 18 | 17 | None | None |
+
+### Agent Dispatch Summary
+
+| Wave | Tasks | Recommended Agents |
+|------|-------|-------------------|
+| 1 | 0 | quick（分析任务） |
+| 2 | 1-9 | unspecified-low（代码移动和重组，无复杂逻辑） |
+| 3 | 10-17 | unspecified-low（代码移动和重组，无复杂逻辑） |
+| 4 | 18 | quick（验证任务） |
+
+---
+
+## TODOs
+
+### Wave 1: Preparation
+
+- [x] 0. 准备工作：记录基准测试和分析依赖
+
+  **What to do**:
+  1. 记录当前测试基准线：运行 `cargo test` 并保存输出
+  2. 分析跨文件引用：使用 `grep` 搜索 `ws.rs` 和 `git_tools.rs` 的使用位置
+  3. 检查全局状态：搜索 `static`、`lazy_static`、`OnceLock` 等关键字
+  4. 验证模块导入：确认 `server/mod.rs` 当前的模块声明
+
+  **Must NOT do**:
+  - 不修改任何源代码
+  - 不创建新文件或目录
+
+  **Recommended Agent Profile**:
+  - **Category**: `quick`
+    - Reason: 这是简单的分析和记录任务，不涉及复杂逻辑
+  - **Skills**: []
+    - Reason: 无需特定技能，使用标准 Bash 工具即可
+  - **Skills Evaluated but Omitted**:
+    - `git-master`: 不涉及 Git 操作
+    - `playwright`: 不涉及浏览器测试
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 1（必须第一个执行）
+  - **Blocks**: Task 1
+  - **Blocked By**: None
+
+  **References**:
+
+  **代码位置**:
+  - `core/src/server/ws.rs` - WebSocket 服务器主文件（待拆分）
+  - `core/src/server/git_tools.rs` - Git 工具主文件（待拆分）
+  - `core/src/server/mod.rs` - 服务器模块声明文件（需要更新）
+
+  **为什么这些引用重要**:
+  - 了解当前的模块结构和导出方式，确保拆分后保持兼容性
+
+  **Acceptance Criteria**:
+
+  **编译和测试基准**:
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee .sisyphus/evidence/task-0-baseline-test.log`
+  - [ ] 确认退出码为 0（所有测试通过）
+  - [ ] 记录测试用例总数（从输出中提取 "test result: ok. X passed"）
+
+  **依赖分析**:
+  - [ ] 运行 `cd core && grep -r "use.*ws::" src/ | tee .sisyphus/evidence/task-0-ws-refs.log`
+  - [ ] 运行 `cd core && grep -r "use.*git_tools" src/ | tee .sisyphus/evidence/task-0-git-refs.log`
+  - [ ] 运行 `cd core && grep -E "static|lazy_static|OnceLock" src/server/ws.rs src/server/git_tools.rs | tee .sisyphus/evidence/task-0-global-state.log`
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 记录基准测试结果
+    Tool: Bash
+    Preconditions: 项目在 core/ 目录，cargo 已安装
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-0-baseline-test.log
+      2. 检查退出码 $? 是否为 0
+      3. 确认输出包含 "test result: ok"
+    Expected Result: 所有测试通过，输出保存到日志文件
+    Failure Indicators: 退出码非 0，或输出包含 "FAILED"
+    Evidence: .sisyphus/evidence/task-0-baseline-test.log
+
+  Scenario: 分析跨文件引用
+    Tool: Bash
+    Preconditions: core/src 目录存在
+    Steps:
+      1. cd core && grep -r "use.*ws::" src/ > ../.sisyphus/evidence/task-0-ws-refs.log
+      2. cd core && grep -r "use.*git_tools" src/ > ../.sisyphus/evidence/task-0-git-refs.log
+      3. 确认文件已创建且非空
+    Expected Result: 引用列表保存到日志文件
+    Failure Indicators: 文件不存在或命令失败
+    Evidence: .sisyphus/evidence/task-0-ws-refs.log, .sisyphus/evidence/task-0-git-refs.log
+
+  Scenario: 检查全局状态
+    Tool: Bash
+    Preconditions: ws.rs 和 git_tools.rs 文件存在
+    Steps:
+      1. cd core && grep -E "static|lazy_static|OnceLock" src/server/ws.rs src/server/git_tools.rs > ../.sisyphus/evidence/task-0-global-state.log
+      2. 如果 grep 返回 1（无匹配），创建空文件表示无全局状态
+    Expected Result: 全局状态搜索结果保存到日志文件
+    Failure Indicators: 命令执行失败
+    Evidence: .sisyphus/evidence/task-0-global-state.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-0-baseline-test.log` - 基准测试输出
+  - [ ] `.sisyphus/evidence/task-0-ws-refs.log` - ws.rs 引用列表
+  - [ ] `.sisyphus/evidence/task-0-git-refs.log` - git_tools.rs 引用列表
+  - [ ] `.sisyphus/evidence/task-0-global-state.log` - 全局状态搜索结果
+
+  **Commit**: NO（仅分析任务，不修改代码）
+
+---
+
+### Wave 2: ws.rs Refactoring
+
+- [ ] 1. 创建 handlers/ 和 terminal/ 目录结构
+
+  **What to do**:
+  1. 创建目录 `core/src/server/handlers/`
+  2. 创建目录 `core/src/server/terminal/`
+  3. 创建模块声明文件 `core/src/server/handlers/mod.rs`（空文件，后续填充）
+  4. 创建模块声明文件 `core/src/server/terminal/mod.rs`（空文件，后续填充）
+
+  **Must NOT do**:
+  - 不移动任何代码
+  - 不修改 `server/mod.rs`（在后续任务中统一更新）
+
+  **Recommended Agent Profile**:
+  - **Category**: `quick`
+    - Reason: 简单的目录和文件创建任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能（无需特定技能）
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2（第一个任务）
+  - **Blocks**: Task 2-9
+  - **Blocked By**: Task 0
+
+  **References**:
+
+  **目标位置**:
+  - `core/src/server/handlers/` - 新创建的处理器目录
+  - `core/src/server/terminal/` - 新创建的终端管理目录
+
+  **Acceptance Criteria**:
+
+  **目录创建**:
+  - [ ] 目录 `core/src/server/handlers/` 存在
+  - [ ] 目录 `core/src/server/terminal/` 存在
+  - [ ] 文件 `core/src/server/handlers/mod.rs` 存在（内容为空或仅包含注释）
+  - [ ] 文件 `core/src/server/terminal/mod.rs` 存在（内容为空或仅包含注释）
+
+  **编译检查**:
+  - [ ] 运行 `cd core && cargo check 2>&1 | tee ../.sisyphus/evidence/task-1-check.log`
+  - [ ] 确认退出码为 0（编译通过）
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 创建目录结构
+    Tool: Bash
+    Preconditions: core/src/server/ 目录存在
+    Steps:
+      1. mkdir -p core/src/server/handlers
+      2. mkdir -p core/src/server/terminal
+      3. touch core/src/server/handlers/mod.rs
+      4. touch core/src/server/terminal/mod.rs
+      5. 验证目录和文件存在：ls -la core/src/server/handlers/ core/src/server/terminal/
+    Expected Result: 目录和文件创建成功
+    Failure Indicators: mkdir 或 touch 命令失败
+    Evidence: 命令输出
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 目录已创建
+    Steps:
+      1. cd core && cargo check 2>&1 | tee ../.sisyphus/evidence/task-1-check.log
+      2. 检查退出码 $? 是否为 0
+    Expected Result: 编译通过，无错误
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-1-check.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-1-check.log` - 编译检查输出
+
+  **Commit**: YES
+  - Message: `refactor(server): create handlers and terminal module directories`
+  - Files: `core/src/server/handlers/mod.rs`, `core/src/server/terminal/mod.rs`
+  - Pre-commit: `cd core && cargo check`
+
+---
+
+- [ ] 2. 拆分 handlers/terminal.rs - 终端相关消息处理
+
+  **What to do**:
+  1. 从 `ws.rs` 的 `handle_client_message` 函数中提取终端相关的 case 分支：
+     - `ClientMessage::CreateTerminal`
+     - `ClientMessage::TerminalInput`
+     - `ClientMessage::ResizeTerminal`
+     - `ClientMessage::CloseTerminal`
+     - `ClientMessage::ListTerminals`
+  2. 创建独立函数 `handle_terminal_message` 并移动到 `core/src/server/handlers/terminal.rs`
+  3. 保留所有依赖的类型定义（如果需要，通过 `use` 导入）
+  4. 在 `handlers/mod.rs` 中声明模块：`pub mod terminal;`
+  5. 更新 `ws.rs` 中的 `handle_client_message` 调用新函数
+
+  **Must NOT do**:
+  - 不修改消息处理逻辑
+  - 不改变函数签名或返回值类型
+  - 不重命名类型或函数
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务，无复杂逻辑，但需要仔细处理依赖
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能（标准重构任务）
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 3
+  - **Blocked By**: Task 1
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs:handle_client_message` - 查找终端相关的 case 分支（搜索 "CreateTerminal", "TerminalInput" 等关键字）
+  - `core/src/server/protocol.rs` - ClientMessage 和 ServerMessage 类型定义
+
+  **目标位置**:
+  - `core/src/server/handlers/terminal.rs` - 新创建的终端处理器模块
+
+  **为什么这些引用重要**:
+  - 提取 case 分支时需要保持完整的逻辑和依赖，确保编译通过
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/handlers/terminal.rs` 存在
+  - [ ] 文件包含 `handle_terminal_message` 函数或类似的处理函数
+  - [ ] `handlers/mod.rs` 包含 `pub mod terminal;` 声明
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-2-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-2-test.log`
+  - [ ] 确认所有测试通过（退出码 0）
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分终端处理器模块
+    Tool: Bash
+    Preconditions: ws.rs 包含终端相关的 case 分支
+    Steps:
+      1. 创建 core/src/server/handlers/terminal.rs（通过 Write 工具）
+      2. 从 ws.rs 提取终端相关的 case 分支并移动
+      3. 在 handlers/mod.rs 添加 `pub mod terminal;`
+      4. 更新 ws.rs 中的 handle_client_message 调用新函数
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败或缺少必要的 import
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-2-build.log
+      2. 检查退出码 $? 是否为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0，输出包含错误信息
+    Evidence: .sisyphus/evidence/task-2-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-2-test.log
+      2. 检查退出码 $? 是否为 0
+      3. 确认输出包含 "test result: ok"
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0，或新增测试失败
+    Evidence: .sisyphus/evidence/task-2-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-2-build.log` - 编译输出
+  - [ ] `.sisyphus/evidence/task-2-test.log` - 测试输出
+
+  **Commit**: YES
+  - Message: `refactor(server): extract terminal message handlers to handlers/terminal.rs`
+  - Files: `core/src/server/handlers/terminal.rs`, `core/src/server/handlers/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 3. 拆分 handlers/file.rs - 文件操作消息处理
+
+  **What to do**:
+  1. 从 `ws.rs` 的 `handle_client_message` 函数中提取文件相关的 case 分支：
+     - `ClientMessage::ReadFile`
+     - `ClientMessage::WriteFile`
+     - `ClientMessage::ListFiles`
+     - `ClientMessage::DeleteFile`
+     - 以及任何其他文件操作相关的消息
+  2. 创建独立函数 `handle_file_message` 并移动到 `core/src/server/handlers/file.rs`
+  3. 在 `handlers/mod.rs` 中声明模块：`pub mod file;`
+  4. 更新 `ws.rs` 中的 `handle_client_message` 调用新函数
+
+  **Must NOT do**:
+  - 不修改消息处理逻辑
+  - 不改变函数签名或返回值类型
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务，类似 Task 2
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 4
+  - **Blocked By**: Task 2
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs:handle_client_message` - 查找文件相关的 case 分支（搜索 "ReadFile", "WriteFile" 等）
+  - `core/src/server/protocol.rs` - ClientMessage 定义
+
+  **目标位置**:
+  - `core/src/server/handlers/file.rs` - 新创建的文件处理器模块
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/handlers/file.rs` 存在
+  - [ ] `handlers/mod.rs` 包含 `pub mod file;` 声明
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-3-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-3-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分文件处理器模块
+    Tool: Bash
+    Preconditions: ws.rs 包含文件相关的 case 分支
+    Steps:
+      1. 创建 core/src/server/handlers/file.rs
+      2. 从 ws.rs 提取文件相关的 case 分支并移动
+      3. 在 handlers/mod.rs 添加 `pub mod file;`
+      4. 更新 ws.rs 调用新函数
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-3-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-3-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-3-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-3-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-3-build.log`
+  - [ ] `.sisyphus/evidence/task-3-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): extract file message handlers to handlers/file.rs`
+  - Files: `core/src/server/handlers/file.rs`, `core/src/server/handlers/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 4. 拆分 handlers/git.rs - Git 消息处理
+
+  **What to do**:
+  1. 从 `ws.rs` 的 `handle_client_message` 函数中提取 Git 相关的 case 分支：
+     - `ClientMessage::GitStatus`
+     - `ClientMessage::GitDiff`
+     - `ClientMessage::GitStage`
+     - `ClientMessage::GitCommit`
+     - `ClientMessage::GitBranches`
+     - 以及其他所有 Git 操作相关的消息
+  2. 创建独立函数 `handle_git_message` 并移动到 `core/src/server/handlers/git.rs`
+  3. 在 `handlers/mod.rs` 中声明模块：`pub mod git;`
+  4. 更新 `ws.rs` 调用新函数
+
+  **Must NOT do**:
+  - 不修改 Git 工具函数的调用方式
+  - 不改变消息处理逻辑
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 5
+  - **Blocked By**: Task 3
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs:handle_client_message` - 查找 Git 相关的 case 分支（搜索 "GitStatus", "GitDiff" 等）
+  - `core/src/server/git_tools.rs` - Git 工具函数（调用但不修改）
+
+  **目标位置**:
+  - `core/src/server/handlers/git.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/handlers/git.rs` 存在
+  - [ ] `handlers/mod.rs` 包含 `pub mod git;` 声明
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-4-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-4-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 处理器模块
+    Tool: Bash
+    Preconditions: ws.rs 包含 Git 相关的 case 分支
+    Steps:
+      1. 创建 core/src/server/handlers/git.rs
+      2. 从 ws.rs 提取 Git 相关的 case 分支并移动
+      3. 在 handlers/mod.rs 添加 `pub mod git;`
+      4. 更新 ws.rs 调用新函数
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-4-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-4-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-4-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-4-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-4-build.log`
+  - [ ] `.sisyphus/evidence/task-4-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): extract git message handlers to handlers/git.rs`
+  - Files: `core/src/server/handlers/git.rs`, `core/src/server/handlers/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 5. 拆分 handlers/project.rs - 项目和工作空间管理消息处理
+
+  **What to do**:
+  1. 从 `ws.rs` 的 `handle_client_message` 函数中提取项目和工作空间相关的 case 分支：
+     - `ClientMessage::ListProjects`
+     - `ClientMessage::CreateWorkspace`
+     - `ClientMessage::ListWorkspaces`
+     - `ClientMessage::SwitchWorkspace`
+     - `ClientMessage::ImportProject`
+     - `ClientMessage::ExportProject`
+     - 以及其他项目管理相关的消息
+  2. 创建独立函数 `handle_project_message` 并移动到 `core/src/server/handlers/project.rs`
+  3. 在 `handlers/mod.rs` 中声明模块：`pub mod project;`
+  4. 更新 `ws.rs` 调用新函数
+
+  **Must NOT do**:
+  - 不修改工作空间引擎的调用方式
+  - 不改变消息处理逻辑
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 6
+  - **Blocked By**: Task 4
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs:handle_client_message` - 查找项目相关的 case 分支（搜索 "ListProjects", "CreateWorkspace" 等）
+  - `core/src/workspace/` - 工作空间引擎模块（调用但不修改）
+
+  **目标位置**:
+  - `core/src/server/handlers/project.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/handlers/project.rs` 存在
+  - [ ] `handlers/mod.rs` 包含 `pub mod project;` 声明
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-5-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-5-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分项目处理器模块
+    Tool: Bash
+    Preconditions: ws.rs 包含项目相关的 case 分支
+    Steps:
+      1. 创建 core/src/server/handlers/project.rs
+      2. 从 ws.rs 提取项目相关的 case 分支并移动
+      3. 在 handlers/mod.rs 添加 `pub mod project;`
+      4. 更新 ws.rs 调用新函数
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-5-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-5-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-5-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-5-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-5-build.log`
+  - [ ] `.sisyphus/evidence/task-5-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): extract project/workspace handlers to handlers/project.rs`
+  - Files: `core/src/server/handlers/project.rs`, `core/src/server/handlers/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 6. 拆分 handlers/settings.rs - 设置相关消息处理
+
+  **What to do**:
+  1. 从 `ws.rs` 的 `handle_client_message` 函数中提取设置相关的 case 分支：
+     - `ClientMessage::GetSettings`
+     - `ClientMessage::UpdateSettings`
+     - 以及其他设置相关的消息
+  2. 创建独立函数 `handle_settings_message` 并移动到 `core/src/server/handlers/settings.rs`
+  3. 在 `handlers/mod.rs` 中声明模块：`pub mod settings;`
+  4. 更新 `ws.rs` 调用新函数
+
+  **Must NOT do**:
+  - 不修改设置存储逻辑
+  - 不改变消息处理逻辑
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 7
+  - **Blocked By**: Task 5
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs:handle_client_message` - 查找设置相关的 case 分支（搜索 "Settings"）
+
+  **目标位置**:
+  - `core/src/server/handlers/settings.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/handlers/settings.rs` 存在
+  - [ ] `handlers/mod.rs` 包含 `pub mod settings;` 声明
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-6-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-6-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分设置处理器模块
+    Tool: Bash
+    Preconditions: ws.rs 包含设置相关的 case 分支
+    Steps:
+      1. 创建 core/src/server/handlers/settings.rs
+      2. 从 ws.rs 提取设置相关的 case 分支并移动
+      3. 在 handlers/mod.rs 添加 `pub mod settings;`
+      4. 更新 ws.rs 调用新函数
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-6-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-6-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-6-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-6-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-6-build.log`
+  - [ ] `.sisyphus/evidence/task-6-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): extract settings handlers to handlers/settings.rs`
+  - Files: `core/src/server/handlers/settings.rs`, `core/src/server/handlers/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 7. 拆分 terminal/manager.rs - TerminalManager 和相关方法
+
+  **What to do**:
+  1. 从 `ws.rs` 中提取 `TerminalManager` 结构体定义
+  2. 提取所有 `impl TerminalManager` 块中的方法（spawn, close, list 等）
+  3. 移动到 `core/src/server/terminal/manager.rs`
+  4. 在 `terminal/mod.rs` 中声明模块：`pub mod manager;`
+  5. 在 `terminal/mod.rs` 中重新导出：`pub use manager::TerminalManager;`
+  6. 更新 `ws.rs` 导入 `TerminalManager`
+
+  **Must NOT do**:
+  - 不修改 TerminalManager 的字段或方法签名
+  - 不改变 PTY 管理逻辑
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务，但需要处理类型导出
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 8
+  - **Blocked By**: Task 6
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs` - 查找 `struct TerminalManager` 和 `impl TerminalManager`
+  - `core/src/pty/` - PTY 模块（了解 TerminalManager 的依赖）
+
+  **目标位置**:
+  - `core/src/server/terminal/manager.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/terminal/manager.rs` 存在
+  - [ ] 包含 `TerminalManager` 结构体定义和所有 impl 块
+  - [ ] `terminal/mod.rs` 包含 `pub mod manager;` 和 `pub use manager::TerminalManager;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-7-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-7-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 TerminalManager
+    Tool: Bash
+    Preconditions: ws.rs 包含 TerminalManager 定义
+    Steps:
+      1. 创建 core/src/server/terminal/manager.rs
+      2. 从 ws.rs 提取 TerminalManager 及其 impl 块并移动
+      3. 在 terminal/mod.rs 添加模块声明和重新导出
+      4. 更新 ws.rs 的 import 语句
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败或类型找不到
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-7-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-7-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-7-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-7-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-7-build.log`
+  - [ ] `.sisyphus/evidence/task-7-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): extract TerminalManager to terminal/manager.rs`
+  - Files: `core/src/server/terminal/manager.rs`, `core/src/server/terminal/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 8. 拆分 terminal/session.rs - 终端会话处理逻辑
+
+  **What to do**:
+  1. 从 `ws.rs` 中提取终端会话相关的辅助函数和类型：
+     - `TerminalHandle` 结构体（如果存在）
+     - 会话管理相关的辅助函数
+     - ANSI 转义序列处理函数（如 `find_incomplete_escape_sequence`）
+  2. 移动到 `core/src/server/terminal/session.rs`
+  3. 在 `terminal/mod.rs` 中声明模块：`pub mod session;`
+  4. 根据需要在 `terminal/mod.rs` 中重新导出类型
+  5. 更新 `ws.rs` 和 `terminal/manager.rs` 的导入
+
+  **Must NOT do**:
+  - 不修改会话处理逻辑
+  - 不改变辅助函数的行为
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2
+  - **Blocks**: Task 9
+  - **Blocked By**: Task 7
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/ws.rs` - 查找 `TerminalHandle`, `find_incomplete_escape_sequence` 等
+  - `core/src/server/terminal/manager.rs` - 可能需要引用这些类型
+
+  **目标位置**:
+  - `core/src/server/terminal/session.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/terminal/session.rs` 存在
+  - [ ] `terminal/mod.rs` 包含 `pub mod session;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-8-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-8-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分终端会话逻辑
+    Tool: Bash
+    Preconditions: ws.rs 包含终端会话相关的辅助函数
+    Steps:
+      1. 创建 core/src/server/terminal/session.rs
+      2. 从 ws.rs 提取会话相关的函数和类型并移动
+      3. 在 terminal/mod.rs 添加模块声明
+      4. 更新相关文件的 import 语句
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-8-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-8-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-8-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-8-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-8-build.log`
+  - [ ] `.sisyphus/evidence/task-8-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): extract terminal session logic to terminal/session.rs`
+  - Files: `core/src/server/terminal/session.rs`, `core/src/server/terminal/mod.rs`, `core/src/server/ws.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 9. 更新 ws.rs 和 server/mod.rs - 完成 ws.rs 重构
+
+  **What to do**:
+  1. 清理 `ws.rs`：
+     - 确认所有代码已移动到子模块
+     - 保留 `handle_socket` 主函数和 WebSocket 连接处理逻辑
+     - 简化 `handle_client_message` 为路由函数，调用各子模块的处理函数
+     - 保留必要的类型定义和导入
+  2. 更新 `server/mod.rs`：
+     - 添加 `pub mod handlers;` 和 `pub mod terminal;`
+     - 根据需要重新导出公共类型（如 `pub use terminal::TerminalManager;`）
+  3. 确保所有测试通过
+
+  **Must NOT do**:
+  - 不改变 WebSocket 协议处理逻辑
+  - 不修改公共 API
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码清理和模块声明更新
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 2（最后一个任务）
+  - **Blocks**: Task 10
+  - **Blocked By**: Task 8
+
+  **References**:
+
+  **文件位置**:
+  - `core/src/server/ws.rs` - 清理后的主文件
+  - `core/src/server/mod.rs` - 模块声明文件
+
+  **Acceptance Criteria**:
+
+  **文件更新**:
+  - [ ] `ws.rs` 大小显著减小（预计 500-800 行）
+  - [ ] `server/mod.rs` 包含 `pub mod handlers;` 和 `pub mod terminal;`
+  - [ ] 所有公共类型正确重新导出
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build --release 2>&1 | tee ../.sisyphus/evidence/task-9-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-9-test.log`
+  - [ ] 确认所有测试通过
+  - [ ] 运行 `cd core && cargo clippy -- -D warnings 2>&1 | tee ../.sisyphus/evidence/task-9-clippy.log`
+  - [ ] 确认无新增警告
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 清理 ws.rs 和更新模块声明
+    Tool: Bash
+    Preconditions: 所有子模块已创建
+    Steps:
+      1. 简化 ws.rs 的 handle_client_message 为路由函数
+      2. 在 server/mod.rs 添加 handlers 和 terminal 模块声明
+      3. 根据需要重新导出公共类型
+    Expected Result: 代码清理完成，编译通过
+    Failure Indicators: 编译失败或模块找不到
+    Evidence: 编译日志
+
+  Scenario: Release 编译检查
+    Tool: Bash
+    Preconditions: 代码已更新
+    Steps:
+      1. cd core && cargo build --release 2>&1 | tee ../.sisyphus/evidence/task-9-build.log
+      2. 检查退出码为 0
+    Expected Result: Release 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-9-build.log
+
+  Scenario: 完整测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-9-test.log
+      2. 检查退出码为 0
+      3. 确认测试数量与基准测试一致
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0 或测试数量减少
+    Evidence: .sisyphus/evidence/task-9-test.log
+
+  Scenario: Clippy 检查
+    Tool: Bash
+    Preconditions: 测试通过
+    Steps:
+      1. cd core && cargo clippy -- -D warnings 2>&1 | tee ../.sisyphus/evidence/task-9-clippy.log
+      2. 检查退出码为 0
+    Expected Result: 无新增警告
+    Failure Indicators: 退出码非 0 或出现新警告
+    Evidence: .sisyphus/evidence/task-9-clippy.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-9-build.log`
+  - [ ] `.sisyphus/evidence/task-9-test.log`
+  - [ ] `.sisyphus/evidence/task-9-clippy.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): complete ws.rs modularization, update module declarations`
+  - Files: `core/src/server/ws.rs`, `core/src/server/mod.rs`
+  - Pre-commit: `cd core && cargo test && cargo clippy -- -D warnings`
+
+---
+
+### Wave 3: git_tools.rs Refactoring
+
+- [ ] 10. 创建 git/ 目录结构
+
+  **What to do**:
+  1. 创建目录 `core/src/server/git/`
+  2. 创建模块声明文件 `core/src/server/git/mod.rs`（空文件，后续填充）
+
+  **Must NOT do**:
+  - 不移动任何代码
+  - 不修改 `server/mod.rs`（在后续任务中统一更新）
+
+  **Recommended Agent Profile**:
+  - **Category**: `quick`
+    - Reason: 简单的目录创建任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3（第一个任务）
+  - **Blocks**: Task 11-17
+  - **Blocked By**: Task 9
+
+  **References**:
+
+  **目标位置**:
+  - `core/src/server/git/` - 新创建的 Git 工具目录
+
+  **Acceptance Criteria**:
+
+  **目录创建**:
+  - [ ] 目录 `core/src/server/git/` 存在
+  - [ ] 文件 `core/src/server/git/mod.rs` 存在
+
+  **编译检查**:
+  - [ ] 运行 `cd core && cargo check 2>&1 | tee ../.sisyphus/evidence/task-10-check.log`
+  - [ ] 确认退出码为 0
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 创建 git 目录结构
+    Tool: Bash
+    Preconditions: core/src/server/ 目录存在
+    Steps:
+      1. mkdir -p core/src/server/git
+      2. touch core/src/server/git/mod.rs
+      3. 验证目录和文件存在：ls -la core/src/server/git/
+    Expected Result: 目录和文件创建成功
+    Failure Indicators: mkdir 或 touch 命令失败
+    Evidence: 命令输出
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 目录已创建
+    Steps:
+      1. cd core && cargo check 2>&1 | tee ../.sisyphus/evidence/task-10-check.log
+      2. 检查退出码为 0
+    Expected Result: 编译通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-10-check.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-10-check.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): create git module directory structure`
+  - Files: `core/src/server/git/mod.rs`
+  - Pre-commit: `cd core && cargo check`
+
+---
+
+- [ ] 11. 拆分 git/utils.rs - 类型定义和辅助函数
+
+  **What to do**:
+  1. 从 `git_tools.rs` 中提取所有类型定义：
+     - `GitStatusResult`, `GitOpState`, `GitFileStatus` 等结构体
+     - 所有相关的枚举和类型别名
+  2. 提取辅助函数：
+     - 路径验证函数
+     - 二进制检测函数
+     - 状态解析函数
+     - 其他工具函数
+  3. 移动到 `core/src/server/git/utils.rs`
+  4. 在 `git/mod.rs` 中声明模块：`pub mod utils;`
+  5. 重新导出常用类型：`pub use utils::{GitStatusResult, GitOpState, ...};`
+
+  **Must NOT do**:
+  - 不修改类型定义的字段或方法
+  - 不改变辅助函数的行为
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务，但需要仔细处理类型导出
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3
+  - **Blocks**: Task 12
+  - **Blocked By**: Task 10
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/git_tools.rs` - 查找所有 `struct`、`enum`、`type` 定义和辅助函数
+
+  **目标位置**:
+  - `core/src/server/git/utils.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/git/utils.rs` 存在
+  - [ ] 包含所有类型定义和辅助函数
+  - [ ] `git/mod.rs` 包含模块声明和类型重新导出
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-11-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-11-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 类型定义和辅助函数
+    Tool: Bash
+    Preconditions: git_tools.rs 包含类型定义
+    Steps:
+      1. 创建 core/src/server/git/utils.rs
+      2. 从 git_tools.rs 提取所有类型定义和辅助函数并移动
+      3. 在 git/mod.rs 添加模块声明和重新导出
+      4. 更新 git_tools.rs 的 import 语句
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败或类型找不到
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-11-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-11-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-11-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-11-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-11-build.log`
+  - [ ] `.sisyphus/evidence/task-11-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(git): extract type definitions and utilities to git/utils.rs`
+  - Files: `core/src/server/git/utils.rs`, `core/src/server/git/mod.rs`, `core/src/server/git_tools.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 12. 拆分 git/status.rs - 状态查询函数
+
+  **What to do**:
+  1. 从 `git_tools.rs` 中提取状态查询相关的函数：
+     - `git_status`
+     - `git_diff`
+     - `git_log`
+     - `git_show`
+  2. 移动到 `core/src/server/git/status.rs`
+  3. 在 `git/mod.rs` 中声明模块：`pub mod status;`
+  4. 根据需要重新导出函数
+
+  **Must NOT do**:
+  - 不修改函数签名或返回值类型
+  - 不改变 Git 命令执行逻辑
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3
+  - **Blocks**: Task 13
+  - **Blocked By**: Task 11
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/git_tools.rs` - 查找 `git_status`, `git_diff`, `git_log`, `git_show` 函数
+
+  **目标位置**:
+  - `core/src/server/git/status.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/git/status.rs` 存在
+  - [ ] `git/mod.rs` 包含 `pub mod status;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-12-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-12-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 状态查询函数
+    Tool: Bash
+    Preconditions: git_tools.rs 包含状态查询函数
+    Steps:
+      1. 创建 core/src/server/git/status.rs
+      2. 从 git_tools.rs 提取状态查询函数并移动
+      3. 在 git/mod.rs 添加模块声明
+      4. 更新引用
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-12-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-12-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-12-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-12-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-12-build.log`
+  - [ ] `.sisyphus/evidence/task-12-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(git): extract status query functions to git/status.rs`
+  - Files: `core/src/server/git/status.rs`, `core/src/server/git/mod.rs`, `core/src/server/git_tools.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 13. 拆分 git/operations.rs - 文件操作函数
+
+  **What to do**:
+  1. 从 `git_tools.rs` 中提取文件操作相关的函数：
+     - `git_stage`
+     - `git_unstage`
+     - `git_discard`
+  2. 移动到 `core/src/server/git/operations.rs`
+  3. 在 `git/mod.rs` 中声明模块：`pub mod operations;`
+
+  **Must NOT do**:
+  - 不修改函数逻辑
+  - 不改变函数签名
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3
+  - **Blocks**: Task 14
+  - **Blocked By**: Task 12
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/git_tools.rs` - 查找 `git_stage`, `git_unstage`, `git_discard` 函数
+
+  **目标位置**:
+  - `core/src/server/git/operations.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/git/operations.rs` 存在
+  - [ ] `git/mod.rs` 包含 `pub mod operations;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-13-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-13-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 文件操作函数
+    Tool: Bash
+    Preconditions: git_tools.rs 包含文件操作函数
+    Steps:
+      1. 创建 core/src/server/git/operations.rs
+      2. 从 git_tools.rs 提取文件操作函数并移动
+      3. 在 git/mod.rs 添加模块声明
+      4. 更新引用
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-13-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-13-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-13-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-13-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-13-build.log`
+  - [ ] `.sisyphus/evidence/task-13-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(git): extract file operations to git/operations.rs`
+  - Files: `core/src/server/git/operations.rs`, `core/src/server/git/mod.rs`, `core/src/server/git_tools.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 14. 拆分 git/branches.rs - 分支管理函数
+
+  **What to do**:
+  1. 从 `git_tools.rs` 中提取分支管理相关的函数：
+     - `git_branches`
+     - `git_switch_branch`
+     - `git_create_branch`
+     - `git_delete_branch`（如果存在）
+  2. 移动到 `core/src/server/git/branches.rs`
+  3. 在 `git/mod.rs` 中声明模块：`pub mod branches;`
+
+  **Must NOT do**:
+  - 不修改分支管理逻辑
+  - 不改变函数签名
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3
+  - **Blocks**: Task 15
+  - **Blocked By**: Task 13
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/git_tools.rs` - 查找 `git_branches`, `git_switch_branch`, `git_create_branch` 函数
+
+  **目标位置**:
+  - `core/src/server/git/branches.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/git/branches.rs` 存在
+  - [ ] `git/mod.rs` 包含 `pub mod branches;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-14-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-14-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 分支管理函数
+    Tool: Bash
+    Preconditions: git_tools.rs 包含分支管理函数
+    Steps:
+      1. 创建 core/src/server/git/branches.rs
+      2. 从 git_tools.rs 提取分支管理函数并移动
+      3. 在 git/mod.rs 添加模块声明
+      4. 更新引用
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-14-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-14-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-14-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-14-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-14-build.log`
+  - [ ] `.sisyphus/evidence/task-14-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(git): extract branch management to git/branches.rs`
+  - Files: `core/src/server/git/branches.rs`, `core/src/server/git/mod.rs`, `core/src/server/git_tools.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 15. 拆分 git/commit.rs - 提交操作函数
+
+  **What to do**:
+  1. 从 `git_tools.rs` 中提取提交操作相关的函数：
+     - `git_commit`
+     - `git_rebase`
+     - `git_fetch`
+     - `git_pull`（如果存在）
+     - `git_push`（如果存在）
+  2. 移动到 `core/src/server/git/commit.rs`
+  3. 在 `git/mod.rs` 中声明模块：`pub mod commit;`
+
+  **Must NOT do**:
+  - 不修改提交逻辑
+  - 不改变函数签名
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3
+  - **Blocks**: Task 16
+  - **Blocked By**: Task 14
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/git_tools.rs` - 查找 `git_commit`, `git_rebase`, `git_fetch` 函数
+
+  **目标位置**:
+  - `core/src/server/git/commit.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/git/commit.rs` 存在
+  - [ ] `git/mod.rs` 包含 `pub mod commit;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-15-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-15-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 提交操作函数
+    Tool: Bash
+    Preconditions: git_tools.rs 包含提交操作函数
+    Steps:
+      1. 创建 core/src/server/git/commit.rs
+      2. 从 git_tools.rs 提取提交操作函数并移动
+      3. 在 git/mod.rs 添加模块声明
+      4. 更新引用
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-15-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-15-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-15-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-15-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-15-build.log`
+  - [ ] `.sisyphus/evidence/task-15-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(git): extract commit operations to git/commit.rs`
+  - Files: `core/src/server/git/commit.rs`, `core/src/server/git/mod.rs`, `core/src/server/git_tools.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 16. 拆分 git/integration.rs - 集成工作流函数
+
+  **What to do**:
+  1. 从 `git_tools.rs` 中提取集成工作流相关的函数：
+     - `merge_to_default`
+     - `rebase_onto_default`
+     - 其他 UX 集成函数
+  2. 移动到 `core/src/server/git/integration.rs`
+  3. 在 `git/mod.rs` 中声明模块：`pub mod integration;`
+
+  **Must NOT do**:
+  - 不修改集成逻辑
+  - 不改变函数签名
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码移动任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3
+  - **Blocks**: Task 17
+  - **Blocked By**: Task 15
+
+  **References**:
+
+  **源文件**:
+  - `core/src/server/git_tools.rs` - 查找 `merge_to_default`, `rebase_onto_default` 函数
+
+  **目标位置**:
+  - `core/src/server/git/integration.rs`
+
+  **Acceptance Criteria**:
+
+  **文件创建**:
+  - [ ] 文件 `core/src/server/git/integration.rs` 存在
+  - [ ] `git/mod.rs` 包含 `pub mod integration;`
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-16-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-16-test.log`
+  - [ ] 确认所有测试通过
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 拆分 Git 集成工作流函数
+    Tool: Bash
+    Preconditions: git_tools.rs 包含集成工作流函数
+    Steps:
+      1. 创建 core/src/server/git/integration.rs
+      2. 从 git_tools.rs 提取集成工作流函数并移动
+      3. 在 git/mod.rs 添加模块声明
+      4. 更新引用
+    Expected Result: 代码成功移动，编译通过
+    Failure Indicators: 编译失败
+    Evidence: 编译日志
+
+  Scenario: 编译检查
+    Tool: Bash
+    Preconditions: 代码已移动
+    Steps:
+      1. cd core && cargo build 2>&1 | tee ../.sisyphus/evidence/task-16-build.log
+      2. 检查退出码为 0
+    Expected Result: 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-16-build.log
+
+  Scenario: 测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-16-test.log
+      2. 检查退出码为 0
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-16-test.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-16-build.log`
+  - [ ] `.sisyphus/evidence/task-16-test.log`
+
+  **Commit**: YES
+  - Message: `refactor(git): extract integration workflows to git/integration.rs`
+  - Files: `core/src/server/git/integration.rs`, `core/src/server/git/mod.rs`, `core/src/server/git_tools.rs`
+  - Pre-commit: `cd core && cargo test`
+
+---
+
+- [ ] 17. 更新 git_tools.rs 和 server/mod.rs - 完成 git_tools.rs 重构
+
+  **What to do**:
+  1. 清理 `git_tools.rs`：
+     - 确认所有代码已移动到子模块
+     - 如果 `git_tools.rs` 变为空文件或仅包含少量代码，考虑删除或保留为重新导出模块
+  2. 更新 `server/mod.rs`：
+     - 添加 `pub mod git;`
+     - 根据需要重新导出公共类型和函数
+  3. 更新 `handlers/git.rs` 的导入路径（从 `git_tools` 改为 `git::*`）
+  4. 确保所有测试通过
+
+  **Must NOT do**:
+  - 不改变公共 API
+  - 不修改 Git 工具函数的行为
+
+  **Recommended Agent Profile**:
+  - **Category**: `unspecified-low`
+    - Reason: 代码清理和模块声明更新
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 3（最后一个任务）
+  - **Blocks**: Task 18
+  - **Blocked By**: Task 16
+
+  **References**:
+
+  **文件位置**:
+  - `core/src/server/git_tools.rs` - 清理或删除
+  - `core/src/server/mod.rs` - 模块声明文件
+  - `core/src/server/handlers/git.rs` - 更新导入路径
+
+  **Acceptance Criteria**:
+
+  **文件更新**:
+  - [ ] `git_tools.rs` 被删除或清理为重新导出模块
+  - [ ] `server/mod.rs` 包含 `pub mod git;`
+  - [ ] `handlers/git.rs` 的导入路径已更新
+
+  **编译和测试**:
+  - [ ] 运行 `cd core && cargo build --release 2>&1 | tee ../.sisyphus/evidence/task-17-build.log`
+  - [ ] 确认退出码为 0
+  - [ ] 运行 `cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-17-test.log`
+  - [ ] 确认所有测试通过
+  - [ ] 运行 `cd core && cargo clippy -- -D warnings 2>&1 | tee ../.sisyphus/evidence/task-17-clippy.log`
+  - [ ] 确认无新增警告
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 清理 git_tools.rs 和更新模块声明
+    Tool: Bash
+    Preconditions: 所有 Git 子模块已创建
+    Steps:
+      1. 清理或删除 git_tools.rs
+      2. 在 server/mod.rs 添加 git 模块声明
+      3. 更新 handlers/git.rs 的导入路径
+      4. 根据需要重新导出公共类型
+    Expected Result: 代码清理完成，编译通过
+    Failure Indicators: 编译失败或模块找不到
+    Evidence: 编译日志
+
+  Scenario: Release 编译检查
+    Tool: Bash
+    Preconditions: 代码已更新
+    Steps:
+      1. cd core && cargo build --release 2>&1 | tee ../.sisyphus/evidence/task-17-build.log
+      2. 检查退出码为 0
+    Expected Result: Release 编译成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-17-build.log
+
+  Scenario: 完整测试验证
+    Tool: Bash
+    Preconditions: 编译通过
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-17-test.log
+      2. 检查退出码为 0
+      3. 确认测试数量与基准测试一致
+    Expected Result: 所有测试通过
+    Failure Indicators: 退出码非 0 或测试数量减少
+    Evidence: .sisyphus/evidence/task-17-test.log
+
+  Scenario: Clippy 检查
+    Tool: Bash
+    Preconditions: 测试通过
+    Steps:
+      1. cd core && cargo clippy -- -D warnings 2>&1 | tee ../.sisyphus/evidence/task-17-clippy.log
+      2. 检查退出码为 0
+    Expected Result: 无新增警告
+    Failure Indicators: 退出码非 0 或出现新警告
+    Evidence: .sisyphus/evidence/task-17-clippy.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-17-build.log`
+  - [ ] `.sisyphus/evidence/task-17-test.log`
+  - [ ] `.sisyphus/evidence/task-17-clippy.log`
+
+  **Commit**: YES
+  - Message: `refactor(server): complete git_tools.rs modularization, update module declarations`
+  - Files: `core/src/server/git_tools.rs`, `core/src/server/mod.rs`, `core/src/server/handlers/git.rs`
+  - Pre-commit: `cd core && cargo test && cargo clippy -- -D warnings`
+
+---
+
+### Wave 4: Final Verification
+
+- [ ] 18. 最终验证和清理
+
+  **What to do**:
+  1. 运行完整的测试套件并与基准测试对比
+  2. 运行 `cargo fmt` 格式化所有代码
+  3. 运行 `cargo clippy` 检查代码质量
+  4. 验证模块结构是否符合预期
+  5. 清理临时文件和日志（如果需要）
+  6. 生成最终报告总结拆分结果
+
+  **Must NOT do**:
+  - 不修改任何功能代码
+  - 不改变公共 API
+
+  **Recommended Agent Profile**:
+  - **Category**: `quick`
+    - Reason: 验证和清理任务
+  - **Skills**: []
+  - **Skills Evaluated but Omitted**: 所有技能
+
+  **Parallelization**:
+  - **Can Run In Parallel**: NO
+  - **Parallel Group**: Wave 4
+  - **Blocks**: None
+  - **Blocked By**: Task 17
+
+  **References**:
+
+  **文件位置**:
+  - `.sisyphus/evidence/` - 所有任务的证据日志
+  - `core/src/server/` - 重构后的模块结构
+
+  **Acceptance Criteria**:
+
+  **测试对比**:
+  - [ ] 对比基准测试和最终测试结果：`diff .sisyphus/evidence/task-0-baseline-test.log .sisyphus/evidence/task-18-final-test.log`
+  - [ ] 确认测试用例数量一致
+  - [ ] 确认所有测试通过
+
+  **代码质量**:
+  - [ ] 运行 `cd core && cargo fmt 2>&1 | tee ../.sisyphus/evidence/task-18-fmt.log`
+  - [ ] 运行 `cd core && cargo clippy -- -D warnings 2>&1 | tee ../.sisyphus/evidence/task-18-clippy.log`
+  - [ ] 确认无格式问题和警告
+
+  **模块结构验证**:
+  - [ ] 运行 `tree core/src/server/ -L 2` 查看模块结构
+  - [ ] 确认 `handlers/` 包含 5 个模块
+  - [ ] 确认 `terminal/` 包含 2 个模块
+  - [ ] 确认 `git/` 包含 6 个模块
+
+  **Agent-Executed QA Scenarios**:
+
+  ```
+  Scenario: 最终测试验证
+    Tool: Bash
+    Preconditions: 所有任务已完成
+    Steps:
+      1. cd core && cargo test 2>&1 | tee ../.sisyphus/evidence/task-18-final-test.log
+      2. 检查退出码为 0
+      3. 对比测试结果：diff ../.sisyphus/evidence/task-0-baseline-test.log ../.sisyphus/evidence/task-18-final-test.log
+    Expected Result: 所有测试通过，测试数量一致
+    Failure Indicators: 退出码非 0 或测试数量不一致
+    Evidence: .sisyphus/evidence/task-18-final-test.log
+
+  Scenario: 代码格式化
+    Tool: Bash
+    Preconditions: 所有代码已提交
+    Steps:
+      1. cd core && cargo fmt 2>&1 | tee ../.sisyphus/evidence/task-18-fmt.log
+      2. 检查退出码为 0
+    Expected Result: 代码格式化成功
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-18-fmt.log
+
+  Scenario: Clippy 最终检查
+    Tool: Bash
+    Preconditions: 代码已格式化
+    Steps:
+      1. cd core && cargo clippy -- -D warnings 2>&1 | tee ../.sisyphus/evidence/task-18-clippy.log
+      2. 检查退出码为 0
+    Expected Result: 无警告
+    Failure Indicators: 退出码非 0
+    Evidence: .sisyphus/evidence/task-18-clippy.log
+
+  Scenario: 模块结构验证
+    Tool: Bash
+    Preconditions: 所有任务已完成
+    Steps:
+      1. tree core/src/server/ -L 2 | tee .sisyphus/evidence/task-18-tree.log
+      2. 验证目录结构包含 handlers/, terminal/, git/
+    Expected Result: 模块结构符合预期
+    Failure Indicators: 缺少目录或模块
+    Evidence: .sisyphus/evidence/task-18-tree.log
+  ```
+
+  **Evidence to Capture**:
+  - [ ] `.sisyphus/evidence/task-18-final-test.log` - 最终测试输出
+  - [ ] `.sisyphus/evidence/task-18-fmt.log` - 格式化输出
+  - [ ] `.sisyphus/evidence/task-18-clippy.log` - Clippy 输出
+  - [ ] `.sisyphus/evidence/task-18-tree.log` - 模块结构
+
+  **Commit**: YES
+  - Message: `chore: format code and finalize refactoring`
+  - Files: `core/src/server/**/*.rs`
+  - Pre-commit: `cd core && cargo fmt && cargo clippy -- -D warnings && cargo test`
+
+---
+
+## Commit Strategy
+
+| After Task | Message | Files | Verification |
+|------------|---------|-------|--------------|
+| 1 | `refactor(server): create handlers and terminal module directories` | handlers/mod.rs, terminal/mod.rs | cargo check |
+| 2 | `refactor(server): extract terminal message handlers` | handlers/terminal.rs, handlers/mod.rs, ws.rs | cargo test |
+| 3 | `refactor(server): extract file message handlers` | handlers/file.rs, handlers/mod.rs, ws.rs | cargo test |
+| 4 | `refactor(server): extract git message handlers` | handlers/git.rs, handlers/mod.rs, ws.rs | cargo test |
+| 5 | `refactor(server): extract project/workspace handlers` | handlers/project.rs, handlers/mod.rs, ws.rs | cargo test |
+| 6 | `refactor(server): extract settings handlers` | handlers/settings.rs, handlers/mod.rs, ws.rs | cargo test |
+| 7 | `refactor(server): extract TerminalManager` | terminal/manager.rs, terminal/mod.rs, ws.rs | cargo test |
+| 8 | `refactor(server): extract terminal session logic` | terminal/session.rs, terminal/mod.rs, ws.rs | cargo test |
+| 9 | `refactor(server): complete ws.rs modularization` | ws.rs, server/mod.rs | cargo test && cargo clippy |
+| 10 | `refactor(server): create git module directory` | git/mod.rs | cargo check |
+| 11 | `refactor(git): extract type definitions and utilities` | git/utils.rs, git/mod.rs, git_tools.rs | cargo test |
+| 12 | `refactor(git): extract status query functions` | git/status.rs, git/mod.rs, git_tools.rs | cargo test |
+| 13 | `refactor(git): extract file operations` | git/operations.rs, git/mod.rs, git_tools.rs | cargo test |
+| 14 | `refactor(git): extract branch management` | git/branches.rs, git/mod.rs, git_tools.rs | cargo test |
+| 15 | `refactor(git): extract commit operations` | git/commit.rs, git/mod.rs, git_tools.rs | cargo test |
+| 16 | `refactor(git): extract integration workflows` | git/integration.rs, git/mod.rs, git_tools.rs | cargo test |
+| 17 | `refactor(server): complete git_tools.rs modularization` | git_tools.rs, server/mod.rs, handlers/git.rs | cargo test && cargo clippy |
+| 18 | `chore: format code and finalize refactoring` | all .rs files | cargo fmt && cargo clippy && cargo test |
+
+---
+
+## Success Criteria
+
+### Verification Commands
+```bash
+# 编译检查
+cd core && cargo build --release
+
+# 完整测试
+cd core && cargo test
+
+# Clippy 检查
+cd core && cargo clippy -- -D warnings
+
+# 格式检查
+cd core && cargo fmt --check
+
+# 模块结构
+tree core/src/server/ -L 2
+```
+
+### Final Checklist
+- [ ] All "Must Have" present
+  - [ ] 所有现有测试通过（零功能回归）
+  - [ ] Release 编译成功
+  - [ ] WebSocket 协议保持不变
+  - [ ] 每个子模块拆分后立即测试通过
+  - [ ] 代码风格和注释保持一致
+- [ ] All "Must NOT Have" absent
+  - [ ] 未修改 WebSocket 消息格式或版本号
+  - [ ] 未引入性能退化
+  - [ ] 未创建不必要的抽象
+  - [ ] 未趁机重构其他文件
+  - [ ] 未破坏现有功能
+  - [ ] 未新增 crate 依赖
+  - [ ] 未调整日志级别或格式
+- [ ] 模块结构符合预期
+  - [ ] `ws.rs` 大小减小到 500-800 行
+  - [ ] `git_tools.rs` 被删除或清理
+  - [ ] `handlers/` 包含 5 个模块（terminal, file, git, project, settings）
+  - [ ] `terminal/` 包含 2 个模块（manager, session）
+  - [ ] `git/` 包含 6 个模块（utils, status, operations, branches, commit, integration）
+- [ ] 代码质量
+  - [ ] Clippy 无新增警告
+  - [ ] 代码格式化通过
+  - [ ] 所有公共类型正确导出
