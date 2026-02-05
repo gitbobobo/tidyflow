@@ -1368,3 +1368,60 @@ struct GitStatusChangedNotification {
         return GitStatusChangedNotification(project: project, workspace: workspace)
     }
 }
+
+// MARK: - v1.23: File Rename/Delete Protocol Models
+
+/// 文件重命名结果
+struct FileRenameResult {
+    let project: String
+    let workspace: String
+    let oldPath: String
+    let newPath: String
+    let success: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> FileRenameResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let oldPath = json["old_path"] as? String,
+              let newPath = json["new_path"] as? String,
+              let success = json["success"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        return FileRenameResult(
+            project: project,
+            workspace: workspace,
+            oldPath: oldPath,
+            newPath: newPath,
+            success: success,
+            message: message
+        )
+    }
+}
+
+/// 文件删除结果
+struct FileDeleteResult {
+    let project: String
+    let workspace: String
+    let path: String
+    let success: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> FileDeleteResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String,
+              let success = json["success"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        return FileDeleteResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            success: success,
+            message: message
+        )
+    }
+}

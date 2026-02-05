@@ -417,6 +417,11 @@ struct FileRowView: View {
     let item: FileEntry
     let depth: Int
 
+    // v1.23: 右键菜单状态
+    @State private var showRenameDialog = false
+    @State private var showDeleteConfirm = false
+    @State private var newName = ""
+
     private var isExpanded: Bool {
         appState.isDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
     }
@@ -437,7 +442,7 @@ struct FileRowView: View {
         }
     }
 
-    /// 当前文件是否为资源管理器中应高亮的“当前打开文件”（与活动编辑器标签一致）
+    /// 当前文件是否为资源管理器中应高亮的"当前打开文件"（与活动编辑器标签一致）
     private var isSelected: Bool {
         !item.isDir
             && appState.selectedWorkspaceKey == workspaceKey
@@ -457,6 +462,22 @@ struct FileRowView: View {
                 selectedBackgroundColor: Color.accentColor.opacity(0.35),
                 onTap: { handleTap() }
             )
+            .contextMenu {
+                Button {
+                    newName = item.name
+                    showRenameDialog = true
+                } label: {
+                    Label("重命名", systemImage: "pencil")
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
 
             if item.isDir && isExpanded {
                 FileListContent(
@@ -466,6 +487,30 @@ struct FileRowView: View {
                 )
                 .environmentObject(appState)
             }
+        }
+        .sheet(isPresented: $showRenameDialog) {
+            RenameDialogView(
+                originalName: item.name,
+                newName: $newName,
+                isDir: item.isDir,
+                onConfirm: {
+                    if !newName.isEmpty && newName != item.name {
+                        appState.renameFile(workspaceKey: workspaceKey, path: item.path, newName: newName)
+                    }
+                    showRenameDialog = false
+                },
+                onCancel: {
+                    showRenameDialog = false
+                }
+            )
+        }
+        .alert("确认删除", isPresented: $showDeleteConfirm) {
+            Button("取消", role: .cancel) { }
+            Button("删除", role: .destructive) {
+                appState.deleteFile(workspaceKey: workspaceKey, path: item.path)
+            }
+        } message: {
+            Text("确定要将「\(item.name)」移到废纸篓吗？")
         }
     }
 
@@ -581,6 +626,66 @@ struct NoToolSelectedView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - v1.23: 重命名对话框
+
+/// 重命名对话框视图
+struct RenameDialogView: View {
+    let originalName: String
+    @Binding var newName: String
+    let isDir: Bool
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    @FocusState private var isTextFieldFocused: Bool
+
+    private var isValid: Bool {
+        !newName.isEmpty && newName != originalName && !newName.contains("/") && !newName.contains("\\")
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // 标题
+            HStack {
+                Image(systemName: isDir ? "folder" : "doc")
+                    .foregroundColor(.accentColor)
+                Text("重命名\(isDir ? "文件夹" : "文件")")
+                    .font(.headline)
+            }
+
+            // 输入框
+            TextField("新名称", text: $newName)
+                .textFieldStyle(.roundedBorder)
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    if isValid {
+                        onConfirm()
+                    }
+                }
+
+            // 按钮
+            HStack(spacing: 12) {
+                Button("取消") {
+                    onCancel()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+
+                Button("确定") {
+                    onConfirm()
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                .disabled(!isValid)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
+        .onAppear {
+            // 自动聚焦并选中文件名（不含扩展名）
+            isTextFieldFocused = true
+        }
     }
 }
 

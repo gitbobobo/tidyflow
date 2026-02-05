@@ -29,6 +29,8 @@ petname = "2.0"
 # v1.22: File watcher
 notify = "6.1"
 notify-debouncer-mini = "0.4"
+# v1.23: File rename/delete (macOS Trash)
+trash = "3"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

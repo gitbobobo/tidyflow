@@ -53,6 +53,9 @@ class WSClient: NSObject, ObservableObject {
     var onWatchUnsubscribed: (() -> Void)?
     var onFileChanged: ((FileChangedNotification) -> Void)?
     var onGitStatusChanged: ((GitStatusChangedNotification) -> Void)?
+    // v1.23: 文件重命名/删除回调
+    var onFileRenameResult: ((FileRenameResult) -> Void)?
+    var onFileDeleteResult: ((FileDeleteResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -513,6 +516,29 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // MARK: - v1.23: 文件重命名/删除
+
+    /// 请求重命名文件或目录
+    func requestFileRename(project: String, workspace: String, oldPath: String, newName: String) {
+        send([
+            "type": "file_rename",
+            "project": project,
+            "workspace": workspace,
+            "old_path": oldPath,
+            "new_name": newName
+        ])
+    }
+
+    /// 请求删除文件或目录（移到回收站）
+    func requestFileDelete(project: String, workspace: String, path: String) {
+        send([
+            "type": "file_delete",
+            "project": project,
+            "workspace": workspace,
+            "path": path
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -721,6 +747,16 @@ class WSClient: NSObject, ObservableObject {
         case "git_status_changed":
             if let notification = GitStatusChangedNotification.from(json: json) {
                 onGitStatusChanged?(notification)
+            }
+
+        case "file_rename_result":
+            if let result = FileRenameResult.from(json: json) {
+                onFileRenameResult?(result)
+            }
+
+        case "file_delete_result":
+            if let result = FileDeleteResult.from(json: json) {
+                onFileDeleteResult?(result)
             }
 
         case "error":

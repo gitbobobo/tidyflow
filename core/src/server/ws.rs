@@ -607,6 +607,9 @@ fn file_error_to_response(e: &FileApiError) -> (String, String) {
         FileApiError::FileTooLarge => ("file_too_large".to_string(), e.to_string()),
         FileApiError::InvalidUtf8 => ("invalid_utf8".to_string(), e.to_string()),
         FileApiError::IoError(_) => ("io_error".to_string(), e.to_string()),
+        FileApiError::TargetExists => ("target_exists".to_string(), e.to_string()),
+        FileApiError::InvalidName(_) => ("invalid_name".to_string(), e.to_string()),
+        FileApiError::TrashError(_) => ("trash_error".to_string(), e.to_string()),
     }
 }
 
@@ -3042,6 +3045,116 @@ async fn handle_client_message(
             let mut w = watcher.lock().await;
             w.unsubscribe();
             send_message(socket, &ServerMessage::WatchUnsubscribed).await?;
+        }
+
+        // v1.23: File rename
+        ClientMessage::FileRename { project, workspace, old_path, new_name } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
+                            match file_api::rename_file(&root, &old_path, &new_name) {
+                                Ok(new_path) => {
+                                    send_message(socket, &ServerMessage::FileRenameResult {
+                                        project,
+                                        workspace,
+                                        old_path,
+                                        new_path,
+                                        success: true,
+                                        message: None,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    let (_, message) = file_error_to_response(&e);
+                                    send_message(socket, &ServerMessage::FileRenameResult {
+                                        project,
+                                        workspace,
+                                        old_path,
+                                        new_path: String::new(),
+                                        success: false,
+                                        message: Some(message),
+                                    }).await?;
+                                }
+                            }
+                        }
+                        None => {
+                            send_message(socket, &ServerMessage::FileRenameResult {
+                                project,
+                                workspace,
+                                old_path,
+                                new_path: String::new(),
+                                success: false,
+                                message: Some("Workspace not found".to_string()),
+                            }).await?;
+                        }
+                    }
+                }
+                None => {
+                    send_message(socket, &ServerMessage::FileRenameResult {
+                        project,
+                        workspace,
+                        old_path,
+                        new_path: String::new(),
+                        success: false,
+                        message: Some("Project not found".to_string()),
+                    }).await?;
+                }
+            }
+        }
+
+        // v1.23: File delete
+        ClientMessage::FileDelete { project, workspace, path } => {
+            let state = app_state.lock().await;
+            match state.get_project(&project) {
+                Some(p) => {
+                    match get_workspace_root(p, &workspace) {
+                        Some(root) => {
+                            drop(state);
+                            match file_api::delete_file(&root, &path) {
+                                Ok(()) => {
+                                    send_message(socket, &ServerMessage::FileDeleteResult {
+                                        project,
+                                        workspace,
+                                        path,
+                                        success: true,
+                                        message: None,
+                                    }).await?;
+                                }
+                                Err(e) => {
+                                    let (_, message) = file_error_to_response(&e);
+                                    send_message(socket, &ServerMessage::FileDeleteResult {
+                                        project,
+                                        workspace,
+                                        path,
+                                        success: false,
+                                        message: Some(message),
+                                    }).await?;
+                                }
+                            }
+                        }
+                        None => {
+                            send_message(socket, &ServerMessage::FileDeleteResult {
+                                project,
+                                workspace,
+                                path,
+                                success: false,
+                                message: Some("Workspace not found".to_string()),
+                            }).await?;
+                        }
+                    }
+                }
+                None => {
+                    send_message(socket, &ServerMessage::FileDeleteResult {
+                        project,
+                        workspace,
+                        path,
+                        success: false,
+                        message: Some("Project not found".to_string()),
+                    }).await?;
+                }
+            }
         }
     }
 

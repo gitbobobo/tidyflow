@@ -731,6 +731,16 @@ class AppState: ObservableObject {
             self?.fetchGitBranches(workspaceKey: notification.workspace)
         }
 
+        // v1.23: 文件重命名结果
+        wsClient.onFileRenameResult = { [weak self] result in
+            self?.handleFileRenameResult(result)
+        }
+
+        // v1.23: 文件删除结果
+        wsClient.onFileDeleteResult = { [weak self] result in
+            self?.handleFileDeleteResult(result)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -907,6 +917,89 @@ class AppState: ObservableObject {
     func isDirectoryExpanded(workspaceKey: String, path: String) -> Bool {
         let key = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: path)
         return directoryExpandState[key] ?? false
+    }
+
+    // MARK: - v1.23: File Rename/Delete API
+
+    /// 处理文件重命名结果
+    private func handleFileRenameResult(_ result: FileRenameResult) {
+        if result.success {
+            print("[AppState] 文件重命名成功: \(result.oldPath) -> \(result.newPath)")
+            // 刷新文件列表
+            refreshFileList()
+            // 如果重命名的文件正在编辑器中打开，更新标签
+            updateEditorTabAfterRename(oldPath: result.oldPath, newPath: result.newPath)
+        } else {
+            print("[AppState] 文件重命名失败: \(result.message ?? "未知错误")")
+        }
+    }
+
+    /// 处理文件删除结果
+    private func handleFileDeleteResult(_ result: FileDeleteResult) {
+        if result.success {
+            print("[AppState] 文件删除成功: \(result.path)")
+            // 刷新文件列表
+            refreshFileList()
+            // 如果删除的文件正在编辑器中打开，关闭标签
+            closeEditorTabAfterDelete(path: result.path)
+        } else {
+            print("[AppState] 文件删除失败: \(result.message ?? "未知错误")")
+        }
+    }
+
+    /// 请求重命名文件或目录
+    func renameFile(workspaceKey: String, path: String, newName: String) {
+        guard connectionState == .connected else {
+            print("[AppState] 无法重命名：未连接")
+            return
+        }
+        wsClient.requestFileRename(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            oldPath: path,
+            newName: newName
+        )
+    }
+
+    /// 请求删除文件或目录（移到回收站）
+    func deleteFile(workspaceKey: String, path: String) {
+        guard connectionState == .connected else {
+            print("[AppState] 无法删除：未连接")
+            return
+        }
+        wsClient.requestFileDelete(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            path: path
+        )
+    }
+
+    /// 重命名后更新编辑器标签
+    private func updateEditorTabAfterRename(oldPath: String, newPath: String) {
+        guard let globalKey = currentGlobalWorkspaceKey else { return }
+        guard var tabs = workspaceTabs[globalKey] else { return }
+        // 检查是否有打开的编辑器标签匹配旧路径
+        if let index = tabs.firstIndex(where: { $0.kind == .editor && $0.payload == oldPath }) {
+            // 更新标签路径（payload）和标题
+            tabs[index].payload = newPath
+            let newFileName = String(newPath.split(separator: "/").last ?? Substring(newPath))
+            tabs[index].title = newFileName
+            workspaceTabs[globalKey] = tabs
+        }
+    }
+
+    /// 删除后关闭编辑器标签
+    private func closeEditorTabAfterDelete(path: String) {
+        guard let globalKey = currentGlobalWorkspaceKey else { return }
+        guard let tabs = workspaceTabs[globalKey] else { return }
+        // 检查是否有打开的编辑器标签匹配路径（包括子路径，因为可能删除的是目录）
+        let tabsToClose = tabs.filter { tab in
+            tab.kind == .editor && (tab.payload == path || tab.payload.hasPrefix(path + "/"))
+        }
+
+        for tab in tabsToClose {
+            closeTab(workspaceKey: globalKey, tabId: tab.id)
+        }
     }
 
     // MARK: - Phase C2-2a: Git Diff API

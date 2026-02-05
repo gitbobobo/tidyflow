@@ -264,6 +264,19 @@ pub enum ClientMessage {
         workspace: String,
     },
     WatchUnsubscribe,
+
+    // v1.23: File rename/delete
+    FileRename {
+        project: String,
+        workspace: String,
+        old_path: String,
+        new_name: String,
+    },
+    FileDelete {
+        project: String,
+        workspace: String,
+        path: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -595,6 +608,25 @@ pub enum ServerMessage {
         project: String,
         workspace: String,
     },
+
+    // v1.23: File rename/delete results
+    FileRenameResult {
+        project: String,
+        workspace: String,
+        old_path: String,
+        new_path: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    FileDeleteResult {
+        project: String,
+        workspace: String,
+        path: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -706,6 +738,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "git_branch_divergence".to_string(),
         "project_import".to_string(),
         "file_watch".to_string(),
+        "file_rename_delete".to_string(),
     ]
 }
 

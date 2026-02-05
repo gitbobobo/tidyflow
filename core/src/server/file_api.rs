@@ -30,6 +30,12 @@ pub enum FileApiError {
     FileTooLarge,
     InvalidUtf8,
     IoError(std::io::Error),
+    /// v1.23: 目标文件已存在
+    TargetExists,
+    /// v1.23: 无效的文件名
+    InvalidName(String),
+    /// v1.23: 回收站操作失败
+    TrashError(String),
 }
 
 impl std::fmt::Display for FileApiError {
@@ -41,6 +47,9 @@ impl std::fmt::Display for FileApiError {
             FileApiError::FileTooLarge => write!(f, "File exceeds 1MB limit"),
             FileApiError::InvalidUtf8 => write!(f, "File is not valid UTF-8"),
             FileApiError::IoError(e) => write!(f, "I/O error: {}", e),
+            FileApiError::TargetExists => write!(f, "Target file already exists"),
+            FileApiError::InvalidName(reason) => write!(f, "Invalid file name: {}", reason),
+            FileApiError::TrashError(msg) => write!(f, "Trash error: {}", msg),
         }
     }
 }
@@ -203,6 +212,89 @@ pub fn write_file(workspace_root: &Path, relative_path: &str, content: &str) -> 
     fs::rename(&temp_path, &file_path)?;
 
     Ok(size)
+}
+
+/// v1.23: 验证文件名是否有效
+fn validate_filename(name: &str) -> Result<(), FileApiError> {
+    // 不能为空
+    if name.is_empty() {
+        return Err(FileApiError::InvalidName("文件名不能为空".to_string()));
+    }
+    // 不能包含路径分隔符
+    if name.contains('/') || name.contains('\\') {
+        return Err(FileApiError::InvalidName("文件名不能包含路径分隔符".to_string()));
+    }
+    // 不能是 . 或 ..
+    if name == "." || name == ".." {
+        return Err(FileApiError::InvalidName("文件名不能是 . 或 ..".to_string()));
+    }
+    // 不能包含空字符
+    if name.contains('\0') {
+        return Err(FileApiError::InvalidName("文件名不能包含空字符".to_string()));
+    }
+    Ok(())
+}
+
+/// v1.23: 重命名文件或目录
+/// 返回新的相对路径
+pub fn rename_file(workspace_root: &Path, old_path: &str, new_name: &str) -> Result<String, FileApiError> {
+    // 验证新文件名
+    validate_filename(new_name)?;
+
+    // 解析旧路径
+    let old_full_path = resolve_safe_path(workspace_root, old_path)?;
+    if !old_full_path.exists() {
+        return Err(FileApiError::FileNotFound);
+    }
+
+    // 计算新路径（同目录下）
+    let parent = old_full_path.parent().ok_or(FileApiError::PathEscape)?;
+    let new_full_path = parent.join(new_name);
+
+    // 检查目标是否已存在
+    if new_full_path.exists() {
+        return Err(FileApiError::TargetExists);
+    }
+
+    // 验证新路径仍在工作空间内
+    let root_canonical = workspace_root.canonicalize()?;
+    let parent_canonical = parent.canonicalize()?;
+    if !parent_canonical.starts_with(&root_canonical) {
+        return Err(FileApiError::PathEscape);
+    }
+
+    debug!("Renaming {:?} to {:?}", old_full_path, new_full_path);
+
+    // 执行重命名
+    fs::rename(&old_full_path, &new_full_path)?;
+
+    // 计算新的相对路径
+    let new_relative = if let Some(parent_path) = Path::new(old_path).parent() {
+        if parent_path.as_os_str().is_empty() || parent_path == Path::new(".") {
+            new_name.to_string()
+        } else {
+            format!("{}/{}", parent_path.display(), new_name)
+        }
+    } else {
+        new_name.to_string()
+    };
+
+    Ok(new_relative)
+}
+
+/// v1.23: 删除文件或目录（移到回收站）
+pub fn delete_file(workspace_root: &Path, path: &str) -> Result<(), FileApiError> {
+    let full_path = resolve_safe_path(workspace_root, path)?;
+    if !full_path.exists() {
+        return Err(FileApiError::FileNotFound);
+    }
+
+    debug!("Moving to trash: {:?}", full_path);
+
+    // 使用 trash crate 移到回收站
+    trash::delete(&full_path).map_err(|e| FileApiError::TrashError(e.to_string()))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
