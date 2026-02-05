@@ -23,8 +23,6 @@ TidyFlow 是一款 macOS 原生的工作流管理工具，旨在解决开发者�
 
 > "让你的开发流程像流水一样顺畅。"
 
----
-
 ## ✨ 核心特性
 
 - 📂 **多项目并行管理**：在一个界面中同时管理多个独立项目，互不干扰。
@@ -34,21 +32,9 @@ TidyFlow 是一款 macOS 原生的工作流管理工具，旨在解决开发者�
 - 🚀 **极致性能**：Rust 编写的核心后端，冷启动秒开，Workspace 创建瞬间完成。
 - 🛠️ **自动化环境准备**：克隆项目后自动检测类型并执行 `setup` 脚本，开箱即用。
 
----
-
 ## 📸 界面预览
 
-| 项目管理与 Workspace | 终端体验 |
-| :---: | :---: |
-| ![项目列表占位符](docs/images/screenshot-projects.png) | ![终端占位符](docs/images/screenshot-terminal.png) |
-| *多项目侧边栏与工作区管理* | *VS Code 级的专业终端渲染* |
-
-| Git 交互面板 | 全局命令板 (Command Palette) |
-| :---: | :---: |
-| ![Git面板占位符](docs/images/screenshot-git.png) | ![命令板占位符](docs/images/screenshot-palette.png) |
-| *原生的 Git 状态管理与 Diff 视图* | *高效的全键盘操作体验* |
-
----
+![](./docs/images/screenshot.png)
 
 ## 🏗️ 技术架构
 
@@ -58,8 +44,6 @@ TidyFlow 采用现代化的**混合原生架构**：
 - **Terminal Container**: 通过 WKWebView 承载 xterm.js，提供业界标准的高性能终端渲染。
 - **Core Engine (Backend)**: 由 Rust 编写的高性能引擎，处理 PTY 管理、Git 操作、文件系统和状态持久化。
 - **Communication**: 前后端通过 JSON-RPC 2.0 协议在 WebSocket 上进行高效通信。
-
----
 
 ## ⌨️ 常用快捷键
 
@@ -73,8 +57,6 @@ TidyFlow 采用现代化的**混合原生架构**：
 - `Cmd + W`: 关闭当前 Tab
 - `Ctrl + Tab`: 切换下一个 Tab
 - `Ctrl + Shift + Tab`: 切换上一个 Tab
-
----
 
 ## 🛠️ 如何构建
 
@@ -96,8 +78,6 @@ cargo build --release
 open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
 ```
 
----
-
 ## 📦 打包发布
 
 项目支持自动化的签名与公证流程，确保在其他 macOS 设备上顺畅运行。
@@ -106,15 +86,7 @@ open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
 - **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/release/build_dmg.sh --sign`
 - **公证**: `./scripts/release/notarize.sh --profile tidyflow-notary`
 
----
-
 ## 📄 开源协议
 
 本项目采用 **LGPL-3.0** 协议开源。
 详细内容请参阅 [LICENSE](LICENSE) 与 [COPYING](COPYING)。
-
----
-
-<p align="center">
-  Made with ❤️ for macOS Developers
-</p>

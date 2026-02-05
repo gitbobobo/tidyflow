@@ -125,8 +125,22 @@
       return dims;
     };
 
+    // WebLinks addon - 支持 Command+Click 在浏览器中打开链接
     try {
-      const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+      const webLinksAddon = new WebLinksAddon.WebLinksAddon(
+        (event, uri) => {
+          // 仅在按住 Command 键时打开链接
+          if (event.metaKey) {
+            // 通过 Native Bridge 打开 URL
+            if (window.tidyflowNative && window.tidyflowNative.post) {
+              window.tidyflowNative.post("open_url", { url: uri });
+            } else {
+              // 回退：尝试直接打开
+              window.open(uri, "_blank");
+            }
+          }
+        }
+      );
       term.loadAddon(webLinksAddon);
     } catch (e) {
       console.warn("WebLinks addon failed:", e.message);

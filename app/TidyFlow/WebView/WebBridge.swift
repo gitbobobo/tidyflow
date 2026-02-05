@@ -108,6 +108,14 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
                 print("[WebBridge] Copied to clipboard: \(text.prefix(50))...")
             }
 
+        // 打开 URL：终端中 Command+Click 链接
+        case "open_url":
+            if let urlString = body["url"] as? String,
+               let url = URL(string: urlString) {
+                NSWorkspace.shared.open(url)
+                print("[WebBridge] Opening URL: \(urlString)")
+            }
+
         default:
             print("[WebBridge] Unknown message type: \(type)")
         }

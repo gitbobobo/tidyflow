@@ -126,8 +126,8 @@ pub fn list_files(workspace_root: &Path, relative_path: &str) -> Result<Vec<File
         let metadata = entry.metadata()?;
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip hidden files (starting with .)
-        if name.starts_with('.') {
+        // 只跳过 .git 目录，显示其他隐藏文件
+        if name == ".git" {
             continue;
         }
 
