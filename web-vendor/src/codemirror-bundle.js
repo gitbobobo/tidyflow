@@ -7,12 +7,16 @@
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration } from "@codemirror/view";
+import { StreamLanguage } from "@codemirror/language";
 
 // 主题
 import { oneDark } from "@codemirror/theme-one-dark";
 
 // 语言支持
 import { javascript } from "@codemirror/lang-javascript";
+
+// Legacy modes (shell)
+import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
 import { json } from "@codemirror/lang-json";
@@ -62,6 +66,11 @@ const languageExtensions = {
 
   // TOML - 使用 YAML 作为近似
   toml: () => yaml(),
+
+  // Shell
+  sh: () => StreamLanguage.define(shell),
+  bash: () => StreamLanguage.define(shell),
+  zsh: () => StreamLanguage.define(shell),
 };
 
 /**
@@ -101,5 +110,6 @@ window.CodeMirror = {
     css,
     markdown,
     yaml,
+    shell: () => StreamLanguage.define(shell),
   },
 };
