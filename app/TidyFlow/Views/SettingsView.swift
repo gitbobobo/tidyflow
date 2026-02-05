@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 
 struct SettingsContentView: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
         TabView {
             CustomCommandsSection()
@@ -16,6 +16,11 @@ struct SettingsContentView: View {
                     Label("设置", systemImage: "gear")
                 }
                 .environmentObject(appState)
+
+            AboutSection()
+                .tabItem {
+                    Label("关于", systemImage: "info.circle")
+                }
         }
         .frame(width: 550, height: 400)
     }
@@ -482,3 +487,50 @@ struct CommandIconView: View {
 }
 
 // BrandIcon 枚举定义在 Models.swift 中
+
+// MARK: - 关于页面
+
+struct AboutSection: View {
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            // 应用图标
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 96, height: 96)
+
+            // 应用名称
+            Text("TidyFlow")
+                .font(.system(size: 24, weight: .semibold))
+
+            // 版本信息
+            Text("版本 \(appVersion) (\(buildNumber))")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+
+            // 描述
+            Text("macOS 原生多项目开发工具")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            // 版权信息
+            Text("© 2026 TidyFlow. All rights reserved.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+}
