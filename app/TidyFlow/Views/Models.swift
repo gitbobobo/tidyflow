@@ -197,6 +197,35 @@ enum BrandIcon: String, CaseIterable {
         case .opencode: return "OpenCode"
         }
     }
+
+    /// 是否有 AI Agent 功能（VS Code 和 Trae 没有）
+    var hasAIAgent: Bool {
+        switch self {
+        case .vscode, .trae: return false
+        default: return true
+        }
+    }
+
+    /// 建议的正常模式命令
+    var suggestedCommand: String? {
+        switch self {
+        case .cursor: return "cursor-agent"
+        case .claude: return "claude"
+        case .codex: return "codex"
+        case .gemini: return "gemini"
+        case .opencode: return "opencode"
+        case .vscode, .trae: return nil
+        }
+    }
+
+    /// 建议的 Yolo 模式命令（自动执行，跳过确认）
+    var yoloCommand: String? {
+        switch self {
+        case .claude: return "claude --dangerously-skip-permissions"
+        case .codex: return "codex --full-auto"
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Command Palette Models

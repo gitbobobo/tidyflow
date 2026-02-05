@@ -150,25 +150,31 @@ struct CustomCommandRow: View {
 struct CommandEditSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
-    
+
     @State private var command: CustomCommand
     let isNew: Bool
     let onSave: (CustomCommand) -> Void
-    
+
     @State private var showIconPicker = false
-    
+
     init(command: CustomCommand, isNew: Bool, onSave: @escaping (CustomCommand) -> Void) {
         _command = State(initialValue: command)
         self.isNew = isNew
         self.onSave = onSave
     }
-    
+
+    /// 当前选择的品牌图标
+    private var selectedBrand: BrandIcon? {
+        guard command.icon.hasPrefix("brand:") else { return nil }
+        let brandName = String(command.icon.dropFirst(6))
+        return BrandIcon(rawValue: brandName)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    TextField("名称", text: $command.name)
-                    
+                    // 图标在前
                     LabeledContent("图标") {
                         Button(action: { showIconPicker = true }) {
                             HStack(spacing: 4) {
@@ -179,8 +185,43 @@ struct CommandEditSheet: View {
                         }
                         .buttonStyle(.bordered)
                     }
+
+                    // 名称在后
+                    TextField("名称", text: $command.name)
                 }
-                
+
+                // 当选择品牌图标且有 AI Agent 时显示建议配置
+                if let brand = selectedBrand, brand.hasAIAgent {
+                    Section("建议配置") {
+                        if let cmd = brand.suggestedCommand {
+                            HStack {
+                                Text("正常模式")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text(cmd)
+                                    .font(.system(.body, design: .monospaced))
+                                Button("使用") {
+                                    command.command = cmd
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        if let yolo = brand.yoloCommand {
+                            HStack {
+                                Text("Yolo 模式")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text(yolo)
+                                    .font(.system(.body, design: .monospaced))
+                                Button("使用") {
+                                    command.command = yolo
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+
                 Section("命令") {
                     TextEditor(text: $command.command)
                         .font(.system(size: 12, design: .monospaced))
@@ -192,14 +233,14 @@ struct CommandEditSheet: View {
                 }
             }
             .formStyle(.grouped)
-            
+
             // 底部按钮
             HStack {
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.escape, modifiers: [])
-                
+
                 Spacer()
-                
+
                 Button(isNew ? "添加" : "保存") {
                     onSave(command)
                     dismiss()
@@ -211,9 +252,18 @@ struct CommandEditSheet: View {
             .padding()
             .background(Color(NSColor.windowBackgroundColor))
         }
-        .frame(width: 450, height: 350)
+        .frame(width: 450, height: 480)
         .sheet(isPresented: $showIconPicker) {
             IconPickerSheet(selectedIcon: $command.icon)
+        }
+        .onChange(of: command.icon) { _, newIcon in
+            // 选择品牌图标时自动填充名称
+            if newIcon.hasPrefix("brand:") {
+                let brandName = String(newIcon.dropFirst(6))
+                if let brand = BrandIcon(rawValue: brandName) {
+                    command.name = brand.displayName
+                }
+            }
         }
     }
 }
