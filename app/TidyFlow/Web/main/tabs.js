@@ -76,7 +76,7 @@
       cursorBlink: true,
       cursorStyle: "block",
       fontSize: 14,
-      fontFamily: '"MesloLGS NF", "Meslo LG M DZ", "FiraCode Nerd Font", "JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
+      fontFamily: '"MesloLGS NF", "Meslo LG M DZ", "FiraCode Nerd Font", "JetBrains Mono", "Sarasa Mono SC", "Source Han Mono", "Noto Sans Mono CJK SC", Menlo, Monaco, "Courier New", monospace',
       drawBoldTextInBrightColors: false,
       allowTransparency: true,
       theme: {

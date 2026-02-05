@@ -314,7 +314,8 @@ body.renderer-only #tab-content {
 .diff-text {
   font-family:
     "MesloLGS NF", "Meslo LG M DZ", "FiraCode Nerd Font",
-    "JetBrains Mono", Menlo, Monaco, "Courier New", monospace;
+    "JetBrains Mono", "Sarasa Mono SC", "Source Han Mono",
+    "Noto Sans Mono CJK SC", Menlo, Monaco, "Courier New", monospace;
   font-size: 13px;
   line-height: 1.5;
   margin: 0;
@@ -446,7 +447,8 @@ body.renderer-only #tab-content {
 .diff-split-container {
   font-family:
     "MesloLGS NF", "Meslo LG M DZ", "FiraCode Nerd Font",
-    "JetBrains Mono", Menlo, Monaco, "Courier New", monospace;
+    "JetBrains Mono", "Sarasa Mono SC", "Source Han Mono",
+    "Noto Sans Mono CJK SC", Menlo, Monaco, "Courier New", monospace;
   font-size: 13px;
   line-height: 1.5;
 }
