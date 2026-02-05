@@ -44,11 +44,6 @@ impl ProjectManager {
             .canonicalize()
             .map_err(|_| ProjectError::PathNotFound(path.display().to_string()))?;
 
-        // Check if it's a git repository
-        if !abs_path.join(".git").exists() {
-            return Err(ProjectError::NotGitRepo(abs_path.display().to_string()));
-        }
-
         // Load project config
         let config = ProjectConfig::load(&abs_path).unwrap_or_default();
 

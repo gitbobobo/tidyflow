@@ -252,6 +252,9 @@ pub async fn handle_project_message(
                         crate::workspace::workspace::WorkspaceError::ProjectNotFound(_) => {
                             ("project_not_found".to_string(), e.to_string())
                         }
+                        crate::workspace::workspace::WorkspaceError::NotGitRepo(_) => {
+                            ("not_git_repo".to_string(), e.to_string())
+                        }
                         _ => ("workspace_error".to_string(), e.to_string()),
                     };
                     send_message(socket, &ServerMessage::Error { code, message }).await?;

@@ -95,7 +95,7 @@ struct AddProjectSheet: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle")
                         .foregroundColor(.blue)
-                    Text("项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间，请确保项目已配置 Git 远程仓库。")
+                    Text("项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间（基于 Git Worktree），请确保项目是 Git 仓库并已配置远程仓库。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

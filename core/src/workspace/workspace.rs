@@ -22,6 +22,8 @@ pub enum WorkspaceError {
     NotFound(String),
     #[error("Git operation failed: {0}")]
     GitError(String),
+    #[error("Not a git repository: {0}")]
+    NotGitRepo(String),
     #[error("State error: {0}")]
     StateError(#[from] StateError),
     #[error("IO error: {0}")]
@@ -45,6 +47,14 @@ impl WorkspaceManager {
         let project = state
             .get_project(project_name)
             .ok_or_else(|| WorkspaceError::ProjectNotFound(project_name.to_string()))?;
+
+        // 检查项目根目录是否为 Git 仓库
+        if !project.root_path.join(".git").exists() {
+            return Err(WorkspaceError::NotGitRepo(format!(
+                "项目 '{}' 的根目录不是 Git 仓库，无法创建工作空间。请先在项目目录中运行 git init 初始化仓库。",
+                project_name
+            )));
+        }
 
         // 检查项目是否有 remote URL，没有则不允许创建工作空间
         if project.remote_url.is_none() {
