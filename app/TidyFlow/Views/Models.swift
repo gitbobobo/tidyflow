@@ -279,6 +279,9 @@ struct GitStatusIndex {
 
     /// 向上传播状态到所有父目录
     private mutating func propagateToParents(path: String, status: String) {
+        // 被忽略的文件（!!）不传播到父目录，因为用户关心的是有变更的文件
+        if status == "!!" { return }
+
         var currentPath = path
         while let lastSlash = currentPath.lastIndex(of: "/") {
             currentPath = String(currentPath[..<lastSlash])
@@ -342,7 +345,8 @@ struct FileEntry: Identifiable, Equatable {
     let path: String      // 相对路径
     let isDir: Bool
     let size: UInt64
-    
+    let isIgnored: Bool   // 是否被 .gitignore 忽略
+
     /// 从 JSON 解析
     static func from(json: [String: Any], parentPath: String) -> FileEntry? {
         guard let name = json["name"] as? String,
@@ -350,8 +354,9 @@ struct FileEntry: Identifiable, Equatable {
             return nil
         }
         let size = json["size"] as? UInt64 ?? 0
+        let isIgnored = json["is_ignored"] as? Bool ?? false
         let path = parentPath.isEmpty ? name : "\(parentPath)/\(name)"
-        return FileEntry(name: name, path: path, isDir: isDir, size: size)
+        return FileEntry(name: name, path: path, isDir: isDir, size: size, isIgnored: isIgnored)
     }
 }
 

@@ -2,9 +2,11 @@
 //!
 //! Provides secure file list/read/write within workspace boundaries.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tracing::{debug, warn};
 
 /// Maximum file size: 1MB
@@ -19,6 +21,8 @@ pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    /// 是否被 .gitignore 忽略
+    pub is_ignored: bool,
 }
 
 /// File API error types
@@ -125,6 +129,45 @@ pub fn resolve_safe_path(
     }
 }
 
+/// 批量检查文件是否被 git 忽略
+/// 返回被忽略的文件名集合
+fn get_ignored_files(dir_path: &Path, file_names: &[String]) -> HashSet<String> {
+    if file_names.is_empty() {
+        return HashSet::new();
+    }
+
+    // 构建相对路径列表（相对于 dir_path）
+    let input = file_names.join("\n");
+
+    let output = match Command::new("git")
+        .args(["check-ignore", "--stdin"])
+        .current_dir(dir_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(input.as_bytes());
+            }
+            match child.wait_with_output() {
+                Ok(o) => o,
+                Err(_) => return HashSet::new(),
+            }
+        }
+        Err(_) => return HashSet::new(),
+    };
+
+    // git check-ignore 返回被忽略的文件，每行一个
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// List files in a directory within workspace
 pub fn list_files(
     workspace_root: &Path,
@@ -138,27 +181,38 @@ pub fn list_files(
 
     debug!("Listing files in: {:?}", dir_path);
 
-    let mut entries = Vec::new();
+    // 先收集所有文件名
+    let mut raw_entries = Vec::new();
     for entry in fs::read_dir(&dir_path)? {
         let entry = entry?;
         let metadata = entry.metadata()?;
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // 只跳过 .git 目录，显示其他隐藏文件
-        if name == ".git" {
+        // 跳过 .git 目录和 .DS_Store 文件
+        if name == ".git" || name == ".DS_Store" {
             continue;
         }
 
-        entries.push(FileEntry {
-            name,
-            is_dir: metadata.is_dir(),
-            size: if metadata.is_file() {
-                metadata.len()
-            } else {
-                0
-            },
-        });
+        raw_entries.push((name, metadata.is_dir(), metadata.len()));
     }
+
+    // 批量检查 git 忽略状态
+    let file_names: Vec<String> = raw_entries.iter().map(|(n, _, _)| n.clone()).collect();
+    let ignored_set = get_ignored_files(&dir_path, &file_names);
+
+    // 构建最终结果
+    let mut entries: Vec<FileEntry> = raw_entries
+        .into_iter()
+        .map(|(name, is_dir, len)| {
+            let is_ignored = ignored_set.contains(&name);
+            FileEntry {
+                name,
+                is_dir,
+                size: if !is_dir { len } else { 0 },
+                is_ignored,
+            }
+        })
+        .collect();
 
     // Sort: directories first, then alphabetically
     entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {

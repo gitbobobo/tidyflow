@@ -662,6 +662,9 @@ pub struct FileEntryInfo {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    /// 是否被 .gitignore 忽略
+    #[serde(default)]
+    pub is_ignored: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

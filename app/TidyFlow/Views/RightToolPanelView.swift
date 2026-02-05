@@ -459,6 +459,10 @@ struct FileRowView: View {
     }
 
     private var iconColor: Color {
+        // 被忽略的文件显示为灰色
+        if item.isIgnored {
+            return Color.gray.opacity(0.5)
+        }
         // 如果有 Git 状态颜色，使用它；否则使用默认颜色
         if let statusColor = gitStatusColor {
             return statusColor
@@ -470,9 +474,12 @@ struct FileRowView: View {
         }
     }
 
-    /// 标题颜色：有 Git 状态时使用状态颜色
+    /// 标题颜色：被忽略时灰色，有 Git 状态时使用状态颜色
     private var titleColor: Color? {
-        gitStatusColor
+        if item.isIgnored {
+            return Color.gray.opacity(0.5)
+        }
+        return gitStatusColor
     }
 
     /// 当前文件是否为资源管理器中应高亮的"当前打开文件"（与活动编辑器标签一致）
