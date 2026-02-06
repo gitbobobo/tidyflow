@@ -629,6 +629,11 @@
     tab.isDirty = isDirty;
     if (tab.dirtyIndicator) tab.dirtyIndicator.style.display = isDirty ? "inline" : "none";
     if (tab.saveBtn) tab.saveBtn.disabled = !isDirty;
+
+    // 通知 Native 层 dirty 状态变化
+    if (tab.filePath) {
+      TF.postToNative("dirty_state_changed", { path: tab.filePath, isDirty });
+    }
   }
 
   function saveEditorTab(tabId) {

@@ -53,15 +53,23 @@ struct TabItemView: View {
     
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: tab.kind.iconName)
-                .font(.system(size: 11))
-                .foregroundColor(isActive ? .primary : .secondary)
-            
+            // 文件图标位置：dirty 时显示橙色圆点，否则显示文件类型图标
+            if tab.isDirty {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 7))
+                    .foregroundColor(.orange)
+                    .frame(width: 11)
+            } else {
+                Image(systemName: tab.kind.iconName)
+                    .font(.system(size: 11))
+                    .foregroundColor(isActive ? .primary : .secondary)
+            }
+
             Text(tab.title)
                 .font(.system(size: 12))
                 .lineLimit(1)
                 .foregroundColor(isActive ? .primary : .secondary)
-            
+
             if isActive || isHovered {
                 Button(action: onClose) {
                     Image(systemName: "xmark")

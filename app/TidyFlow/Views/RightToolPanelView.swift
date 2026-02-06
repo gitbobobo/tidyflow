@@ -652,11 +652,34 @@ struct FileRowView: View {
         }
     }
 
+    /// 不支持在编辑器中打开的文件扩展名（二进制文件）
+    private static let unsupportedExtensions: Set<String> = [
+        // 图片
+        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "tiff", "tif",
+        // 音频
+        "mp3", "wav", "m4a", "aac", "flac", "ogg", "wma",
+        // 视频
+        "mp4", "mov", "avi", "mkv", "wmv", "flv", "webm",
+        // 压缩包
+        "zip", "tar", "gz", "rar", "7z", "bz2", "xz", "dmg", "iso",
+        // 文档/二进制
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+        // 字体
+        "ttf", "otf", "woff", "woff2",
+        // 编译产物
+        "o", "a", "dylib", "so", "dll", "exe", "class", "jar",
+        // 其他二进制
+        "sqlite", "db", "DS_Store",
+    ]
+
     private func handleTap() {
         if item.isDir {
             // 目录：切换展开状态
             appState.toggleDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
         } else {
+            // 不支持的文件类型不打开 tab
+            let ext = (item.name as NSString).pathExtension.lowercased()
+            guard !Self.unsupportedExtensions.contains(ext) else { return }
             // 文件：打开编辑器（使用全局工作空间键）
             if let globalKey = appState.currentGlobalWorkspaceKey {
                 appState.addEditorTab(workspaceKey: globalKey, path: item.path)

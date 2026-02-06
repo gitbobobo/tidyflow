@@ -24,6 +24,9 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
     var onOpenFile: ((String, String, Int?) -> Void)?  // workspace, path, line (optional)
     var onDiffError: ((String) -> Void)?  // error message
 
+    // 编辑器 dirty 状态变化回调
+    var onDirtyStateChanged: ((String, Bool) -> Void)?  // path, isDirty
+
     // State
     private(set) var isWebReady = false
     private var pendingEvents: [(type: String, payload: [String: Any])] = []
@@ -115,6 +118,12 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
                 NSWorkspace.shared.open(url)
                 print("[WebBridge] Opening URL: \(urlString)")
             }
+
+        // 编辑器 dirty 状态变化
+        case "dirty_state_changed":
+            let path = body["path"] as? String ?? ""
+            let isDirty = body["isDirty"] as? Bool ?? false
+            onDirtyStateChanged?(path, isDirty)
 
         default:
             print("[WebBridge] Unknown message type: \(type)")
@@ -221,6 +230,13 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         send(type: "save_file", payload: [
             "project": project,
             "workspace": workspace,
+            "path": path
+        ])
+    }
+
+    /// 通知 JS 层关闭编辑器 Tab（清理 CodeMirror 缓存）
+    func closeEditorTab(path: String) {
+        send(type: "close_editor_tab", payload: [
             "path": path
         ])
     }

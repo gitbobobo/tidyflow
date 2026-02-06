@@ -113,6 +113,9 @@ struct TabModel: Identifiable, Codable, Equatable {
     // Phase C2-2b: Diff view mode (only for diff tabs)
     // "unified" = single column, "split" = side-by-side
     var diffViewMode: String?
+
+    // 编辑器 dirty 状态（文件有未保存更改）
+    var isDirty: Bool = false
 }
 
 // Phase C2-1: Diff mode enum for type safety
@@ -537,6 +540,12 @@ class AppState: ObservableObject {
     @Published var editorStatus: String = ""
     @Published var editorStatusIsError: Bool = false
 
+    // 未保存更改确认对话框状态
+    @Published var showUnsavedChangesAlert: Bool = false
+    var pendingCloseTabId: UUID?
+    var pendingCloseWorkspaceKey: String?
+    var pendingCloseAfterSave: (workspaceKey: String, tabId: UUID)?
+
     // Phase C2-1.5: Pending editor line reveal (path, line, highlightMs)
     // Set when diff click requests line navigation before editor is ready
     @Published var pendingEditorReveal: (path: String, line: Int, highlightMs: Int)?
@@ -565,6 +574,9 @@ class AppState: ObservableObject {
     var onTerminalAttach: ((String, String) -> Void)?
     // Callback for Core ready with port (set by CenterContentView to update WebBridge)
     var onCoreReadyWithPort: ((Int) -> Void)?
+    // Callback for editor tab close (通知 JS 层清理编辑器缓存)
+    // Parameters: path
+    var onEditorTabClose: ((String) -> Void)?
 
     // WebSocket Client
     let wsClient = WSClient()
@@ -1144,7 +1156,7 @@ class AppState: ObservableObject {
         }
 
         for tab in tabsToClose {
-            closeTab(workspaceKey: globalKey, tabId: tab.id)
+            performCloseTab(workspaceKey: globalKey, tabId: tab.id)
         }
     }
 
@@ -2383,6 +2395,22 @@ class AppState: ObservableObject {
     }
     
     func closeTab(workspaceKey: String, tabId: UUID) {
+        guard let tabs = workspaceTabs[workspaceKey] else { return }
+        guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
+
+        // 编辑器 Tab 且有未保存更改时，弹出确认对话框
+        if tab.kind == .editor && tab.isDirty {
+            pendingCloseWorkspaceKey = workspaceKey
+            pendingCloseTabId = tabId
+            showUnsavedChangesAlert = true
+            return
+        }
+
+        performCloseTab(workspaceKey: workspaceKey, tabId: tabId)
+    }
+
+    /// 实际执行关闭 Tab（跳过 dirty 检查）
+    func performCloseTab(workspaceKey: String, tabId: UUID) {
         guard var tabs = workspaceTabs[workspaceKey] else { return }
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
 
@@ -2396,6 +2424,11 @@ class AppState: ObservableObject {
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
+        }
+
+        // 编辑器 Tab 关闭时通知 JS 层清理缓存
+        if tab.kind == .editor {
+            onEditorTabClose?(tab.payload)
         }
 
         tabs.remove(at: index)
@@ -2734,6 +2767,13 @@ class AppState: ObservableObject {
     func handleEditorSaved(path: String) {
         editorStatus = "Saved"
         editorStatusIsError = false
+        // 保存成功后清除 dirty 状态
+        updateEditorDirtyState(path: path, isDirty: false)
+        // 如果有待关闭的 Tab（保存后关闭流程），执行关闭
+        if let pending = pendingCloseAfterSave {
+            pendingCloseAfterSave = nil
+            performCloseTab(workspaceKey: pending.workspaceKey, tabId: pending.tabId)
+        }
         // Clear status after 3 seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             if self?.editorStatus == "Saved" {
@@ -2745,6 +2785,31 @@ class AppState: ObservableObject {
     func handleEditorSaveError(path: String, message: String) {
         editorStatus = "Error: \(message)"
         editorStatusIsError = true
+        // 保存失败时清除待关闭状态
+        pendingCloseAfterSave = nil
+    }
+
+    /// 更新编辑器 Tab 的 dirty 状态
+    func updateEditorDirtyState(path: String, isDirty: Bool) {
+        guard let globalKey = currentGlobalWorkspaceKey else { return }
+        guard var tabs = workspaceTabs[globalKey] else { return }
+        if let index = tabs.firstIndex(where: { $0.kind == .editor && $0.payload == path }) {
+            tabs[index].isDirty = isDirty
+            workspaceTabs[globalKey] = tabs
+        }
+    }
+
+    /// 保存并关闭 Tab（用于未保存确认对话框的"保存"按钮）
+    func saveAndCloseTab(workspaceKey: String, tabId: UUID) {
+        guard let tabs = workspaceTabs[workspaceKey],
+              let tab = tabs.first(where: { $0.id == tabId }),
+              tab.kind == .editor else { return }
+        pendingCloseAfterSave = (workspaceKey: workspaceKey, tabId: tabId)
+        // 触发保存
+        lastEditorPath = tab.payload
+        editorStatus = "Saving..."
+        editorStatusIsError = false
+        NotificationCenter.default.post(name: .saveEditorFile, object: tab.payload)
     }
 
     /// Check if active tab is a diff tab

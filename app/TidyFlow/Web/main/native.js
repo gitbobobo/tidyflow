@@ -292,6 +292,22 @@
         break;
       }
 
+      case "close_editor_tab": {
+        const { path } = payload;
+        console.log("[NativeBridge] close_editor_tab:", path);
+        if (!path) return;
+
+        const wsKey = TF.getCurrentWorkspaceKey();
+        if (!wsKey || !TF.workspaceTabs.has(wsKey)) return;
+
+        const tabId = "editor-" + path.replace(/[^a-zA-Z0-9]/g, "-");
+        const tabSet = TF.workspaceTabs.get(wsKey);
+        if (tabSet.tabs.has(tabId)) {
+          TF.removeTabFromUI(tabId);
+        }
+        break;
+      }
+
       default:
         console.warn("[NativeBridge] Unknown event type:", type);
     }

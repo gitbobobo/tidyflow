@@ -37,6 +37,30 @@ struct CenterContentView: View {
             setupBridgeCallbacks()
             setupSaveNotification()
         }
+        .alert("文件有未保存的更改", isPresented: $appState.showUnsavedChangesAlert) {
+            Button("保存", role: nil) {
+                if let wsKey = appState.pendingCloseWorkspaceKey,
+                   let tabId = appState.pendingCloseTabId {
+                    appState.saveAndCloseTab(workspaceKey: wsKey, tabId: tabId)
+                }
+                appState.pendingCloseWorkspaceKey = nil
+                appState.pendingCloseTabId = nil
+            }
+            Button("不保存", role: .destructive) {
+                if let wsKey = appState.pendingCloseWorkspaceKey,
+                   let tabId = appState.pendingCloseTabId {
+                    appState.performCloseTab(workspaceKey: wsKey, tabId: tabId)
+                }
+                appState.pendingCloseWorkspaceKey = nil
+                appState.pendingCloseTabId = nil
+            }
+            Button("取消", role: .cancel) {
+                appState.pendingCloseWorkspaceKey = nil
+                appState.pendingCloseTabId = nil
+            }
+        } message: {
+            Text("如果不保存，你的更改将会丢失。")
+        }
     }
 
     /// Whether to show WebView (editor, terminal, or diff tab is active and web is ready)
@@ -144,6 +168,18 @@ struct CenterContentView: View {
                 print("[CenterContentView] Diff error: \(message)")
                 // Could show an alert or update status
             }
+        }
+
+        // 编辑器 dirty 状态变化
+        webBridge.onDirtyStateChanged = { [weak appState] path, isDirty in
+            DispatchQueue.main.async {
+                appState?.updateEditorDirtyState(path: path, isDirty: isDirty)
+            }
+        }
+
+        // 编辑器 Tab 关闭时通知 JS 层清理缓存
+        appState.onEditorTabClose = { [weak webBridge] path in
+            webBridge?.closeEditorTab(path: path)
         }
     }
 
