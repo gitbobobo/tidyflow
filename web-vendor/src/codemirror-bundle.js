@@ -15,8 +15,10 @@ import { oneDark } from "@codemirror/theme-one-dark";
 // 语言支持
 import { javascript } from "@codemirror/lang-javascript";
 
-// Legacy modes (shell)
+// Legacy modes
 import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { erlang } from "@codemirror/legacy-modes/mode/erlang";
+import { javascript as jsLegacy } from "@codemirror/legacy-modes/mode/javascript";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
 import { json } from "@codemirror/lang-json";
@@ -45,9 +47,10 @@ const languageExtensions = {
   py: () => python(),
   pyw: () => python(),
 
-  // JSON
+  // JSON / JSON5
   json: () => json(),
   jsonc: () => json(),
+  json5: () => StreamLanguage.define(jsLegacy),
 
   // HTML
   html: () => html(),
@@ -71,6 +74,10 @@ const languageExtensions = {
   sh: () => StreamLanguage.define(shell),
   bash: () => StreamLanguage.define(shell),
   zsh: () => StreamLanguage.define(shell),
+
+  // Erlang / ETS
+  erl: () => StreamLanguage.define(erlang),
+  ets: () => StreamLanguage.define(erlang),
 };
 
 /**
@@ -111,5 +118,6 @@ window.CodeMirror = {
     markdown,
     yaml,
     shell: () => StreamLanguage.define(shell),
+    erlang: () => StreamLanguage.define(erlang),
   },
 };

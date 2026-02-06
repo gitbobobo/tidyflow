@@ -11,8 +11,8 @@
     const ext = filename.split(".").pop().toLowerCase();
     const icons = {
       js: "📜", ts: "📘", jsx: "⚛️", tsx: "⚛️", html: "🌐", css: "🎨",
-      json: "📋", md: "📝", txt: "📄", rs: "🦀", go: "🐹", py: "🐍",
-      swift: "🍎", java: "☕", png: "🖼️", jpg: "🖼️", gif: "🖼️", svg: "🖼️",
+      json: "📋", json5: "📋", md: "📝", txt: "📄", rs: "🦀", go: "🐹", py: "🐍",
+      swift: "🍎", java: "☕", erl: "📡", ets: "📡", png: "🖼️", jpg: "🖼️", gif: "🖼️", svg: "🖼️",
     };
     return icons[ext] || "📄";
   }

@@ -763,7 +763,7 @@ struct FileRowView: View {
             return "gear"
         case "js", "ts", "jsx", "tsx":
             return "j.square"
-        case "json":
+        case "json", "json5":
             return "curlybraces"
         case "md", "markdown":
             return "doc.richtext"
@@ -777,6 +777,8 @@ struct FileRowView: View {
             return "terminal"
         case "yml", "yaml", "toml":
             return "doc.badge.gearshape"
+        case "erl", "ets":
+            return "antenna.radiowaves.left.and.right"
         case "png", "jpg", "jpeg", "gif", "svg", "webp":
             return "photo"
         case "mp3", "wav", "m4a":
