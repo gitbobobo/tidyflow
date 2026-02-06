@@ -160,6 +160,8 @@ struct TreeRowView<CustomIcon: View>: View {
     var selectedBackgroundColor: Color? = nil
     /// 尾部标签文本（如快捷键提示 ⌘1）
     var trailingText: String? = nil
+    /// 尾部图标（如符号链接指示）
+    var trailingIcon: String? = nil
     /// 标题文字颜色；nil 表示使用默认 .primary
     var titleColor: Color? = nil
     /// 尾部文字颜色；nil 表示使用默认 .secondary
@@ -200,6 +202,11 @@ struct TreeRowView<CustomIcon: View>: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            if let icon = trailingIcon {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
             if let trailing = trailingText {
                 Text(trailing)
                     .font(.system(size: 10))
@@ -235,6 +242,7 @@ extension TreeRowView where CustomIcon == EmptyView {
         isSelected: Bool = false,
         selectedBackgroundColor: Color? = nil,
         trailingText: String? = nil,
+        trailingIcon: String? = nil,
         titleColor: Color? = nil,
         trailingTextColor: Color? = nil,
         onTap: @escaping () -> Void
@@ -248,6 +256,7 @@ extension TreeRowView where CustomIcon == EmptyView {
         self.isSelected = isSelected
         self.selectedBackgroundColor = selectedBackgroundColor
         self.trailingText = trailingText
+        self.trailingIcon = trailingIcon
         self.titleColor = titleColor
         self.trailingTextColor = trailingTextColor
         self.customIconView = nil
@@ -268,6 +277,7 @@ extension TreeRowView {
         isSelected: Bool = false,
         selectedBackgroundColor: Color? = nil,
         trailingText: String? = nil,
+        trailingIcon: String? = nil,
         titleColor: Color? = nil,
         trailingTextColor: Color? = nil,
         customIconView: CustomIcon,
@@ -282,6 +292,7 @@ extension TreeRowView {
         self.isSelected = isSelected
         self.selectedBackgroundColor = selectedBackgroundColor
         self.trailingText = trailingText
+        self.trailingIcon = trailingIcon
         self.titleColor = titleColor
         self.trailingTextColor = trailingTextColor
         self.customIconView = customIconView
@@ -575,6 +586,7 @@ struct FileRowView: View {
                         isSelected: isSelected,
                         selectedBackgroundColor: Color.accentColor.opacity(0.35),
                         trailingText: gitStatus,
+                        trailingIcon: item.isSymlink ? "arrow.uturn.backward" : nil,
                         titleColor: titleColor,
                         trailingTextColor: gitStatusColor,
                         customIconView: specialFileIcon,
@@ -591,6 +603,7 @@ struct FileRowView: View {
                         isSelected: isSelected,
                         selectedBackgroundColor: Color.accentColor.opacity(0.35),
                         trailingText: gitStatus,
+                        trailingIcon: item.isSymlink ? "arrow.uturn.backward" : nil,
                         titleColor: titleColor,
                         trailingTextColor: gitStatusColor,
                         onTap: { handleTap() }

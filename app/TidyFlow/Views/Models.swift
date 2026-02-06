@@ -397,6 +397,7 @@ struct FileEntry: Identifiable, Equatable {
     let isDir: Bool
     let size: UInt64
     let isIgnored: Bool   // 是否被 .gitignore 忽略
+    let isSymlink: Bool   // 是否为符号链接
 
     /// 从 JSON 解析
     static func from(json: [String: Any], parentPath: String) -> FileEntry? {
@@ -406,8 +407,9 @@ struct FileEntry: Identifiable, Equatable {
         }
         let size = json["size"] as? UInt64 ?? 0
         let isIgnored = json["is_ignored"] as? Bool ?? false
+        let isSymlink = json["is_symlink"] as? Bool ?? false
         let path = parentPath.isEmpty ? name : "\(parentPath)/\(name)"
-        return FileEntry(name: name, path: path, isDir: isDir, size: size, isIgnored: isIgnored)
+        return FileEntry(name: name, path: path, isDir: isDir, size: size, isIgnored: isIgnored, isSymlink: isSymlink)
     }
 }
 

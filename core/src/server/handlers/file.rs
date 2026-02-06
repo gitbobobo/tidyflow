@@ -68,6 +68,7 @@ pub async fn handle_file_message(
                                         is_dir: e.is_dir,
                                         size: e.size,
                                         is_ignored: e.is_ignored,
+                                        is_symlink: e.is_symlink,
                                     })
                                     .collect();
                                 send_message(

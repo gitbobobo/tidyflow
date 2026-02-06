@@ -23,6 +23,8 @@ pub struct FileEntry {
     pub size: u64,
     /// 是否被 .gitignore 忽略
     pub is_ignored: bool,
+    /// 是否为符号链接
+    pub is_symlink: bool,
 }
 
 /// File API error types
@@ -188,6 +190,9 @@ pub fn list_files(
     let mut raw_entries = Vec::new();
     for entry in fs::read_dir(&dir_path)? {
         let entry = entry?;
+        // file_type() 不跟随符号链接，可正确检测 symlink
+        let is_symlink = entry.file_type()?.is_symlink();
+        // metadata() 跟随符号链接，is_dir/size 反映目标文件属性
         let metadata = entry.metadata()?;
         let name = entry.file_name().to_string_lossy().to_string();
 
@@ -196,23 +201,24 @@ pub fn list_files(
             continue;
         }
 
-        raw_entries.push((name, metadata.is_dir(), metadata.len()));
+        raw_entries.push((name, metadata.is_dir(), metadata.len(), is_symlink));
     }
 
     // 批量检查 git 忽略状态
-    let file_names: Vec<String> = raw_entries.iter().map(|(n, _, _)| n.clone()).collect();
+    let file_names: Vec<String> = raw_entries.iter().map(|(n, _, _, _)| n.clone()).collect();
     let ignored_set = get_ignored_files(&dir_path, &file_names);
 
     // 构建最终结果
     let mut entries: Vec<FileEntry> = raw_entries
         .into_iter()
-        .map(|(name, is_dir, len)| {
+        .map(|(name, is_dir, len, is_symlink)| {
             let is_ignored = ignored_set.contains(&name);
             FileEntry {
                 name,
                 is_dir,
                 size: if !is_dir { len } else { 0 },
                 is_ignored,
+                is_symlink,
             }
         })
         .collect();

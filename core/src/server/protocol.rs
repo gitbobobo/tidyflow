@@ -703,6 +703,9 @@ pub struct FileEntryInfo {
     /// 是否被 .gitignore 忽略
     #[serde(default)]
     pub is_ignored: bool,
+    /// 是否为符号链接
+    #[serde(default)]
+    pub is_symlink: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
