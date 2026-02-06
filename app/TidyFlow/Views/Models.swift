@@ -2848,6 +2848,22 @@ class AppState: ObservableObject {
         activeTabIdByWorkspace[ws] = tabs[prevIndex].id
     }
 
+    /// 按索引切换 Tab，index 1-9 对应第 1-9 个 Tab，0 对应最后一个 Tab
+    func switchToTabByIndex(_ index: Int) {
+        guard let ws = currentGlobalWorkspaceKey,
+              let tabs = workspaceTabs[ws], !tabs.isEmpty else { return }
+
+        let targetIndex: Int
+        if index == 0 {
+            targetIndex = tabs.count - 1
+        } else {
+            targetIndex = index - 1
+        }
+
+        guard targetIndex >= 0 && targetIndex < tabs.count else { return }
+        activeTabIdByWorkspace[ws] = tabs[targetIndex].id
+    }
+
     // MARK: - Editor Bridge Helpers
 
     /// Get the active tab for the current workspace

@@ -40,6 +40,28 @@ struct GlobalKeybindingHandler: ViewModifier {
                     Button("Debug Panel") { appState.debugPanelPresented.toggle() }
                         .keyboardShortcut("d", modifiers: [.command, .shift])
                     
+                    // Tab 索引切换 Ctrl+1-9,0
+                    Button("Switch Tab 1") { appState.switchToTabByIndex(1) }
+                        .keyboardShortcut("1", modifiers: .control)
+                    Button("Switch Tab 2") { appState.switchToTabByIndex(2) }
+                        .keyboardShortcut("2", modifiers: .control)
+                    Button("Switch Tab 3") { appState.switchToTabByIndex(3) }
+                        .keyboardShortcut("3", modifiers: .control)
+                    Button("Switch Tab 4") { appState.switchToTabByIndex(4) }
+                        .keyboardShortcut("4", modifiers: .control)
+                    Button("Switch Tab 5") { appState.switchToTabByIndex(5) }
+                        .keyboardShortcut("5", modifiers: .control)
+                    Button("Switch Tab 6") { appState.switchToTabByIndex(6) }
+                        .keyboardShortcut("6", modifiers: .control)
+                    Button("Switch Tab 7") { appState.switchToTabByIndex(7) }
+                        .keyboardShortcut("7", modifiers: .control)
+                    Button("Switch Tab 8") { appState.switchToTabByIndex(8) }
+                        .keyboardShortcut("8", modifiers: .control)
+                    Button("Switch Tab 9") { appState.switchToTabByIndex(9) }
+                        .keyboardShortcut("9", modifiers: .control)
+                    Button("Switch Tab 0") { appState.switchToTabByIndex(0) }
+                        .keyboardShortcut("0", modifiers: .control)
+
                     // 工作空间快捷键 Cmd+0-9
                     Button("Switch Workspace 0") { appState.switchToWorkspaceByShortcut(shortcutKey: "0") }
                         .keyboardShortcut("0", modifiers: .command)
