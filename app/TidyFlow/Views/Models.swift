@@ -311,10 +311,11 @@ struct GitStatusIndex {
 
     /// 向上传播状态到所有父目录
     private mutating func propagateToParents(path: String, status: String) {
-        // 被忽略的文件（!!）和被删除的文件（D）不传播到父目录
-        // 忽略文件：用户关心的是有变更的文件
-        // 删除文件：删除状态无需向上传递，避免父目录显示删除标记
-        if status == "!!" || status == "D" { return }
+        // 不传播到父目录的状态：
+        // !! 忽略文件：用户关心的是有变更的文件
+        // D 删除文件：删除状态无需向上传递，避免父目录显示删除标记
+        // ?? 未跟踪文件：未纳入版本控制的文件不应影响父目录状态
+        if status == "!!" || status == "D" || status == "??" { return }
 
         var currentPath = path
         while let lastSlash = currentPath.lastIndex(of: "/") {
