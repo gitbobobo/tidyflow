@@ -260,6 +260,29 @@ pub fn read_file(
     Ok((text, size))
 }
 
+/// 读取二进制文件（不做 UTF-8 校验）
+/// 用于图片等非文本文件
+pub fn read_file_binary(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<(Vec<u8>, u64), FileApiError> {
+    let file_path = resolve_safe_path(workspace_root, relative_path)?;
+
+    debug!("Reading binary file: {:?}", file_path);
+
+    let metadata = fs::metadata(&file_path)?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(FileApiError::FileTooLarge);
+    }
+
+    let mut file = fs::File::open(&file_path)?;
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)?;
+    let size = content.len() as u64;
+
+    Ok((content, size))
+}
+
 /// Write file content atomically
 pub fn write_file(
     workspace_root: &Path,

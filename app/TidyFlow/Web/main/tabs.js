@@ -507,11 +507,30 @@
     saveBtn.addEventListener("click", () => TF.saveEditorTab(tabId));
     toolbar.appendChild(saveBtn);
 
+    // Markdown 预览按钮（仅 .md 文件）
+    let previewBtn = null;
+    if (TF.isMarkdownFile && TF.isMarkdownFile(filePath)) {
+      previewBtn = document.createElement("button");
+      previewBtn.className = "editor-preview-btn";
+      previewBtn.textContent = "Preview";
+      previewBtn.addEventListener("click", () => TF.toggleMarkdownPreview(tabId));
+      toolbar.insertBefore(previewBtn, saveBtn);
+    }
+
     pane.appendChild(toolbar);
 
     const editorContainer = document.createElement("div");
     editorContainer.className = "editor-container";
     pane.appendChild(editorContainer);
+
+    // Markdown 预览容器（仅 .md 文件）
+    let previewContainer = null;
+    if (TF.isMarkdownFile && TF.isMarkdownFile(filePath)) {
+      previewContainer = document.createElement("div");
+      previewContainer.className = "preview-container";
+      previewContainer.style.display = "none";
+      pane.appendChild(previewContainer);
+    }
 
     const statusBar = document.createElement("div");
     statusBar.className = "editor-status";
@@ -610,6 +629,9 @@
       isDirty: false,
       project: TF.currentProject,
       workspace: TF.currentWorkspace,
+      previewMode: false,
+      previewBtn,
+      previewContainer,
     };
 
     tabSet.tabs.set(tabId, tabInfo);

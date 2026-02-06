@@ -216,6 +216,10 @@
           break;
 
         case "file_read_result":
+          // 检查是否是 Markdown 预览的图片加载请求
+          if (TF.handleImageReadResult && TF.handleImageReadResult(msg.path, msg.content)) {
+            break;
+          }
           // 检查是否是 reload 请求（文件外部变更后的重新加载）
           if (TF.pendingReloads && TF.pendingReloads.has(msg.path)) {
             try {

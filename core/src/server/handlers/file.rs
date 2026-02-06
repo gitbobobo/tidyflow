@@ -139,6 +139,29 @@ pub async fn handle_file_message(
                                 )
                                 .await?;
                             }
+                            Err(FileApiError::InvalidUtf8) => {
+                                // 非 UTF-8 文件（如图片），回退到二进制读取
+                                match file_api::read_file_binary(&root, path) {
+                                    Ok((content, size)) => {
+                                        send_message(
+                                            socket,
+                                            &ServerMessage::FileReadResult {
+                                                project: project.clone(),
+                                                workspace: workspace.clone(),
+                                                path: path.clone(),
+                                                content,
+                                                size,
+                                            },
+                                        )
+                                        .await?;
+                                    }
+                                    Err(e) => {
+                                        let (code, message) = file_error_to_response(&e);
+                                        send_message(socket, &ServerMessage::Error { code, message })
+                                            .await?;
+                                    }
+                                }
+                            }
                             Err(e) => {
                                 let (code, message) = file_error_to_response(&e);
                                 send_message(socket, &ServerMessage::Error { code, message })
