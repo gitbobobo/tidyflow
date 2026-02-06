@@ -1,2 +1,0 @@
-src/server/git_tools.rs:    pub fn as_str(&self) -> &'static str {
-src/server/git_tools.rs:    pub fn as_str(&self) -> &'static str {

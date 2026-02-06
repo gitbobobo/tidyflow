@@ -124,3 +124,6 @@ dist/
 
 # Cursor editor debug logs
 .cursor/debug.log
+
+# Sisyphus session data
+.sisyphus/
