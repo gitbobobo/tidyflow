@@ -2680,9 +2680,9 @@ class AppState: ObservableObject {
     var autoWorkspaceShortcuts: [String: String] {
         let sortedWorkspaces = workspaceTerminalOpenTime
             .sorted { $0.value < $1.value }
-            .prefix(10)
+            .prefix(9)
 
-        let shortcutKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+        let shortcutKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
         var result: [String: String] = [:]
         for (index, (workspaceKey, _)) in sortedWorkspaces.enumerated() {
             result[shortcutKeys[index]] = workspaceKey
@@ -2718,7 +2718,7 @@ class AppState: ObservableObject {
     }
 
     /// 根据快捷键切换工作空间
-    /// - Parameter shortcutKey: 快捷键数字 "1"-"9" 或 "0"
+    /// - Parameter shortcutKey: 快捷键数字 "1"-"9"
     func switchToWorkspaceByShortcut(shortcutKey: String) {
         guard let workspaceKey = autoWorkspaceShortcuts[shortcutKey] else {
             return
@@ -2848,17 +2848,12 @@ class AppState: ObservableObject {
         activeTabIdByWorkspace[ws] = tabs[prevIndex].id
     }
 
-    /// 按索引切换 Tab，index 1-9 对应第 1-9 个 Tab，0 对应最后一个 Tab
+    /// 按索引切换 Tab，index 1-9 对应第 1-9 个 Tab
     func switchToTabByIndex(_ index: Int) {
         guard let ws = currentGlobalWorkspaceKey,
               let tabs = workspaceTabs[ws], !tabs.isEmpty else { return }
 
-        let targetIndex: Int
-        if index == 0 {
-            targetIndex = tabs.count - 1
-        } else {
-            targetIndex = index - 1
-        }
+        let targetIndex = index - 1
 
         guard targetIndex >= 0 && targetIndex < tabs.count else { return }
         activeTabIdByWorkspace[ws] = tabs[targetIndex].id

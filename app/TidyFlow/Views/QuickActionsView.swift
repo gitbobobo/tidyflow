@@ -6,27 +6,61 @@ struct QuickActionsView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        VStack(spacing: 32) {
-            Spacer()
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 32) {
+                Spacer()
 
-            // 工作空间信息头部
-            workspaceHeader
+                // 工作空间信息头部
+                workspaceHeader
 
-            VStack(spacing: 16) {
-                // 主要操作：打开终端
-                openTerminalButton
+                VStack(spacing: 16) {
+                    // 主要操作：打开终端
+                    openTerminalButton
 
-                // 自定义命令列表
-                if !appState.clientSettings.customCommands.isEmpty {
-                    customCommandsSection
+                    // 自定义命令列表
+                    if !appState.clientSettings.customCommands.isEmpty {
+                        customCommandsSection
+                    }
                 }
-            }
-            .padding(.bottom, 32)
+                .padding(.bottom, 32)
 
-            Spacer()
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // 右下角快捷键提示
+            keyboardShortcutsHint
+                .padding(24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    // MARK: - 快捷键提示
+
+    private var keyboardShortcutsHint: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            shortcutRow(keys: "⌘ 1-9", description: "切换工作空间")
+            shortcutRow(keys: "⌃ 1-9", description: "切换 Tab")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        )
+    }
+
+    private func shortcutRow(keys: String, description: String) -> some View {
+        HStack(spacing: 8) {
+            Text(keys)
+                .font(.caption)
+                .monospaced()
+                .foregroundColor(.secondary)
+                .frame(width: 56, alignment: .trailing)
+            Text(description)
+                .font(.caption)
+                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+        }
     }
 
     // MARK: - 工作空间信息头部

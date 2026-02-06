@@ -40,7 +40,7 @@ struct GlobalKeybindingHandler: ViewModifier {
                     Button("Debug Panel") { appState.debugPanelPresented.toggle() }
                         .keyboardShortcut("d", modifiers: [.command, .shift])
                     
-                    // Tab 索引切换 Ctrl+1-9,0
+                    // Tab 索引切换 Ctrl+1-9
                     Button("Switch Tab 1") { appState.switchToTabByIndex(1) }
                         .keyboardShortcut("1", modifiers: .control)
                     Button("Switch Tab 2") { appState.switchToTabByIndex(2) }
@@ -59,12 +59,8 @@ struct GlobalKeybindingHandler: ViewModifier {
                         .keyboardShortcut("8", modifiers: .control)
                     Button("Switch Tab 9") { appState.switchToTabByIndex(9) }
                         .keyboardShortcut("9", modifiers: .control)
-                    Button("Switch Tab 0") { appState.switchToTabByIndex(0) }
-                        .keyboardShortcut("0", modifiers: .control)
 
-                    // 工作空间快捷键 Cmd+0-9
-                    Button("Switch Workspace 0") { appState.switchToWorkspaceByShortcut(shortcutKey: "0") }
-                        .keyboardShortcut("0", modifiers: .command)
+                    // 工作空间快捷键 Cmd+1-9
                     Button("Switch Workspace 1") { appState.switchToWorkspaceByShortcut(shortcutKey: "1") }
                         .keyboardShortcut("1", modifiers: .command)
                     Button("Switch Workspace 2") { appState.switchToWorkspaceByShortcut(shortcutKey: "2") }
