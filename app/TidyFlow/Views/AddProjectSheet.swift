@@ -14,104 +14,66 @@ struct AddProjectSheet: View {
     @State private var isImporting = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Add Project")
-                    .font(.headline)
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding()
+        VStack(spacing: 16) {
+            // 标题
+            Text("添加项目")
+                .font(.headline)
 
-            Divider()
-
-            // Content
-            VStack(alignment: .leading, spacing: 16) {
-                // Folder Selection
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Project Folder")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-
+            Form {
+                // 项目文件夹
+                LabeledContent("项目文件夹") {
                     HStack {
                         if let path = selectedPath {
                             Image(systemName: "folder.fill")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.accentColor)
                             Text(path.lastPathComponent)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                                .help(path.path)
                             Spacer()
-                            Button("Change") {
+                            Button("更改…") {
                                 showFileImporter = true
                             }
-                            .buttonStyle(.link)
                         } else {
-                            Button(action: { showFileImporter = true }) {
-                                HStack {
-                                    Image(systemName: "folder.badge.plus")
-                                    Text("Select Folder...")
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
+                            Button("选择文件夹…") {
+                                showFileImporter = true
                             }
-                            .buttonStyle(.bordered)
                         }
                     }
-                    .padding(12)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(8)
                 }
 
-                // Project Name
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Project Name")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-
-                    TextField("Enter project name", text: $projectName)
+                // 项目名称
+                LabeledContent("项目名称") {
+                    TextField("", text: $projectName)
                         .textFieldStyle(.roundedBorder)
                 }
-
-                // Error Message
-                if let error = importError {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(8)
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(6)
-                }
-
-                // Info Note
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .foregroundColor(.blue)
-                    Text("项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间（基于 Git Worktree），请确保项目是 Git 仓库并已配置远程仓库。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(8)
-                .background(Color.blue.opacity(0.05))
-                .cornerRadius(6)
             }
-            .padding()
+            .formStyle(.grouped)
 
-            Spacer()
+            // 错误信息
+            if let error = importError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .padding(.horizontal)
+            }
+
+            // 提示信息
+            Label {
+                Text("项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间（基于 Git Worktree），请确保项目是 Git 仓库并已配置远程仓库。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } icon: {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal)
 
             Divider()
 
-            // Actions
+            // 操作按钮
             HStack {
-                Button("Cancel") {
+                Button("取消") {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -121,18 +83,20 @@ struct AddProjectSheet: View {
                 Button(action: importProject) {
                     if isImporting {
                         ProgressView()
-                            .scaleEffect(0.7)
+                            .controlSize(.small)
                     } else {
-                        Text("Import")
+                        Text("导入")
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(selectedPath == nil || projectName.isEmpty || isImporting)
                 .keyboardShortcut(.defaultAction)
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.bottom, 12)
         }
-        .frame(width: 420, height: 380)
+        .padding(.top, 16)
+        .frame(width: 400, height: 340)
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.folder],
