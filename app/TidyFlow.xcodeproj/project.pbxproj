@@ -38,6 +38,8 @@
 		UX100001 /* ProjectsSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100011 /* ProjectsSidebarView.swift */; };
 		UX100002 /* AddProjectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100012 /* AddProjectSheet.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
+		L10N0001 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
+		L10N0002 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = L10N0020 /* Localizable.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -87,6 +89,9 @@
 		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
 		UX100011 /* ProjectsSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsSidebarView.swift; sourceTree = "<group>"; };
 		UX100012 /* AddProjectSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddProjectSheet.swift; sourceTree = "<group>"; };
+		L10N0011 /* LocalizationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationManager.swift; sourceTree = "<group>"; };
+		L10N0021 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		L10N0022 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -159,11 +164,13 @@
 				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
 				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
 				D3900011 /* AppConfig.swift */,
+				L10N0011 /* LocalizationManager.swift */,
 				A1000011 /* TidyFlowApp.swift */,
 				A1000012 /* ContentView.swift */,
 				A1000013 /* Web */,
 				A1000014 /* Info.plist */,
 				A1000015 /* TidyFlow.entitlements */,
+				L10N0020 /* Localizable.strings */,
 			);
 			path = TidyFlow;
 			sourceTree = "<group>";
@@ -251,6 +258,7 @@
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hans",
 			);
 			mainGroup = A1000007;
 			packageReferences = (
@@ -272,6 +280,7 @@
 			files = (
 				A1000003 /* Web in Resources */,
 				A1000004 /* Assets.xcassets in Resources */,
+				L10N0002 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -335,6 +344,7 @@
 				D3900002 /* CoreProcessManager.swift in Sources */,
 				D3900003 /* PortAllocator.swift in Sources */,
 				E4200001 /* LogWriter.swift in Sources */,
+				L10N0001 /* LocalizationManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -548,6 +558,18 @@
 		};
 /* End XCConfigurationList section */
 
+
+/* Begin PBXVariantGroup section */
+		L10N0020 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				L10N0021 /* en */,
+				L10N0022 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 /* Begin XCRemoteSwiftPackageReference section */
 		MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */ = {
 			isa = XCRemoteSwiftPackageReference;

@@ -733,21 +733,21 @@ struct GitLogEntry: Identifiable {
     private func formatRelativeDate(_ date: Date) -> String {
         let now = Date()
         let interval = now.timeIntervalSince(date)
-        
+
         if interval < 60 {
-            return "刚刚"
+            return "time.justNow".localized
         } else if interval < 3600 {
             let minutes = Int(interval / 60)
-            return "\(minutes) 分钟前"
+            return String(format: "time.minutesAgo".localized, minutes)
         } else if interval < 86400 {
             let hours = Int(interval / 3600)
-            return "\(hours) 小时前"
+            return String(format: "time.hoursAgo".localized, hours)
         } else if interval < 604800 {
             let days = Int(interval / 86400)
-            return "\(days) 天前"
+            return String(format: "time.daysAgo".localized, days)
         } else if interval < 2592000 {
             let weeks = Int(interval / 604800)
-            return "\(weeks) 周前"
+            return String(format: "time.weeksAgo".localized, weeks)
         } else {
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd"
@@ -1453,6 +1453,32 @@ struct FileMoveResult {
             newPath: newPath,
             success: success,
             message: message
+        )
+    }
+}
+
+/// 文件写入结果（新建文件）
+struct FileWriteResult {
+    let project: String
+    let workspace: String
+    let path: String
+    let success: Bool
+    let size: UInt64
+
+    static func from(json: [String: Any]) -> FileWriteResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String,
+              let success = json["success"] as? Bool else {
+            return nil
+        }
+        let size = json["size"] as? UInt64 ?? 0
+        return FileWriteResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            success: success,
+            size: size
         )
     }
 }

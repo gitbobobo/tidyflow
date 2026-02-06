@@ -8,18 +8,20 @@ import UniformTypeIdentifiers
 
 struct SettingsContentView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var localizationManager: LocalizationManager
 
     var body: some View {
         TabView {
             CustomCommandsSection()
                 .tabItem {
-                    Label("设置", systemImage: "gear")
+                    Label("settings.title".localized, systemImage: "gear")
                 }
                 .environmentObject(appState)
+                .environmentObject(localizationManager)
 
             AboutSection()
                 .tabItem {
-                    Label("关于", systemImage: "info.circle")
+                    Label("settings.about".localized, systemImage: "info.circle")
                 }
         }
         .frame(width: 550, height: 400)
@@ -30,14 +32,25 @@ struct SettingsContentView: View {
 
 struct CustomCommandsSection: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var localizationManager: LocalizationManager
     @State private var editingCommand: CustomCommand?
     @State private var showingAddSheet = false
-    
+
     var body: some View {
         Form {
             Section {
+                Picker("settings.language".localized, selection: $localizationManager.appLanguage) {
+                    Text("settings.language.system".localized).tag("system")
+                    Text("settings.language.zh".localized).tag("zh-Hans")
+                    Text("settings.language.en".localized).tag("en")
+                }
+            } header: {
+                Text("settings.language".localized)
+            }
+
+            Section {
                 if appState.clientSettings.customCommands.isEmpty {
-                    Text("暂无自定义命令")
+                    Text("settings.noCommands".localized)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(appState.clientSettings.customCommands) { command in
@@ -48,16 +61,16 @@ struct CustomCommandsSection: View {
                         )
                     }
                 }
-                
+
                 // 新增按钮
                 Button(action: { showingAddSheet = true }) {
-                    Label("添加命令", systemImage: "plus")
+                    Label("settings.addCommand".localized, systemImage: "plus")
                         .foregroundColor(.accentColor)
                 }
             } header: {
-                Text("终端命令")
+                Text("settings.terminalCommands".localized)
             } footer: {
-                Text("配置快捷命令，在新建终端时快速执行")
+                Text("settings.terminalCommands.footer".localized)
             }
         }
         .formStyle(.grouped)
@@ -122,7 +135,7 @@ struct CustomCommandRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("编辑")
+                .help("common.edit".localized)
                 
                 Button(action: { showDeleteConfirm = true }) {
                     Image(systemName: "trash")
@@ -132,15 +145,15 @@ struct CustomCommandRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("删除")
+                .help("common.delete".localized)
             }
         }
         .padding(.vertical, 4)
-        .alert("删除命令", isPresented: $showDeleteConfirm) {
-            Button("取消", role: .cancel) { }
-            Button("删除", role: .destructive) { onDelete() }
+        .alert("settings.deleteCommand".localized, isPresented: $showDeleteConfirm) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.delete".localized, role: .destructive) { onDelete() }
         } message: {
-            Text("确定要删除命令「\(command.name)」吗？")
+            Text(String(format: "settings.deleteCommand.message".localized, command.name))
         }
     }
 }
@@ -175,11 +188,11 @@ struct CommandEditSheet: View {
             Form {
                 Section {
                     // 图标在前
-                    LabeledContent("图标") {
+                    LabeledContent("settings.icon".localized) {
                         Button(action: { showIconPicker = true }) {
                             HStack(spacing: 4) {
                                 CommandIconView(iconName: command.icon, size: 16)
-                                Text("选择...")
+                                Text("settings.icon.choose".localized)
                                     .font(.subheadline)
                             }
                         }
@@ -187,20 +200,20 @@ struct CommandEditSheet: View {
                     }
 
                     // 名称在后
-                    TextField("名称", text: $command.name)
+                    TextField("settings.name".localized, text: $command.name)
                 }
 
                 // 当选择品牌图标且有 AI Agent 时显示建议配置
                 if let brand = selectedBrand, brand.hasAIAgent {
-                    Section("建议配置") {
+                    Section("settings.suggestedConfig".localized) {
                         if let cmd = brand.suggestedCommand {
                             HStack {
-                                Text("正常模式")
+                                Text("settings.normalMode".localized)
                                     .foregroundColor(.secondary)
                                 Spacer()
                                 Text(cmd)
                                     .font(.system(.body, design: .monospaced))
-                                Button("使用") {
+                                Button("common.use".localized) {
                                     command.command = cmd
                                 }
                                 .buttonStyle(.bordered)
@@ -208,12 +221,12 @@ struct CommandEditSheet: View {
                         }
                         if let yolo = brand.yoloCommand {
                             HStack {
-                                Text("Yolo 模式")
+                                Text("settings.yoloMode".localized)
                                     .foregroundColor(.secondary)
                                 Spacer()
                                 Text(yolo)
                                     .font(.system(.body, design: .monospaced))
-                                Button("使用") {
+                                Button("common.use".localized) {
                                     command.command = yolo
                                 }
                                 .buttonStyle(.bordered)
@@ -222,7 +235,7 @@ struct CommandEditSheet: View {
                     }
                 }
 
-                Section("命令") {
+                Section("settings.command".localized) {
                     TextEditor(text: $command.command)
                         .font(.system(size: 12, design: .monospaced))
                         .frame(height: 100)
@@ -236,12 +249,12 @@ struct CommandEditSheet: View {
 
             // 底部按钮
             HStack {
-                Button("取消") { dismiss() }
+                Button("common.cancel".localized) { dismiss() }
                     .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
 
-                Button(isNew ? "添加" : "保存") {
+                Button(isNew ? "common.add".localized : "common.save".localized) {
                     onSave(command)
                     dismiss()
                 }
@@ -308,10 +321,10 @@ struct IconPickerSheet: View {
         VStack(spacing: 0) {
             // 标题
             HStack {
-                Text("选择图标")
+                Text("settings.iconPicker.title".localized)
                     .font(.headline)
                 Spacer()
-                Button("完成") { dismiss() }
+                Button("common.done".localized) { dismiss() }
             }
             .padding()
             
@@ -321,7 +334,7 @@ struct IconPickerSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // 内置图标
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("系统图标")
+                        Text("settings.iconPicker.system".localized)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
@@ -336,7 +349,7 @@ struct IconPickerSheet: View {
                     
                     // 品牌图标
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("品牌图标")
+                        Text("settings.iconPicker.brand".localized)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
@@ -352,7 +365,7 @@ struct IconPickerSheet: View {
                         Divider()
                         
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("自定义图标")
+                            Text("settings.iconPicker.custom".localized)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             
@@ -368,7 +381,7 @@ struct IconPickerSheet: View {
                     
                     // 上传自定义图标按钮
                     Button(action: uploadCustomIcon) {
-                        Label("上传图标", systemImage: "plus.circle")
+                        Label("settings.iconPicker.upload".localized, systemImage: "plus.circle")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -461,7 +474,7 @@ struct IconPickerSheet: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.png, .jpeg]
-        panel.message = "选择图标文件（推荐 32x32 或 64x64 PNG）"
+        panel.message = "settings.iconPicker.uploadMessage".localized
         
         if panel.runModal() == .OK, let url = panel.url {
             // 创建 assets 目录
@@ -564,12 +577,12 @@ struct AboutSection: View {
                 .font(.system(size: 24, weight: .semibold))
 
             // 版本信息
-            Text("版本 \(appVersion) (\(buildNumber))")
+            Text(String(format: "settings.about.version".localized, appVersion, buildNumber))
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
 
             // 描述
-            Text("macOS 原生多项目开发工具")
+            Text("settings.about.description".localized)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
 

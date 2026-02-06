@@ -1,4 +1,8 @@
-# AGENTS.md
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> CLAUDE.md 是 AGENTS.md 的符号链接，始终保持同步。
 
 1. 使用中文交流、编写代码注释、文档
 2. 经验总结：获取到经验教训后，如果它属于可复用的项目开发流程，就用简洁的语言记录到 AGENTS.md 中
@@ -30,7 +34,10 @@ cd core
 cargo build --release
 cargo run                          # Start WebSocket server
 TIDYFLOW_PORT=8080 cargo run       # Custom port
-cargo test                         # Run tests
+cargo test                         # Run all tests
+cargo test test_name               # Run specific test by name
+cargo test git::status::           # Run tests in a module
+RUST_LOG=debug cargo test          # Run with debug logging
 ```
 
 ### macOS App
@@ -76,35 +83,47 @@ Manual verification checklists are in `scripts/*-check.md`.
 │   ├─ PTY Manager (portable-pty)    │
 │   ├─ Workspace Engine (git worktree)│
 │   ├─ WebSocket Server (axum)       │
-│   └─ State Persistence (SQLite)    │
+│   └─ State Persistence (JSON)      │
 └─────────────────────────────────────┘
 ```
 
 ### Rust Core (`/core/src/`)
 - `main.rs` - CLI entry point (clap)
 - `pty/` - PTY session management
-- `server/` - WebSocket server, protocol (v2 MessagePack), file API, git tools, file watcher
+- `server/` - WebSocket server and协议处理
+  - `ws.rs` - WebSocket handler，tokio select! 循环处理消息/PTY输出/文件监控事件
+  - `protocol.rs` - Protocol v2 (MessagePack) 消息定义
+  - `handlers/` - 模块化消息处理器（terminal, file, git, project, settings），每个返回 `Result<bool, String>`
+  - `git/` - Git 操作模块（status, operations, branches, commit, integration, utils）
+  - `file_api.rs` - 文件操作，`file_index.rs` - Quick Open 索引，`watcher.rs` - 文件监控
 - `workspace/` - Project/workspace management, config, state persistence
 - `util/` - 日志等通用工具
 
 ### macOS App (`/app/TidyFlow/`)
 - `TidyFlowApp.swift` - App entry point
 - `ContentView.swift` - Main view composition
+- `LocalizationManager.swift` - 运行时语言切换（system/en/zh-Hans），使用 `"key".localized` 模式
 - `Views/` - SwiftUI views (sidebar, toolbar, tabs, git panel, command palette, settings)
+  - `Models.swift` - 核心数据模型（最大文件，修改需谨慎）
+  - `KeybindingHandler.swift` - 键盘快捷键处理
 - `WebView/` - WKWebView container and Swift-JS bridge
-- `Networking/` - WebSocket client, protocol models (MessagePack), AnyCodable
-- `Web/` - HTML/JS for xterm.js integration, Diff view (CodeMirror)
+- `Networking/` - WebSocket client (MessagePacker 库), protocol models, AnyCodable
+- `Web/` - HTML/JS for xterm.js terminal, CodeMirror diff view
 - `Process/` - 进程管理
+- `en.lproj/`, `zh-Hans.lproj/` - 本地化字符串文件
 
 ### Design Documentation (`/design/`)
-50+ design docs covering architecture, protocols, and feature specs. Reference these when implementing new features.
+设计文档，实现新功能时可参考。
 
 ## Key Patterns
 
 - **Workspace isolation**: Each workspace is a separate git worktree
-- **Protocol versioning**: v2 (MessagePack binary) with feature versions v1.0-v1.22
-- **State persistence**: `~/.tidyflow/state.json`
+- **Protocol versioning**: v2 (MessagePack binary, `rmp-serde`) with feature versions v1.0-v1.25
+- **State persistence**: `~/.tidyflow/state.json`（JSON 格式，非 SQLite）
 - **Per-project config**: `.tidyflow.toml` for setup scripts
+- **WebSocket 消息流**: Client 发送 MessagePack 编码的 `ClientMessage` → Server 通过 `handlers/` 模块化处理 → 返回 `ServerMessage`
+- **父进程监控**: Core 监控 Swift app 进程，父进程退出时自动终止
+- **本地化**: 运行时语言切换，使用 `"key".localized` 扩展，字符串文件在 `en.lproj/` 和 `zh-Hans.lproj/`
 
 ## Protocol Features (v1.x)
 
@@ -117,6 +136,9 @@ Manual verification checklists are in `scripts/*-check.md`.
 - v1.19-v1.20: Git log 和 commit 详情
 - v1.21: 客户端设置同步
 - v1.22: 文件监控
+- v1.23: 文件重命名/删除（macOS Trash）
+- v1.24: 文件复制（跨项目绝对路径）
+- v1.25: 文件移动（拖拽）
 
 ## CLI Commands
 
@@ -134,3 +156,7 @@ cargo run -- list workspaces --project my-project
 - `Cmd+1/2/3` - Switch right panel (Explorer/Search/Git)
 - `Cmd+T` - New terminal tab
 - `Cmd+W` - Close tab
+- `Cmd+Option+T` - Close other tabs
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` - Next/Previous tab
+- `Ctrl+1-9` - Switch to tab by index
+- `Cmd+1-9` - Switch to workspace by shortcut key (user-configurable)

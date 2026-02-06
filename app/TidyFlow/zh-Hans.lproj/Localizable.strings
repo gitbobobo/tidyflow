@@ -1,0 +1,178 @@
+/* ============================================
+   TidyFlow 中文本地化
+   ============================================ */
+
+/* 通用 */
+"common.cancel" = "取消";
+"common.save" = "保存";
+"common.delete" = "删除";
+"common.confirm" = "确定";
+"common.add" = "添加";
+"common.edit" = "编辑";
+"common.done" = "完成";
+"common.use" = "使用";
+"common.close" = "关闭";
+"common.discard" = "放弃";
+"common.remove" = "移除";
+"common.refresh" = "刷新";
+"common.paste" = "粘贴";
+"common.copy" = "复制";
+"common.rename" = "重命名";
+"common.loading" = "加载中";
+
+/* 应用退出确认 */
+"app.quit.title" = "确认退出";
+"app.quit.message" = "当前有 %d 个终端会话正在运行，可能存在正在进行的工作。确定要退出吗？";
+"app.quit.quit" = "退出";
+
+/* 设置页面 */
+"settings.title" = "设置";
+"settings.about" = "关于";
+"settings.language" = "语言";
+"settings.language.system" = "跟随系统";
+"settings.language.zh" = "中文";
+"settings.language.en" = "English";
+"settings.noCommands" = "暂无自定义命令";
+"settings.addCommand" = "添加命令";
+"settings.terminalCommands" = "终端命令";
+"settings.terminalCommands.footer" = "配置快捷命令，在新建终端时快速执行";
+"settings.deleteCommand" = "删除命令";
+"settings.deleteCommand.message" = "确定要删除命令「%@」吗？";
+"settings.icon" = "图标";
+"settings.icon.choose" = "选择...";
+"settings.name" = "名称";
+"settings.suggestedConfig" = "建议配置";
+"settings.normalMode" = "正常模式";
+"settings.yoloMode" = "Yolo 模式";
+"settings.command" = "命令";
+"settings.iconPicker.title" = "选择图标";
+"settings.iconPicker.system" = "系统图标";
+"settings.iconPicker.brand" = "品牌图标";
+"settings.iconPicker.custom" = "自定义图标";
+"settings.iconPicker.upload" = "上传图标";
+"settings.iconPicker.uploadMessage" = "选择图标文件（推荐 32x32 或 64x64 PNG）";
+"settings.about.version" = "版本 %@ (%@)";
+"settings.about.description" = "macOS 原生多项目开发工具";
+
+/* 主视图 - 工具栏 */
+"toolbar.settings" = "设置 (⌘,)";
+"toolbar.showInspector" = "显示检查器 (⌘⌃I)";
+"toolbar.hideInspector" = "隐藏检查器 (⌘⌃I)";
+"toolbar.openInEditor" = "在外部编辑器中打开";
+"toolbar.openFailed" = "打开失败";
+"toolbar.openEditorFailed" = "打开编辑器失败";
+
+/* 添加项目 */
+"addProject.title" = "添加项目";
+"addProject.folder" = "项目文件夹";
+"addProject.changeFolder" = "更改…";
+"addProject.selectFolder" = "选择文件夹…";
+"addProject.name" = "项目名称";
+"addProject.import" = "导入";
+"addProject.hint" = "项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间（基于 Git Worktree），请确保项目是 Git 仓库并已配置远程仓库。";
+
+/* 项目侧边栏 */
+"sidebar.projects" = "项目";
+"sidebar.addProject" = "添加项目";
+"sidebar.noProjects" = "暂无项目";
+"sidebar.noProjects.hint" = "添加项目以开始使用";
+"sidebar.noProjects.button" = "添加项目";
+"sidebar.copyPath" = "复制路径";
+"sidebar.openInFinder" = "在 Finder 中打开";
+"sidebar.openInEditor" = "在编辑器中打开";
+"sidebar.newWorkspace" = "新建工作空间";
+"sidebar.removeProject" = "移除项目";
+"sidebar.removeProject.title" = "移除项目";
+"sidebar.removeProject.message" = "确定要移除项目 \"%@\" 吗？\n此操作仅从列表移除，不会删除磁盘文件。";
+"sidebar.deleteWorkspace" = "删除工作空间";
+"sidebar.deleteWorkspace.message" = "确定要删除工作空间 \"%@\" 吗？\n将移除该 worktree，分支与未提交更改请先自行处理。";
+
+/* Git 面板 */
+"git.sourceControl" = "源代码管理";
+"git.commitMessage.placeholder" = "消息（⌘Enter 提交）";
+"git.commit" = "提交";
+"git.commitAndPush" = "提交并推送";
+"git.commitAndSync" = "提交并同步";
+"git.stageFirst" = "请先暂存更改";
+"git.enterMessage" = "请输入提交消息";
+"git.committing" = "正在提交...";
+"git.commitStaged" = "提交暂存的更改";
+"git.stagedChanges" = "暂存的更改";
+"git.unstageAll" = "取消暂存所有";
+"git.changes" = "更改";
+"git.stageAll" = "暂存所有更改";
+"git.discardAll" = "放弃所有更改";
+"git.notGitRepo" = "非 Git 仓库";
+"git.noChanges" = "没有更改";
+"git.discardAll.title" = "放弃所有更改？";
+"git.discardAll.message" = "这将放弃所有已跟踪文件的本地更改，此操作无法撤销。";
+"git.graph" = "图形";
+"git.auto" = "自动";
+"git.refreshHistory" = "刷新历史";
+"git.noCommitHistory" = "没有提交历史";
+"git.noFileChanges" = "没有文件变更";
+"git.loadFailed" = "加载失败: %@";
+"git.unstage" = "取消暂存";
+"git.openFile" = "打开文件";
+"git.discardChanges" = "放弃更改";
+"git.stageChanges" = "暂存更改";
+"git.deleteFile.title" = "删除文件？";
+"git.discardChanges.title" = "放弃更改？";
+"git.deleteFile.message" = "将永久删除此文件";
+"git.discardChanges.message" = "将放弃此文件的所有本地更改";
+
+/* 右侧面板 */
+"rightPanel.files" = "文件";
+"rightPanel.search" = "搜索";
+"rightPanel.noWorkspace" = "未选择工作空间";
+"rightPanel.noWorkspace.hint" = "请在左侧边栏选择一个项目和工作空间";
+"rightPanel.explorer" = "资源管理器";
+"rightPanel.copyPath" = "复制路径";
+"rightPanel.copyRelativePath" = "复制相对路径";
+"rightPanel.confirmDelete" = "确认删除";
+"rightPanel.confirmDelete.message" = "确定要将「%@」移到废纸篓吗？";
+"rightPanel.renameFile" = "重命名文件";
+"rightPanel.renameFolder" = "重命名文件夹";
+"rightPanel.newName" = "新名称";
+"rightPanel.newFile" = "新建文件";
+"rightPanel.newFile.placeholder" = "文件名";
+"rightPanel.newFile.title" = "新建文件";
+"rightPanel.explorerPlaceholder" = "文件浏览器";
+"rightPanel.comingSoon" = "即将推出";
+"rightPanel.globalSearch" = "全局搜索";
+"rightPanel.noTool" = "未选择工具";
+"rightPanel.noTool.hint" = "请从上方选择一个工具";
+
+/* 连接状态 */
+"connection.connected" = "已连接";
+"connection.disconnected" = "未连接";
+
+/* Tab 栏 */
+"tab.close" = "关闭";
+"tab.closeOthers" = "关闭其他";
+"tab.closeRight" = "关闭右侧标签页";
+"tab.closeSaved" = "关闭已保存 [⌘K U]";
+"tab.closeAll" = "全部关闭 [⌘K W]";
+"tab.newTerminal" = "新建终端";
+"tab.newTerminal.tooltip" = "新建终端 (⌘T)";
+
+/* Tab 内容 */
+"tabContent.selectOrAdd" = "选择或添加项目开始";
+"tabContent.selectOrAdd.hint" = "在左侧边栏选择项目和工作区，或使用 ⌘⇧P 添加新项目";
+"tabContent.addProject" = "添加项目";
+"tabContent.unsavedChanges" = "文件有未保存的更改";
+"tabContent.dontSave" = "不保存";
+"tabContent.unsavedChanges.message" = "如果不保存，你的更改将会丢失。";
+
+/* 快捷操作 */
+"quickActions.switchWorkspace" = "切换工作空间";
+"quickActions.switchTab" = "切换 Tab";
+"quickActions.openTerminal" = "打开终端";
+"quickActions.quickCommands" = "快捷命令";
+
+/* 相对时间 */
+"time.justNow" = "刚刚";
+"time.minutesAgo" = "%d 分钟前";
+"time.hoursAgo" = "%d 小时前";
+"time.daysAgo" = "%d 天前";
+"time.weeksAgo" = "%d 周前";

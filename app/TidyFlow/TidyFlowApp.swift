@@ -82,11 +82,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 显示退出确认弹框，返回用户是否确认退出
     private func showTerminationConfirmation(terminalCount: Int) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "确认退出"
-        alert.informativeText = "当前有 \(terminalCount) 个终端会话正在运行，可能存在正在进行的工作。确定要退出吗？"
+        alert.messageText = "app.quit.title".localized
+        alert.informativeText = String(format: "app.quit.message".localized, terminalCount)
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "退出")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "app.quit.quit".localized)
+        alert.addButton(withTitle: "common.cancel".localized)
         
         let response = alert.runModal()
         return response == .alertFirstButtonReturn
@@ -97,6 +97,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 struct TidyFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
+    @StateObject private var localizationManager = LocalizationManager.shared
 
     init() {
         // Register for termination notification as backup
@@ -113,6 +114,8 @@ struct TidyFlowApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(localizationManager)
+                .environment(\.locale, localizationManager.locale)
                 .onAppear {
                     // Give delegate access to appState for cleanup
                     appDelegate.appState = appState
@@ -137,6 +140,8 @@ struct TidyFlowApp: App {
         Settings {
             SettingsContentView()
                 .environmentObject(appState)
+                .environmentObject(localizationManager)
+                .environment(\.locale, localizationManager.locale)
                 .frame(minWidth: 500, minHeight: 400)
                 .preferredColorScheme(.dark)
         }

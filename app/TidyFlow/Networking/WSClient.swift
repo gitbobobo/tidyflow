@@ -60,6 +60,8 @@ class WSClient: NSObject, ObservableObject {
     var onFileCopyResult: ((FileCopyResult) -> Void)?
     // v1.25: 文件移动回调
     var onFileMoveResult: ((FileMoveResult) -> Void)?
+    // 文件写入回调（新建文件）
+    var onFileWriteResult: ((FileWriteResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -569,6 +571,19 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // MARK: - 文件写入（新建文件）
+
+    /// 请求写入文件（用于新建空文件）
+    func requestFileWrite(project: String, workspace: String, path: String, content: Data) {
+        send([
+            "type": "file_write",
+            "project": project,
+            "workspace": workspace,
+            "path": path,
+            "content": [UInt8](content)
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -797,6 +812,11 @@ class WSClient: NSObject, ObservableObject {
         case "file_move_result":
             if let result = FileMoveResult.from(json: json) {
                 onFileMoveResult?(result)
+            }
+
+        case "file_write_result":
+            if let result = FileWriteResult.from(json: json) {
+                onFileWriteResult?(result)
             }
 
         case "error":

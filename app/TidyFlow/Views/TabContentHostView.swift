@@ -76,12 +76,12 @@ struct NoActiveTabView: View {
                 .font(.system(size: 56))
                 .foregroundColor(.secondary.opacity(0.6))
 
-            Text("选择或添加项目开始")
+            Text("tabContent.selectOrAdd".localized)
                 .font(.title2)
                 .fontWeight(.medium)
                 .foregroundColor(.primary)
 
-            Text("在左侧边栏选择项目和工作区，或使用 ⌘⇧P 添加新项目")
+            Text("tabContent.selectOrAdd.hint".localized)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -90,7 +90,7 @@ struct NoActiveTabView: View {
             Button(action: {
                 appState.addProjectSheetPresented = true
             }) {
-                Label("添加项目", systemImage: "plus.circle.fill")
+                Label("tabContent.addProject".localized, systemImage: "plus.circle.fill")
             }
             .buttonStyle(.borderedProminent)
             .padding(.top, 8)
@@ -121,7 +121,7 @@ struct TerminalContentView: View {
                     VStack {
                         ProgressView()
                             .scaleEffect(0.8)
-                        Text("加载中")
+                        Text("common.loading".localized)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

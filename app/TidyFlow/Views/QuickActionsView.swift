@@ -40,8 +40,8 @@ struct QuickActionsView: View {
 
     private var keyboardShortcutsHint: some View {
         VStack(alignment: .leading, spacing: 10) {
-            shortcutRow(keys: "⌘ 1-9", description: "切换工作空间")
-            shortcutRow(keys: "⌃ 1-9", description: "切换 Tab")
+            shortcutRow(keys: "⌘ 1-9", description: "quickActions.switchWorkspace".localized)
+            shortcutRow(keys: "⌃ 1-9", description: "quickActions.switchTab".localized)
         }
         .padding(12)
         .background(
@@ -97,7 +97,7 @@ struct QuickActionsView: View {
                     .font(.title3)
                     .frame(width: 24, height: 24)
 
-                Text("打开终端")
+                Text("quickActions.openTerminal".localized)
                     .font(.headline)
 
                 Spacer()
@@ -116,7 +116,7 @@ struct QuickActionsView: View {
 
     private var customCommandsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("快捷命令")
+            Text("quickActions.quickCommands".localized)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.leading, 8)

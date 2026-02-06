@@ -71,7 +71,7 @@ struct ConnectionStatusView: View {
     }
 
     private var helpText: String {
-        appState.connectionState == .connected ? "已连接" : "未连接"
+        appState.connectionState == .connected ? "connection.connected".localized : "connection.disconnected".localized
     }
 
     var body: some View {
@@ -107,7 +107,7 @@ struct ProjectBranchView: View {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
-                    .help(appState.connectionState == .connected ? "已连接" : "未连接")
+                    .help(appState.connectionState == .connected ? "connection.connected".localized : "connection.disconnected".localized)
 
                 Text(appState.selectedProjectName)
                     .font(.system(size: 13, weight: .medium))
@@ -218,7 +218,7 @@ struct OpenInEditorButtonView: View {
             ForEach(ExternalEditor.allCases, id: \.self) { editor in
                 Button(action: {
                     if let path = appState.selectedWorkspacePath, !appState.openPathInEditor(path, editor: editor) {
-                        alertMessage = "打开失败"
+                        alertMessage = "toolbar.openFailed".localized
                         showingAlert = true
                     }
                 }) {
@@ -232,13 +232,13 @@ struct OpenInEditorButtonView: View {
             }
         } label: {
             toolbarButtonIcon
-                .help("在外部编辑器中打开")
+                .help("toolbar.openInEditor".localized)
         }
         .menuStyle(.borderlessButton)
         .padding(.horizontal, 8)
         .disabled(appState.selectedWorkspacePath == nil)
-        .alert("打开编辑器失败", isPresented: $showingAlert) {
-            Button("确定", role: .cancel) {}
+        .alert("toolbar.openEditorFailed".localized, isPresented: $showingAlert) {
+            Button("common.confirm".localized, role: .cancel) {}
         } message: {
             Text(alertMessage)
         }

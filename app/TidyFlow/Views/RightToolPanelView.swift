@@ -60,8 +60,8 @@ struct CapsuleSegmentedControl: View {
 
     private func accessibilityLabel(for tool: RightTool) -> String {
         switch tool {
-        case .explorer: return "文件"
-        case .search: return "搜索"
+        case .explorer: return "rightPanel.files".localized
+        case .search: return "rightPanel.search".localized
         case .git: return "Git"
         }
     }
@@ -135,7 +135,7 @@ struct PanelHeaderView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("刷新")
+                .help("common.refresh".localized)
                 .disabled(isRefreshDisabled)
             }
         }
@@ -327,10 +327,10 @@ struct RightPanelNoWorkspaceView: View {
             Image(systemName: "folder.badge.questionmark")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary.opacity(0.6))
-            Text("未选择工作空间")
+            Text("rightPanel.noWorkspace".localized)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("请在左侧边栏选择一个项目和工作空间")
+            Text("rightPanel.noWorkspace.hint".localized)
                 .font(.caption)
                 .foregroundColor(.secondary.opacity(0.8))
                 .multilineTextAlignment(.center)
@@ -346,11 +346,15 @@ struct FileTreeView: View {
     @EnvironmentObject var appState: AppState
     let workspaceKey: String
 
+    // 新建文件状态
+    @State private var showNewFileDialog = false
+    @State private var newFileName = ""
+
     var body: some View {
         VStack(spacing: 0) {
             // 与源代码管理一致的面板标题
             PanelHeaderView(
-                title: "资源管理器",
+                title: "rightPanel.explorer".localized,
                 onRefresh: { appState.fetchFileList(workspaceKey: workspaceKey, path: ".") },
                 isRefreshDisabled: false
             )
@@ -366,12 +370,22 @@ struct FileTreeView: View {
                 .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
             }
             .contextMenu {
+                // 新建文件（根目录）
+                Button {
+                    newFileName = ""
+                    showNewFileDialog = true
+                } label: {
+                    Label("rightPanel.newFile".localized, systemImage: "doc.badge.plus")
+                }
+
+                Divider()
+
                 // 粘贴到根目录
                 if appState.clipboardHasFiles {
                     Button {
                         appState.pasteFiles(workspaceKey: workspaceKey, destDir: ".")
                     } label: {
-                        Label("粘贴", systemImage: "doc.on.clipboard")
+                        Label("common.paste".localized, systemImage: "doc.on.clipboard")
                     }
 
                     Divider()
@@ -385,7 +399,7 @@ struct FileTreeView: View {
                         appState.clipboardHasFiles = false
                     }
                 } label: {
-                    Label("复制路径", systemImage: "link")
+                    Label("rightPanel.copyPath".localized, systemImage: "link")
                 }
 
                 // 复制相对路径（根目录为 "."）
@@ -394,8 +408,22 @@ struct FileTreeView: View {
                     NSPasteboard.general.setString(".", forType: .string)
                     appState.clipboardHasFiles = false
                 } label: {
-                    Label("复制相对路径", systemImage: "arrow.turn.down.right")
+                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
                 }
+            }
+            .sheet(isPresented: $showNewFileDialog) {
+                NewFileDialogView(
+                    fileName: $newFileName,
+                    onConfirm: {
+                        if !newFileName.isEmpty {
+                            appState.createNewFile(workspaceKey: workspaceKey, parentDir: ".", fileName: newFileName)
+                        }
+                        showNewFileDialog = false
+                    },
+                    onCancel: {
+                        showNewFileDialog = false
+                    }
+                )
             }
             // v1.25: 根目录放置目标（拖拽到空白区域移动到根目录）
             .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
@@ -491,6 +519,9 @@ struct FileRowView: View {
     @State private var showRenameDialog = false
     @State private var showDeleteConfirm = false
     @State private var newName = ""
+    // 新建文件状态
+    @State private var showNewFileDialog = false
+    @State private var newFileName = ""
     // v1.25: 拖拽放置目标高亮
     @State private var isDropTarget = false
 
@@ -611,6 +642,16 @@ struct FileRowView: View {
                 }
             }
             .contextMenu {
+                // 新建文件
+                Button {
+                    newFileName = ""
+                    showNewFileDialog = true
+                } label: {
+                    Label("rightPanel.newFile".localized, systemImage: "doc.badge.plus")
+                }
+
+                Divider()
+
                 Button {
                     appState.copyFileToClipboard(
                         workspaceKey: workspaceKey,
@@ -619,7 +660,7 @@ struct FileRowView: View {
                         name: item.name
                     )
                 } label: {
-                    Label("复制", systemImage: "doc.on.doc")
+                    Label("common.copy".localized, systemImage: "doc.on.doc")
                 }
 
                 // 粘贴选项：目录粘贴到自身，文件粘贴到其父目录
@@ -629,7 +670,7 @@ struct FileRowView: View {
                         let dest = destDir.isEmpty ? "." : destDir
                         appState.pasteFiles(workspaceKey: workspaceKey, destDir: dest)
                     } label: {
-                        Label("粘贴", systemImage: "doc.on.clipboard")
+                        Label("common.paste".localized, systemImage: "doc.on.clipboard")
                     }
                 }
 
@@ -643,7 +684,7 @@ struct FileRowView: View {
                         appState.clipboardHasFiles = false
                     }
                 } label: {
-                    Label("复制路径", systemImage: "link")
+                    Label("rightPanel.copyPath".localized, systemImage: "link")
                 }
 
                 Button {
@@ -651,7 +692,7 @@ struct FileRowView: View {
                     NSPasteboard.general.setString(item.path, forType: .string)
                     appState.clipboardHasFiles = false
                 } label: {
-                    Label("复制相对路径", systemImage: "arrow.turn.down.right")
+                    Label("rightPanel.copyRelativePath".localized, systemImage: "arrow.turn.down.right")
                 }
 
                 Divider()
@@ -660,7 +701,7 @@ struct FileRowView: View {
                     newName = item.name
                     showRenameDialog = true
                 } label: {
-                    Label("重命名", systemImage: "pencil")
+                    Label("common.rename".localized, systemImage: "pencil")
                 }
 
                 Divider()
@@ -668,7 +709,7 @@ struct FileRowView: View {
                 Button(role: .destructive) {
                     showDeleteConfirm = true
                 } label: {
-                    Label("删除", systemImage: "trash")
+                    Label("common.delete".localized, systemImage: "trash")
                 }
             }
 
@@ -697,13 +738,29 @@ struct FileRowView: View {
                 }
             )
         }
-        .alert("确认删除", isPresented: $showDeleteConfirm) {
-            Button("取消", role: .cancel) { }
-            Button("删除", role: .destructive) {
+        .sheet(isPresented: $showNewFileDialog) {
+            NewFileDialogView(
+                fileName: $newFileName,
+                onConfirm: {
+                    if !newFileName.isEmpty {
+                        let parentDir = item.isDir ? item.path : (item.path as NSString).deletingLastPathComponent
+                        let dir = parentDir.isEmpty ? "." : parentDir
+                        appState.createNewFile(workspaceKey: workspaceKey, parentDir: dir, fileName: newFileName)
+                    }
+                    showNewFileDialog = false
+                },
+                onCancel: {
+                    showNewFileDialog = false
+                }
+            )
+        }
+        .alert("rightPanel.confirmDelete".localized, isPresented: $showDeleteConfirm) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.delete".localized, role: .destructive) {
                 appState.deleteFile(workspaceKey: workspaceKey, path: item.path)
             }
         } message: {
-            Text("确定要将「\(item.name)」移到废纸篓吗？")
+            Text(String(format: "rightPanel.confirmDelete.message".localized, item.name))
         }
         // v1.25: 拖拽源
         .onDrag {
@@ -839,10 +896,10 @@ struct ExplorerPlaceholderView: View {
             Image(systemName: "folder")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary.opacity(0.6))
-            Text("文件浏览器")
+            Text("rightPanel.explorerPlaceholder".localized)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("即将推出")
+            Text("rightPanel.comingSoon".localized)
                 .font(.caption)
                 .foregroundColor(.secondary.opacity(0.8))
             Spacer()
@@ -858,10 +915,10 @@ struct SearchPlaceholderView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary.opacity(0.6))
-            Text("全局搜索")
+            Text("rightPanel.globalSearch".localized)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("即将推出")
+            Text("rightPanel.comingSoon".localized)
                 .font(.caption)
                 .foregroundColor(.secondary.opacity(0.8))
             Spacer()
@@ -877,10 +934,10 @@ struct NoToolSelectedView: View {
             Image(systemName: "square.dashed")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary.opacity(0.6))
-            Text("未选择工具")
+            Text("rightPanel.noTool".localized)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("请从上方选择一个工具")
+            Text("rightPanel.noTool.hint".localized)
                 .font(.caption)
                 .foregroundColor(.secondary.opacity(0.8))
             Spacer()
@@ -892,6 +949,61 @@ struct NoToolSelectedView: View {
 // MARK: - v1.23: 重命名对话框
 
 /// 重命名对话框视图
+// MARK: - 新建文件对话框
+
+struct NewFileDialogView: View {
+    @Binding var fileName: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    @FocusState private var isTextFieldFocused: Bool
+
+    private var isValid: Bool {
+        !fileName.isEmpty && !fileName.contains("/") && !fileName.contains("\\")
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Image(systemName: "doc.badge.plus")
+                    .foregroundColor(.accentColor)
+                Text("rightPanel.newFile.title".localized)
+                    .font(.headline)
+            }
+
+            TextField("rightPanel.newFile.placeholder".localized, text: $fileName)
+                .textFieldStyle(.roundedBorder)
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    if isValid {
+                        onConfirm()
+                    }
+                }
+
+            HStack(spacing: 12) {
+                Button("common.cancel".localized) {
+                    onCancel()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+
+                Button("common.confirm".localized) {
+                    onConfirm()
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                .disabled(!isValid)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
+        .onAppear {
+            isTextFieldFocused = true
+        }
+    }
+}
+
+// MARK: - 重命名对话框
+
 struct RenameDialogView: View {
     let originalName: String
     @Binding var newName: String
@@ -911,12 +1023,12 @@ struct RenameDialogView: View {
             HStack {
                 Image(systemName: isDir ? "folder" : "doc")
                     .foregroundColor(.accentColor)
-                Text("重命名\(isDir ? "文件夹" : "文件")")
+                Text(isDir ? "rightPanel.renameFolder".localized : "rightPanel.renameFile".localized)
                     .font(.headline)
             }
 
             // 输入框
-            TextField("新名称", text: $newName)
+            TextField("rightPanel.newName".localized, text: $newName)
                 .textFieldStyle(.roundedBorder)
                 .focused($isTextFieldFocused)
                 .onSubmit {
@@ -927,12 +1039,12 @@ struct RenameDialogView: View {
 
             // 按钮
             HStack(spacing: 12) {
-                Button("取消") {
+                Button("common.cancel".localized) {
                     onCancel()
                 }
                 .keyboardShortcut(.escape, modifiers: [])
 
-                Button("确定") {
+                Button("common.confirm".localized) {
                     onConfirm()
                 }
                 .keyboardShortcut(.return, modifiers: [])

@@ -12,7 +12,7 @@ struct ProjectsSidebarView: View {
         VStack(spacing: 0) {
             // 标题栏
             HStack {
-                Text("项目")
+                Text("sidebar.projects".localized)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -34,7 +34,7 @@ struct ProjectsSidebarView: View {
                 }) {
                     Image(systemName: "plus")
                 }
-                .help("添加项目")
+                .help("sidebar.addProject".localized)
             }
         }
     }
@@ -47,13 +47,13 @@ struct ProjectsSidebarView: View {
             Image(systemName: "folder.badge.plus")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary.opacity(0.5))
-            Text("No Projects")
+            Text("sidebar.noProjects".localized)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("Add a project to get started")
+            Text("sidebar.noProjects.hint".localized)
                 .font(.caption)
                 .foregroundColor(.secondary.opacity(0.8))
-            Button("Add Project") {
+            Button("sidebar.noProjects.button".localized) {
                 appState.addProjectSheetPresented = true
             }
             .buttonStyle(.borderedProminent)
@@ -216,12 +216,12 @@ struct ProjectRowView: View {
                 Button {
                     copyPathToPasteboard(path)
                 } label: {
-                    Label("复制路径", systemImage: "doc.on.doc")
+                    Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
                 }
                 Button {
                     openInFinder(path)
                 } label: {
-                    Label("在 Finder 中打开", systemImage: "folder")
+                    Label("sidebar.openInFinder".localized, systemImage: "folder")
                 }
                 Menu {
                     ForEach(ExternalEditor.allCases, id: \.self) { editor in
@@ -237,28 +237,28 @@ struct ProjectRowView: View {
                         .disabled(!editor.isInstalled)
                     }
                 } label: {
-                    Label("在编辑器中打开", systemImage: "square.and.arrow.up")
+                    Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
                 }
             }
             Button {
                 appState.createWorkspace(projectName: project.name)
             } label: {
-                Label("新建工作空间", systemImage: "plus.square.on.square")
+                Label("sidebar.newWorkspace".localized, systemImage: "plus.square.on.square")
             }
             Divider()
             Button(role: .destructive) {
                 showDeleteConfirmation = true
             } label: {
-                Label("移除项目", systemImage: "trash")
+                Label("sidebar.removeProject".localized, systemImage: "trash")
             }
         }
-        .alert("移除项目", isPresented: $showDeleteConfirmation) {
-            Button("取消", role: .cancel) { }
-            Button("移除", role: .destructive) {
+        .alert("sidebar.removeProject.title".localized, isPresented: $showDeleteConfirmation) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.remove".localized, role: .destructive) {
                 appState.removeProject(id: project.id)
             }
         } message: {
-            Text("确定要移除项目 \"\(project.name)\" 吗？\n此操作仅从列表移除，不会删除磁盘文件。")
+            Text(String(format: "sidebar.removeProject.message".localized, project.name))
         }
     }
 }
@@ -370,12 +370,12 @@ struct WorkspaceRowView: View {
                 Button {
                     copyPathToPasteboard(path)
                 } label: {
-                    Label("复制路径", systemImage: "doc.on.doc")
+                    Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
                 }
                 Button {
                     openInFinder(path)
                 } label: {
-                    Label("在 Finder 中打开", systemImage: "folder")
+                    Label("sidebar.openInFinder".localized, systemImage: "folder")
                 }
                 Menu {
                     ForEach(ExternalEditor.allCases, id: \.self) { editor in
@@ -391,7 +391,7 @@ struct WorkspaceRowView: View {
                         .disabled(!editor.isInstalled)
                     }
                 } label: {
-                    Label("在编辑器中打开", systemImage: "square.and.arrow.up")
+                    Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
                 }
             }
 
@@ -401,17 +401,17 @@ struct WorkspaceRowView: View {
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
                 } label: {
-                    Label("删除", systemImage: "trash")
+                    Label("common.delete".localized, systemImage: "trash")
                 }
             }
         }
-        .alert("删除工作空间", isPresented: $showDeleteConfirmation) {
-            Button("取消", role: .cancel) { }
-            Button("删除", role: .destructive) {
+        .alert("sidebar.deleteWorkspace".localized, isPresented: $showDeleteConfirmation) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.delete".localized, role: .destructive) {
                 appState.removeWorkspace(projectName: projectName, workspaceName: workspace.name)
             }
         } message: {
-            Text("确定要删除工作空间 \"\(workspace.name)\" 吗？\n将移除该 worktree，分支与未提交更改请先自行处理。")
+            Text(String(format: "sidebar.deleteWorkspace.message".localized, workspace.name))
         }
         .animation(.easeInOut(duration: 0.2), value: isSelected)
     }

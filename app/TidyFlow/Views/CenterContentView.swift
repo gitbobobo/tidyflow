@@ -37,8 +37,8 @@ struct CenterContentView: View {
             setupBridgeCallbacks()
             setupSaveNotification()
         }
-        .alert("文件有未保存的更改", isPresented: $appState.showUnsavedChangesAlert) {
-            Button("保存", role: nil) {
+        .alert("tabContent.unsavedChanges".localized, isPresented: $appState.showUnsavedChangesAlert) {
+            Button("common.save".localized, role: nil) {
                 if let wsKey = appState.pendingCloseWorkspaceKey,
                    let tabId = appState.pendingCloseTabId {
                     appState.saveAndCloseTab(workspaceKey: wsKey, tabId: tabId)
@@ -46,7 +46,7 @@ struct CenterContentView: View {
                 appState.pendingCloseWorkspaceKey = nil
                 appState.pendingCloseTabId = nil
             }
-            Button("不保存", role: .destructive) {
+            Button("tabContent.dontSave".localized, role: .destructive) {
                 if let wsKey = appState.pendingCloseWorkspaceKey,
                    let tabId = appState.pendingCloseTabId {
                     appState.performCloseTab(workspaceKey: wsKey, tabId: tabId)
@@ -54,12 +54,12 @@ struct CenterContentView: View {
                 appState.pendingCloseWorkspaceKey = nil
                 appState.pendingCloseTabId = nil
             }
-            Button("取消", role: .cancel) {
+            Button("common.cancel".localized, role: .cancel) {
                 appState.pendingCloseWorkspaceKey = nil
                 appState.pendingCloseTabId = nil
             }
         } message: {
-            Text("如果不保存，你的更改将会丢失。")
+            Text("tabContent.unsavedChanges.message".localized)
         }
     }
 

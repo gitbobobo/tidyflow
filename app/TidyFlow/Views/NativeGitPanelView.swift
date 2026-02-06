@@ -337,13 +337,13 @@ struct NativeGitPanelView: View {
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             loadDataIfNeeded()
         }
-        .alert("放弃所有更改？", isPresented: $showDiscardAllConfirm) {
-            Button("取消", role: .cancel) { }
-            Button("放弃", role: .destructive) {
+        .alert("git.discardAll.title".localized, isPresented: $showDiscardAllConfirm) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.discard".localized, role: .destructive) {
                 discardAll()
             }
         } message: {
-            Text("这将放弃所有已跟踪文件的本地更改，此操作无法撤销。")
+            Text("git.discardAll.message".localized)
         }
     }
 
@@ -386,7 +386,7 @@ struct GitPanelHeader: View {
 
     var body: some View {
         PanelHeaderView(
-            title: "源代码管理",
+            title: "git.sourceControl".localized,
             onRefresh: refreshAll,
             isRefreshDisabled: isLoading
         )
@@ -413,7 +413,7 @@ struct GitCommitInputSection: View {
     var body: some View {
         VStack(spacing: 8) {
             // 提交消息输入框
-            TextField("消息（⌘Enter 提交）", text: commitMessageBinding, axis: .vertical)
+            TextField("git.commitMessage.placeholder".localized, text: commitMessageBinding, axis: .vertical)
                 .font(.system(size: 12))
                 .lineLimit(1...10)
                 .cornerRadius(2)
@@ -437,7 +437,7 @@ struct GitCommitInputSection: View {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 11, weight: .medium))
                         }
-                        Text("提交")
+                        Text("git.commit".localized)
                             .font(.system(size: 12, weight: .medium))
                     }
                     .frame(maxWidth: .infinity)
@@ -452,17 +452,17 @@ struct GitCommitInputSection: View {
                 
                 // 下拉菜单（占位）
                 Menu {
-                    Button("提交") {
+                    Button("git.commit".localized) {
                         performCommit()
                     }
                     .disabled(!canCommit)
                     
-                    Button("提交并推送") {
+                    Button("git.commitAndPush".localized) {
                         // 暂不实现
                     }
                     .disabled(true)
                     
-                    Button("提交并同步") {
+                    Button("git.commitAndSync".localized) {
                         // 暂不实现
                     }
                     .disabled(true)
@@ -520,13 +520,13 @@ struct GitCommitInputSection: View {
 
     private var commitButtonHelp: String {
         if !hasStagedChanges {
-            return "请先暂存更改"
+            return "git.stageFirst".localized
         } else if currentMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "请输入提交消息"
+            return "git.enterMessage".localized
         } else if isCommitInFlight {
-            return "正在提交..."
+            return "git.committing".localized
         } else {
-            return "提交暂存的更改"
+            return "git.commitStaged".localized
         }
     }
 
@@ -614,7 +614,7 @@ struct GitStagedChangesSection: View {
 
     var body: some View {
         CollapsibleSection(
-            title: "暂存的更改",
+            title: "git.stagedChanges".localized,
             count: stagedCount,
             isExpanded: $isExpanded,
             headerActions: {
@@ -626,7 +626,7 @@ struct GitStagedChangesSection: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("取消暂存所有")
+                        .help("git.unstageAll".localized)
                     }
                 )
             }
@@ -667,7 +667,7 @@ struct GitChangesSection: View {
 
     var body: some View {
         CollapsibleSection(
-            title: "更改",
+            title: "git.changes".localized,
             count: unstagedCount,
             isExpanded: $isExpanded,
             headerActions: {
@@ -679,7 +679,7 @@ struct GitChangesSection: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("暂存所有更改")
+                        .help("git.stageAll".localized)
                         .disabled(!hasUnstagedChanges || isStageAllInFlight)
                         
                         Button(action: { showDiscardAllConfirm = true }) {
@@ -688,7 +688,7 @@ struct GitChangesSection: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("放弃所有更改")
+                        .help("git.discardAll".localized)
                         .disabled(!hasTrackedChanges)
                     }
                 )
@@ -700,11 +700,11 @@ struct GitChangesSection: View {
                         if cache.isLoading && cache.items.isEmpty {
                             LoadingRow()
                         } else if !cache.isGitRepo {
-                            EmptyRow(text: "非 Git 仓库")
+                            EmptyRow(text: "git.notGitRepo".localized)
                         } else {
                             let unstaged = unstagedItems(cache.items)
                             if unstaged.isEmpty {
-                                EmptyRow(text: "没有更改")
+                                EmptyRow(text: "git.noChanges".localized)
                             } else {
                                 ForEach(unstaged) { item in
                                     GitStatusRow(item: item, isStaged: false)
@@ -817,7 +817,7 @@ struct GitStatusRow: View {
                                 .foregroundColor(.orange)
                         }
                         .buttonStyle(.plain)
-                        .help("取消暂存")
+                        .help("git.unstage".localized)
                     } else {
                         // 打开文件
                         Button(action: openFile) {
@@ -826,7 +826,7 @@ struct GitStatusRow: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("打开文件")
+                        .help("git.openFile".localized)
                         
                         // 放弃更改
                         Button(action: { showDiscardConfirm = true }) {
@@ -835,7 +835,7 @@ struct GitStatusRow: View {
                                 .foregroundColor(.red)
                         }
                         .buttonStyle(.plain)
-                        .help("放弃更改")
+                        .help("git.discardChanges".localized)
                         
                         // 暂存
                         Button(action: stageFile) {
@@ -844,7 +844,7 @@ struct GitStatusRow: View {
                                 .foregroundColor(.green)
                         }
                         .buttonStyle(.plain)
-                        .help("暂存更改")
+                        .help("git.stageChanges".localized)
                     }
                 }
             }
@@ -887,13 +887,13 @@ struct GitStatusRow: View {
         .onTapGesture {
             openDiff()
         }
-        .alert(isUntracked ? "删除文件？" : "放弃更改？", isPresented: $showDiscardConfirm) {
-            Button("取消", role: .cancel) { }
-            Button(isUntracked ? "删除" : "放弃", role: .destructive) {
+        .alert(isUntracked ? "git.deleteFile.title".localized : "git.discardChanges.title".localized, isPresented: $showDiscardConfirm) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button(isUntracked ? "common.delete".localized : "common.discard".localized, role: .destructive) {
                 discardFile()
             }
         } message: {
-            Text(isUntracked ? "将永久删除此文件" : "将放弃此文件的所有本地更改")
+            Text(isUntracked ? "git.deleteFile.message".localized : "git.discardChanges.message".localized)
         }
     }
 
@@ -969,14 +969,14 @@ struct GitGraphSection: View {
 
     var body: some View {
         CollapsibleSection(
-            title: "图形",
+            title: "git.graph".localized,
             count: nil,
             isExpanded: $isExpanded,
             headerActions: {
                 AnyView(
                     HStack(spacing: 4) {
                         // 自动刷新（占位）
-                        Text("自动")
+                        Text("git.auto".localized)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                         
@@ -987,7 +987,7 @@ struct GitGraphSection: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("刷新历史")
+                        .help("git.refreshHistory".localized)
                     }
                 )
             }
@@ -998,7 +998,7 @@ struct GitGraphSection: View {
                         if cache.isLoading && cache.entries.isEmpty {
                             LoadingRow()
                         } else if cache.entries.isEmpty {
-                            EmptyRow(text: "没有提交历史")
+                            EmptyRow(text: "git.noCommitHistory".localized)
                         } else {
                             ForEach(cache.entries) { entry in
                                 GitLogRow(entry: entry)
@@ -1156,7 +1156,7 @@ struct CommitFilesView: View {
                     .padding(.vertical, 8)
                 } else if let result = cache.result {
                     if result.files.isEmpty {
-                        Text("没有文件变更")
+                        Text("git.noFileChanges".localized)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 32)
@@ -1167,7 +1167,7 @@ struct CommitFilesView: View {
                         }
                     }
                 } else if let error = cache.error {
-                    Text("加载失败: \(error)")
+                    Text(String(format: "git.loadFailed".localized, error))
                         .font(.system(size: 11))
                         .foregroundColor(.red)
                         .padding(.horizontal, 32)

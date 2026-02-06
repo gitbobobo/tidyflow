@@ -16,12 +16,12 @@ struct AddProjectSheet: View {
     var body: some View {
         VStack(spacing: 16) {
             // 标题
-            Text("添加项目")
+            Text("addProject.title".localized)
                 .font(.headline)
 
             Form {
                 // 项目文件夹
-                LabeledContent("项目文件夹") {
+                LabeledContent("addProject.folder".localized) {
                     HStack {
                         if let path = selectedPath {
                             Image(systemName: "folder.fill")
@@ -31,11 +31,11 @@ struct AddProjectSheet: View {
                                 .truncationMode(.middle)
                                 .help(path.path)
                             Spacer()
-                            Button("更改…") {
+                            Button("addProject.changeFolder".localized) {
                                 showFileImporter = true
                             }
                         } else {
-                            Button("选择文件夹…") {
+                            Button("addProject.selectFolder".localized) {
                                 showFileImporter = true
                             }
                         }
@@ -43,7 +43,7 @@ struct AddProjectSheet: View {
                 }
 
                 // 项目名称
-                LabeledContent("项目名称") {
+                LabeledContent("addProject.name".localized) {
                     TextField("", text: $projectName)
                         .textFieldStyle(.roundedBorder)
                 }
@@ -60,7 +60,7 @@ struct AddProjectSheet: View {
 
             // 提示信息
             Label {
-                Text("项目将被导入，默认工作空间指向项目根目录。如需创建独立工作空间（基于 Git Worktree），请确保项目是 Git 仓库并已配置远程仓库。")
+                Text("addProject.hint".localized)
                     .font(.caption)
                     .foregroundColor(.secondary)
             } icon: {
@@ -73,7 +73,7 @@ struct AddProjectSheet: View {
 
             // 操作按钮
             HStack {
-                Button("取消") {
+                Button("common.cancel".localized) {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -85,7 +85,7 @@ struct AddProjectSheet: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Text("导入")
+                        Text("addProject.import".localized)
                     }
                 }
                 .buttonStyle(.borderedProminent)

@@ -928,6 +928,11 @@ class AppState: ObservableObject {
             self?.handleFileMoveResult(result)
         }
 
+        // 文件写入结果（新建文件）
+        wsClient.onFileWriteResult = { [weak self] result in
+            self?.handleFileWriteResult(result)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -1060,7 +1065,7 @@ class AppState: ObservableObject {
         
         guard connectionState == .connected else {
             var cache = fileListCache[key] ?? FileListCache.empty()
-            cache.error = "未连接"
+            cache.error = "connection.disconnected".localized
             cache.isLoading = false
             fileListCache[key] = cache
             return
@@ -1196,6 +1201,42 @@ class AppState: ObservableObject {
             updateEditorTabAfterRename(oldPath: result.oldPath, newPath: result.newPath)
         } else {
             print("[AppState] 文件移动失败: \(result.message ?? "未知错误")")
+        }
+    }
+
+    // MARK: - 新建文件
+
+    /// 请求新建文件
+    func createNewFile(workspaceKey: String, parentDir: String, fileName: String) {
+        guard connectionState == .connected else {
+            print("[AppState] 无法新建文件：未连接")
+            return
+        }
+        // 拼接路径
+        let filePath = parentDir == "." ? fileName : "\(parentDir)/\(fileName)"
+        // 检查文件列表缓存中是否已有同名文件
+        let cacheKey = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: parentDir)
+        if let cache = fileListCache[cacheKey] {
+            if cache.items.contains(where: { $0.name == fileName }) {
+                print("[AppState] 新建文件失败：文件已存在 \(filePath)")
+                return
+            }
+        }
+        wsClient.requestFileWrite(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            path: filePath,
+            content: Data()
+        )
+    }
+
+    /// 处理文件写入结果
+    private func handleFileWriteResult(_ result: FileWriteResult) {
+        if result.success {
+            print("[AppState] 新建文件成功: \(result.path)")
+            refreshFileList()
+        } else {
+            print("[AppState] 新建文件失败: \(result.path)")
         }
     }
 

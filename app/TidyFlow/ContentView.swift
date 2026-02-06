@@ -53,7 +53,7 @@ struct ContentView: View {
                     SettingsLink {
                         Image(systemName: "gearshape")
                     }
-                    .help("设置 (⌘,)")
+                    .help("toolbar.settings".localized)
                 }
                 // 右侧面板切换按钮
                 ToolbarItem(placement: .primaryAction) {
@@ -64,7 +64,7 @@ struct ContentView: View {
                     }) {
                         Image(systemName: "sidebar.right")
                     }
-                    .help(appState.rightSidebarCollapsed ? "显示检查器 (⌘⌃I)" : "隐藏检查器 (⌘⌃I)")
+                    .help(appState.rightSidebarCollapsed ? "toolbar.showInspector".localized : "toolbar.hideInspector".localized)
                 }
             }
 

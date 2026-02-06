@@ -98,7 +98,7 @@ struct TabItemView: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button("关闭") {
+            Button("tab.close".localized) {
                 onClose()
             }
             .keyboardShortcut("w", modifiers: .command)
@@ -106,7 +106,7 @@ struct TabItemView: View {
             let tabs = appState.workspaceTabs[workspaceKey] ?? []
             let otherTabs = tabs.filter { $0.id != tab.id }
 
-            Button("关闭其他") {
+            Button("tab.closeOthers".localized) {
                 appState.closeOtherTabs(workspaceKey: workspaceKey, keepTabId: tab.id)
             }
             .keyboardShortcut("t", modifiers: [.option, .command])
@@ -115,18 +115,18 @@ struct TabItemView: View {
             let tabIndex = tabs.firstIndex(where: { $0.id == tab.id }) ?? tabs.endIndex
             let hasRightTabs = tabIndex < tabs.count - 1
 
-            Button("关闭右侧标签页") {
+            Button("tab.closeRight".localized) {
                 appState.closeTabsToRight(workspaceKey: workspaceKey, ofTabId: tab.id)
             }
             .disabled(!hasRightTabs)
 
             Divider()
 
-            Button("关闭已保存 [⌘K U]") {
+            Button("tab.closeSaved".localized) {
                 appState.closeSavedTabs(workspaceKey: workspaceKey)
             }
 
-            Button("全部关闭 [⌘K W]") {
+            Button("tab.closeAll".localized) {
                 appState.closeAllTabs(workspaceKey: workspaceKey)
             }
         }
@@ -150,7 +150,7 @@ struct NewTerminalButton: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.borderless)
-            .help("新建终端 (⌘T)")
+            .help("tab.newTerminal.tooltip".localized)
         } else {
             // 有自定义命令时，显示下拉菜单
             Menu {
@@ -158,7 +158,7 @@ struct NewTerminalButton: View {
                 Button(action: {
                     appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
                 }) {
-                    Label("新建终端", systemImage: "terminal")
+                    Label("tab.newTerminal".localized, systemImage: "terminal")
                 }
                 
                 Divider()
@@ -182,7 +182,7 @@ struct NewTerminalButton: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .help("新建终端 (⌘T)")
+            .help("tab.newTerminal.tooltip".localized)
         }
     }
 }

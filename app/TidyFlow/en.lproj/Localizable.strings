@@ -1,0 +1,178 @@
+/* ============================================
+   TidyFlow English Localization
+   ============================================ */
+
+/* Common */
+"common.cancel" = "Cancel";
+"common.save" = "Save";
+"common.delete" = "Delete";
+"common.confirm" = "OK";
+"common.add" = "Add";
+"common.edit" = "Edit";
+"common.done" = "Done";
+"common.use" = "Use";
+"common.close" = "Close";
+"common.discard" = "Discard";
+"common.remove" = "Remove";
+"common.refresh" = "Refresh";
+"common.paste" = "Paste";
+"common.copy" = "Copy";
+"common.rename" = "Rename";
+"common.loading" = "Loading";
+
+/* App Quit Confirmation */
+"app.quit.title" = "Confirm Quit";
+"app.quit.message" = "%d terminal sessions are running with possible ongoing work. Are you sure you want to quit?";
+"app.quit.quit" = "Quit";
+
+/* Settings */
+"settings.title" = "Settings";
+"settings.about" = "About";
+"settings.language" = "Language";
+"settings.language.system" = "Follow System";
+"settings.language.zh" = "中文";
+"settings.language.en" = "English";
+"settings.noCommands" = "No custom commands";
+"settings.addCommand" = "Add Command";
+"settings.terminalCommands" = "Terminal Commands";
+"settings.terminalCommands.footer" = "Configure quick commands to run when creating new terminals";
+"settings.deleteCommand" = "Delete Command";
+"settings.deleteCommand.message" = "Are you sure you want to delete command \"%@\"?";
+"settings.icon" = "Icon";
+"settings.icon.choose" = "Choose...";
+"settings.name" = "Name";
+"settings.suggestedConfig" = "Suggested Configuration";
+"settings.normalMode" = "Normal Mode";
+"settings.yoloMode" = "Yolo Mode";
+"settings.command" = "Command";
+"settings.iconPicker.title" = "Choose Icon";
+"settings.iconPicker.system" = "System Icons";
+"settings.iconPicker.brand" = "Brand Icons";
+"settings.iconPicker.custom" = "Custom Icons";
+"settings.iconPicker.upload" = "Upload Icon";
+"settings.iconPicker.uploadMessage" = "Choose an icon file (recommended 32x32 or 64x64 PNG)";
+"settings.about.version" = "Version %@ (%@)";
+"settings.about.description" = "Native macOS multi-project development tool";
+
+/* Main View - Toolbar */
+"toolbar.settings" = "Settings (⌘,)";
+"toolbar.showInspector" = "Show Inspector (⌘⌃I)";
+"toolbar.hideInspector" = "Hide Inspector (⌘⌃I)";
+"toolbar.openInEditor" = "Open in External Editor";
+"toolbar.openFailed" = "Open Failed";
+"toolbar.openEditorFailed" = "Failed to Open Editor";
+
+/* Add Project */
+"addProject.title" = "Add Project";
+"addProject.folder" = "Project Folder";
+"addProject.changeFolder" = "Change…";
+"addProject.selectFolder" = "Select Folder…";
+"addProject.name" = "Project Name";
+"addProject.import" = "Import";
+"addProject.hint" = "The project will be imported with a default workspace pointing to the project root. To create isolated workspaces (via Git Worktree), ensure the project is a Git repository with a configured remote.";
+
+/* Projects Sidebar */
+"sidebar.projects" = "Projects";
+"sidebar.addProject" = "Add Project";
+"sidebar.noProjects" = "No Projects";
+"sidebar.noProjects.hint" = "Add a project to get started";
+"sidebar.noProjects.button" = "Add Project";
+"sidebar.copyPath" = "Copy Path";
+"sidebar.openInFinder" = "Open in Finder";
+"sidebar.openInEditor" = "Open in Editor";
+"sidebar.newWorkspace" = "New Workspace";
+"sidebar.removeProject" = "Remove Project";
+"sidebar.removeProject.title" = "Remove Project";
+"sidebar.removeProject.message" = "Are you sure you want to remove project \"%@\"?\nThis only removes it from the list, files on disk will not be deleted.";
+"sidebar.deleteWorkspace" = "Delete Workspace";
+"sidebar.deleteWorkspace.message" = "Are you sure you want to delete workspace \"%@\"?\nThe worktree will be removed. Please handle branches and uncommitted changes beforehand.";
+
+/* Git Panel */
+"git.sourceControl" = "Source Control";
+"git.commitMessage.placeholder" = "Message (⌘Enter to commit)";
+"git.commit" = "Commit";
+"git.commitAndPush" = "Commit & Push";
+"git.commitAndSync" = "Commit & Sync";
+"git.stageFirst" = "Stage changes first";
+"git.enterMessage" = "Enter a commit message";
+"git.committing" = "Committing...";
+"git.commitStaged" = "Commit staged changes";
+"git.stagedChanges" = "Staged Changes";
+"git.unstageAll" = "Unstage All";
+"git.changes" = "Changes";
+"git.stageAll" = "Stage All Changes";
+"git.discardAll" = "Discard All Changes";
+"git.notGitRepo" = "Not a Git Repository";
+"git.noChanges" = "No Changes";
+"git.discardAll.title" = "Discard All Changes?";
+"git.discardAll.message" = "This will discard all local changes to tracked files. This action cannot be undone.";
+"git.graph" = "Graph";
+"git.auto" = "Auto";
+"git.refreshHistory" = "Refresh History";
+"git.noCommitHistory" = "No commit history";
+"git.noFileChanges" = "No file changes";
+"git.loadFailed" = "Load failed: %@";
+"git.unstage" = "Unstage";
+"git.openFile" = "Open File";
+"git.discardChanges" = "Discard Changes";
+"git.stageChanges" = "Stage Changes";
+"git.deleteFile.title" = "Delete File?";
+"git.discardChanges.title" = "Discard Changes?";
+"git.deleteFile.message" = "This file will be permanently deleted";
+"git.discardChanges.message" = "All local changes to this file will be discarded";
+
+/* Right Panel */
+"rightPanel.files" = "Files";
+"rightPanel.search" = "Search";
+"rightPanel.noWorkspace" = "No Workspace Selected";
+"rightPanel.noWorkspace.hint" = "Select a project and workspace from the sidebar";
+"rightPanel.explorer" = "Explorer";
+"rightPanel.copyPath" = "Copy Path";
+"rightPanel.copyRelativePath" = "Copy Relative Path";
+"rightPanel.confirmDelete" = "Confirm Delete";
+"rightPanel.confirmDelete.message" = "Are you sure you want to move \"%@\" to Trash?";
+"rightPanel.renameFile" = "Rename File";
+"rightPanel.renameFolder" = "Rename Folder";
+"rightPanel.newName" = "New Name";
+"rightPanel.newFile" = "New File";
+"rightPanel.newFile.placeholder" = "File Name";
+"rightPanel.newFile.title" = "New File";
+"rightPanel.explorerPlaceholder" = "File Explorer";
+"rightPanel.comingSoon" = "Coming Soon";
+"rightPanel.globalSearch" = "Global Search";
+"rightPanel.noTool" = "No Tool Selected";
+"rightPanel.noTool.hint" = "Select a tool from above";
+
+/* Connection Status */
+"connection.connected" = "Connected";
+"connection.disconnected" = "Disconnected";
+
+/* Tab Bar */
+"tab.close" = "Close";
+"tab.closeOthers" = "Close Others";
+"tab.closeRight" = "Close Tabs to the Right";
+"tab.closeSaved" = "Close Saved [⌘K U]";
+"tab.closeAll" = "Close All [⌘K W]";
+"tab.newTerminal" = "New Terminal";
+"tab.newTerminal.tooltip" = "New Terminal (⌘T)";
+
+/* Tab Content */
+"tabContent.selectOrAdd" = "Select or Add a Project";
+"tabContent.selectOrAdd.hint" = "Select a project and workspace from the sidebar, or use ⌘⇧P to add a new project";
+"tabContent.addProject" = "Add Project";
+"tabContent.unsavedChanges" = "File Has Unsaved Changes";
+"tabContent.dontSave" = "Don't Save";
+"tabContent.unsavedChanges.message" = "Your changes will be lost if you don't save.";
+
+/* Quick Actions */
+"quickActions.switchWorkspace" = "Switch Workspace";
+"quickActions.switchTab" = "Switch Tab";
+"quickActions.openTerminal" = "Open Terminal";
+"quickActions.quickCommands" = "Quick Commands";
+
+/* Relative Time */
+"time.justNow" = "just now";
+"time.minutesAgo" = "%d min ago";
+"time.hoursAgo" = "%d hr ago";
+"time.daysAgo" = "%d days ago";
+"time.weeksAgo" = "%d weeks ago";
