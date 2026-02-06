@@ -496,6 +496,9 @@ class AppState: ObservableObject {
     // Git Show Cache (workspace key + sha -> GitShowCache)
     @Published var gitShowCache: [String: GitShowCache] = [:]
 
+    // v1.24: 剪贴板是否有文件（驱动粘贴菜单显示）
+    @Published var clipboardHasFiles: Bool = false
+
     // Phase C3-2a: Git operation in-flight tracking (workspace key -> Set<GitOpInFlight>)
     @Published var gitOpsInFlight: [String: Set<GitOpInFlight>] = [:]
 
@@ -1160,7 +1163,34 @@ class AppState: ObservableObject {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([fileURL as NSURL])
+        clipboardHasFiles = true
         print("[AppState] 已复制到系统剪贴板: \(absolutePath)")
+        #endif
+    }
+
+    /// 从系统剪贴板读取文件 URL 列表
+    private func readFileURLsFromClipboard() -> [URL] {
+        #if canImport(AppKit)
+        let pasteboard = NSPasteboard.general
+        // 优先使用 urlReadingFileURLsOnly 确保只读取文件 URL
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty {
+            return urls
+        }
+        // 兜底：从 pasteboardItems 中直接读取 public.file-url
+        var result: [URL] = []
+        for item in pasteboard.pasteboardItems ?? [] {
+            if let urlString = item.string(forType: .fileURL),
+               let url = URL(string: urlString),
+               url.isFileURL {
+                result.append(url)
+            }
+        }
+        return result
+        #else
+        return []
         #endif
     }
 
@@ -1171,9 +1201,8 @@ class AppState: ObservableObject {
             return
         }
 
-        #if canImport(AppKit)
-        let pasteboard = NSPasteboard.general
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty else {
+        let urls = readFileURLsFromClipboard()
+        guard !urls.isEmpty else {
             print("[AppState] 剪贴板中没有文件")
             return
         }
@@ -1188,18 +1217,11 @@ class AppState: ObservableObject {
                 destDir: destDir
             )
         }
-        #endif
     }
 
-    /// 检查系统剪贴板是否有文件
-    func hasFilesInClipboard() -> Bool {
-        #if canImport(AppKit)
-        let pasteboard = NSPasteboard.general
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            return !urls.isEmpty
-        }
-        #endif
-        return false
+    /// 检查系统剪贴板是否有文件（同时同步 clipboardHasFiles 状态）
+    func checkClipboardForFiles() {
+        clipboardHasFiles = !readFileURLsFromClipboard().isEmpty
     }
 
     /// 处理文件复制结果

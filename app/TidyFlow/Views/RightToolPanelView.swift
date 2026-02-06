@@ -358,8 +358,8 @@ struct FileTreeView: View {
                     appState.fetchFileList(workspaceKey: workspaceKey, path: ".")
                 }
 
-                // 粘贴到根目录（检查系统剪贴板）
-                if appState.hasFilesInClipboard() {
+                // 粘贴到根目录
+                if appState.clipboardHasFiles {
                     Divider()
                     Button {
                         appState.pasteFiles(workspaceKey: workspaceKey, destDir: ".")
@@ -376,6 +376,40 @@ struct FileTreeView: View {
                         .environmentObject(appState)
                 }
                 .padding(4)
+                // 撑满空白区域以响应右键
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
+            }
+            .contextMenu {
+                // 粘贴到根目录
+                if appState.clipboardHasFiles {
+                    Button {
+                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: ".")
+                    } label: {
+                        Label("粘贴", systemImage: "doc.on.clipboard")
+                    }
+
+                    Divider()
+                }
+
+                // 复制工作空间根目录绝对路径
+                Button {
+                    if let workspacePath = appState.selectedWorkspacePath {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(workspacePath, forType: .string)
+                        appState.clipboardHasFiles = false
+                    }
+                } label: {
+                    Label("复制路径", systemImage: "link")
+                }
+
+                // 复制相对路径（根目录为 "."）
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(".", forType: .string)
+                    appState.clipboardHasFiles = false
+                } label: {
+                    Label("复制相对路径", systemImage: "arrow.turn.down.right")
+                }
             }
         }
         .onAppear {
@@ -383,6 +417,12 @@ struct FileTreeView: View {
             if appState.getFileListCache(workspaceKey: workspaceKey, path: ".") == nil {
                 appState.fetchFileList(workspaceKey: workspaceKey, path: ".")
             }
+            // 检查剪贴板状态以驱动粘贴菜单
+            appState.checkClipboardForFiles()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // 应用获得焦点时刷新剪贴板状态（支持从 Finder 复制后粘贴）
+            appState.checkClipboardForFiles()
         }
     }
 }
@@ -527,10 +567,12 @@ struct FileRowView: View {
                     Label("复制", systemImage: "doc.on.doc")
                 }
 
-                // 仅目录显示粘贴选项，且系统剪贴板有文件时
-                if item.isDir && appState.hasFilesInClipboard() {
+                // 粘贴选项：目录粘贴到自身，文件粘贴到其父目录
+                if appState.clipboardHasFiles {
                     Button {
-                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: item.path)
+                        let destDir = item.isDir ? item.path : (item.path as NSString).deletingLastPathComponent
+                        let dest = destDir.isEmpty ? "." : destDir
+                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: dest)
                     } label: {
                         Label("粘贴", systemImage: "doc.on.clipboard")
                     }
@@ -543,6 +585,7 @@ struct FileRowView: View {
                         let absolutePath = (workspacePath as NSString).appendingPathComponent(item.path)
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(absolutePath, forType: .string)
+                        appState.clipboardHasFiles = false
                     }
                 } label: {
                     Label("复制路径", systemImage: "link")
@@ -551,6 +594,7 @@ struct FileRowView: View {
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(item.path, forType: .string)
+                    appState.clipboardHasFiles = false
                 } label: {
                     Label("复制相对路径", systemImage: "arrow.turn.down.right")
                 }
