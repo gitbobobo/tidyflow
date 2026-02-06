@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build DMG for distribution (optionally signed with Developer ID)
-# Usage: ./scripts/release/build_dmg.sh [--skip-core] [--sign] [--identity "Developer ID Application: ..."]
+# Usage: ./scripts/build_dmg.sh [--skip-core] [--sign] [--identity "Developer ID Application: ..."]
 # Output: dist/TidyFlow-<version>.dmg
 #
 # Signing requires:
@@ -8,13 +8,13 @@
 #   - Either --identity "..." or SIGN_IDENTITY env var
 #
 # Examples:
-#   ./scripts/release/build_dmg.sh                    # Unsigned build
-#   ./scripts/release/build_dmg.sh --sign             # Signed (uses SIGN_IDENTITY env)
-#   ./scripts/release/build_dmg.sh --sign --identity "Developer ID Application: Your Name (TEAMID)"
+#   ./scripts/build_dmg.sh                    # Unsigned build
+#   ./scripts/build_dmg.sh --sign             # Signed (uses SIGN_IDENTITY env)
+#   ./scripts/build_dmg.sh --sign --identity "Developer ID Application: Your Name (TEAMID)"
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Parse arguments
@@ -41,7 +41,7 @@ done
 echo "[build_dmg] Starting release build..."
 
 # 1. Read version
-VERSION_INFO=$("$PROJECT_ROOT/scripts/release/read_version.sh")
+VERSION_INFO=$("$PROJECT_ROOT/scripts/tools/read_version.sh")
 SHORT_VERSION=$(echo "$VERSION_INFO" | cut -d' ' -f1)
 BUILD_NUMBER=$(echo "$VERSION_INFO" | cut -d' ' -f2)
 DMG_NAME="TidyFlow-${SHORT_VERSION}-${BUILD_NUMBER}.dmg"
@@ -166,5 +166,5 @@ else
     echo "  1. Double-click DMG to mount"
     echo "  2. Drag TidyFlow.app to Applications"
     echo "  3. Right-click > Open (first time, Gatekeeper warning)"
-    echo "  4. For signed build: ./scripts/release/build_dmg.sh --sign"
+    echo "  4. For signed build: ./scripts/build_dmg.sh --sign"
 fi

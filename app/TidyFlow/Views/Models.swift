@@ -899,6 +899,11 @@ class AppState: ObservableObject {
             self?.handleFileCopyResult(result)
         }
 
+        // v1.25: 文件移动结果
+        wsClient.onFileMoveResult = { [weak self] result in
+            self?.handleFileMoveResult(result)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -1130,6 +1135,31 @@ class AppState: ObservableObject {
             workspace: workspaceKey,
             path: path
         )
+    }
+
+    /// v1.25: 请求移动文件或目录到新目录
+    func moveFile(workspaceKey: String, oldPath: String, newDir: String) {
+        guard connectionState == .connected else {
+            print("[AppState] 无法移动：未连接")
+            return
+        }
+        wsClient.requestFileMove(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            oldPath: oldPath,
+            newDir: newDir
+        )
+    }
+
+    /// 处理文件移动结果
+    private func handleFileMoveResult(_ result: FileMoveResult) {
+        if result.success {
+            print("[AppState] 文件移动成功: \(result.oldPath) -> \(result.newPath)")
+            refreshFileList()
+            updateEditorTabAfterRename(oldPath: result.oldPath, newPath: result.newPath)
+        } else {
+            print("[AppState] 文件移动失败: \(result.message ?? "未知错误")")
+        }
     }
 
     /// 重命名后更新编辑器标签

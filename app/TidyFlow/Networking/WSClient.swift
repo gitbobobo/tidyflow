@@ -58,6 +58,8 @@ class WSClient: NSObject, ObservableObject {
     var onFileDeleteResult: ((FileDeleteResult) -> Void)?
     // v1.24: 文件复制回调
     var onFileCopyResult: ((FileCopyResult) -> Void)?
+    // v1.25: 文件移动回调
+    var onFileMoveResult: ((FileMoveResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -554,6 +556,19 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // MARK: - v1.25: 文件移动
+
+    /// 请求移动文件或目录到新目录
+    func requestFileMove(project: String, workspace: String, oldPath: String, newDir: String) {
+        send([
+            "type": "file_move",
+            "project": project,
+            "workspace": workspace,
+            "old_path": oldPath,
+            "new_dir": newDir
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -777,6 +792,11 @@ class WSClient: NSObject, ObservableObject {
         case "file_copy_result":
             if let result = FileCopyResult.from(json: json) {
                 onFileCopyResult?(result)
+            }
+
+        case "file_move_result":
+            if let result = FileMoveResult.from(json: json) {
+                onFileMoveResult?(result)
             }
 
         case "error":

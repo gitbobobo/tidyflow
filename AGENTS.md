@@ -44,9 +44,9 @@ xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug
 
 ### Release Build
 ```bash
-./scripts/release/build_dmg.sh                    # Unsigned DMG
-SIGN_IDENTITY="Developer ID..." ./scripts/release/build_dmg.sh --sign  # Signed
-./scripts/release/notarize.sh --profile tidyflow-notary  # Notarize
+./scripts/build_dmg.sh                    # Unsigned DMG
+SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign  # Signed
+./scripts/notarize.sh --profile tidyflow-notary  # Notarize
 ```
 
 ## Testing

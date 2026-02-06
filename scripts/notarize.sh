@@ -58,7 +58,7 @@ if [ -z "$DMG_PATH" ]; then
     DMG_PATH=$(ls -t dist/TidyFlow-*.dmg 2>/dev/null | head -1 || true)
     if [ -z "$DMG_PATH" ]; then
         echo "[notarize] ERROR: No DMG found in dist/"
-        echo "[notarize] Build first: ./scripts/release/build_dmg.sh --sign"
+        echo "[notarize] Build first: ./scripts/build_dmg.sh --sign"
         exit 1
     fi
 fi

@@ -86,9 +86,9 @@ open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
 
 项目支持自动化的签名与公证流程，确保在其他 macOS 设备上顺畅运行。
 
-- **构建未签名 DMG**: `./scripts/release/build_dmg.sh`
-- **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/release/build_dmg.sh --sign`
-- **公证**: `./scripts/release/notarize.sh --profile tidyflow-notary`
+- **构建未签名 DMG**: `./scripts/build_dmg.sh`
+- **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign`
+- **公证**: `./scripts/notarize.sh --profile tidyflow-notary`
 
 ## 📄 开源协议
 

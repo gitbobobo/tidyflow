@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Xcode 风格胶囊分段控件（仅图标）
 
@@ -411,6 +412,27 @@ struct FileTreeView: View {
                     Label("复制相对路径", systemImage: "arrow.turn.down.right")
                 }
             }
+            // v1.25: 根目录放置目标（拖拽到空白区域移动到根目录）
+            .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
+                for provider in providers {
+                    if provider.canLoadObject(ofClass: NSString.self) {
+                        _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
+                            guard let draggedPath = reading as? String else { return }
+                            // 不能拖到当前所在目录（已在根目录则无意义）
+                            let parentDir = (draggedPath as NSString).deletingLastPathComponent
+                            guard !parentDir.isEmpty && parentDir != "." else { return }
+                            DispatchQueue.main.async {
+                                appState.moveFile(
+                                    workspaceKey: workspaceKey,
+                                    oldPath: draggedPath,
+                                    newDir: "."
+                                )
+                            }
+                        }
+                    }
+                }
+                return true
+            }
         }
         .onAppear {
             // 首次加载时请求根目录文件列表
@@ -484,6 +506,8 @@ struct FileRowView: View {
     @State private var showRenameDialog = false
     @State private var showDeleteConfirm = false
     @State private var newName = ""
+    // v1.25: 拖拽放置目标高亮
+    @State private var isDropTarget = false
 
     private var isExpanded: Bool {
         appState.isDirectoryExpanded(workspaceKey: workspaceKey, path: item.path)
@@ -650,6 +674,20 @@ struct FileRowView: View {
         } message: {
             Text("确定要将「\(item.name)」移到废纸篓吗？")
         }
+        // v1.25: 拖拽源
+        .onDrag {
+            NSItemProvider(object: item.path as NSString)
+        }
+        // v1.25: 放置目标（仅目录）
+        .if(item.isDir) { view in
+            view.onDrop(of: [UTType.plainText], isTargeted: $isDropTarget) { providers in
+                handleDrop(providers: providers)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isDropTarget ? Color.accentColor.opacity(0.2) : Color.clear)
+            )
+        }
     }
 
     /// 不支持在编辑器中打开的文件扩展名（二进制文件）
@@ -685,6 +723,34 @@ struct FileRowView: View {
                 appState.addEditorTab(workspaceKey: globalKey, path: item.path)
             }
         }
+    }
+
+    /// v1.25: 处理拖拽放置
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard item.isDir else { return false }
+        for provider in providers {
+            if provider.canLoadObject(ofClass: NSString.self) {
+                _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
+                    guard let draggedPath = reading as? String else { return }
+                    // 不能拖到自身
+                    guard draggedPath != item.path else { return }
+                    // 不能拖到自身的子目录
+                    guard !item.path.hasPrefix(draggedPath + "/") else { return }
+                    // 不能拖到当前所在目录（无意义移动）
+                    let parentDir = (draggedPath as NSString).deletingLastPathComponent
+                    let targetDir = item.path
+                    guard parentDir != targetDir else { return }
+                    DispatchQueue.main.async {
+                        appState.moveFile(
+                            workspaceKey: workspaceKey,
+                            oldPath: draggedPath,
+                            newDir: item.path
+                        )
+                    }
+                }
+            }
+        }
+        return true
     }
 
     /// 根据文件扩展名返回图标名称
@@ -846,6 +912,19 @@ struct RenameDialogView: View {
         .onAppear {
             // 自动聚焦并选中文件名（不含扩展名）
             isTextFieldFocused = true
+        }
+    }
+}
+
+// MARK: - View 条件修饰符扩展
+
+extension View {
+    /// 条件应用修饰符
+    @ViewBuilder func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
         }
     }
 }

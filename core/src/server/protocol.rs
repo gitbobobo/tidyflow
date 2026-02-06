@@ -285,6 +285,14 @@ pub enum ClientMessage {
         source_absolute_path: String,  // 源文件绝对路径
         dest_dir: String,              // 目标目录（相对路径）
     },
+
+    // v1.25: File move (拖拽移动)
+    FileMove {
+        project: String,
+        workspace: String,
+        old_path: String,   // 源文件相对路径
+        new_dir: String,    // 目标目录相对路径
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -646,6 +654,17 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    // v1.25: File move result
+    FileMoveResult {
+        project: String,
+        workspace: String,
+        old_path: String,
+        new_path: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -762,6 +781,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "file_watch".to_string(),
         "file_rename_delete".to_string(),
         "file_copy".to_string(),
+        "file_move".to_string(),
     ]
 }
 

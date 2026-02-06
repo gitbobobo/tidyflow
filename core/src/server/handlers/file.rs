@@ -31,6 +31,7 @@ fn file_error_to_response(e: &FileApiError) -> (String, String) {
         FileApiError::TargetExists => ("target_exists".to_string(), e.to_string()),
         FileApiError::InvalidName(_) => ("invalid_name".to_string(), e.to_string()),
         FileApiError::TrashError(_) => ("trash_error".to_string(), e.to_string()),
+        FileApiError::MoveIntoSelf => ("move_into_self".to_string(), e.to_string()),
     }
 }
 
@@ -538,6 +539,83 @@ pub async fn handle_file_message(
                             workspace: dest_workspace.clone(),
                             source_absolute_path: source_absolute_path.clone(),
                             dest_path: String::new(),
+                            success: false,
+                            message: Some("Project not found".to_string()),
+                        },
+                    )
+                    .await?;
+                }
+            }
+            Ok(true)
+        }
+
+        // v1.25: File move (拖拽移动)
+        ClientMessage::FileMove {
+            project,
+            workspace,
+            old_path,
+            new_dir,
+        } => {
+            let state = app_state.lock().await;
+            match state.get_project(project) {
+                Some(p) => match get_workspace_root(p, workspace) {
+                    Some(root) => {
+                        drop(state);
+                        match file_api::move_file(&root, old_path, new_dir) {
+                            Ok(new_path) => {
+                                send_message(
+                                    socket,
+                                    &ServerMessage::FileMoveResult {
+                                        project: project.clone(),
+                                        workspace: workspace.clone(),
+                                        old_path: old_path.clone(),
+                                        new_path,
+                                        success: true,
+                                        message: None,
+                                    },
+                                )
+                                .await?;
+                            }
+                            Err(e) => {
+                                let (_, message) = file_error_to_response(&e);
+                                send_message(
+                                    socket,
+                                    &ServerMessage::FileMoveResult {
+                                        project: project.clone(),
+                                        workspace: workspace.clone(),
+                                        old_path: old_path.clone(),
+                                        new_path: String::new(),
+                                        success: false,
+                                        message: Some(message),
+                                    },
+                                )
+                                .await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(
+                            socket,
+                            &ServerMessage::FileMoveResult {
+                                project: project.clone(),
+                                workspace: workspace.clone(),
+                                old_path: old_path.clone(),
+                                new_path: String::new(),
+                                success: false,
+                                message: Some("Workspace not found".to_string()),
+                            },
+                        )
+                        .await?;
+                    }
+                },
+                None => {
+                    send_message(
+                        socket,
+                        &ServerMessage::FileMoveResult {
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            old_path: old_path.clone(),
+                            new_path: String::new(),
                             success: false,
                             message: Some("Project not found".to_string()),
                         },

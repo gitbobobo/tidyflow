@@ -822,7 +822,8 @@ async fn handle_client_message(
         | ClientMessage::FileIndex { .. }
         | ClientMessage::FileRename { .. }
         | ClientMessage::FileDelete { .. }
-        | ClientMessage::FileCopy { .. } => {
+        | ClientMessage::FileCopy { .. }
+        | ClientMessage::FileMove { .. } => {
             unreachable!("File messages should be handled by file handler");
         }
 

@@ -40,6 +40,8 @@ pub enum FileApiError {
     InvalidName(String),
     /// v1.23: 回收站操作失败
     TrashError(String),
+    /// v1.25: 不能将目录移入自身
+    MoveIntoSelf,
 }
 
 impl std::fmt::Display for FileApiError {
@@ -54,6 +56,7 @@ impl std::fmt::Display for FileApiError {
             FileApiError::TargetExists => write!(f, "Target file already exists"),
             FileApiError::InvalidName(reason) => write!(f, "Invalid file name: {}", reason),
             FileApiError::TrashError(msg) => write!(f, "Trash error: {}", msg),
+            FileApiError::MoveIntoSelf => write!(f, "Cannot move directory into itself"),
         }
     }
 }
@@ -490,6 +493,65 @@ pub fn copy_file_from_absolute(
     } else {
         fs::copy(source_full_path, &dest_full_path)?;
     }
+
+    // 计算相对路径
+    let root_canonical = workspace_root.canonicalize()?;
+    let dest_canonical = dest_full_path.canonicalize()?;
+    let relative_path = dest_canonical
+        .strip_prefix(&root_canonical)
+        .map_err(|_| FileApiError::PathEscape)?
+        .to_string_lossy()
+        .to_string();
+
+    Ok(relative_path)
+}
+
+/// v1.25: 移动文件或目录到新目录
+/// 返回新的相对路径
+pub fn move_file(
+    workspace_root: &Path,
+    old_path: &str,
+    new_dir: &str,
+) -> Result<String, FileApiError> {
+    // 解析源路径
+    let old_full_path = resolve_safe_path(workspace_root, old_path)?;
+    if !old_full_path.exists() {
+        return Err(FileApiError::FileNotFound);
+    }
+
+    // 解析目标目录
+    let new_dir_full = if new_dir.is_empty() || new_dir == "." {
+        workspace_root.to_path_buf()
+    } else {
+        resolve_safe_path(workspace_root, new_dir)?
+    };
+
+    if !new_dir_full.exists() || !new_dir_full.is_dir() {
+        return Err(FileApiError::FileNotFound);
+    }
+
+    // 防止将目录移入自身子目录
+    if old_full_path.is_dir() {
+        let old_canonical = old_full_path.canonicalize()?;
+        let new_dir_canonical = new_dir_full.canonicalize()?;
+        if new_dir_canonical.starts_with(&old_canonical) {
+            return Err(FileApiError::MoveIntoSelf);
+        }
+    }
+
+    // 获取源文件名
+    let source_name = old_full_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| FileApiError::InvalidName("无法获取源文件名".to_string()))?;
+
+    // 生成不冲突的目标路径
+    let dest_full_path = generate_unique_path(&new_dir_full, source_name);
+
+    debug!("Moving {:?} to {:?}", old_full_path, dest_full_path);
+
+    // 执行移动（同文件系统下为原子操作）
+    fs::rename(&old_full_path, &dest_full_path)?;
 
     // 计算相对路径
     let root_canonical = workspace_root.canonicalize()?;
