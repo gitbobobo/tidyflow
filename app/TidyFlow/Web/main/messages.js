@@ -216,7 +216,22 @@
           break;
 
         case "file_read_result":
-          if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
+          // 检查是否是 reload 请求（文件外部变更后的重新加载）
+          if (TF.pendingReloads && TF.pendingReloads.has(msg.path)) {
+            try {
+              const content = new TextDecoder().decode(msg.content);
+              const reloadInfo = TF.pendingReloads.get(msg.path);
+              TF.pendingReloads.delete(msg.path);
+
+              const tabSet = TF.workspaceTabs.get(reloadInfo.wsKey);
+              if (tabSet && tabSet.tabs.has(reloadInfo.tabId)) {
+                const tab = tabSet.tabs.get(reloadInfo.tabId);
+                TF.replaceEditorContent(tab, reloadInfo.tabId, content);
+              }
+            } catch (e) {
+              console.error("Failed to decode file content for reload:", e);
+            }
+          } else if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
             try {
               const content = new TextDecoder().decode(msg.content);
               const tabInfo = TF.createEditorTab(msg.path, content);

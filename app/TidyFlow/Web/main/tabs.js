@@ -530,7 +530,7 @@
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const tab = tabSet.tabs.get(tabId);
-            if (tab && !tab.isDirty) {
+            if (tab && !tab.isDirty && !tab._isReloading) {
               tab.isDirty = true;
               TF.updateTabDirtyState(tabId, true);
             }
@@ -963,6 +963,73 @@
     });
   }
 
+  // === 文件外部变更自动刷新 ===
+
+  /// 静默重载（非 dirty 文件）
+  function reloadEditorContent(tab, tabId, filePath, project, workspace) {
+    const wsKey = TF.getWorkspaceKey(project, workspace);
+    TF.pendingReloads.set(filePath, { tabId, wsKey });
+    TF.sendFileRead(project, workspace, filePath);
+  }
+
+  /// 冲突提示（dirty 文件）
+  function handleFileConflict(tab, tabId, filePath, project, workspace) {
+    const fileName = filePath.split("/").pop();
+    if (tab.statusBar) {
+      tab.statusBar.textContent = `⚠ "${fileName}" 已在磁盘上更改。点击重新加载`;
+      tab.statusBar.className = "editor-status file-conflict";
+      tab.statusBar.onclick = () => {
+        tab.statusBar.onclick = null;
+        tab.statusBar.className = "editor-status";
+        tab.statusBar.textContent = "正在重新加载...";
+        TF.reloadEditorContent(tab, tabId, filePath, project, workspace);
+      };
+    }
+  }
+
+  /// 文件删除提示
+  function handleFileDeleted(tab) {
+    if (tab.statusBar) {
+      tab.statusBar.textContent = "⚠ 此文件已从磁盘删除";
+      tab.statusBar.className = "editor-status file-deleted";
+    }
+  }
+
+  /// 替换 CodeMirror 内容（核心函数）
+  function replaceEditorContent(tab, tabId, newContent) {
+    if (!tab || !tab.editorView) return;
+
+    const view = tab.editorView;
+    const currentContent = view.state.doc.toString();
+    if (currentContent === newContent) {
+      if (tab.statusBar) {
+        tab.statusBar.textContent = "";
+        tab.statusBar.className = "editor-status";
+      }
+      return;
+    }
+
+    // 标记正在重载，防止 updateListener 触发 dirty 状态
+    tab._isReloading = true;
+
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: newContent },
+    });
+
+    tab._isReloading = false;
+
+    // 重置 dirty 状态
+    TF.updateTabDirtyState(tabId, false);
+
+    if (tab.statusBar) {
+      tab.statusBar.textContent = "已从磁盘重新加载";
+      tab.statusBar.className = "editor-status";
+      setTimeout(() => {
+        tab.statusBar.textContent = "";
+      }, 3000);
+    }
+  }
+
   // 监听页面可见性变化，解决应用切换后的花屏问题
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
@@ -994,4 +1061,8 @@
   TF.removeTabFromUI = removeTabFromUI;
   TF.refreshActiveTerminal = refreshActiveTerminal;
   TF.refreshAllTerminals = refreshAllTerminals;
+  TF.reloadEditorContent = reloadEditorContent;
+  TF.handleFileConflict = handleFileConflict;
+  TF.handleFileDeleted = handleFileDeleted;
+  TF.replaceEditorContent = replaceEditorContent;
 })();

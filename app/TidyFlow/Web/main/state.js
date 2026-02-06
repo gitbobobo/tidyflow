@@ -101,6 +101,7 @@
   TF.placeholder = null;
   TF.pendingLineNavigation = null;
   TF.pendingFileOpen = null;  // 待打开的文件（WebSocket 连接后处理）
+  TF.pendingReloads = new Map();  // 追踪正在重新加载的文件 Map<filePath, { tabId, wsKey }>
 
   TF.WebSocketTransport = WebSocketTransport;
   TF.notifySwift = notifySwift;

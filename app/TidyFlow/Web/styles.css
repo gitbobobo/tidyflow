@@ -253,6 +253,13 @@ body.renderer-only #tab-content {
 .editor-status.error {
   color: #f48771;
 }
+.editor-status.file-conflict {
+  color: #cca700;
+  cursor: pointer;
+}
+.editor-status.file-deleted {
+  color: #f48771;
+}
 
 /* Diff Tab Pane */
 .diff-pane {

@@ -181,6 +181,11 @@ struct CenterContentView: View {
         appState.onEditorTabClose = { [weak webBridge] path in
             webBridge?.closeEditorTab(path: path)
         }
+
+        // 文件在磁盘上发生变化时通知 JS 层
+        appState.onEditorFileChanged = { [weak webBridge] project, workspace, paths, isDirtyFlags, kind in
+            webBridge?.notifyFileChanged(project: project, workspace: workspace, paths: paths, isDirtyFlags: isDirtyFlags, kind: kind)
+        }
     }
 
     /// Setup notification listener for save command

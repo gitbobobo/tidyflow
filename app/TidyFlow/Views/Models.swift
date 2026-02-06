@@ -577,6 +577,9 @@ class AppState: ObservableObject {
     // Callback for editor tab close (通知 JS 层清理编辑器缓存)
     // Parameters: path
     var onEditorTabClose: ((String) -> Void)?
+    // Callback for editor file changed on disk (通知 JS 层文件在磁盘上发生变化)
+    // Parameters: project, workspace, paths, isDirtyFlags, kind
+    var onEditorFileChanged: ((String, String, [String], [Bool], String) -> Void)?
 
     // WebSocket Client
     let wsClient = WSClient()
@@ -874,6 +877,8 @@ class AppState: ObservableObject {
             print("[AppState] 文件变化: \(notification.paths.count) 个文件, kind=\(notification.kind)")
             // 使相关缓存失效
             self?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
+            // 通知编辑器层文件变化
+            self?.notifyEditorFileChanged(notification: notification)
         }
 
         wsClient.onGitStatusChanged = { [weak self] notification in
@@ -995,6 +1000,19 @@ class AppState: ObservableObject {
                 fetchFileList(workspaceKey: workspace, path: path)
             }
         }
+    }
+
+    /// 通知编辑器层文件在磁盘上发生变化
+    func notifyEditorFileChanged(notification: FileChangedNotification) {
+        let globalKey = globalWorkspaceKey(projectName: notification.project, workspaceName: notification.workspace)
+        guard let tabs = workspaceTabs[globalKey] else { return }
+
+        let affectedTabs = tabs.filter { $0.kind == .editor && notification.paths.contains($0.payload) }
+        guard !affectedTabs.isEmpty else { return }
+
+        let paths = affectedTabs.map { $0.payload }
+        let dirtyFlags = affectedTabs.map { $0.isDirty }
+        onEditorFileChanged?(notification.project, notification.workspace, paths, dirtyFlags, notification.kind)
     }
 
     // MARK: - 文件列表 API

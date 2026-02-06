@@ -308,6 +308,37 @@
         break;
       }
 
+      case "file_changed": {
+        const { project, workspace, paths, isDirtyFlags, kind } = payload;
+        if (!paths || paths.length === 0) return;
+
+        const wsKey = TF.getWorkspaceKey(
+          project || TF.currentProject,
+          workspace || TF.currentWorkspace
+        );
+        if (!wsKey || !TF.workspaceTabs.has(wsKey)) return;
+
+        const tabSet = TF.workspaceTabs.get(wsKey);
+
+        for (let i = 0; i < paths.length; i++) {
+          const filePath = paths[i];
+          const isDirty = isDirtyFlags ? isDirtyFlags[i] : false;
+          const tabId = "editor-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
+
+          if (!tabSet.tabs.has(tabId)) continue;
+          const tab = tabSet.tabs.get(tabId);
+
+          if (kind === "delete") {
+            TF.handleFileDeleted(tab);
+          } else if (isDirty) {
+            TF.handleFileConflict(tab, tabId, filePath, project, workspace);
+          } else {
+            TF.reloadEditorContent(tab, tabId, filePath, project, workspace);
+          }
+        }
+        break;
+      }
+
       default:
         console.warn("[NativeBridge] Unknown event type:", type);
     }

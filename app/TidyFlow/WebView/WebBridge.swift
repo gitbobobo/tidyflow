@@ -241,6 +241,17 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         ])
     }
 
+    /// 通知 JS 层文件在磁盘上发生变化
+    func notifyFileChanged(project: String, workspace: String, paths: [String], isDirtyFlags: [Bool], kind: String) {
+        send(type: "file_changed", payload: [
+            "project": project,
+            "workspace": workspace,
+            "paths": paths,
+            "isDirtyFlags": isDirtyFlags,
+            "kind": kind
+        ])
+    }
+
     // MARK: - Phase C1-2: Terminal Methods (Multi-Session)
 
     /// Enter a specific mode (editor or terminal)
