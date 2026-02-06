@@ -539,6 +539,25 @@ struct FileRowView: View {
                 Divider()
 
                 Button {
+                    if let workspacePath = appState.selectedWorkspacePath {
+                        let absolutePath = (workspacePath as NSString).appendingPathComponent(item.path)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(absolutePath, forType: .string)
+                    }
+                } label: {
+                    Label("复制路径", systemImage: "link")
+                }
+
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(item.path, forType: .string)
+                } label: {
+                    Label("复制相对路径", systemImage: "arrow.turn.down.right")
+                }
+
+                Divider()
+
+                Button {
                     newName = item.name
                     showRenameDialog = true
                 } label: {
