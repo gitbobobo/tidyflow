@@ -105,7 +105,9 @@
 "git.notGitRepo" = "非 Git 仓库";
 "git.noChanges" = "没有更改";
 "git.discardAll.title" = "放弃所有更改？";
-"git.discardAll.message" = "这将放弃所有已跟踪文件的本地更改，此操作无法撤销。";
+"git.discardAll.message" = "此操作无法撤销，请选择放弃范围。";
+"git.discardAll.trackedOnly" = "仅放弃已跟踪文件的更改";
+"git.discardAll.includeUntracked" = "放弃所有更改（包括删除未跟踪文件）";
 "git.graph" = "图形";
 "git.auto" = "自动";
 "git.refreshHistory" = "刷新历史";

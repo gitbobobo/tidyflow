@@ -1715,7 +1715,7 @@ class AppState: ObservableObject {
 
     /// Discard working tree changes for a file or all files
     /// WARNING: This is destructive and cannot be undone!
-    func gitDiscard(workspaceKey: String, path: String?, scope: String) {
+    func gitDiscard(workspaceKey: String, path: String?, scope: String, includeUntracked: Bool = false) {
         guard connectionState == .connected else { return }
 
         // Track in-flight
@@ -1729,7 +1729,8 @@ class AppState: ObservableObject {
             project: selectedProjectName,
             workspace: workspaceKey,
             path: path,
-            scope: scope
+            scope: scope,
+            includeUntracked: includeUntracked
         )
     }
 

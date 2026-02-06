@@ -256,7 +256,8 @@ pub fn git_unstage(
 ///
 /// - For tracked files: git restore -- <path>
 /// - For untracked files: git clean -f -- <path> (deletes the file)
-/// - scope "all": git restore . (only tracked files, does NOT clean untracked)
+/// - scope "all": git restore . (only tracked files)
+/// - scope "all" + include_untracked: git restore . && git clean -fd (also removes untracked files/dirs)
 ///
 /// SAFETY: This operation is destructive and cannot be undone.
 /// The UI must show a confirmation dialog before calling this.
@@ -264,6 +265,7 @@ pub fn git_discard(
     workspace_root: &Path,
     path: Option<&str>,
     scope: &str,
+    include_untracked: bool,
 ) -> Result<GitOpResult, GitError> {
     // Check if it's a git repo
     if get_git_repo_root(workspace_root).is_none() {
@@ -271,24 +273,16 @@ pub fn git_discard(
     }
 
     if scope == "all" {
-        // Discard all tracked changes (does NOT delete untracked files for safety)
+        // Discard all tracked changes
         let output = Command::new("git")
             .args(["restore", "."])
             .current_dir(workspace_root)
             .output()
             .map_err(GitError::IoError)?;
 
-        if output.status.success() {
-            Ok(GitOpResult {
-                op: "discard".to_string(),
-                ok: true,
-                message: None,
-                path: None,
-                scope: scope.to_string(),
-            })
-        } else {
+        if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Ok(GitOpResult {
+            return Ok(GitOpResult {
                 op: "discard".to_string(),
                 ok: false,
                 message: Some(if stderr.is_empty() {
@@ -298,8 +292,40 @@ pub fn git_discard(
                 }),
                 path: None,
                 scope: scope.to_string(),
-            })
+            });
         }
+
+        // 如果需要同时清理未跟踪文件
+        if include_untracked {
+            let clean_output = Command::new("git")
+                .args(["clean", "-fd"])
+                .current_dir(workspace_root)
+                .output()
+                .map_err(GitError::IoError)?;
+
+            if !clean_output.status.success() {
+                let stderr = String::from_utf8_lossy(&clean_output.stderr).trim().to_string();
+                return Ok(GitOpResult {
+                    op: "discard".to_string(),
+                    ok: false,
+                    message: Some(if stderr.is_empty() {
+                        "Clean untracked files failed".to_string()
+                    } else {
+                        stderr
+                    }),
+                    path: None,
+                    scope: scope.to_string(),
+                });
+            }
+        }
+
+        Ok(GitOpResult {
+            op: "discard".to_string(),
+            ok: true,
+            message: None,
+            path: None,
+            scope: scope.to_string(),
+        })
     } else {
         // Single file discard
         let p = path

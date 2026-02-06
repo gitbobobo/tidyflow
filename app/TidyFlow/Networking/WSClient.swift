@@ -250,7 +250,7 @@ class WSClient: NSObject, ObservableObject {
     }
 
     // Phase C3-2b: Request git discard
-    func requestGitDiscard(project: String, workspace: String, path: String?, scope: String) {
+    func requestGitDiscard(project: String, workspace: String, path: String?, scope: String, includeUntracked: Bool = false) {
         var msg: [String: Any] = [
             "type": "git_discard",
             "project": project,
@@ -259,6 +259,9 @@ class WSClient: NSObject, ObservableObject {
         ]
         if let path = path {
             msg["path"] = path
+        }
+        if includeUntracked {
+            msg["include_untracked"] = true
         }
         send(msg)
     }

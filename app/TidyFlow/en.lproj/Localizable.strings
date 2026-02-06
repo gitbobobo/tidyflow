@@ -105,7 +105,9 @@
 "git.notGitRepo" = "Not a Git Repository";
 "git.noChanges" = "No Changes";
 "git.discardAll.title" = "Discard All Changes?";
-"git.discardAll.message" = "This will discard all local changes to tracked files. This action cannot be undone.";
+"git.discardAll.message" = "This action cannot be undone. Choose the scope of discard.";
+"git.discardAll.trackedOnly" = "Discard Tracked Changes Only";
+"git.discardAll.includeUntracked" = "Discard All (Including Untracked Files)";
 "git.graph" = "Graph";
 "git.auto" = "Auto";
 "git.refreshHistory" = "Refresh History";

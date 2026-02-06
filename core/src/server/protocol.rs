@@ -122,6 +122,8 @@ pub enum ClientMessage {
         path: Option<String>, // None = discard all
         #[serde(default = "default_git_scope")]
         scope: String, // "file" or "all"
+        #[serde(default)]
+        include_untracked: bool, // scope="all" 时是否同时删除未跟踪文件
     },
 
     // v1.8: Git branch operations

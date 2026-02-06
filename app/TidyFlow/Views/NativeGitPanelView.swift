@@ -337,11 +337,18 @@ struct NativeGitPanelView: View {
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             loadDataIfNeeded()
         }
-        .alert("git.discardAll.title".localized, isPresented: $showDiscardAllConfirm) {
-            Button("common.cancel".localized, role: .cancel) { }
-            Button("common.discard".localized, role: .destructive) {
-                discardAll()
+        .confirmationDialog("git.discardAll.title".localized, isPresented: $showDiscardAllConfirm, titleVisibility: .visible) {
+            if hasTrackedChangesInWorkspace {
+                Button("git.discardAll.trackedOnly".localized, role: .destructive) {
+                    discardAll(includeUntracked: false)
+                }
             }
+            if hasUntrackedChangesInWorkspace {
+                Button("git.discardAll.includeUntracked".localized, role: .destructive) {
+                    discardAll(includeUntracked: true)
+                }
+            }
+            Button("common.cancel".localized, role: .cancel) { }
         } message: {
             Text("git.discardAll.message".localized)
         }
@@ -366,9 +373,23 @@ struct NativeGitPanelView: View {
         }
     }
 
-    private func discardAll() {
+    private func discardAll(includeUntracked: Bool) {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitDiscard(workspaceKey: ws, path: nil, scope: "all")
+        appState.gitDiscard(workspaceKey: ws, path: nil, scope: "all", includeUntracked: includeUntracked)
+    }
+
+    /// 当前工作区是否存在已跟踪文件的更改
+    private var hasTrackedChangesInWorkspace: Bool {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+        return cache.items.contains { $0.staged != true && $0.status != "??" }
+    }
+
+    /// 当前工作区是否存在未跟踪文件
+    private var hasUntrackedChangesInWorkspace: Bool {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+        return cache.items.contains { $0.staged != true && $0.status == "??" }
     }
 
     /// 当前工作区是否存在暂存的更改（用于决定是否显示「暂存的更改」顶层区）
@@ -689,7 +710,7 @@ struct GitChangesSection: View {
                         }
                         .buttonStyle(.plain)
                         .help("git.discardAll".localized)
-                        .disabled(!hasTrackedChanges)
+                        .disabled(!hasTrackedChanges && !hasUntrackedChanges)
                     }
                 )
             }
@@ -735,7 +756,13 @@ struct GitChangesSection: View {
     private var hasTrackedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.items.contains { $0.status != "??" }
+        return cache.items.contains { $0.staged != true && $0.status != "??" }
+    }
+
+    private var hasUntrackedChanges: Bool {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+        return cache.items.contains { $0.staged != true && $0.status == "??" }
     }
 
     private var isStageAllInFlight: Bool {
