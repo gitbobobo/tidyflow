@@ -385,8 +385,8 @@
         compositionDataSent = true;
       }
       
-      // composition 刚结束时，处理拼音残留（如 "o p" -> "op"）
-      if (compositionJustEnded && /^[a-z](\s+[a-z])+$/i.test(data)) {
+      // composition 刚结束时，处理拼音残留（如 "o p" -> "op", "mu si ver" -> "musiver"）
+      if (compositionJustEnded && /^[a-z]+(\s+[a-z]+)+$/i.test(data)) {
         data = data.replace(/\s+/g, '');
       }
 
