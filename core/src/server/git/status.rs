@@ -5,8 +5,23 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 use super::utils::*;
+
+/// 缓存条目
+struct CacheEntry {
+    result: GitStatusResult,
+    created_at: Instant,
+}
+
+/// 缓存 TTL（1 秒）
+const CACHE_TTL_SECS: u64 = 1;
+
+/// 全局 git status 缓存
+static GIT_STATUS_CACHE: LazyLock<Mutex<HashMap<String, CacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 获取 diff 行数统计
 /// 返回 HashMap<路径, (新增行数, 删除行数)>，二进制文件返回 (None, None)
@@ -68,7 +83,7 @@ fn char_to_code(c: char) -> String {
 ///
 /// Format: XY PATH\0 or XY ORIG_PATH\0PATH\0 for renames
 /// X = index (staged), Y = work tree (unstaged). 每条线可产生 0/1/2 条记录以区分暂存/未暂存。
-fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
+pub(super) fn parse_porcelain_status(output: &str) -> Vec<GitStatusEntry> {
     let mut items = Vec::new();
     let parts: Vec<&str> = output.split('\0').collect();
 
@@ -167,30 +182,48 @@ fn parse_status_code(xy: &str) -> String {
     }
 }
 
-/// Check if there are staged changes
-///
-/// Uses `git diff --cached --name-only` to list staged files.
-fn check_staged_changes(workspace_root: &Path) -> (bool, usize) {
-    let output = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
-        .current_dir(workspace_root)
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let count = stdout.lines().filter(|l| !l.is_empty()).count();
-            (count > 0, count)
-        }
-        _ => (false, 0),
-    }
-}
-
 /// Get git status for a workspace
 ///
 /// Uses `git status --porcelain=v1 -z` for stable parsing.
-/// Also checks for staged changes using `git diff --cached --name-only`.
+/// Staged changes are derived from the parsed porcelain output.
 pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
+    let key = workspace_root.to_string_lossy().to_string();
+
+    // 查缓存
+    if let Ok(cache) = GIT_STATUS_CACHE.lock() {
+        if let Some(entry) = cache.get(&key) {
+            if entry.created_at.elapsed().as_secs() < CACHE_TTL_SECS {
+                return Ok(entry.result.clone());
+            }
+        }
+    }
+
+    let result = git_status_uncached(workspace_root)?;
+
+    // 写缓存
+    if let Ok(mut cache) = GIT_STATUS_CACHE.lock() {
+        cache.insert(
+            key,
+            CacheEntry {
+                result: result.clone(),
+                created_at: Instant::now(),
+            },
+        );
+    }
+
+    Ok(result)
+}
+
+/// 使指定工作区的 git status 缓存失效
+pub fn invalidate_git_status_cache(workspace_root: &Path) {
+    let key = workspace_root.to_string_lossy().to_string();
+    if let Ok(mut cache) = GIT_STATUS_CACHE.lock() {
+        cache.remove(&key);
+    }
+}
+
+/// 实际执行 git status 查询（无缓存）
+fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     // Check if it's a git repo
     let repo_root = match get_git_repo_root(workspace_root) {
         Some(root) => root,
@@ -236,8 +269,9 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
         }
     }
 
-    // Check for staged changes
-    let (has_staged_changes, staged_count) = check_staged_changes(workspace_root);
+    // 从已解析的 items 推导暂存状态（无需额外子进程）
+    let staged_count = items.iter().filter(|item| item.staged).count();
+    let has_staged_changes = staged_count > 0;
 
     Ok(GitStatusResult {
         repo_root,
@@ -245,6 +279,25 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
         has_staged_changes,
         staged_count,
     })
+}
+
+/// 获取单个文件的 git 状态码（仅 1 个子进程）
+///
+/// 返回 `Some((code, staged))` 或 `None`（文件无变更）。
+pub fn git_file_status(workspace_root: &Path, path: &str) -> Option<(String, bool)> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "-z", "--", path])
+        .current_dir(workspace_root)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let items = parse_porcelain_status(&stdout);
+    items.first().map(|item| (item.code.clone(), item.staged))
 }
 
 /// Get git log (commit history) for a workspace

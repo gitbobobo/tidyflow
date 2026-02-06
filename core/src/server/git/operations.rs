@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use super::status::git_status;
+use super::status::{git_file_status, invalidate_git_status_cache};
 use super::utils::*;
 
 /// Get git diff for a specific file
@@ -26,12 +26,9 @@ pub fn git_diff(
         return Err(GitError::NotAGitRepo);
     }
 
-    // Get status for this file to determine how to diff
-    let status_result = git_status(workspace_root)?;
-    let file_status = status_result.items.iter().find(|item| item.path == path);
-
-    let code = file_status
-        .map(|s| s.code.clone())
+    // 获取单个文件的状态码（仅 1 个子进程，替代完整 git_status）
+    let code = git_file_status(workspace_root, path)
+        .map(|(c, _)| c)
         .unwrap_or_else(|| "M".to_string());
 
     // Check if file is binary
@@ -142,6 +139,7 @@ pub fn git_stage(
         .map_err(GitError::IoError)?;
 
     if output.status.success() {
+        invalidate_git_status_cache(workspace_root);
         Ok(GitOpResult {
             op: "stage".to_string(),
             ok: true,
@@ -203,13 +201,16 @@ pub fn git_unstage(
     };
 
     match restore_result {
-        Ok(output) if output.status.success() => Ok(GitOpResult {
-            op: "unstage".to_string(),
-            ok: true,
-            message: None,
-            path: path_str,
-            scope: scope.to_string(),
-        }),
+        Ok(output) if output.status.success() => {
+            invalidate_git_status_cache(workspace_root);
+            Ok(GitOpResult {
+                op: "unstage".to_string(),
+                ok: true,
+                message: None,
+                path: path_str,
+                scope: scope.to_string(),
+            })
+        }
         _ => {
             // Fallback to git reset
             let reset_output = if scope == "all" {
@@ -225,13 +226,16 @@ pub fn git_unstage(
             };
 
             match reset_output {
-                Ok(output) if output.status.success() => Ok(GitOpResult {
-                    op: "unstage".to_string(),
-                    ok: true,
-                    message: None,
-                    path: path_str,
-                    scope: scope.to_string(),
-                }),
+                Ok(output) if output.status.success() => {
+                    invalidate_git_status_cache(workspace_root);
+                    Ok(GitOpResult {
+                        op: "unstage".to_string(),
+                        ok: true,
+                        message: None,
+                        path: path_str,
+                        scope: scope.to_string(),
+                    })
+                }
                 Ok(output) => {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     Ok(GitOpResult {
@@ -319,6 +323,7 @@ pub fn git_discard(
             }
         }
 
+        invalidate_git_status_cache(workspace_root);
         Ok(GitOpResult {
             op: "discard".to_string(),
             ok: true,
@@ -332,11 +337,10 @@ pub fn git_discard(
             .ok_or_else(|| GitError::CommandFailed("Path required for file scope".to_string()))?;
         validate_path(workspace_root, p)?;
 
-        // Check if file is untracked
-        let status_result = git_status(workspace_root)?;
-        let file_status = status_result.items.iter().find(|item| item.path == p);
-
-        let is_untracked = file_status.map(|s| s.code == "??").unwrap_or(false);
+        // 获取单个文件的状态码（仅 1 个子进程，替代完整 git_status）
+        let is_untracked = git_file_status(workspace_root, p)
+            .map(|(code, _)| code == "??")
+            .unwrap_or(false);
 
         if is_untracked {
             // Untracked file: use git clean -f to delete
@@ -347,6 +351,7 @@ pub fn git_discard(
                 .map_err(GitError::IoError)?;
 
             if output.status.success() {
+                invalidate_git_status_cache(workspace_root);
                 Ok(GitOpResult {
                     op: "discard".to_string(),
                     ok: true,
@@ -377,6 +382,7 @@ pub fn git_discard(
                 .map_err(GitError::IoError)?;
 
             if output.status.success() {
+                invalidate_git_status_cache(workspace_root);
                 Ok(GitOpResult {
                     op: "discard".to_string(),
                     ok: true,

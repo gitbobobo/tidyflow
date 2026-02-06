@@ -23,7 +23,7 @@ pub struct GitStatusEntry {
 }
 
 /// Git status result
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GitStatusResult {
     pub repo_root: String,
     pub items: Vec<GitStatusEntry>,

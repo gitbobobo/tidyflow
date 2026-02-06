@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use super::status::invalidate_git_status_cache;
 use super::utils::*;
 
 /// Commit staged changes
@@ -45,6 +46,7 @@ pub fn git_commit(workspace_root: &Path, message: &str) -> Result<GitCommitResul
         .map_err(GitError::IoError)?;
 
     if output.status.success() {
+        invalidate_git_status_cache(workspace_root);
         // Get the short SHA of the new commit
         let sha = get_short_head_sha(workspace_root);
         Ok(GitCommitResult {

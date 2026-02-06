@@ -27,7 +27,7 @@ pub struct ProjectConfig {
     pub env: EnvSection,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectSection {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -35,11 +35,21 @@ pub struct ProjectSection {
     pub default_branch: String,
 }
 
+impl Default for ProjectSection {
+    fn default() -> Self {
+        Self {
+            name: None,
+            description: None,
+            default_branch: default_branch(),
+        }
+    }
+}
+
 fn default_branch() -> String {
     "main".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupSection {
     #[serde(default = "default_timeout")]
     pub timeout: u32,
@@ -47,6 +57,17 @@ pub struct SetupSection {
     pub working_dir: Option<String>,
     #[serde(default)]
     pub steps: Vec<SetupStep>,
+}
+
+impl Default for SetupSection {
+    fn default() -> Self {
+        Self {
+            timeout: default_timeout(),
+            shell: None,
+            working_dir: None,
+            steps: Vec::new(),
+        }
+    }
 }
 
 fn default_timeout() -> u32 {
@@ -66,7 +87,7 @@ pub struct SetupStep {
     pub working_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvSection {
     #[serde(default = "default_true")]
     pub inherit: bool,
@@ -76,6 +97,17 @@ pub struct EnvSection {
     pub path_prepend: PathConfig,
     #[serde(default)]
     pub path_append: PathConfig,
+}
+
+impl Default for EnvSection {
+    fn default() -> Self {
+        Self {
+            inherit: default_true(),
+            vars: HashMap::new(),
+            path_prepend: PathConfig::default(),
+            path_append: PathConfig::default(),
+        }
+    }
 }
 
 fn default_true() -> bool {
