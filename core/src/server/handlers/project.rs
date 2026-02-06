@@ -23,7 +23,7 @@ pub async fn handle_project_message(
         // v1: List projects
         ClientMessage::ListProjects => {
             let state = app_state.lock().await;
-            let items: Vec<ProjectInfo> = state
+            let mut items: Vec<ProjectInfo> = state
                 .projects
                 .values()
                 .map(|p| ProjectInfo {
@@ -32,6 +32,8 @@ pub async fn handle_project_message(
                     workspace_count: p.workspaces.len(),
                 })
                 .collect();
+            // HashMap 迭代顺序不稳定；在服务端固定字母序，避免客户端启动时顺序随机
+            items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
             send_message(socket, &ServerMessage::Projects { items }).await?;
             Ok(true)
         }

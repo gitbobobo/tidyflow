@@ -121,7 +121,7 @@ struct TerminalContentView: View {
                     VStack {
                         ProgressView()
                             .scaleEffect(0.8)
-                        Text("Loading terminal...")
+                        Text("加载中")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

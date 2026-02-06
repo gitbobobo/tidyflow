@@ -127,8 +127,8 @@ struct ProjectsSidebarView: View {
                 return keyA < keyB
             }
 
-            // 3. 保持原有顺序
-            return i < j
+            // 3. 默认按项目名称字母序，确保启动时排序稳定
+            return projectA.name.localizedCaseInsensitiveCompare(projectB.name) == .orderedAscending
         }
 
         var rows: [SidebarRow] = []

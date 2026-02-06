@@ -15,6 +15,7 @@ struct TabStripView: View {
                             TabItemView(
                                 tab: tab,
                                 isActive: appState.activeTabIdByWorkspace[globalKey] == tab.id,
+                                workspaceKey: globalKey,
                                 onClose: {
                                     appState.closeTab(workspaceKey: globalKey, tabId: tab.id)
                                 },
@@ -44,8 +45,10 @@ struct TabStripView: View {
 }
 
 struct TabItemView: View {
+    @EnvironmentObject var appState: AppState
     let tab: TabModel
     let isActive: Bool
+    let workspaceKey: String
     let onClose: () -> Void
     let onActivate: () -> Void
     
@@ -93,6 +96,39 @@ struct TabItemView: View {
         }
         .onHover { hovering in
             isHovered = hovering
+        }
+        .contextMenu {
+            Button("关闭") {
+                onClose()
+            }
+            .keyboardShortcut("w", modifiers: .command)
+
+            let tabs = appState.workspaceTabs[workspaceKey] ?? []
+            let otherTabs = tabs.filter { $0.id != tab.id }
+
+            Button("关闭其他") {
+                appState.closeOtherTabs(workspaceKey: workspaceKey, keepTabId: tab.id)
+            }
+            .keyboardShortcut("t", modifiers: [.option, .command])
+            .disabled(otherTabs.isEmpty)
+
+            let tabIndex = tabs.firstIndex(where: { $0.id == tab.id }) ?? tabs.endIndex
+            let hasRightTabs = tabIndex < tabs.count - 1
+
+            Button("关闭右侧标签页") {
+                appState.closeTabsToRight(workspaceKey: workspaceKey, ofTabId: tab.id)
+            }
+            .disabled(!hasRightTabs)
+
+            Divider()
+
+            Button("关闭已保存 [⌘K U]") {
+                appState.closeSavedTabs(workspaceKey: workspaceKey)
+            }
+
+            Button("全部关闭 [⌘K W]") {
+                appState.closeAllTabs(workspaceKey: workspaceKey)
+            }
         }
     }
 }

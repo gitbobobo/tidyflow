@@ -10,7 +10,7 @@ SwiftUI + WKWebView terminal application that connects to the TidyFlow Rust core
 
 # Option 2: Manual
 # Terminal 1: Start core
-./scripts/run-core.sh
+cd core && cargo run
 
 # Terminal 2: Open in Xcode
 open app/TidyFlow.xcodeproj

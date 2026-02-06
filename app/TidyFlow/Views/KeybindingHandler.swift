@@ -23,6 +23,9 @@ struct GlobalKeybindingHandler: ViewModifier {
                         
                     Button("Close Tab") { runCommand("workspace.closeTab") }
                         .keyboardShortcut("w", modifiers: .command)
+
+                    Button("Close Other Tabs") { runCommand("workspace.closeOtherTabs") }
+                        .keyboardShortcut("t", modifiers: [.option, .command])
                         
                     Button("Next Tab") { runCommand("workspace.nextTab") }
                         .keyboardShortcut(.tab, modifiers: .control)

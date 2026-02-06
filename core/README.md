@@ -149,14 +149,6 @@ See `design/05-project-config-schema.md` for the full schema.
 
 State is stored at `~/.tidyflow/state.json`. See `design/11-workspace-engine-contract.md` for the schema.
 
-## Demo
-
-Run the end-to-end demo:
-
-```bash
-./scripts/workspace-demo.sh
-```
-
 ## Protocol
 
 See `design/09-m0-contracts.md` for the WebSocket protocol specification.

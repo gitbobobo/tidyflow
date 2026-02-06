@@ -14,9 +14,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - **Communication**: WebSocket with MessagePack binary encoding (protocol v2, default port 47999)
 
 ## 经验总结
-- 多终端场景下，为避免 WebGL 上下文占用过多，建议仅在激活终端启用 WebGL，切换时及时释放。
-- 文件缓存策略应采用增量更新，避免全量刷新导致界面闪烁。
-- 终端输出需处理 ANSI 转义序列和 UTF-8 字符在缓冲区边界截断的问题，防止花屏。
+- 同一业务状态若在多个入口写入（如终端创建时间），应抽取统一路径或至少补齐兜底写入，避免分支遗漏导致 UI 状态不一致。
+- 对外返回列表数据时，不要依赖 `HashMap` 迭代顺序；应在服务端显式排序，确保启动与刷新顺序稳定可预期。
 
 ## Build Commands
 

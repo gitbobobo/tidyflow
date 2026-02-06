@@ -2324,6 +2324,19 @@ class AppState: ObservableObject {
                       let tabId = app.activeTabIdByWorkspace[ws] else { return }
                 app.closeTab(workspaceKey: ws, tabId: tabId)
             },
+            Command(id: "workspace.closeOtherTabs", title: "Close Other Tabs", subtitle: nil, scope: .workspace, keyHint: "Opt+Cmd+T") { app in
+                guard let ws = app.currentGlobalWorkspaceKey,
+                      let tabId = app.activeTabIdByWorkspace[ws] else { return }
+                app.closeOtherTabs(workspaceKey: ws, keepTabId: tabId)
+            },
+            Command(id: "workspace.closeSavedTabs", title: "Close Saved Tabs", subtitle: nil, scope: .workspace, keyHint: "Cmd+K Cmd+U") { app in
+                guard let ws = app.currentGlobalWorkspaceKey else { return }
+                app.closeSavedTabs(workspaceKey: ws)
+            },
+            Command(id: "workspace.closeAllTabs", title: "Close All Tabs", subtitle: nil, scope: .workspace, keyHint: "Cmd+K Cmd+W") { app in
+                guard let ws = app.currentGlobalWorkspaceKey else { return }
+                app.closeAllTabs(workspaceKey: ws)
+            },
             Command(id: "workspace.nextTab", title: "Next Tab", subtitle: nil, scope: .workspace, keyHint: "Ctrl+Tab") { app in
                 app.nextTab()
             },
@@ -2407,6 +2420,41 @@ class AppState: ObservableObject {
         }
 
         performCloseTab(workspaceKey: workspaceKey, tabId: tabId)
+    }
+
+    /// 关闭其他标签页（保留指定 tab）
+    func closeOtherTabs(workspaceKey: String, keepTabId: UUID) {
+        guard let tabs = workspaceTabs[workspaceKey] else { return }
+        for tab in tabs where tab.id != keepTabId {
+            closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+        }
+    }
+
+    /// 关闭右侧标签页
+    func closeTabsToRight(workspaceKey: String, ofTabId: UUID) {
+        guard let tabs = workspaceTabs[workspaceKey],
+              let index = tabs.firstIndex(where: { $0.id == ofTabId }) else { return }
+        let rightTabs = tabs.suffix(from: tabs.index(after: index))
+        for tab in rightTabs {
+            closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+        }
+    }
+
+    /// 关闭已保存的标签页（跳过 dirty 的编辑器 tab）
+    func closeSavedTabs(workspaceKey: String) {
+        guard let tabs = workspaceTabs[workspaceKey] else { return }
+        for tab in tabs {
+            if tab.kind == .editor && tab.isDirty { continue }
+            performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
+        }
+    }
+
+    /// 全部关闭（dirty 的编辑器 tab 会弹确认）
+    func closeAllTabs(workspaceKey: String) {
+        guard let tabs = workspaceTabs[workspaceKey] else { return }
+        for tab in tabs {
+            closeTab(workspaceKey: workspaceKey, tabId: tab.id)
+        }
     }
 
     /// 实际执行关闭 Tab（跳过 dirty 检查）
@@ -2517,6 +2565,11 @@ class AppState: ObservableObject {
         }
         workspaceTabs[workspaceKey]?.append(newTab)
         activeTabIdByWorkspace[workspaceKey] = newTab.id
+
+        // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
+        if workspaceTerminalOpenTime[workspaceKey] == nil {
+            workspaceTerminalOpenTime[workspaceKey] = Date()
+        }
 
         // 终端视图会在 spawn 后检查 payload 并执行命令
     }
@@ -2886,14 +2939,18 @@ class AppState: ObservableObject {
             return
         }
 
+        // 兜底：若某些入口未提前记录，则在终端 ready 时补齐首次打开时间
+        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        if workspaceTerminalOpenTime[globalKey] == nil {
+            workspaceTerminalOpenTime[globalKey] = Date()
+        }
+
         // Update session mapping
         terminalSessionByTabId[uuid] = sessionId
         staleTerminalTabs.remove(uuid)
         pendingSpawnTabs.remove(uuid)  // 移除 pending 标记
 
         // Update tab's terminalSessionId（使用服务端返回的 project 和 workspace 生成全局键）
-        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
-        
         if var tabs = workspaceTabs[globalKey],
            let index = tabs.firstIndex(where: { $0.id == uuid }) {
             tabs[index].terminalSessionId = sessionId
