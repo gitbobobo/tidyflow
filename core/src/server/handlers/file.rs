@@ -471,6 +471,83 @@ pub async fn handle_file_message(
             Ok(true)
         }
 
+        // v1.24: File copy (使用绝对路径)
+        ClientMessage::FileCopy {
+            dest_project,
+            dest_workspace,
+            source_absolute_path,
+            dest_dir,
+        } => {
+            let state = app_state.lock().await;
+            match state.get_project(dest_project) {
+                Some(p) => match get_workspace_root(p, dest_workspace) {
+                    Some(root) => {
+                        drop(state);
+                        match file_api::copy_file_from_absolute(&root, source_absolute_path, dest_dir) {
+                            Ok(dest_path) => {
+                                send_message(
+                                    socket,
+                                    &ServerMessage::FileCopyResult {
+                                        project: dest_project.clone(),
+                                        workspace: dest_workspace.clone(),
+                                        source_absolute_path: source_absolute_path.clone(),
+                                        dest_path,
+                                        success: true,
+                                        message: None,
+                                    },
+                                )
+                                .await?;
+                            }
+                            Err(e) => {
+                                let (_, message) = file_error_to_response(&e);
+                                send_message(
+                                    socket,
+                                    &ServerMessage::FileCopyResult {
+                                        project: dest_project.clone(),
+                                        workspace: dest_workspace.clone(),
+                                        source_absolute_path: source_absolute_path.clone(),
+                                        dest_path: String::new(),
+                                        success: false,
+                                        message: Some(message),
+                                    },
+                                )
+                                .await?;
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(
+                            socket,
+                            &ServerMessage::FileCopyResult {
+                                project: dest_project.clone(),
+                                workspace: dest_workspace.clone(),
+                                source_absolute_path: source_absolute_path.clone(),
+                                dest_path: String::new(),
+                                success: false,
+                                message: Some("Workspace not found".to_string()),
+                            },
+                        )
+                        .await?;
+                    }
+                },
+                None => {
+                    send_message(
+                        socket,
+                        &ServerMessage::FileCopyResult {
+                            project: dest_project.clone(),
+                            workspace: dest_workspace.clone(),
+                            source_absolute_path: source_absolute_path.clone(),
+                            dest_path: String::new(),
+                            success: false,
+                            message: Some("Project not found".to_string()),
+                        },
+                    )
+                    .await?;
+                }
+            }
+            Ok(true)
+        }
+
         // Not a file message
         _ => Ok(false),
     }

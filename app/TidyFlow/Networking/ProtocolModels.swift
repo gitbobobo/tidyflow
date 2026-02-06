@@ -1425,3 +1425,34 @@ struct FileDeleteResult {
         )
     }
 }
+
+// MARK: - v1.24: File Copy Protocol Models
+
+/// 文件复制结果
+struct FileCopyResult {
+    let project: String
+    let workspace: String
+    let sourceAbsolutePath: String
+    let destPath: String
+    let success: Bool
+    let message: String?
+
+    static func from(json: [String: Any]) -> FileCopyResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let sourceAbsolutePath = json["source_absolute_path"] as? String,
+              let destPath = json["dest_path"] as? String,
+              let success = json["success"] as? Bool else {
+            return nil
+        }
+        let message = json["message"] as? String
+        return FileCopyResult(
+            project: project,
+            workspace: workspace,
+            sourceAbsolutePath: sourceAbsolutePath,
+            destPath: destPath,
+            success: success,
+            message: message
+        )
+    }
+}

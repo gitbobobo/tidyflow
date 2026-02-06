@@ -345,7 +345,7 @@ struct RightPanelNoWorkspaceView: View {
 struct FileTreeView: View {
     @EnvironmentObject var appState: AppState
     let workspaceKey: String
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // 与源代码管理一致的面板标题
@@ -357,8 +357,18 @@ struct FileTreeView: View {
                 Button("刷新") {
                     appState.fetchFileList(workspaceKey: workspaceKey, path: ".")
                 }
+
+                // 粘贴到根目录（检查系统剪贴板）
+                if appState.hasFilesInClipboard() {
+                    Divider()
+                    Button {
+                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: ".")
+                    } label: {
+                        Label("粘贴到根目录", systemImage: "doc.on.clipboard")
+                    }
+                }
             }
-            
+
             // 文件列表
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -506,6 +516,28 @@ struct FileRowView: View {
                 onTap: { handleTap() }
             )
             .contextMenu {
+                Button {
+                    appState.copyFileToClipboard(
+                        workspaceKey: workspaceKey,
+                        path: item.path,
+                        isDir: item.isDir,
+                        name: item.name
+                    )
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                }
+
+                // 仅目录显示粘贴选项，且系统剪贴板有文件时
+                if item.isDir && appState.hasFilesInClipboard() {
+                    Button {
+                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: item.path)
+                    } label: {
+                        Label("粘贴", systemImage: "doc.on.clipboard")
+                    }
+                }
+
+                Divider()
+
                 Button {
                     newName = item.name
                     showRenameDialog = true

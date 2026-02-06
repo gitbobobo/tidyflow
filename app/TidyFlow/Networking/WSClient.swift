@@ -56,6 +56,8 @@ class WSClient: NSObject, ObservableObject {
     // v1.23: 文件重命名/删除回调
     var onFileRenameResult: ((FileRenameResult) -> Void)?
     var onFileDeleteResult: ((FileDeleteResult) -> Void)?
+    // v1.24: 文件复制回调
+    var onFileCopyResult: ((FileCopyResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -539,6 +541,19 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    // MARK: - v1.24: 文件复制
+
+    /// 请求复制文件或目录（使用绝对路径）
+    func requestFileCopy(destProject: String, destWorkspace: String, sourceAbsolutePath: String, destDir: String) {
+        send([
+            "type": "file_copy",
+            "dest_project": destProject,
+            "dest_workspace": destWorkspace,
+            "source_absolute_path": sourceAbsolutePath,
+            "dest_dir": destDir
+        ])
+    }
+
     // MARK: - Receive Messages
 
     private func receiveMessage() {
@@ -757,6 +772,11 @@ class WSClient: NSObject, ObservableObject {
         case "file_delete_result":
             if let result = FileDeleteResult.from(json: json) {
                 onFileDeleteResult?(result)
+            }
+
+        case "file_copy_result":
+            if let result = FileCopyResult.from(json: json) {
+                onFileCopyResult?(result)
             }
 
         case "error":

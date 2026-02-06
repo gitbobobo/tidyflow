@@ -435,16 +435,18 @@ struct FileListCache {
     var isLoading: Bool
     var error: String?
     var updatedAt: Date?
-    
+
     static func empty() -> FileListCache {
         FileListCache(items: [], isLoading: false, error: nil, updatedAt: nil)
     }
-    
+
     var isExpired: Bool {
         guard let updatedAt = updatedAt else { return true }
         return Date().timeIntervalSince(updatedAt) > 60 // 60秒后过期
     }
 }
+
+// MARK: - v1.24: 剪贴板模型
 
 class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
@@ -877,6 +879,11 @@ class AppState: ObservableObject {
             self?.handleFileDeleteResult(result)
         }
 
+        // v1.24: 文件复制结果
+        wsClient.onFileCopyResult = { [weak self] result in
+            self?.handleFileCopyResult(result)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -1135,6 +1142,76 @@ class AppState: ObservableObject {
 
         for tab in tabsToClose {
             closeTab(workspaceKey: globalKey, tabId: tab.id)
+        }
+    }
+
+    // MARK: - v1.24: 文件复制粘贴（使用系统剪贴板）
+
+    /// 复制文件到系统剪贴板（Finder 兼容格式）
+    func copyFileToClipboard(workspaceKey: String, path: String, isDir: Bool, name: String) {
+        #if canImport(AppKit)
+        guard let workspacePath = selectedWorkspacePath else {
+            print("[AppState] 无法复制：未找到工作空间路径")
+            return
+        }
+        let absolutePath = (workspacePath as NSString).appendingPathComponent(path)
+        let fileURL = URL(fileURLWithPath: absolutePath)
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([fileURL as NSURL])
+        print("[AppState] 已复制到系统剪贴板: \(absolutePath)")
+        #endif
+    }
+
+    /// 从系统剪贴板粘贴文件到指定目录
+    func pasteFiles(workspaceKey: String, destDir: String) {
+        guard connectionState == .connected else {
+            print("[AppState] 无法粘贴：未连接")
+            return
+        }
+
+        #if canImport(AppKit)
+        let pasteboard = NSPasteboard.general
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty else {
+            print("[AppState] 剪贴板中没有文件")
+            return
+        }
+
+        for url in urls {
+            let absolutePath = url.path
+            print("[AppState] 粘贴文件: \(absolutePath) -> \(destDir)")
+            wsClient.requestFileCopy(
+                destProject: selectedProjectName,
+                destWorkspace: workspaceKey,
+                sourceAbsolutePath: absolutePath,
+                destDir: destDir
+            )
+        }
+        #endif
+    }
+
+    /// 检查系统剪贴板是否有文件
+    func hasFilesInClipboard() -> Bool {
+        #if canImport(AppKit)
+        let pasteboard = NSPasteboard.general
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            return !urls.isEmpty
+        }
+        #endif
+        return false
+    }
+
+    /// 处理文件复制结果
+    private func handleFileCopyResult(_ result: FileCopyResult) {
+        if result.success {
+            print("[AppState] 文件复制成功: \(result.sourceAbsolutePath) -> \(result.destPath)")
+            // 刷新目标目录的文件列表
+            let destDir = (result.destPath as NSString).deletingLastPathComponent
+            let refreshPath = destDir.isEmpty ? "." : destDir
+            fetchFileList(workspaceKey: result.workspace, path: refreshPath)
+        } else {
+            print("[AppState] 文件复制失败: \(result.message ?? "未知错误")")
         }
     }
 

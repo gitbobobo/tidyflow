@@ -379,6 +379,130 @@ pub fn delete_file(workspace_root: &Path, path: &str) -> Result<(), FileApiError
     Ok(())
 }
 
+/// v1.24: 生成不冲突的文件名
+/// 如果目标路径已存在，添加 (1), (2) 等后缀
+fn generate_unique_path(dest_dir: &Path, name: &str) -> PathBuf {
+    let dest_path = dest_dir.join(name);
+    if !dest_path.exists() {
+        return dest_path;
+    }
+
+    // 分离文件名和扩展名
+    let (base_name, extension) = if let Some(dot_pos) = name.rfind('.') {
+        // 检查是否是隐藏文件（以 . 开头且只有一个 .）
+        if dot_pos == 0 {
+            (name, "")
+        } else {
+            (&name[..dot_pos], &name[dot_pos..])
+        }
+    } else {
+        (name, "")
+    };
+
+    // 尝试添加数字后缀
+    for i in 1..1000 {
+        let new_name = format!("{} ({}){}", base_name, i, extension);
+        let new_path = dest_dir.join(&new_name);
+        if !new_path.exists() {
+            return new_path;
+        }
+    }
+
+    // 极端情况：使用时间戳
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    dest_dir.join(format!("{}_{}{}", base_name, timestamp, extension))
+}
+
+/// v1.24: 递归复制目录
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), FileApiError> {
+    fs::create_dir_all(dest)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            fs::copy(&src_path, &dest_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// v1.24: 复制文件或目录（支持绝对路径源）
+/// 返回实际的目标相对路径（可能因重名而与预期不同）
+pub fn copy_file_from_absolute(
+    workspace_root: &Path,
+    source_absolute_path: &str,
+    dest_dir: &str,
+) -> Result<String, FileApiError> {
+    // 解析源路径（绝对路径）
+    let source_full_path = Path::new(source_absolute_path);
+    if !source_full_path.exists() {
+        return Err(FileApiError::FileNotFound);
+    }
+
+    // 验证源路径是绝对路径
+    if !source_full_path.is_absolute() {
+        return Err(FileApiError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "源路径必须是绝对路径",
+        )));
+    }
+
+    // 解析目标目录
+    let dest_dir_full = if dest_dir.is_empty() || dest_dir == "." {
+        workspace_root.to_path_buf()
+    } else {
+        resolve_safe_path(workspace_root, dest_dir)?
+    };
+
+    if !dest_dir_full.exists() || !dest_dir_full.is_dir() {
+        return Err(FileApiError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "目标目录不存在",
+        )));
+    }
+
+    // 获取源文件名
+    let source_name = source_full_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| FileApiError::InvalidName("无法获取源文件名".to_string()))?;
+
+    // 生成不冲突的目标路径
+    let dest_full_path = generate_unique_path(&dest_dir_full, source_name);
+
+    debug!(
+        "Copying {:?} to {:?}",
+        source_full_path, dest_full_path
+    );
+
+    // 执行复制
+    if source_full_path.is_dir() {
+        copy_dir_recursive(source_full_path, &dest_full_path)?;
+    } else {
+        fs::copy(source_full_path, &dest_full_path)?;
+    }
+
+    // 计算相对路径
+    let root_canonical = workspace_root.canonicalize()?;
+    let dest_canonical = dest_full_path.canonicalize()?;
+    let relative_path = dest_canonical
+        .strip_prefix(&root_canonical)
+        .map_err(|_| FileApiError::PathEscape)?
+        .to_string_lossy()
+        .to_string();
+
+    Ok(relative_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

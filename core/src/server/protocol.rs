@@ -277,6 +277,14 @@ pub enum ClientMessage {
         workspace: String,
         path: String,
     },
+
+    // v1.24: File copy (使用绝对路径支持跨项目/外部文件复制)
+    FileCopy {
+        dest_project: String,
+        dest_workspace: String,
+        source_absolute_path: String,  // 源文件绝对路径
+        dest_dir: String,              // 目标目录（相对路径）
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -627,6 +635,17 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    // v1.24: File copy result
+    FileCopyResult {
+        project: String,
+        workspace: String,
+        source_absolute_path: String,
+        dest_path: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -742,6 +761,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "project_import".to_string(),
         "file_watch".to_string(),
         "file_rename_delete".to_string(),
+        "file_copy".to_string(),
     ]
 }
 
