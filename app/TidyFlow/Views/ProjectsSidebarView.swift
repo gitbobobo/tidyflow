@@ -79,14 +79,18 @@ struct ProjectsSidebarView: View {
         }
     }
 
-    /// 计算项目的终端总数
-    private func projectTerminalCount(_ project: ProjectModel) -> Int {
-        var count = 0
+    /// 获取项目中最早的终端创建时间（用于排序）
+    private func projectEarliestTerminalTime(_ project: ProjectModel) -> Date? {
+        var earliest: Date?
         for workspace in project.workspaces {
             let key = "\(project.name):\(workspace.name)"
-            count += appState.workspaceTabs[key]?.filter { $0.kind == .terminal }.count ?? 0
+            if let time = appState.workspaceTerminalOpenTime[key] {
+                if earliest == nil || time < earliest! {
+                    earliest = time
+                }
+            }
         }
-        return count
+        return earliest
     }
 
     /// 获取项目的最小快捷键编号（用于排序，0视为10以排在最后）
@@ -106,25 +110,28 @@ struct ProjectsSidebarView: View {
         return minKey
     }
 
-    /// 将项目和工作空间扁平化为单一列表（按终端数量和快捷键排序）
+    /// 将项目和工作空间扁平化为单一列表（已分配快捷键的项目按最早终端创建时间排序）
     private var flattenedRows: [SidebarRow] {
         // 先对项目进行排序
         let sortedIndices = appState.projects.indices.sorted { i, j in
             let projectA = appState.projects[i]
             let projectB = appState.projects[j]
 
-            // 1. 按终端总数排序（多的在前）
-            let countA = projectTerminalCount(projectA)
-            let countB = projectTerminalCount(projectB)
-            if countA != countB {
-                return countA > countB
+            let hasShortcutA = projectMinShortcutKey(projectA) < Int.max
+            let hasShortcutB = projectMinShortcutKey(projectB) < Int.max
+
+            // 1. 有快捷键的项目排在前面
+            if hasShortcutA != hasShortcutB {
+                return hasShortcutA
             }
 
-            // 2. 按快捷键编号排序（小的在前，0在最后）
-            let keyA = projectMinShortcutKey(projectA)
-            let keyB = projectMinShortcutKey(projectB)
-            if keyA != keyB {
-                return keyA < keyB
+            // 2. 有快捷键的项目之间，按最早终端创建时间排序（早的在前）
+            if hasShortcutA && hasShortcutB {
+                let timeA = projectEarliestTerminalTime(projectA)
+                let timeB = projectEarliestTerminalTime(projectB)
+                if let tA = timeA, let tB = timeB, tA != tB {
+                    return tA < tB
+                }
             }
 
             // 3. 默认按项目名称字母序，确保启动时排序稳定
