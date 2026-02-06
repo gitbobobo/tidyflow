@@ -114,12 +114,11 @@ struct RightToolPanelView: View {
 
 // MARK: - 面板标题（与源代码管理标题样式一致，可复用）
 
-/// 与源代码管理面板标题一致的通用标题栏：左侧标题、右侧刷新 + 三点菜单
-struct PanelHeaderView<MenuContent: View>: View {
+/// 通用面板标题栏：左侧标题、右侧刷新按钮
+struct PanelHeaderView: View {
     let title: String
     var onRefresh: (() -> Void)?
     var isRefreshDisabled: Bool = false
-    @ViewBuilder var menuContent: () -> MenuContent
 
     var body: some View {
         HStack(spacing: 8) {
@@ -139,17 +138,6 @@ struct PanelHeaderView<MenuContent: View>: View {
                 .help("刷新")
                 .disabled(isRefreshDisabled)
             }
-
-            Menu {
-                menuContent()
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 20)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -354,21 +342,7 @@ struct FileTreeView: View {
                 title: "资源管理器",
                 onRefresh: { appState.fetchFileList(workspaceKey: workspaceKey, path: ".") },
                 isRefreshDisabled: false
-            ) {
-                Button("刷新") {
-                    appState.fetchFileList(workspaceKey: workspaceKey, path: ".")
-                }
-
-                // 粘贴到根目录
-                if appState.clipboardHasFiles {
-                    Divider()
-                    Button {
-                        appState.pasteFiles(workspaceKey: workspaceKey, destDir: ".")
-                    } label: {
-                        Label("粘贴到根目录", systemImage: "doc.on.clipboard")
-                    }
-                }
-            }
+            )
 
             // 文件列表
             ScrollView {
@@ -521,6 +495,30 @@ struct FileRowView: View {
         }
     }
 
+    /// 特殊文件的自定义图标视图（CLAUDE.md / AGENTS.md）
+    @ViewBuilder
+    private var specialFileIcon: some View {
+        if item.name == "CLAUDE.md" {
+            Image("claude-icon")
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        } else if item.name == "AGENTS.md" {
+            Image("agents-icon")
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        } else {
+            EmptyView()
+        }
+    }
+
+    /// 是否为需要自定义图标的特殊文件
+    private var hasSpecialIcon: Bool {
+        guard !item.isDir else { return false }
+        return item.name == "CLAUDE.md" || item.name == "AGENTS.md"
+    }
+
     /// 获取当前项的 Git 状态
     private var gitStatus: String? {
         let index = appState.getGitStatusIndex(workspaceKey: workspaceKey)
@@ -565,20 +563,40 @@ struct FileRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TreeRowView(
-                isExpandable: item.isDir,
-                isExpanded: isExpanded,
-                iconName: iconName,
-                iconColor: iconColor,
-                title: item.name,
-                depth: depth,
-                isSelected: isSelected,
-                selectedBackgroundColor: Color.accentColor.opacity(0.35),
-                trailingText: gitStatus,
-                titleColor: titleColor,
-                trailingTextColor: gitStatusColor,
-                onTap: { handleTap() }
-            )
+            Group {
+                if hasSpecialIcon {
+                    TreeRowView(
+                        isExpandable: item.isDir,
+                        isExpanded: isExpanded,
+                        iconName: iconName,
+                        iconColor: iconColor,
+                        title: item.name,
+                        depth: depth,
+                        isSelected: isSelected,
+                        selectedBackgroundColor: Color.accentColor.opacity(0.35),
+                        trailingText: gitStatus,
+                        titleColor: titleColor,
+                        trailingTextColor: gitStatusColor,
+                        customIconView: specialFileIcon,
+                        onTap: { handleTap() }
+                    )
+                } else {
+                    TreeRowView(
+                        isExpandable: item.isDir,
+                        isExpanded: isExpanded,
+                        iconName: iconName,
+                        iconColor: iconColor,
+                        title: item.name,
+                        depth: depth,
+                        isSelected: isSelected,
+                        selectedBackgroundColor: Color.accentColor.opacity(0.35),
+                        trailingText: gitStatus,
+                        titleColor: titleColor,
+                        trailingTextColor: gitStatusColor,
+                        onTap: { handleTap() }
+                    )
+                }
+            }
             .contextMenu {
                 Button {
                     appState.copyFileToClipboard(

@@ -389,16 +389,7 @@ struct GitPanelHeader: View {
             title: "源代码管理",
             onRefresh: refreshAll,
             isRefreshDisabled: isLoading
-        ) {
-            Button("查看提交历史") {
-                refreshLog()
-            }
-            Divider()
-            Button("放弃所有更改", role: .destructive) {
-                // 由外部处理
-            }
-            .disabled(!hasChanges)
-        }
+        )
     }
 
     private var isLoading: Bool {
@@ -406,18 +397,8 @@ struct GitPanelHeader: View {
         return appState.getGitStatusCache(workspaceKey: ws)?.isLoading == true
     }
 
-    private var hasChanges: Bool {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
-        return !cache.items.isEmpty
-    }
-
     private func refreshAll() {
         appState.refreshGitStatus()
-        appState.refreshGitLog()
-    }
-
-    private func refreshLog() {
         appState.refreshGitLog()
     }
 }
