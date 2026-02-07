@@ -29,6 +29,11 @@ pub struct GitStatusResult {
     pub items: Vec<GitStatusEntry>,
     pub has_staged_changes: bool,
     pub staged_count: usize,
+    pub current_branch: Option<String>,
+    pub default_branch: Option<String>,
+    pub ahead_by: Option<i32>,
+    pub behind_by: Option<i32>,
+    pub compared_branch: Option<String>,
 }
 
 /// Git diff result

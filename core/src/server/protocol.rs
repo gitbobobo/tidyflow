@@ -415,6 +415,16 @@ pub enum ServerMessage {
         has_staged_changes: bool,
         #[serde(default)]
         staged_count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_branch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default_branch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ahead_by: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        behind_by: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compared_branch: Option<String>,
     },
     GitDiffResult {
         project: String,

@@ -126,6 +126,12 @@
 
 /* Git Panel */
 "git.sourceControl" = "Source Control";
+"git.branchDivergence.vs" = "%@ vs %@";
+"git.branchDivergence.currentVs" = "Current branch vs %@";
+"git.branchDivergence.aheadCount" = "Ahead %d";
+"git.branchDivergence.behindCount" = "Behind %d";
+"git.branchDivergence.upToDate" = "Up to date";
+"git.branchDivergence.unavailable" = "Branch divergence unavailable";
 "git.commitMessage.placeholder" = "Message (⌘Enter to commit)";
 "git.commit" = "Commit";
 "git.commitAndPush" = "Commit & Push";

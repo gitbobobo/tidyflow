@@ -625,6 +625,11 @@ struct GitStatusResult {
     let error: String?
     let hasStagedChanges: Bool
     let stagedCount: Int
+    let currentBranch: String?
+    let defaultBranch: String?
+    let aheadBy: Int?
+    let behindBy: Int?
+    let comparedBranch: String?
 
     static func from(json: [String: Any]) -> GitStatusResult? {
         guard let project = json["project"] as? String,
@@ -636,6 +641,11 @@ struct GitStatusResult {
         let errorMsg = json["error"] as? String
         let hasStagedChanges = json["has_staged_changes"] as? Bool ?? false
         let stagedCount = json["staged_count"] as? Int ?? 0
+        let currentBranch = json["current_branch"] as? String
+        let defaultBranch = json["default_branch"] as? String
+        let aheadBy = json["ahead_by"] as? Int
+        let behindBy = json["behind_by"] as? Int
+        let comparedBranch = json["compared_branch"] as? String
 
         var items: [GitStatusItem] = []
         if let itemsArray = json["items"] as? [[String: Any]] {
@@ -666,7 +676,12 @@ struct GitStatusResult {
             isGitRepo: isGitRepo,
             error: errorMsg,
             hasStagedChanges: hasStagedChanges,
-            stagedCount: stagedCount
+            stagedCount: stagedCount,
+            currentBranch: currentBranch,
+            defaultBranch: defaultBranch,
+            aheadBy: aheadBy,
+            behindBy: behindBy,
+            comparedBranch: comparedBranch
         )
     }
 }
@@ -680,6 +695,11 @@ struct GitStatusCache {
     var updatedAt: Date
     var hasStagedChanges: Bool
     var stagedCount: Int
+    var currentBranch: String?
+    var defaultBranch: String?
+    var aheadBy: Int?
+    var behindBy: Int?
+    var comparedBranch: String?
 
     static func empty() -> GitStatusCache {
         GitStatusCache(
@@ -689,7 +709,12 @@ struct GitStatusCache {
             isGitRepo: true,
             updatedAt: .distantPast,
             hasStagedChanges: false,
-            stagedCount: 0
+            stagedCount: 0,
+            currentBranch: nil,
+            defaultBranch: nil,
+            aheadBy: nil,
+            behindBy: nil,
+            comparedBranch: nil
         )
     }
 

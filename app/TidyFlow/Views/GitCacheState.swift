@@ -162,7 +162,12 @@ class GitCacheState: ObservableObject {
             isGitRepo: result.isGitRepo,
             updatedAt: Date(),
             hasStagedChanges: result.hasStagedChanges,
-            stagedCount: result.stagedCount
+            stagedCount: result.stagedCount,
+            currentBranch: result.currentBranch,
+            defaultBranch: result.defaultBranch,
+            aheadBy: result.aheadBy,
+            behindBy: result.behindBy,
+            comparedBranch: result.comparedBranch
         )
         gitStatusCache[key] = cache
         gitStatusIndexCache.removeValue(forKey: key)

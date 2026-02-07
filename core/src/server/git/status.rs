@@ -214,6 +214,115 @@ pub fn git_status(workspace_root: &Path) -> Result<GitStatusResult, GitError> {
     Ok(result)
 }
 
+/// 获取当前分支名。
+///
+/// 返回：
+/// - Ok(Some(branch))：正常分支
+/// - Ok(None)：detached HEAD 或非 git 仓库
+/// - Err(_)：git 命令执行失败
+pub fn git_current_branch(workspace_root: &Path) -> Result<Option<String>, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Ok(None);
+    }
+
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(GitError::CommandFailed(format!(
+            "Failed to get current branch: {}",
+            if stderr.is_empty() {
+                "Unknown error"
+            } else {
+                &stderr
+            }
+        )));
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return Ok(None);
+    }
+
+    Ok(Some(branch))
+}
+
+/// 计算当前分支相对本地默认分支的领先/落后提交数（不访问网络）。
+pub fn check_branch_divergence_local(
+    workspace_root: &Path,
+    current_branch: &str,
+    default_branch: &str,
+) -> Result<BranchDivergenceResult, GitError> {
+    if get_git_repo_root(workspace_root).is_none() {
+        return Err(GitError::NotAGitRepo);
+    }
+
+    let default_ref = format!("refs/heads/{}", default_branch);
+    let check_default = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", &default_ref])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !check_default.status.success() {
+        return Err(GitError::CommandFailed(format!(
+            "Local default branch '{}' not found",
+            default_branch
+        )));
+    }
+
+    let rev_list_output = Command::new("git")
+        .args([
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{}...{}", current_branch, default_branch),
+        ])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    if !rev_list_output.status.success() {
+        let stderr = String::from_utf8_lossy(&rev_list_output.stderr)
+            .trim()
+            .to_string();
+        return Err(GitError::CommandFailed(format!(
+            "Failed to compare local branches: {}",
+            if stderr.is_empty() {
+                "Unknown error"
+            } else {
+                &stderr
+            }
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&rev_list_output.stdout);
+    let parts: Vec<&str> = stdout.trim().split('\t').collect();
+    if parts.len() != 2 {
+        return Err(GitError::CommandFailed(format!(
+            "Unexpected rev-list output format: '{}'",
+            stdout.trim()
+        )));
+    }
+
+    let ahead_by = parts[0]
+        .parse::<i32>()
+        .map_err(|e| GitError::CommandFailed(format!("Failed to parse ahead count: {}", e)))?;
+    let behind_by = parts[1]
+        .parse::<i32>()
+        .map_err(|e| GitError::CommandFailed(format!("Failed to parse behind count: {}", e)))?;
+
+    Ok(BranchDivergenceResult {
+        ahead_by,
+        behind_by,
+        compared_branch: default_branch.to_string(),
+    })
+}
+
 /// 使指定工作区的 git status 缓存失效
 pub fn invalidate_git_status_cache(workspace_root: &Path) {
     let key = workspace_root.to_string_lossy().to_string();
@@ -233,6 +342,11 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
                 items: vec![],
                 has_staged_changes: false,
                 staged_count: 0,
+                current_branch: None,
+                default_branch: None,
+                ahead_by: None,
+                behind_by: None,
+                compared_branch: None,
             });
         }
     };
@@ -278,6 +392,11 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
         items,
         has_staged_changes,
         staged_count,
+        current_branch: None,
+        default_branch: None,
+        ahead_by: None,
+        behind_by: None,
+        compared_branch: None,
     })
 }
 

@@ -1,4 +1,5 @@
 use axum::extract::ws::WebSocket;
+use tracing::warn;
 
 use crate::server::git;
 use crate::server::protocol::{ClientMessage, GitStatusEntry, ServerMessage};
@@ -19,11 +20,48 @@ pub async fn try_handle_git_message(
                 Some(p) => {
                     match get_workspace_root(p, workspace) {
                         Some(root) => {
+                            let default_branch = p.default_branch.clone();
                             drop(state);
 
-                            // Run git status in blocking task
-                            let result =
-                                tokio::task::spawn_blocking(move || git::git_status(&root)).await;
+                            // Run git status + branch divergence in blocking task
+                            let result = tokio::task::spawn_blocking(move || {
+                                let mut status = git::git_status(&root)?;
+                                let current_branch = match git::git_current_branch(&root) {
+                                    Ok(branch) => branch,
+                                    Err(e) => {
+                                        warn!("Failed to get current branch: {}", e);
+                                        None
+                                    }
+                                };
+
+                                let divergence = if let Some(branch) = current_branch.as_deref() {
+                                    match git::check_branch_divergence_local(
+                                        &root,
+                                        branch,
+                                        &default_branch,
+                                    ) {
+                                        Ok(result) => Some(result),
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to compute local branch divergence for '{}' vs '{}': {}",
+                                                branch, default_branch, e
+                                            );
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                status.current_branch = current_branch;
+                                status.default_branch = Some(default_branch);
+                                status.ahead_by = divergence.as_ref().map(|d| d.ahead_by);
+                                status.behind_by = divergence.as_ref().map(|d| d.behind_by);
+                                status.compared_branch =
+                                    divergence.map(|d| d.compared_branch);
+                                Ok::<_, git::GitError>(status)
+                            })
+                            .await;
 
                             match result {
                                 Ok(Ok(status_result)) => {
@@ -49,6 +87,11 @@ pub async fn try_handle_git_message(
                                             items,
                                             has_staged_changes: status_result.has_staged_changes,
                                             staged_count: status_result.staged_count,
+                                            current_branch: status_result.current_branch,
+                                            default_branch: status_result.default_branch,
+                                            ahead_by: status_result.ahead_by,
+                                            behind_by: status_result.behind_by,
+                                            compared_branch: status_result.compared_branch,
                                         },
                                     )
                                     .await?;

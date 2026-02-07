@@ -126,6 +126,12 @@
 
 /* Git 面板 */
 "git.sourceControl" = "源代码管理";
+"git.branchDivergence.vs" = "%@ 对比 %@";
+"git.branchDivergence.currentVs" = "当前分支 对比 %@";
+"git.branchDivergence.aheadCount" = "领先 %d";
+"git.branchDivergence.behindCount" = "落后 %d";
+"git.branchDivergence.upToDate" = "已同步";
+"git.branchDivergence.unavailable" = "分支差距不可用";
 "git.commitMessage.placeholder" = "消息（⌘Enter 提交）";
 "git.commit" = "提交";
 "git.commitAndPush" = "提交并推送";

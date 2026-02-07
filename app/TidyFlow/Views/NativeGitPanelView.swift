@@ -408,11 +408,27 @@ struct GitPanelHeader: View {
     @EnvironmentObject var gitCache: GitCacheState
 
     var body: some View {
-        PanelHeaderView(
-            title: "git.sourceControl".localized,
-            onRefresh: refreshAll,
-            isRefreshDisabled: isLoading
-        )
+        VStack(spacing: 0) {
+            PanelHeaderView(
+                title: "git.sourceControl".localized,
+                onRefresh: refreshAll,
+                isRefreshDisabled: isLoading
+            )
+
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                Text(branchDivergenceText)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
     }
 
     private var isLoading: Bool {
@@ -423,6 +439,33 @@ struct GitPanelHeader: View {
     private func refreshAll() {
         gitCache.refreshGitStatus()
         gitCache.refreshGitLog()
+    }
+
+    private var branchDivergenceText: String {
+        guard let ws = appState.selectedWorkspaceKey else {
+            return "git.branchDivergence.unavailable".localized
+        }
+        guard let cache = gitCache.getGitStatusCache(workspaceKey: ws) else {
+            return "git.branchDivergence.unavailable".localized
+        }
+
+        if let base = cache.defaultBranch,
+           let ahead = cache.aheadBy,
+           let behind = cache.behindBy {
+            let branchPair = String(format: "git.branchDivergence.currentVs".localized, base)
+            if ahead == 0 && behind == 0 {
+                return "\(branchPair) | \("git.branchDivergence.upToDate".localized)"
+            }
+            let aheadText = String(format: "git.branchDivergence.aheadCount".localized, ahead)
+            let behindText = String(format: "git.branchDivergence.behindCount".localized, behind)
+            return "\(branchPair) | \(aheadText) | \(behindText)"
+        }
+
+        if cache.isLoading {
+            return "common.loading".localized
+        }
+
+        return "git.branchDivergence.unavailable".localized
     }
 }
 
