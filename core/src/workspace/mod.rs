@@ -10,10 +10,12 @@ pub mod config;
 pub mod project;
 pub mod setup;
 pub mod state;
+pub mod state_saver;
 pub mod workspace;
 
 pub use config::ProjectConfig;
 pub use project::ProjectManager;
 pub use setup::{SetupExecutor, SetupResult, StepResult};
 pub use state::{AppState, Project, Workspace, WorkspaceStatus};
+pub use state_saver::spawn_state_saver;
 pub use workspace::WorkspaceManager;

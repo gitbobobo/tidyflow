@@ -19,13 +19,15 @@ use crate::pty::PtySession;
 use crate::server::handlers::file;
 use crate::server::handlers::git;
 use crate::server::handlers::project;
+use crate::server::handlers::settings;
 use crate::server::handlers::terminal;
 use crate::server::protocol::{
-    v1_capabilities, ClientMessage, CustomCommandInfo, ServerMessage, TerminalInfo,
+    v1_capabilities, ClientMessage, ServerMessage, TerminalInfo,
     PROTOCOL_VERSION,
 };
 use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
 use crate::workspace::state::{AppState, Project};
+use crate::workspace::state_saver::spawn_state_saver;
 
 /// 获取工作空间的根路径，支持 "default" 虚拟工作空间
 /// 如果 workspace 是 "default"，返回项目根目录
@@ -167,6 +169,13 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
 /// Shared application state for the WebSocket server
 pub type SharedAppState = Arc<Mutex<AppState>>;
 
+/// WebSocket 服务器上下文，包含共享状态和防抖保存通道
+#[derive(Clone)]
+pub struct AppContext {
+    pub app_state: SharedAppState,
+    pub save_tx: tokio::sync::mpsc::Sender<()>,
+}
+
 /// Run the WebSocket server on the specified port
 pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting WebSocket server on port {}", port);
@@ -179,9 +188,17 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = AppState::load().unwrap_or_default();
     let shared_state: SharedAppState = Arc::new(Mutex::new(app_state));
 
+    // 启动防抖保存 actor
+    let save_tx = spawn_state_saver(shared_state.clone());
+
+    let ctx = AppContext {
+        app_state: shared_state,
+        save_tx,
+    };
+
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(shared_state);
+        .with_state(ctx);
 
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -230,9 +247,9 @@ fn spawn_parent_monitor() {
 /// WebSocket upgrade handler
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(state): State<SharedAppState>,
+    State(ctx): State<AppContext>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_socket(socket, ctx.app_state, ctx.save_tx))
 }
 
 /// Single terminal session handle with workspace binding (v1.2)
@@ -412,7 +429,7 @@ impl TerminalManager {
 }
 
 /// Handle a WebSocket connection
-async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
+async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx: tokio::sync::mpsc::Sender<()>) {
     info!("New WebSocket connection established");
 
     // Create channels for terminal output and exit events
@@ -502,6 +519,7 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState) {
                             &manager,
                             &watcher,
                             &app_state,
+                            &save_tx,
                             tx_output.clone(),
                             tx_exit.clone(),
                         ).await {
@@ -621,6 +639,7 @@ async fn handle_client_message(
     manager: &Arc<Mutex<TerminalManager>>,
     watcher: &Arc<Mutex<WorkspaceWatcher>>,
     app_state: &SharedAppState,
+    save_tx: &tokio::sync::mpsc::Sender<()>,
     tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
 ) -> Result<(), String> {
@@ -675,73 +694,14 @@ async fn handle_client_message(
         return Ok(());
     }
 
+    // Try settings handler
+    if settings::handle_settings_message(&client_msg, socket, app_state, save_tx).await? {
+        return Ok(());
+    }
+
     match client_msg {
         ClientMessage::Ping => {
             send_message(socket, &ServerMessage::Pong).await?;
-        }
-
-        // v1.21: Client settings
-        ClientMessage::GetClientSettings => {
-            let state = app_state.lock().await;
-            let commands: Vec<CustomCommandInfo> = state
-                .client_settings
-                .custom_commands
-                .iter()
-                .map(|c| CustomCommandInfo {
-                    id: c.id.clone(),
-                    name: c.name.clone(),
-                    icon: c.icon.clone(),
-                    command: c.command.clone(),
-                })
-                .collect();
-            send_message(
-                socket,
-                &ServerMessage::ClientSettingsResult {
-                    custom_commands: commands,
-                    workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
-                },
-            )
-            .await?;
-        }
-
-        ClientMessage::SaveClientSettings {
-            custom_commands,
-            workspace_shortcuts,
-        } => {
-            let mut state = app_state.lock().await;
-            state.client_settings.custom_commands = custom_commands
-                .into_iter()
-                .map(|c| crate::workspace::state::CustomCommand {
-                    id: c.id,
-                    name: c.name,
-                    icon: c.icon,
-                    command: c.command,
-                })
-                .collect();
-            state.client_settings.workspace_shortcuts = workspace_shortcuts;
-
-            match state.save() {
-                Ok(_) => {
-                    send_message(
-                        socket,
-                        &ServerMessage::ClientSettingsSaved {
-                            ok: true,
-                            message: None,
-                        },
-                    )
-                    .await?;
-                }
-                Err(e) => {
-                    send_message(
-                        socket,
-                        &ServerMessage::ClientSettingsSaved {
-                            ok: false,
-                            message: Some(format!("保存设置失败: {}", e)),
-                        },
-                    )
-                    .await?;
-                }
-            }
         }
 
         // v1.22: File watcher
@@ -864,6 +824,11 @@ async fn handle_client_message(
         | ClientMessage::RemoveProject { .. }
         | ClientMessage::RemoveWorkspace { .. } => {
             unreachable!("Project messages should be handled by project handler");
+        }
+
+        ClientMessage::GetClientSettings
+        | ClientMessage::SaveClientSettings { .. } => {
+            unreachable!("Settings messages should be handled by settings handler");
         }
     }
 
