@@ -34,6 +34,10 @@ pub async fn handle_settings_message(
                         .client_settings
                         .workspace_shortcuts
                         .clone(),
+                    selected_ai_agent: state
+                        .client_settings
+                        .selected_ai_agent
+                        .clone(),
                 },
             )
             .await?;
@@ -44,6 +48,7 @@ pub async fn handle_settings_message(
         ClientMessage::SaveClientSettings {
             custom_commands,
             workspace_shortcuts,
+            selected_ai_agent,
         } => {
             info!("SaveClientSettings request");
             {
@@ -58,6 +63,7 @@ pub async fn handle_settings_message(
                     })
                     .collect();
                 state.client_settings.workspace_shortcuts = workspace_shortcuts.clone();
+                state.client_settings.selected_ai_agent = selected_ai_agent.clone();
             }
 
             // 触发防抖保存，不等待磁盘写入完成

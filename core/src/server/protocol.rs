@@ -258,6 +258,8 @@ pub enum ClientMessage {
         custom_commands: Vec<CustomCommandInfo>,
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
+        #[serde(default)]
+        selected_ai_agent: Option<String>,
     },
 
     // v1.22: File watcher
@@ -603,6 +605,8 @@ pub enum ServerMessage {
     ClientSettingsResult {
         custom_commands: Vec<CustomCommandInfo>,
         workspace_shortcuts: std::collections::HashMap<String, String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selected_ai_agent: Option<String>,
     },
     ClientSettingsSaved {
         ok: bool,

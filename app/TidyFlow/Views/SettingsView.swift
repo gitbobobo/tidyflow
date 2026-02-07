@@ -19,6 +19,12 @@ struct SettingsContentView: View {
                 .environmentObject(appState)
                 .environmentObject(localizationManager)
 
+            AIAgentSection()
+                .tabItem {
+                    Label("settings.aiAgent".localized, systemImage: "cpu")
+                }
+                .environmentObject(appState)
+
             AboutSection()
                 .tabItem {
                     Label("settings.about".localized, systemImage: "info.circle")
@@ -550,6 +556,93 @@ struct CommandIconView: View {
 }
 
 // BrandIcon 枚举定义在 Models.swift 中
+
+// MARK: - AI Agent 配置部分
+
+struct AIAgentSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var agentStatus: [AIAgent: Bool] = [:]
+    @State private var isDetecting = false
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AIAgent.allCases) { agent in
+                    HStack(spacing: 12) {
+                        // 品牌图标
+                        Image(agent.brandIcon.assetName)
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 24, height: 24)
+
+                        // 名称
+                        Text(agent.displayName)
+                            .font(.system(size: 13, weight: .medium))
+
+                        Spacer()
+
+                        // 状态
+                        if isDetecting {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if let available = agentStatus[agent] {
+                            if available {
+                                if appState.clientSettings.selectedAIAgent == agent.rawValue {
+                                    // 已选中
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.accentColor)
+                                        .font(.system(size: 16))
+                                } else {
+                                    // 已安装但未选中
+                                    Button("common.use".localized) {
+                                        appState.clientSettings.selectedAIAgent = agent.rawValue
+                                        appState.saveClientSettings()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            } else {
+                                Text("settings.aiAgent.notInstalled".localized)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Text("settings.aiAgent.title".localized)
+            } footer: {
+                Text("settings.aiAgent.footer".localized)
+            }
+
+            Section {
+                Button(action: { detectAgents() }) {
+                    Label("settings.aiAgent.redetect".localized, systemImage: "arrow.clockwise")
+                }
+                .disabled(isDetecting)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            if agentStatus.isEmpty {
+                detectAgents()
+            }
+        }
+    }
+
+    private func detectAgents() {
+        isDetecting = true
+        Task {
+            let results = await AIAgentDetector.detectAll()
+            await MainActor.run {
+                agentStatus = results
+                isDetecting = false
+            }
+        }
+    }
+}
 
 // MARK: - 关于页面
 

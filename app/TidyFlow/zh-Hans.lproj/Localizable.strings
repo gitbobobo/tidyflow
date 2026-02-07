@@ -54,6 +54,32 @@
 "settings.about.version" = "版本 %@ (%@)";
 "settings.about.description" = "macOS 原生多项目开发工具";
 
+/* AI Agent 设置 */
+"settings.aiAgent" = "AI Agent";
+"settings.aiAgent.title" = "AI Agent 配置";
+"settings.aiAgent.footer" = "选择用于「AI 合并到默认分支」的 AI 代理工具";
+"settings.aiAgent.detecting" = "检测中...";
+"settings.aiAgent.notInstalled" = "未安装";
+"settings.aiAgent.installed" = "已安装";
+"settings.aiAgent.redetect" = "重新检测";
+"settings.aiAgent.notConfigured" = "未配置 AI Agent";
+"settings.aiAgent.notConfigured.message" = "请先在设置中选择一个 AI Agent";
+
+/* AI 合并 */
+"sidebar.aiMerge" = "AI 合并到默认分支";
+"sidebar.aiMerge.progress" = "AI 正在执行合并...";
+"sidebar.aiMerge.success" = "合并成功";
+"sidebar.aiMerge.failed" = "合并失败";
+"sidebar.aiMerge.conflicts" = "冲突文件";
+"sidebar.aiMerge.rawOutput" = "原始输出";
+"sidebar.aiMerge.result" = "AI 合并结果";
+"sidebar.aiMerge.completed" = "合并操作已完成";
+"sidebar.aiMerge.parseError" = "输出中检测到错误信息，请查看原始输出";
+"sidebar.aiMerge.invalidAgent" = "无效的 AI Agent 配置";
+"sidebar.aiMerge.launchFailed" = "启动 AI Agent 失败: %@";
+"sidebar.aiMerge.exitCode" = "AI Agent 异常退出 (code: %d)";
+"sidebar.aiMerge.noProjectPath" = "无法获取项目路径";
+
 /* 主视图 - 工具栏 */
 "toolbar.settings" = "设置 (⌘,)";
 "toolbar.showInspector" = "显示检查器 (⌘⌃I)";

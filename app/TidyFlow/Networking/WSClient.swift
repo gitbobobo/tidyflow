@@ -497,11 +497,15 @@ class WSClient: NSObject, ObservableObject {
                 "command": cmd.command
             ]
         }
-        send([
+        var payload: [String: Any] = [
             "type": "save_client_settings",
             "custom_commands": commandsData,
             "workspace_shortcuts": settings.workspaceShortcuts
-        ])
+        ]
+        if let agent = settings.selectedAIAgent {
+            payload["selected_ai_agent"] = agent
+        }
+        send(payload)
     }
 
     // MARK: - v1.22: 文件监控
@@ -763,7 +767,9 @@ class WSClient: NSObject, ObservableObject {
             }
             // 解析工作空间快捷键映射
             let workspaceShortcuts = json["workspace_shortcuts"] as? [String: String] ?? [:]
-            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts)
+            // 解析选择的 AI Agent
+            let selectedAIAgent = json["selected_ai_agent"] as? String
+            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts, selectedAIAgent: selectedAIAgent)
             onClientSettingsResult?(settings)
 
         case "client_settings_saved":

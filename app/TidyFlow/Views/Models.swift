@@ -166,21 +166,26 @@ struct ClientSettings: Codable {
     var customCommands: [CustomCommand]
     /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
     var workspaceShortcuts: [String: String]
-    
+    /// 用户选择的 AI Agent（如 "claude"、"codex"、"gemini" 等）
+    var selectedAIAgent: String?
+
     enum CodingKeys: String, CodingKey {
         case customCommands
         case workspaceShortcuts
+        case selectedAIAgent
     }
-    
-    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:]) {
+
+    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:], selectedAIAgent: String? = nil) {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
+        self.selectedAIAgent = selectedAIAgent
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         customCommands = try container.decodeIfPresent([CustomCommand].self, forKey: .customCommands) ?? []
         workspaceShortcuts = try container.decodeIfPresent([String: String].self, forKey: .workspaceShortcuts) ?? [:]
+        selectedAIAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
     }
 }
 
@@ -245,6 +250,450 @@ enum BrandIcon: String, CaseIterable {
         case .codex: return "codex --full-auto"
         default: return nil
         }
+    }
+}
+
+// MARK: - AI Agent 模型
+
+/// AI Agent 枚举（用于 AI 合并到默认分支功能）
+enum AIAgent: String, CaseIterable, Identifiable {
+    case claude
+    case codex
+    case gemini
+    case opencode
+    case cursor
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .codex: return "Codex CLI"
+        case .gemini: return "Gemini CLI"
+        case .opencode: return "OpenCode"
+        case .cursor: return "Cursor Agent"
+        }
+    }
+
+    var brandIcon: BrandIcon {
+        switch self {
+        case .claude: return .claude
+        case .codex: return .codex
+        case .gemini: return .gemini
+        case .opencode: return .opencode
+        case .cursor: return .cursor
+        }
+    }
+
+    /// 构建非交互模式命令参数（默认启用 yolo 模式跳过权限确认）
+    func buildCommand(prompt: String) -> [String] {
+        switch self {
+        case .claude:
+            return ["claude", "--dangerously-skip-permissions", "-p", prompt, "--output-format", "json"]
+        case .codex:
+            return ["codex", "--full-auto", "exec", prompt]
+        case .gemini:
+            return ["gemini", prompt, "-o", "json"]
+        case .opencode:
+            return ["opencode", "run", prompt, "--format", "json"]
+        case .cursor:
+            return ["cursor-agent", "-p", prompt, "--output-format", "json"]
+        }
+    }
+
+    /// 用于检测 --help 输出中是否支持非交互模式的关键字
+    var helpCheckKeyword: String {
+        switch self {
+        case .claude: return "--print"
+        case .codex: return "exec"
+        case .gemini: return "--prompt"
+        case .opencode: return "run"
+        case .cursor: return "--print"
+        }
+    }
+
+    /// CLI 可执行文件名
+    var executableName: String {
+        switch self {
+        case .claude: return "claude"
+        case .codex: return "codex"
+        case .gemini: return "gemini"
+        case .opencode: return "opencode"
+        case .cursor: return "cursor-agent"
+        }
+    }
+
+    /// 从代理原始输出中提取 AI 回复文本（第一层解析）
+    func extractResponse(from output: String) -> String? {
+        switch self {
+        case .claude, .cursor:
+            // 解析外层 JSON → 取 result 字段 → 去除 markdown 代码块
+            guard let data = output.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = json["result"] as? String else {
+                return nil
+            }
+            return AIAgentOutputParser.stripMarkdownCodeBlock(result)
+
+        case .codex:
+            // JSONL 多行，找最后一个 type=="item.completed" 的 item.text
+            var lastText: String?
+            for line in output.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty,
+                      let lineData = trimmed.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                      json["type"] as? String == "item.completed",
+                      let item = json["item"] as? [String: Any],
+                      let text = item["text"] as? String else { continue }
+                lastText = text
+            }
+            return lastText
+
+        case .gemini:
+            // 解析外层 JSON → 取 response 字段
+            guard let data = output.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let response = json["response"] as? String else {
+                return nil
+            }
+            return response
+
+        case .opencode:
+            // JSONL 多行，找最后一个 type=="text" 的 part.text
+            var lastText: String?
+            for line in output.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty,
+                      let lineData = trimmed.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                      json["type"] as? String == "text",
+                      let part = json["part"] as? [String: Any],
+                      let text = part["text"] as? String else { continue }
+                lastText = text
+            }
+            return lastText
+        }
+    }
+}
+
+/// 构建包含常见 CLI 安装路径的 PATH 环境变量
+/// macOS App 默认 PATH 不含 Homebrew、~/.local/bin 等用户路径，需手动补充
+private func buildExtendedPATH() -> [String: String] {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let extraPaths = [
+        "\(home)/.local/bin",
+        "\(home)/.cargo/bin",
+        "\(home)/.opencode/bin",
+        "\(home)/.bun/bin",
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+    ]
+    let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+    let fullPath = (extraPaths + systemPath.split(separator: ":").map(String.init))
+        .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        .joined(separator: ":")
+    var env = ProcessInfo.processInfo.environment
+    env["PATH"] = fullPath
+    return env
+}
+
+/// AI Agent 检测器
+class AIAgentDetector {
+    /// 检测单个 AI Agent 是否可用
+    static func detect(_ agent: AIAgent) async -> Bool {
+        let env = buildExtendedPATH()
+        // 1. 检查是否安装（which）
+        let whichResult = await runProcess(
+            executable: "/usr/bin/which",
+            arguments: [agent.executableName],
+            environment: env
+        )
+        guard whichResult.exitCode == 0 else { return false }
+
+        // 2. 检查 --help 输出是否包含非交互模式关键字
+        let helpResult = await runProcess(
+            executable: "/usr/bin/env",
+            arguments: [agent.executableName, "--help"],
+            environment: env
+        )
+        let output = helpResult.stdout + helpResult.stderr
+        return output.contains(agent.helpCheckKeyword)
+    }
+
+    /// 批量检测所有 AI Agent
+    static func detectAll() async -> [AIAgent: Bool] {
+        var results: [AIAgent: Bool] = [:]
+        await withTaskGroup(of: (AIAgent, Bool).self) { group in
+            for agent in AIAgent.allCases {
+                group.addTask {
+                    let available = await detect(agent)
+                    return (agent, available)
+                }
+            }
+            for await (agent, available) in group {
+                results[agent] = available
+            }
+        }
+        return results
+    }
+
+    /// 运行进程并捕获输出
+    private static func runProcess(
+        executable: String,
+        arguments: [String],
+        workingDirectory: String? = nil,
+        environment: [String: String]? = nil,
+        timeout: TimeInterval = 10
+    ) async -> (stdout: String, stderr: String, exitCode: Int32) {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            if let dir = workingDirectory {
+                process.currentDirectoryURL = URL(fileURLWithPath: dir)
+            }
+            if let env = environment {
+                process.environment = env
+            }
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(returning: ("", error.localizedDescription, -1))
+                return
+            }
+
+            // 超时处理
+            let timer = DispatchSource.makeTimerSource()
+            timer.schedule(deadline: .now() + timeout)
+            timer.setEventHandler {
+                if process.isRunning { process.terminate() }
+            }
+            timer.resume()
+
+            process.waitUntilExit()
+            timer.cancel()
+
+            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+            continuation.resume(returning: (stdout, stderr, process.terminationStatus))
+        }
+    }
+}
+
+/// 通用 AI 代理输出解析器（两层架构）
+/// 第一层：从各代理特定的包装格式中提取 AI 回复文本
+/// 第二层：从 AI 回复文本中解析业务 JSON
+struct AIAgentOutputParser {
+    /// 从 AI 代理原始输出中解析业务结果
+    static func parse(from output: String, agent: AIAgent) -> (success: Bool, message: String, conflicts: [String])? {
+        // 第一层：提取 AI 回复文本
+        if let response = agent.extractResponse(from: output),
+           let result = parseBusinessJSON(from: response) {
+            return result
+        }
+        // 回退：直接对原始输出尝试第二层解析（兼容直接输出 JSON 的情况）
+        return parseBusinessJSON(from: output)
+    }
+
+    /// 从文本中解析业务 JSON（第二层，通用）
+    static func parseBusinessJSON(from text: String) -> (success: Bool, message: String, conflicts: [String])? {
+        let cleaned = stripMarkdownCodeBlock(text)
+
+        // 尝试直接 JSON 解析
+        if let result = extractFields(from: cleaned) {
+            return result
+        }
+
+        // 用正则提取第一个包含 "success" 的 {...} JSON 对象
+        if let jsonRange = cleaned.range(of: "\\{[^{}]*\"success\"[^{}]*\\}", options: .regularExpression),
+           let result = extractFields(from: String(cleaned[jsonRange])) {
+            return result
+        }
+
+        // 嵌套 JSON：贪婪匹配最外层 {...}
+        if let jsonRange = cleaned.range(of: "\\{[\\s\\S]*\"success\"[\\s\\S]*\\}", options: .regularExpression),
+           let result = extractFields(from: String(cleaned[jsonRange])) {
+            return result
+        }
+
+        return nil
+    }
+
+    /// 去除 markdown 代码块包裹
+    static func stripMarkdownCodeBlock(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 匹配 ```json ... ``` 或 ``` ... ```
+        if let range = trimmed.range(of: "^```(?:json)?\\s*\\n([\\s\\S]*?)\\n```\\s*$", options: .regularExpression) {
+            let inner = trimmed[range]
+            // 提取捕获组内容：去掉首行 ``` 和末尾 ```
+            let lines = inner.split(separator: "\n", omittingEmptySubsequences: false)
+            if lines.count >= 2 {
+                let content = lines.dropFirst().dropLast().joined(separator: "\n")
+                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return trimmed
+    }
+
+    /// 从 JSON 字符串中提取业务字段
+    private static func extractFields(from jsonString: String) -> (success: Bool, message: String, conflicts: [String])? {
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json.keys.contains("success") else {
+            return nil
+        }
+        let success = json["success"] as? Bool ?? false
+        let message = json["message"] as? String ?? ""
+        let conflicts = json["conflicts"] as? [String] ?? []
+        return (success, message, conflicts)
+    }
+}
+
+/// AI 合并结果
+struct AIMergeResult: Identifiable {
+    let id = UUID()
+    let success: Bool
+    let message: String
+    let conflicts: [String]
+    let rawOutput: String
+
+    /// 从 AI 输出中解析结果（支持不同代理的输出格式）
+    static func parse(from output: String, agent: AIAgent) -> AIMergeResult {
+        // 使用通用解析器的两层架构
+        if let result = AIAgentOutputParser.parse(from: output, agent: agent) {
+            return AIMergeResult(success: result.success, message: result.message, conflicts: result.conflicts, rawOutput: output)
+        }
+
+        // 无法解析 JSON 时，根据输出内容推断
+        let lowered = output.lowercased()
+        let hasError = lowered.contains("error") || lowered.contains("fatal") || lowered.contains("conflict")
+        return AIMergeResult(
+            success: !hasError,
+            message: hasError ? "sidebar.aiMerge.parseError".localized : "sidebar.aiMerge.completed".localized,
+            conflicts: [],
+            rawOutput: output
+        )
+    }
+}
+
+/// AI Agent Prompt 构建器
+struct AIAgentPromptBuilder {
+    /// 构建合并到默认分支的 prompt
+    static func buildMergePrompt(
+        featureBranch: String,
+        defaultBranch: String,
+        projectName: String
+    ) -> String {
+        return """
+        你是一个 Git 操作助手。请在当前目录（默认分支工作区）执行以下合并操作。这是纯本地操作，禁止任何网络请求。
+
+        目标：将功能分支 "\(featureBranch)" 合并到默认分支 "\(defaultBranch)"
+
+        步骤：
+        1. 确认当前在默认分支 "\(defaultBranch)" 上，如果不是则执行 git checkout \(defaultBranch)
+        2. 执行 git merge \(featureBranch) 合并功能分支
+        3. 如果出现冲突：
+           a. 逐个打开冲突文件，阅读并理解双方改动的意图
+           b. 综合两边的修改进行智能合并——保留双方有意义的改动，而非简单选择某一方
+           c. 移除所有冲突标记（<<<<<<<、=======、>>>>>>>）
+           d. 确保合并后的代码逻辑正确、可编译
+           e. 对每个冲突文件执行 git add 标记为已解决
+           f. 所有冲突解决后执行 git commit 完成合并（使用默认合并提交信息）
+        4. 合并完成后确认工作区干净（git status 无未提交变更）
+
+        严格禁止：
+        - 禁止执行 git pull、git fetch、git push 等任何网络操作
+        - 禁止执行 git merge --abort 放弃合并（除非冲突完全无法理解）
+        - 遇到冲突时不要放弃，必须尝试解决
+
+        请以严格 JSON 格式输出结果：
+        {
+          "success": true/false,
+          "message": "操作结果描述",
+          "conflicts": ["已解决的冲突文件路径列表，无冲突则为空数组"],
+          "commands_executed": ["执行的 git 命令列表"],
+          "merge_commit_sha": "合并提交的 SHA 或 null"
+        }
+
+        只输出 JSON，不要输出其他内容。
+        """
+    }
+}
+
+/// AI Agent 执行器
+class AIAgentRunner {
+    /// 执行 AI Agent 命令
+    static func run(
+        agent: AIAgent,
+        prompt: String,
+        workingDirectory: String
+    ) async -> AIMergeResult {
+        let args = agent.buildCommand(prompt: prompt)
+        guard !args.isEmpty else {
+            return AIMergeResult(success: false, message: "sidebar.aiMerge.invalidAgent".localized, conflicts: [], rawOutput: "")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = args
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        process.environment = buildExtendedPATH()
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            return AIMergeResult(
+                success: false,
+                message: String(format: "sidebar.aiMerge.launchFailed".localized, error.localizedDescription),
+                conflicts: [],
+                rawOutput: error.localizedDescription
+            )
+        }
+
+        // 10 分钟超时
+        let timer = DispatchSource.makeTimerSource()
+        timer.schedule(deadline: .now() + 600)
+        timer.setEventHandler {
+            if process.isRunning { process.terminate() }
+        }
+        timer.resume()
+
+        process.waitUntilExit()
+        timer.cancel()
+
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        let fullOutput = stdout + (stderr.isEmpty ? "" : "\n--- stderr ---\n\(stderr)")
+
+        if process.terminationStatus != 0 && stdout.isEmpty {
+            return AIMergeResult(
+                success: false,
+                message: String(format: "sidebar.aiMerge.exitCode".localized, process.terminationStatus),
+                conflicts: [],
+                rawOutput: fullOutput
+            )
+        }
+
+        return AIMergeResult.parse(from: fullOutput, agent: agent)
     }
 }
 
@@ -1781,6 +2230,56 @@ class AppState: ObservableObject {
         }
 
         // 终端视图会在 spawn 后检查 payload 并执行命令
+    }
+
+    // MARK: - AI Agent 合并
+
+    /// 执行 AI 合并到默认分支
+    func executeAIMerge(
+        projectName: String,
+        workspaceName: String
+    ) async -> AIMergeResult {
+        // 1. 获取 AI Agent
+        guard let agentName = clientSettings.selectedAIAgent,
+              let agent = AIAgent(rawValue: agentName) else {
+            return AIMergeResult(
+                success: false,
+                message: "settings.aiAgent.notConfigured".localized,
+                conflicts: [],
+                rawOutput: ""
+            )
+        }
+
+        // 2. 获取项目路径（默认工作空间路径）
+        guard let project = projects.first(where: { $0.name == projectName }),
+              let projectPath = project.path else {
+            return AIMergeResult(
+                success: false,
+                message: "sidebar.aiMerge.noProjectPath".localized,
+                conflicts: [],
+                rawOutput: ""
+            )
+        }
+
+        // 3. 获取功能分支名和默认分支名
+        let wsKey = workspaceName
+        let featureBranch = gitCache.gitBranchCache[wsKey]?.current ?? workspaceName
+        // 默认分支从默认工作空间的分支信息获取，兜底为 "main"
+        let defaultBranch = gitCache.gitBranchCache["default"]?.current ?? "main"
+
+        // 4. 构建 prompt
+        let prompt = AIAgentPromptBuilder.buildMergePrompt(
+            featureBranch: featureBranch,
+            defaultBranch: defaultBranch,
+            projectName: projectName
+        )
+
+        // 5. 执行 AI Agent（工作目录为项目根目录）
+        return await AIAgentRunner.run(
+            agent: agent,
+            prompt: prompt,
+            workingDirectory: projectPath
+        )
     }
 
     // MARK: - 设置页面

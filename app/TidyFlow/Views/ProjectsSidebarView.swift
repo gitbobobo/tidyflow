@@ -286,6 +286,9 @@ struct WorkspaceRowView: View {
     let isSelected: Bool
     @EnvironmentObject var appState: AppState
     @State private var showDeleteConfirmation = false
+    @State private var showAIMergeProgress = false
+    @State private var aiMergeResult: AIMergeResult?
+    @State private var showNoAgentAlert = false
 
     /// 工作空间路径，用于复制与在编辑器中打开
     private var workspacePath: String? { workspace.root }
@@ -395,9 +398,16 @@ struct WorkspaceRowView: View {
                 }
             }
 
-            // 只有非默认工作空间才显示删除选项
+            // 只有非默认工作空间才显示 AI 合并和删除选项
             if !workspace.isDefault {
                 Divider()
+                Button {
+                    triggerAIMerge()
+                } label: {
+                    Label("sidebar.aiMerge".localized, systemImage: "cpu")
+                }
+                .disabled(appState.clientSettings.selectedAIAgent == nil)
+
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
                 } label: {
@@ -413,6 +423,135 @@ struct WorkspaceRowView: View {
         } message: {
             Text(String(format: "sidebar.deleteWorkspace.message".localized, workspace.name))
         }
+        .alert("settings.aiAgent.notConfigured".localized, isPresented: $showNoAgentAlert) {
+            Button("common.confirm".localized, role: .cancel) { }
+        } message: {
+            Text("settings.aiAgent.notConfigured.message".localized)
+        }
+        .sheet(isPresented: $showAIMergeProgress) {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("sidebar.aiMerge.progress".localized)
+                    .font(.headline)
+            }
+            .frame(width: 300, height: 150)
+            .interactiveDismissDisabled()
+        }
+        .sheet(item: $aiMergeResult) { result in
+            AIMergeResultSheet(result: result)
+        }
         .animation(.easeInOut(duration: 0.2), value: isSelected)
+    }
+
+    /// 触发 AI 合并
+    private func triggerAIMerge() {
+        guard appState.clientSettings.selectedAIAgent != nil else {
+            showNoAgentAlert = true
+            return
+        }
+        showAIMergeProgress = true
+        Task {
+            let result = await appState.executeAIMerge(
+                projectName: projectName,
+                workspaceName: workspace.name
+            )
+            await MainActor.run {
+                showAIMergeProgress = false
+                aiMergeResult = result
+                // 合并完成后刷新 Git 状态
+                if result.success {
+                    appState.gitCache.fetchGitStatus(workspaceKey: "default")
+                    appState.gitCache.fetchGitLog(workspaceKey: "default")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - AI 合并结果弹窗
+
+struct AIMergeResultSheet: View {
+    let result: AIMergeResult
+    @Environment(\.dismiss) private var dismiss
+    @State private var showRawOutput = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // 标题栏
+            HStack {
+                Text("sidebar.aiMerge.result".localized)
+                    .font(.headline)
+                Spacer()
+                Button("common.close".localized) { dismiss() }
+            }
+            .padding(.horizontal)
+            .padding(.top)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    // 成功/失败状态
+                    HStack(spacing: 8) {
+                        Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(result.success ? .green : .red)
+                        Text(result.success ? "sidebar.aiMerge.success".localized : "sidebar.aiMerge.failed".localized)
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+
+                    // 消息
+                    if !result.message.isEmpty {
+                        Text(result.message)
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+
+                    // 冲突文件列表
+                    if !result.conflicts.isEmpty {
+                        Divider()
+                        Text("sidebar.aiMerge.conflicts".localized)
+                            .font(.system(size: 13, weight: .medium))
+                        ForEach(result.conflicts, id: \.self) { file in
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.orange)
+                                Text(file)
+                                    .font(.system(size: 12, design: .monospaced))
+                            }
+                        }
+                    }
+
+                    // 原始输出（可折叠）
+                    if !result.rawOutput.isEmpty {
+                        Divider()
+                        DisclosureGroup(
+                            isExpanded: $showRawOutput,
+                            content: {
+                                ScrollView(.horizontal, showsIndicators: true) {
+                                    Text(result.rawOutput)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(maxHeight: 200)
+                                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                                .cornerRadius(4)
+                            },
+                            label: {
+                                Text("sidebar.aiMerge.rawOutput".localized)
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal)
+            }
+
+            Spacer()
+        }
+        .frame(width: 480, height: 400)
     }
 }

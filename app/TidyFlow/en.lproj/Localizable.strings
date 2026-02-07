@@ -54,6 +54,32 @@
 "settings.about.version" = "Version %@ (%@)";
 "settings.about.description" = "Native macOS multi-project development tool";
 
+/* AI Agent Settings */
+"settings.aiAgent" = "AI Agent";
+"settings.aiAgent.title" = "AI Agent Configuration";
+"settings.aiAgent.footer" = "Select the AI agent for \"AI Merge to Default Branch\"";
+"settings.aiAgent.detecting" = "Detecting...";
+"settings.aiAgent.notInstalled" = "Not Installed";
+"settings.aiAgent.installed" = "Installed";
+"settings.aiAgent.redetect" = "Re-detect";
+"settings.aiAgent.notConfigured" = "AI Agent Not Configured";
+"settings.aiAgent.notConfigured.message" = "Please select an AI Agent in Settings first";
+
+/* AI Merge */
+"sidebar.aiMerge" = "AI Merge to Default Branch";
+"sidebar.aiMerge.progress" = "AI is performing merge...";
+"sidebar.aiMerge.success" = "Merge Succeeded";
+"sidebar.aiMerge.failed" = "Merge Failed";
+"sidebar.aiMerge.conflicts" = "Conflict Files";
+"sidebar.aiMerge.rawOutput" = "Raw Output";
+"sidebar.aiMerge.result" = "AI Merge Result";
+"sidebar.aiMerge.completed" = "Merge operation completed";
+"sidebar.aiMerge.parseError" = "Error detected in output, please check raw output";
+"sidebar.aiMerge.invalidAgent" = "Invalid AI Agent configuration";
+"sidebar.aiMerge.launchFailed" = "Failed to launch AI Agent: %@";
+"sidebar.aiMerge.exitCode" = "AI Agent exited abnormally (code: %d)";
+"sidebar.aiMerge.noProjectPath" = "Cannot get project path";
+
 /* Main View - Toolbar */
 "toolbar.settings" = "Settings (⌘,)";
 "toolbar.showInspector" = "Show Inspector (⌘⌃I)";
