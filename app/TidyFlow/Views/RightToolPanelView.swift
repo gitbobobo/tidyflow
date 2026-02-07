@@ -511,6 +511,7 @@ struct FileListContent: View {
 /// 单个文件/目录行（使用共用 TreeRowView）
 struct FileRowView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     let workspaceKey: String
     let item: FileEntry
     let depth: Int
@@ -563,7 +564,7 @@ struct FileRowView: View {
 
     /// 获取当前项的 Git 状态
     private var gitStatus: String? {
-        let index = appState.getGitStatusIndex(workspaceKey: workspaceKey)
+        let index = gitCache.getGitStatusIndex(workspaceKey: workspaceKey)
         return index.getStatus(path: item.path, isDir: item.isDir)
     }
 

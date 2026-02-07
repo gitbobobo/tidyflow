@@ -102,6 +102,7 @@ struct ContentView: View {
         .sheet(isPresented: $appState.addProjectSheetPresented) {
             AddProjectSheet()
                 .environmentObject(appState)
+                .environmentObject(appState.gitCache)
         }
         // 监听应用激活事件，刷新终端以解决花屏问题
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

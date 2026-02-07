@@ -85,6 +85,7 @@ struct ConnectionStatusView: View {
 /// 显示当前项目名称和分支（格式：● project:branch）
 struct ProjectBranchView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
 
     /// 连接状态颜色
     private var statusColor: Color {
@@ -94,7 +95,7 @@ struct ProjectBranchView: View {
     /// 当前分支名称
     private var currentBranch: String? {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitBranchCache(workspaceKey: ws),
+              let cache = gitCache.getGitBranchCache(workspaceKey: ws),
               !cache.current.isEmpty else {
             return nil
         }

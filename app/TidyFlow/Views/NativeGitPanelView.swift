@@ -299,6 +299,7 @@ private struct CommitDetailPanelContent: View {
 /// 按照 VSCode 源代码管理面板布局设计的 Git 面板
 struct NativeGitPanelView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     @State private var showDiscardAllConfirm: Bool = false
 
     var body: some View {
@@ -358,44 +359,44 @@ struct NativeGitPanelView: View {
         guard let ws = appState.selectedWorkspaceKey else { return }
         
         // 加载 Git 状态
-        if appState.shouldFetchGitStatus(workspaceKey: ws) {
-            appState.fetchGitStatus(workspaceKey: ws)
+        if gitCache.shouldFetchGitStatus(workspaceKey: ws) {
+            gitCache.fetchGitStatus(workspaceKey: ws)
         }
         
         // 加载分支信息
-        if appState.getGitBranchCache(workspaceKey: ws) == nil {
-            appState.fetchGitBranches(workspaceKey: ws)
+        if gitCache.getGitBranchCache(workspaceKey: ws) == nil {
+            gitCache.fetchGitBranches(workspaceKey: ws)
         }
         
         // 加载 Git 日志
-        if appState.shouldFetchGitLog(workspaceKey: ws) {
-            appState.fetchGitLog(workspaceKey: ws)
+        if gitCache.shouldFetchGitLog(workspaceKey: ws) {
+            gitCache.fetchGitLog(workspaceKey: ws)
         }
     }
 
     private func discardAll(includeUntracked: Bool) {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitDiscard(workspaceKey: ws, path: nil, scope: "all", includeUntracked: includeUntracked)
+        gitCache.gitDiscard(workspaceKey: ws, path: nil, scope: "all", includeUntracked: includeUntracked)
     }
 
     /// 当前工作区是否存在已跟踪文件的更改
     private var hasTrackedChangesInWorkspace: Bool {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.items.contains { $0.staged != true && $0.status != "??" }
     }
 
     /// 当前工作区是否存在未跟踪文件
     private var hasUntrackedChangesInWorkspace: Bool {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.items.contains { $0.staged != true && $0.status == "??" }
     }
 
     /// 当前工作区是否存在暂存的更改（用于决定是否显示「暂存的更改」顶层区）
     private var hasStagedChangesInWorkspace: Bool {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.hasStagedChanges
     }
 }
@@ -404,6 +405,7 @@ struct NativeGitPanelView: View {
 
 struct GitPanelHeader: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
 
     var body: some View {
         PanelHeaderView(
@@ -415,12 +417,12 @@ struct GitPanelHeader: View {
 
     private var isLoading: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
-        return appState.getGitStatusCache(workspaceKey: ws)?.isLoading == true
+        return gitCache.getGitStatusCache(workspaceKey: ws)?.isLoading == true
     }
 
     private func refreshAll() {
-        appState.refreshGitStatus()
-        appState.refreshGitLog()
+        gitCache.refreshGitStatus()
+        gitCache.refreshGitLog()
     }
 }
 
@@ -428,6 +430,7 @@ struct GitPanelHeader: View {
 
 struct GitCommitInputSection: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     @FocusState private var isMessageFocused: Bool
     @State private var showCommitMenu: Bool = false
 
@@ -510,28 +513,28 @@ struct GitCommitInputSection: View {
         Binding(
             get: {
                 guard let ws = appState.selectedWorkspaceKey else { return "" }
-                return appState.commitMessage[ws] ?? ""
+                return gitCache.commitMessage[ws] ?? ""
             },
             set: { newValue in
                 guard let ws = appState.selectedWorkspaceKey else { return }
-                appState.commitMessage[ws] = newValue
+                gitCache.commitMessage[ws] = newValue
             }
         )
     }
 
     private var currentMessage: String {
         guard let ws = appState.selectedWorkspaceKey else { return "" }
-        return appState.commitMessage[ws] ?? ""
+        return gitCache.commitMessage[ws] ?? ""
     }
 
     private var hasStagedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
-        return appState.hasStagedChanges(workspaceKey: ws)
+        return gitCache.hasStagedChanges(workspaceKey: ws)
     }
 
     private var isCommitInFlight: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
-        return appState.isCommitInFlight(workspaceKey: ws)
+        return gitCache.isCommitInFlight(workspaceKey: ws)
     }
 
     private var canCommit: Bool {
@@ -553,7 +556,7 @@ struct GitCommitInputSection: View {
 
     private func performCommit() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitCommit(workspaceKey: ws, message: currentMessage)
+        gitCache.gitCommit(workspaceKey: ws, message: currentMessage)
     }
 }
 
@@ -631,6 +634,7 @@ struct CollapsibleSection<Content: View>: View {
 
 struct GitStagedChangesSection: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     @State private var isExpanded: Bool = true
 
     var body: some View {
@@ -663,19 +667,19 @@ struct GitStagedChangesSection: View {
 
     private var stagedCount: Int {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return 0 }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return 0 }
         return cache.items.filter { $0.staged == true }.count
     }
 
     private var stagedItems: [GitStatusItem] {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return [] }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return [] }
         return cache.items.filter { $0.staged == true }
     }
 
     private func unstageAll() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitUnstage(workspaceKey: ws, path: nil, scope: "all")
+        gitCache.gitUnstage(workspaceKey: ws, path: nil, scope: "all")
     }
 }
 
@@ -683,6 +687,7 @@ struct GitStagedChangesSection: View {
 
 struct GitChangesSection: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     @State private var isExpanded: Bool = true
     @Binding var showDiscardAllConfirm: Bool
 
@@ -717,7 +722,7 @@ struct GitChangesSection: View {
         ) {
             VStack(spacing: 0) {
                 if let ws = appState.selectedWorkspaceKey {
-                    if let cache = appState.getGitStatusCache(workspaceKey: ws) {
+                    if let cache = gitCache.getGitStatusCache(workspaceKey: ws) {
                         if cache.isLoading && cache.items.isEmpty {
                             LoadingRow()
                         } else if !cache.isGitRepo {
@@ -743,31 +748,31 @@ struct GitChangesSection: View {
 
     private var unstagedCount: Int {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return 0 }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return 0 }
         return cache.items.filter { $0.staged != true }.count
     }
 
     private var hasUnstagedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.items.contains { $0.status == "??" || $0.status == "M" || $0.status == "A" || $0.status == "D" }
     }
 
     private var hasTrackedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.items.contains { $0.staged != true && $0.status != "??" }
     }
 
     private var hasUntrackedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
-              let cache = appState.getGitStatusCache(workspaceKey: ws) else { return false }
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.items.contains { $0.staged != true && $0.status == "??" }
     }
 
     private var isStageAllInFlight: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
-        return appState.isGitOpInFlight(workspaceKey: ws, path: nil, op: "stage")
+        return gitCache.isGitOpInFlight(workspaceKey: ws, path: nil, op: "stage")
     }
 
     private func unstagedItems(_ items: [GitStatusItem]) -> [GitStatusItem] {
@@ -776,7 +781,7 @@ struct GitChangesSection: View {
 
     private func stageAll() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitStage(workspaceKey: ws, path: nil, scope: "all")
+        gitCache.gitStage(workspaceKey: ws, path: nil, scope: "all")
     }
 }
 
@@ -784,6 +789,7 @@ struct GitChangesSection: View {
 
 struct GitStatusRow: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     let item: GitStatusItem
     let isStaged: Bool
     @State private var isHovered: Bool = false
@@ -974,17 +980,17 @@ struct GitStatusRow: View {
 
     private func stageFile() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitStage(workspaceKey: ws, path: item.path, scope: "file")
+        gitCache.gitStage(workspaceKey: ws, path: item.path, scope: "file")
     }
 
     private func unstageFile() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitUnstage(workspaceKey: ws, path: item.path, scope: "file")
+        gitCache.gitUnstage(workspaceKey: ws, path: item.path, scope: "file")
     }
 
     private func discardFile() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        appState.gitDiscard(workspaceKey: ws, path: item.path, scope: "file")
+        gitCache.gitDiscard(workspaceKey: ws, path: item.path, scope: "file")
     }
 }
 
@@ -992,6 +998,7 @@ struct GitStatusRow: View {
 
 struct GitGraphSection: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     @State private var isExpanded: Bool = true
 
     var body: some View {
@@ -1021,7 +1028,7 @@ struct GitGraphSection: View {
         ) {
             VStack(spacing: 0) {
                 if let ws = appState.selectedWorkspaceKey {
-                    if let cache = appState.getGitLogCache(workspaceKey: ws) {
+                    if let cache = gitCache.getGitLogCache(workspaceKey: ws) {
                         if cache.isLoading && cache.entries.isEmpty {
                             LoadingRow()
                         } else if cache.entries.isEmpty {
@@ -1041,7 +1048,7 @@ struct GitGraphSection: View {
     }
 
     private func refreshLog() {
-        appState.refreshGitLog()
+        gitCache.refreshGitLog()
     }
 }
 
@@ -1049,6 +1056,7 @@ struct GitGraphSection: View {
 
 struct GitLogRow: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     let entry: GitLogEntry
     @State private var isHovered: Bool = false
     @State private var isExpanded: Bool = false
@@ -1095,7 +1103,7 @@ struct GitLogRow: View {
                     }
                     // 展开时加载文件列表
                     if isExpanded, let ws = appState.selectedWorkspaceKey {
-                        appState.fetchGitShow(workspaceKey: ws, sha: entry.sha)
+                        gitCache.fetchGitShow(workspaceKey: ws, sha: entry.sha)
                     }
                 }
                 .onHover { hovering in
@@ -1167,12 +1175,13 @@ struct GitLogRow: View {
 
 struct CommitFilesView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var gitCache: GitCacheState
     let sha: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let ws = appState.selectedWorkspaceKey,
-               let cache = appState.getGitShowCache(workspaceKey: ws, sha: sha) {
+               let cache = gitCache.getGitShowCache(workspaceKey: ws, sha: sha) {
                 if cache.isLoading {
                     HStack {
                         Spacer()

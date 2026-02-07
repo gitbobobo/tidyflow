@@ -12,6 +12,7 @@
 		2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */; };
 		2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */; };
 		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
+		GCS000012 /* GitCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = GCS000011 /* GitCacheState.swift */; };
 		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
@@ -59,6 +60,7 @@
 		2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CenterContentView.swift; sourceTree = "<group>"; };
 		2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeftSidebarView.swift; sourceTree = "<group>"; };
 		2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
 		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
 		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
 		2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebBridge.swift; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 				B3A00019 /* BranchPickerView.swift */,
 				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
 				B3A00011 /* CommandPaletteView.swift */,
+				GCS000011 /* GitCacheState.swift */,
 				B3A00012 /* KeybindingHandler.swift */,
 				2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */,
 				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
@@ -327,6 +330,7 @@
 				2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */,
 				2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
 				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
+				GCS000012 /* GitCacheState.swift in Sources */,
 				2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				B3A00001 /* CommandPaletteView.swift in Sources */,
