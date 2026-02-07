@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 
 /// Allocates available ports for Core process
 /// Uses NWListener to bind to port 0 and get system-assigned port
@@ -14,7 +15,7 @@ enum PortAllocator {
         // Create a TCP socket
         let socketFD = socket(AF_INET, SOCK_STREAM, 0)
         guard socketFD >= 0 else {
-            print("[PortAllocator] Failed to create socket")
+            TFLog.port.error("Failed to create socket")
             return nil
         }
         defer { close(socketFD) }
@@ -36,7 +37,7 @@ enum PortAllocator {
         }
 
         guard bindResult == 0 else {
-            print("[PortAllocator] Failed to bind socket: \(errno)")
+            TFLog.port.error("Failed to bind socket: \(errno, privacy: .public)")
             return nil
         }
 
@@ -51,12 +52,11 @@ enum PortAllocator {
         }
 
         guard getsocknameResult == 0 else {
-            print("[PortAllocator] Failed to get socket name: \(errno)")
+            TFLog.port.error("Failed to get socket name: \(errno, privacy: .public)")
             return nil
         }
 
         let port = Int(UInt16(bigEndian: assignedAddr.sin_port))
-        print("[PortAllocator] Allocated port: \(port)")
         return port
     }
 

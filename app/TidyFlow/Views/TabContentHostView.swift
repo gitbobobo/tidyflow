@@ -154,14 +154,10 @@ struct TerminalContentView: View {
 
         }
         .onAppear {
-            print("[TerminalContentView] onAppear - setting webViewVisible = true")
             webViewVisible = true
             // Send enter_mode and terminal commands when terminal tab becomes active
             if appState.editorWebReady {
-                print("[TerminalContentView] editorWebReady is true, sending terminal mode")
                 sendTerminalMode()
-            } else {
-                print("[TerminalContentView] editorWebReady is false, waiting...")
             }
         }
         .onDisappear {
@@ -190,8 +186,7 @@ struct TerminalContentView: View {
             guard let newGlobalKey = newGlobalKey else { return }
             guard appState.editorWebReady else { return }
             guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
-            
-            print("[TerminalContentView] global workspace key changed to: \(newGlobalKey), re-sending terminal mode")
+
             currentTabId = tab.id
             sendTerminalMode()
         }

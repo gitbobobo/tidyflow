@@ -2,6 +2,7 @@ import Foundation
 import WebKit
 import Combine
 import AppKit
+import os
 
 /// Bridge protocol for Native <-> Web communication
 /// Native -> Web: tidyflow:open_file, tidyflow:save_file, tidyflow:enter_mode, tidyflow:terminal_ensure
@@ -46,11 +47,9 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
               let type = body["type"] as? String else {
-            print("[WebBridge] Invalid message format")
+            TFLog.bridge.warning("Invalid message format")
             return
         }
-
-        print("[WebBridge] Received: \(type)")
 
         switch type {
         case "ready":
@@ -108,7 +107,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
             if let text = body["text"] as? String, !text.isEmpty {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
-                print("[WebBridge] Copied to clipboard: \(text.prefix(50))...")
             }
 
         // 打开 URL：终端中 Command+Click 链接
@@ -116,7 +114,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
             if let urlString = body["url"] as? String,
                let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)
-                print("[WebBridge] Opening URL: \(urlString)")
             }
 
         // 编辑器 dirty 状态变化
@@ -126,7 +123,7 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
             onDirtyStateChanged?(path, isDirty)
 
         default:
-            print("[WebBridge] Unknown message type: \(type)")
+            TFLog.bridge.warning("Unknown message type: \(type, privacy: .public)")
         }
     }
 
@@ -139,21 +136,20 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         } else {
             // Queue event until web is ready
             pendingEvents.append((type: type, payload: payload))
-            print("[WebBridge] Queued event: \(type) (web not ready)")
         }
     }
 
     private func flushPendingEvents() {
-        for event in pendingEvents {
+        let events = pendingEvents
+        pendingEvents.removeAll()
+        for event in events {
             evaluateEvent(type: event.type, payload: event.payload)
         }
-        pendingEvents.removeAll()
-        print("[WebBridge] Flushed \(pendingEvents.count) pending events")
     }
 
     private func evaluateEvent(type: String, payload: [String: Any]) {
         guard let webView = webView else {
-            print("[WebBridge] No webView available")
+            TFLog.bridge.warning("No webView available for event: \(type, privacy: .public)")
             return
         }
 
@@ -168,12 +164,11 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
 
             webView.evaluateJavaScript(js) { result, error in
                 if let error = error {
-                    print("[WebBridge] JS error: \(error.localizedDescription)")
+                    TFLog.bridge.error("JS error for \(type, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             }
-            print("[WebBridge] Sent: \(type)")
         } catch {
-            print("[WebBridge] JSON serialization error: \(error)")
+            TFLog.bridge.error("JSON serialization error: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -183,17 +178,14 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
     /// This must be called before the JavaScript connects to the WebSocket
     func setWsURL(port: Int) {
         guard let webView = webView else {
-            print("[WebBridge] setWsURL: No webView available")
+            TFLog.bridge.warning("setWsURL: No webView available")
             return
         }
         let wsURL = AppConfig.makeWsURLString(port: port)
         let js = "window.TIDYFLOW_WS_URL = '\(wsURL)'; console.log('[NativeBridge] WebSocket URL set to:', window.TIDYFLOW_WS_URL);"
-        print("[WebBridge] Setting WebSocket URL to: \(wsURL)")
         webView.evaluateJavaScript(js) { _, error in
             if let error = error {
-                print("[WebBridge] setWsURL error: \(error.localizedDescription)")
-            } else {
-                print("[WebBridge] WebSocket URL set successfully")
+                TFLog.bridge.error("setWsURL error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -204,7 +196,7 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         let js = "window.setRendererOnly && window.setRendererOnly(\(enabled))"
         webView.evaluateJavaScript(js) { _, error in
             if let error = error {
-                print("[WebBridge] setRendererOnly error: \(error.localizedDescription)")
+                TFLog.bridge.error("setRendererOnly error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -268,7 +260,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
 
     /// Spawn a new terminal session for a tab
     func terminalSpawn(project: String, workspace: String, tabId: String) {
-        print("[WebBridge] terminalSpawn called: project=\(project), workspace=\(workspace), tabId=\(tabId)")
         send(type: "terminal_spawn", payload: [
             "project": project,
             "workspace": workspace,
@@ -316,7 +307,7 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         let js = "window.TidyFlowApp && window.TidyFlowApp.refreshActiveTerminal && window.TidyFlowApp.refreshActiveTerminal()"
         webView.evaluateJavaScript(js) { _, error in
             if let error = error {
-                print("[WebBridge] refreshActiveTerminal error: \(error.localizedDescription)")
+                TFLog.bridge.error("refreshActiveTerminal error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -327,7 +318,7 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         let js = "window.TidyFlowApp && window.TidyFlowApp.refreshAllTerminals && window.TidyFlowApp.refreshAllTerminals()"
         webView.evaluateJavaScript(js) { _, error in
             if let error = error {
-                print("[WebBridge] refreshAllTerminals error: \(error.localizedDescription)")
+                TFLog.bridge.error("refreshAllTerminals error: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

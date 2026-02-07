@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import os
 
 struct WebViewContainer: NSViewRepresentable {
     let bridge: WebBridge
@@ -62,12 +63,11 @@ struct WebViewContainer: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            print("[WebViewContainer] Page loaded")
             // Web will send 'ready' event when tidyflowNative.onEvent is set up
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("[WebViewContainer] Navigation failed: \(error.localizedDescription)")
+            TFLog.bridge.error("Navigation failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

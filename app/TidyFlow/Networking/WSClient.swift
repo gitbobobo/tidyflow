@@ -1,5 +1,6 @@
 import Foundation
 import MessagePacker
+import os
 
 /// Minimal WebSocket client for Core communication
 /// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v2）
@@ -82,7 +83,6 @@ class WSClient: NSObject, ObservableObject {
     ///   - url: New WebSocket URL
     ///   - reconnect: Whether to disconnect and reconnect immediately
     func updateBaseURL(_ url: URL, reconnect: Bool = true) {
-        print("[WSClient] Updating URL to: \(url.absoluteString)")
         currentURL = url
         if reconnect {
             self.reconnect()
@@ -105,7 +105,7 @@ class WSClient: NSObject, ObservableObject {
             return
         }
 
-        print("[WSClient] Connecting to: \(url.absoluteString)")
+        TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
         webSocketTask = urlSession?.webSocketTask(with: url)
         webSocketTask?.resume()
         receiveMessage()
@@ -135,18 +135,15 @@ class WSClient: NSObject, ObservableObject {
     /// 发送二进制 MessagePack 数据
     func sendBinary(_ data: Data) {
         guard isConnected else {
-            print("[WSClient] Cannot send - not connected")
+            TFLog.ws.warning("Cannot send - not connected")
             onError?("Not connected")
             return
         }
 
-        print("[WSClient] Sending binary message (\(data.count) bytes)")
         webSocketTask?.send(.data(data)) { [weak self] error in
             if let error = error {
-                print("[WSClient] Send failed: \(error.localizedDescription)")
+                TFLog.ws.error("Send failed: \(error.localizedDescription, privacy: .public)")
                 self?.onError?("Send failed: \(error.localizedDescription)")
-            } else {
-                print("[WSClient] Message sent successfully")
             }
         }
     }
@@ -158,7 +155,7 @@ class WSClient: NSObject, ObservableObject {
             let data = try msgpackEncoder.encode(codable)
             sendBinary(data)
         } catch {
-            print("[WSClient] MessagePack encode failed: \(error)")
+            TFLog.ws.error("MessagePack encode failed: \(error.localizedDescription, privacy: .public)")
             onError?("Failed to encode message: \(error.localizedDescription)")
         }
     }
@@ -610,7 +607,7 @@ class WSClient: NSObject, ObservableObject {
         case .data(let data):
             parseAndDispatchBinary(data)
         case .string:
-            print("[WSClient] Error: Received unexpected text message, v2 protocol requires binary")
+            TFLog.ws.error("Received unexpected text message, v2 protocol requires binary")
         @unknown default:
             break
         }
@@ -621,23 +618,21 @@ class WSClient: NSObject, ObservableObject {
         do {
             let decoded = try msgpackDecoder.decode(AnyCodable.self, from: data)
             guard let json = decoded.toDictionary else {
-                print("[WSClient] MessagePack decoded value is not a dictionary")
+                TFLog.ws.error("MessagePack decoded value is not a dictionary")
                 return
             }
             dispatchMessage(json)
         } catch {
-            print("[WSClient] MessagePack decode failed: \(error)")
+            TFLog.ws.error("MessagePack decode failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     /// 分发解析后的消息到对应的处理器
     private func dispatchMessage(_ json: [String: Any]) {
         guard let type = json["type"] as? String else {
-            print("[WSClient] Message missing 'type' field")
+            TFLog.ws.error("Message missing 'type' field")
             return
         }
-
-        print("[WSClient] Parsed message type: \(type)")
 
         switch type {
         case "hello":
@@ -720,12 +715,10 @@ class WSClient: NSObject, ObservableObject {
             }
 
         case "project_imported":
-            print("[WSClient] Received project_imported: \(json)")
             if let result = ProjectImportedResult.from(json: json) {
-                print("[WSClient] Parsed ProjectImportedResult: \(result.name)")
                 onProjectImported?(result)
             } else {
-                print("[WSClient] Failed to parse ProjectImportedResult from: \(json)")
+                TFLog.ws.error("Failed to parse ProjectImportedResult")
                 onError?("Failed to parse project import response")
             }
 
@@ -844,19 +837,18 @@ class WSClient: NSObject, ObservableObject {
 
 extension WSClient: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        print("[WSClient] WebSocket connection opened to: \(currentURL?.absoluteString ?? "unknown")")
+        TFLog.ws.info("WebSocket connected to: \(self.currentURL?.absoluteString ?? "unknown", privacy: .public)")
         updateConnectionState(true)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "none"
-        print("[WSClient] WebSocket connection closed. Code: \(closeCode.rawValue), Reason: \(reasonStr)")
+        TFLog.ws.info("WebSocket disconnected. Code: \(closeCode.rawValue, privacy: .public)")
         updateConnectionState(false)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            print("[WSClient] URLSession task completed with error: \(error.localizedDescription)")
+            TFLog.ws.error("URLSession error: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

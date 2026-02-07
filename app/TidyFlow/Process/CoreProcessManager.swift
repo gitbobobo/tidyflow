@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os
 
 /// Status of the Core process with detailed state
 enum CoreStatus: Equatable {
@@ -99,7 +100,6 @@ class CoreProcessManager: ObservableObject {
     /// Retries up to maxPortRetries times on failure
     func start() {
         guard !isStarting && !status.isRunning else {
-            print("[CoreProcessManager] Already running or starting, skipping")
             return
         }
 
@@ -152,7 +152,7 @@ class CoreProcessManager: ObservableObject {
                 // 只杀掉真正的孤儿进程（父进程是 launchd，PPID=1）
                 // 如果 PPID 不是 1，说明父进程（另一个 TidyFlow 实例）还在运行
                 if ppid == 1 {
-                    print("[CoreProcessManager] Killing orphaned tidyflow-core process: PID=\(pid) (PPID=1)")
+                    TFLog.core.info("Killing orphaned tidyflow-core process: PID=\(pid, privacy: .public)")
                     kill(pid, SIGTERM)
 
                     // Give it a moment to terminate gracefully
@@ -163,11 +163,11 @@ class CoreProcessManager: ObservableObject {
                         kill(pid, SIGKILL)
                     }
                 } else {
-                    print("[CoreProcessManager] Skipping tidyflow-core process: PID=\(pid), PPID=\(ppid) (has active parent)")
+                    // Skip: has active parent (PPID != 1)
                 }
             }
         } catch {
-            print("[CoreProcessManager] Failed to check for orphaned processes: \(error)")
+            TFLog.core.error("Failed to check for orphaned processes: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -178,7 +178,6 @@ class CoreProcessManager: ObservableObject {
         isStopping = true
 
         guard let proc = process, proc.isRunning else {
-            print("[CoreProcessManager] No running process to stop")
             DispatchQueue.main.async {
                 self.status = .stopped
                 self.isStopping = false
@@ -187,7 +186,7 @@ class CoreProcessManager: ObservableObject {
         }
 
         let pid = proc.processIdentifier
-        print("[CoreProcessManager] Stopping process PID: \(pid)")
+        TFLog.core.info("Stopping process PID: \(pid, privacy: .public)")
 
         // Send SIGTERM first
         proc.terminate()
@@ -201,7 +200,7 @@ class CoreProcessManager: ObservableObject {
             }
 
             if proc.isRunning {
-                print("[CoreProcessManager] Process didn't terminate gracefully, sending SIGKILL")
+                TFLog.core.warning("Process didn't terminate gracefully, sending SIGKILL")
                 kill(pid, SIGKILL)
             }
 
@@ -275,7 +274,7 @@ class CoreProcessManager: ObservableObject {
 
         guard currentAttempt <= AppConfig.maxPortRetries else {
             let msg = "Failed after \(AppConfig.maxPortRetries) attempts"
-            print("[CoreProcessManager] \(msg)")
+            TFLog.core.error("\(msg, privacy: .public)")
             DispatchQueue.main.async {
                 self.status = .failed(message: msg)
                 self.isStarting = false
@@ -287,15 +286,13 @@ class CoreProcessManager: ObservableObject {
         // Allocate a new port
         guard let port = PortAllocator.findAvailablePort() else {
             let msg = "Failed to allocate port"
-            print("[CoreProcessManager] \(msg)")
+            TFLog.core.error("\(msg, privacy: .public)")
             // Retry with next attempt
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.startWithRetry()
             }
             return
         }
-
-        print("[CoreProcessManager] Attempt \(currentAttempt): trying port \(port)")
 
         DispatchQueue.main.async {
             self.status = .starting(attempt: self.currentAttempt, port: port)
@@ -308,7 +305,7 @@ class CoreProcessManager: ObservableObject {
         // Locate binary in bundle
         guard let binaryURL = locateCoreBinary() else {
             let msg = "Core binary not found in bundle"
-            print("[CoreProcessManager] \(msg)")
+            TFLog.core.error("\(msg, privacy: .public)")
             DispatchQueue.main.async {
                 self.status = .failed(message: msg)
                 self.isStarting = false
@@ -316,8 +313,6 @@ class CoreProcessManager: ObservableObject {
             }
             return
         }
-
-        print("[CoreProcessManager] Found binary at: \(binaryURL.path)")
 
         // Create process
         let proc = Process()
@@ -377,13 +372,11 @@ class CoreProcessManager: ObservableObject {
 
                 // If we're intentionally stopping, don't auto-restart
                 if self.isStopping {
-                    print("[CoreProcessManager] Process stopped intentionally, not auto-restarting")
                     return
                 }
 
                 // If we're still in starting phase and process died, retry (port conflict handling)
                 if self.isStarting {
-                    print("[CoreProcessManager] Process exited during startup with code \(code), retrying...")
                     self.cleanup()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         self.startWithRetry()
@@ -394,7 +387,7 @@ class CoreProcessManager: ObservableObject {
                 // Unexpected termination - attempt auto-restart
                 let isUnexpected = code != 0 || reason == .uncaughtSignal
                 if isUnexpected {
-                    print("[CoreProcessManager] Unexpected termination: code=\(code), reason=\(reason.rawValue)")
+                    TFLog.core.warning("Unexpected termination: code=\(code, privacy: .public), reason=\(reason.rawValue, privacy: .public)")
                     self.handleUnexpectedTermination(code: code, reason: reason)
                     return
                 }
@@ -410,7 +403,7 @@ class CoreProcessManager: ObservableObject {
             try proc.run()
             self.process = proc
             let pid = proc.processIdentifier
-            print("[CoreProcessManager] Process started with PID: \(pid) on port \(port)")
+            TFLog.core.info("Process started with PID: \(pid, privacy: .public) on port \(port, privacy: .public)")
 
             // Mark as running after a short delay to let it initialize
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -423,7 +416,7 @@ class CoreProcessManager: ObservableObject {
             }
         } catch {
             let msg = "Failed to start: \(error.localizedDescription)"
-            print("[CoreProcessManager] \(msg)")
+            TFLog.core.error("\(msg, privacy: .public)")
 
             // Retry on launch failure
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
@@ -446,7 +439,7 @@ class CoreProcessManager: ObservableObject {
             let attempt = autoRestartCount
             let maxAttempts = AppConfig.autoRestartLimit
 
-            print("[CoreProcessManager] Auto-restart attempt \(attempt)/\(maxAttempts)")
+            TFLog.core.warning("Auto-restart attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public)")
 
             // Update status to restarting
             status = .restarting(attempt: attempt, maxAttempts: maxAttempts, lastError: errorDesc)
@@ -455,8 +448,6 @@ class CoreProcessManager: ObservableObject {
             // Calculate backoff delay
             let backoffIndex = min(attempt - 1, AppConfig.autoRestartBackoffs.count - 1)
             let delay = AppConfig.autoRestartBackoffs[backoffIndex]
-
-            print("[CoreProcessManager] Waiting \(delay)s before restart...")
 
             // Schedule restart with backoff
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -469,7 +460,7 @@ class CoreProcessManager: ObservableObject {
         } else {
             // Auto-restart limit reached
             let msg = "Core crashed repeatedly (\(AppConfig.autoRestartLimit) times). \(Self.failureRecoveryHint)"
-            print("[CoreProcessManager] \(msg)")
+            TFLog.core.error("\(msg, privacy: .public)")
             status = .failed(message: msg)
             onCoreRestartLimitReached?(msg)
             onCoreFailed?(msg)

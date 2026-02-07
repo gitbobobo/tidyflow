@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Handles file-based logging with rotation for Core process output
 /// Thread-safe via serial DispatchQueue
@@ -86,7 +87,7 @@ final class LogWriter {
                 attributes: nil
             )
         } catch {
-            print("[LogWriter] Failed to create log directory: \(error)")
+            TFLog.logWriter.error("Failed to create log directory: \(error.localizedDescription, privacy: .public)")
             return
         }
 
@@ -153,7 +154,7 @@ final class LogWriter {
                 currentFileSize = size
             }
         } catch {
-            print("[LogWriter] Failed to open log file: \(error)")
+            TFLog.logWriter.error("Failed to open log file: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -164,7 +165,7 @@ final class LogWriter {
             try handle.write(contentsOf: data)
             currentFileSize += UInt64(data.count)
         } catch {
-            print("[LogWriter] Failed to write log: \(error)")
+            TFLog.logWriter.error("Failed to write log: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -199,7 +200,5 @@ final class LogWriter {
         // Create new empty log file and reopen
         currentFileSize = 0
         openLogFile()
-
-        print("[LogWriter] Log rotated, new file created")
     }
 }

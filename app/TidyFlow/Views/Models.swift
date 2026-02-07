@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import os
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -595,8 +596,6 @@ class AppState: ObservableObject {
 
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
-        print("[AppState] selectWorkspace called: projectId=\(projectId), workspaceName=\(workspaceName)")
-        
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
         
@@ -608,11 +607,10 @@ class AppState: ObservableObject {
         
         // 使用全局工作空间键（包含项目名称）来区分不同项目的同名工作空间
         guard let globalKey = currentGlobalWorkspaceKey else {
-            print("[AppState] Warning: Could not generate global workspace key")
+            TFLog.app.warning("Could not generate global workspace key")
             return
         }
-        print("[AppState] Global workspace key: \(globalKey)")
-        
+
         // 确保有默认 Tab（使用全局键）
         ensureDefaultTab(for: globalKey)
 
@@ -696,26 +694,25 @@ class AppState: ObservableObject {
     /// Setup callbacks for Core process events
     private func setupCoreCallbacks() {
         coreProcessManager.onCoreReady = { [weak self] port in
-            print("[AppState] Core ready on port \(port), connecting WebSocket")
             self?.setupWSClient(port: port)
             // Notify CenterContentView to update WebBridge with the port
             self?.onCoreReadyWithPort?(port)
         }
 
         coreProcessManager.onCoreFailed = { [weak self] message in
-            print("[AppState] Core failed: \(message)")
+            TFLog.core.error("Core failed: \(message, privacy: .public)")
             self?.connectionState = .disconnected
         }
 
         coreProcessManager.onCoreRestarting = { [weak self] attempt, maxAttempts in
-            print("[AppState] Core restarting (attempt \(attempt)/\(maxAttempts))")
+            TFLog.core.warning("Core restarting (attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public))")
             // Disconnect WebSocket during restart
             self?.wsClient.disconnect()
             self?.connectionState = .disconnected
         }
 
         coreProcessManager.onCoreRestartLimitReached = { [weak self] message in
-            print("[AppState] Core restart limit reached: \(message)")
+            TFLog.core.error("Core restart limit reached: \(message, privacy: .public)")
             self?.connectionState = .disconnected
         }
     }
@@ -723,7 +720,6 @@ class AppState: ObservableObject {
     /// Start Core process if not already running
     func startCoreIfNeeded() {
         guard !coreProcessManager.isRunning else {
-            print("[AppState] Core already running")
             return
         }
         coreProcessManager.start()
@@ -732,7 +728,6 @@ class AppState: ObservableObject {
     /// Restart Core process (for Cmd+R recovery)
     /// Resets auto-restart counter for manual recovery
     func restartCore() {
-        print("[AppState] Restarting Core (manual, resetting counter)...")
         wsClient.disconnect()
         coreProcessManager.restart(resetCounter: true)
     }
@@ -748,7 +743,6 @@ class AppState: ObservableObject {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
             if connected {
-                print("[AppState] WebSocket connected, requesting project list and client settings")
                 self?.wsClient.requestListProjects()
                 self?.wsClient.requestGetClientSettings()
             }
@@ -850,10 +844,8 @@ class AppState: ObservableObject {
 
         // Handle project removed results
         wsClient.onProjectRemoved = { [weak self] result in
-            if result.ok {
-                print("[AppState] 项目 '\(result.name)' 已移除")
-            } else {
-                print("[AppState] 移除项目失败: \(result.message ?? "未知错误")")
+            if !result.ok {
+                TFLog.app.error("移除项目失败: \(result.message ?? "未知错误", privacy: .public)")
             }
         }
 
@@ -866,28 +858,24 @@ class AppState: ObservableObject {
         wsClient.onClientSettingsResult = { [weak self] settings in
             self?.clientSettings = settings
             self?.clientSettingsLoaded = true
-            print("[AppState] 已加载 \(settings.customCommands.count) 个自定义命令, \(settings.workspaceShortcuts.count) 个工作空间快捷键")
         }
 
         wsClient.onClientSettingsSaved = { ok, message in
-            if ok {
-                print("[AppState] 客户端设置已保存")
-            } else {
-                print("[AppState] 保存设置失败: \(message ?? "未知错误")")
+            if !ok {
+                TFLog.app.error("保存设置失败: \(message ?? "未知错误", privacy: .public)")
             }
         }
 
         // v1.22: 文件监控回调
         wsClient.onWatchSubscribed = { [weak self] result in
-            print("[AppState] 已订阅文件监控: project=\(result.project), workspace=\(result.workspace)")
+            // 已订阅文件监控
         }
 
         wsClient.onWatchUnsubscribed = {
-            print("[AppState] 已取消文件监控订阅")
+            // 已取消文件监控订阅
         }
 
         wsClient.onFileChanged = { [weak self] notification in
-            print("[AppState] 文件变化: \(notification.paths.count) 个文件, kind=\(notification.kind)")
             // 使相关缓存失效
             self?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
             // 通知编辑器层文件变化
@@ -895,7 +883,6 @@ class AppState: ObservableObject {
         }
 
         wsClient.onGitStatusChanged = { [weak self] notification in
-            print("[AppState] Git 状态变化: project=\(notification.project), workspace=\(notification.workspace)")
             // 自动刷新 Git 状态
             self?.gitCache.fetchGitStatus(workspaceKey: notification.workspace)
             // 同时刷新分支信息（可能有新分支创建）
@@ -1123,33 +1110,31 @@ class AppState: ObservableObject {
     /// 处理文件重命名结果
     private func handleFileRenameResult(_ result: FileRenameResult) {
         if result.success {
-            print("[AppState] 文件重命名成功: \(result.oldPath) -> \(result.newPath)")
             // 刷新文件列表
             refreshFileList()
             // 如果重命名的文件正在编辑器中打开，更新标签
             updateEditorTabAfterRename(oldPath: result.oldPath, newPath: result.newPath)
         } else {
-            print("[AppState] 文件重命名失败: \(result.message ?? "未知错误")")
+            TFLog.app.error("文件重命名失败: \(result.message ?? "未知错误", privacy: .public)")
         }
     }
 
     /// 处理文件删除结果
     private func handleFileDeleteResult(_ result: FileDeleteResult) {
         if result.success {
-            print("[AppState] 文件删除成功: \(result.path)")
             // 刷新文件列表
             refreshFileList()
             // 如果删除的文件正在编辑器中打开，关闭标签
             closeEditorTabAfterDelete(path: result.path)
         } else {
-            print("[AppState] 文件删除失败: \(result.message ?? "未知错误")")
+            TFLog.app.error("文件删除失败: \(result.message ?? "未知错误", privacy: .public)")
         }
     }
 
     /// 请求重命名文件或目录
     func renameFile(workspaceKey: String, path: String, newName: String) {
         guard connectionState == .connected else {
-            print("[AppState] 无法重命名：未连接")
+            TFLog.app.warning("无法重命名：未连接")
             return
         }
         wsClient.requestFileRename(
@@ -1163,7 +1148,7 @@ class AppState: ObservableObject {
     /// 请求删除文件或目录（移到回收站）
     func deleteFile(workspaceKey: String, path: String) {
         guard connectionState == .connected else {
-            print("[AppState] 无法删除：未连接")
+            TFLog.app.warning("无法删除：未连接")
             return
         }
         wsClient.requestFileDelete(
@@ -1176,7 +1161,7 @@ class AppState: ObservableObject {
     /// v1.25: 请求移动文件或目录到新目录
     func moveFile(workspaceKey: String, oldPath: String, newDir: String) {
         guard connectionState == .connected else {
-            print("[AppState] 无法移动：未连接")
+            TFLog.app.warning("无法移动：未连接")
             return
         }
         wsClient.requestFileMove(
@@ -1190,11 +1175,10 @@ class AppState: ObservableObject {
     /// 处理文件移动结果
     private func handleFileMoveResult(_ result: FileMoveResult) {
         if result.success {
-            print("[AppState] 文件移动成功: \(result.oldPath) -> \(result.newPath)")
             refreshFileList()
             updateEditorTabAfterRename(oldPath: result.oldPath, newPath: result.newPath)
         } else {
-            print("[AppState] 文件移动失败: \(result.message ?? "未知错误")")
+            TFLog.app.error("文件移动失败: \(result.message ?? "未知错误", privacy: .public)")
         }
     }
 
@@ -1203,7 +1187,7 @@ class AppState: ObservableObject {
     /// 请求新建文件
     func createNewFile(workspaceKey: String, parentDir: String, fileName: String) {
         guard connectionState == .connected else {
-            print("[AppState] 无法新建文件：未连接")
+            TFLog.app.warning("无法新建文件：未连接")
             return
         }
         // 拼接路径
@@ -1212,7 +1196,6 @@ class AppState: ObservableObject {
         let cacheKey = fileListCacheKey(project: selectedProjectName, workspace: workspaceKey, path: parentDir)
         if let cache = fileListCache[cacheKey] {
             if cache.items.contains(where: { $0.name == fileName }) {
-                print("[AppState] 新建文件失败：文件已存在 \(filePath)")
                 return
             }
         }
@@ -1227,10 +1210,9 @@ class AppState: ObservableObject {
     /// 处理文件写入结果
     private func handleFileWriteResult(_ result: FileWriteResult) {
         if result.success {
-            print("[AppState] 新建文件成功: \(result.path)")
             refreshFileList()
         } else {
-            print("[AppState] 新建文件失败: \(result.path)")
+            TFLog.app.error("新建文件失败: \(result.path, privacy: .public)")
         }
     }
 
@@ -1268,7 +1250,6 @@ class AppState: ObservableObject {
     func copyFileToClipboard(workspaceKey: String, path: String, isDir: Bool, name: String) {
         #if canImport(AppKit)
         guard let workspacePath = selectedWorkspacePath else {
-            print("[AppState] 无法复制：未找到工作空间路径")
             return
         }
         let absolutePath = (workspacePath as NSString).appendingPathComponent(path)
@@ -1278,7 +1259,6 @@ class AppState: ObservableObject {
         pasteboard.clearContents()
         pasteboard.writeObjects([fileURL as NSURL])
         clipboardHasFiles = true
-        print("[AppState] 已复制到系统剪贴板: \(absolutePath)")
         #endif
     }
 
@@ -1311,19 +1291,16 @@ class AppState: ObservableObject {
     /// 从系统剪贴板粘贴文件到指定目录
     func pasteFiles(workspaceKey: String, destDir: String) {
         guard connectionState == .connected else {
-            print("[AppState] 无法粘贴：未连接")
             return
         }
 
         let urls = readFileURLsFromClipboard()
         guard !urls.isEmpty else {
-            print("[AppState] 剪贴板中没有文件")
             return
         }
 
         for url in urls {
             let absolutePath = url.path
-            print("[AppState] 粘贴文件: \(absolutePath) -> \(destDir)")
             wsClient.requestFileCopy(
                 destProject: selectedProjectName,
                 destWorkspace: workspaceKey,
@@ -1341,13 +1318,12 @@ class AppState: ObservableObject {
     /// 处理文件复制结果
     private func handleFileCopyResult(_ result: FileCopyResult) {
         if result.success {
-            print("[AppState] 文件复制成功: \(result.sourceAbsolutePath) -> \(result.destPath)")
             // 刷新目标目录的文件列表
             let destDir = (result.destPath as NSString).deletingLastPathComponent
             let refreshPath = destDir.isEmpty ? "." : destDir
             fetchFileList(workspaceKey: result.workspace, path: refreshPath)
         } else {
-            print("[AppState] 文件复制失败: \(result.message ?? "未知错误")")
+            TFLog.app.error("文件复制失败: \(result.message ?? "未知错误", privacy: .public)")
         }
     }
 
@@ -1359,8 +1335,6 @@ class AppState: ObservableObject {
 
     /// Handle projects list result from WebSocket
     func handleProjectsList(_ result: ProjectsListResult) {
-        print("[AppState] Received project list with \(result.items.count) items")
-        
         let oldProjects = self.projects
         
         self.projects = result.items.map { info in
@@ -1377,15 +1351,12 @@ class AppState: ObservableObject {
 
         // Request workspaces for each project
         for project in result.items {
-            print("[AppState] Requesting workspaces for project: \(project.name)")
             wsClient.requestListWorkspaces(project: project.name)
         }
     }
 
     /// Handle workspaces list result from WebSocket
     func handleWorkspacesList(_ result: WorkspacesListResult) {
-        print("[AppState] Received workspaces for project: \(result.project) (\(result.items.count) items)")
-        
         if let index = projects.firstIndex(where: { $0.name == result.project }) {
             // 服务端现在会返回 "default" 虚拟工作空间，将其标记为 isDefault
             let newWorkspaces = result.items.map { item in
@@ -1503,7 +1474,6 @@ class AppState: ObservableObject {
     func openPathInEditor(_ path: String, editor: ExternalEditor) -> Bool {
         #if canImport(AppKit)
         guard editor.isInstalled else {
-            print("[AppState] \(editor.rawValue) 未安装")
             return false
         }
         let task = Process()
@@ -1513,12 +1483,11 @@ class AppState: ObservableObject {
             try task.run()
             task.waitUntilExit()
             if task.terminationStatus != 0 {
-                print("[AppState] 无法启动 \(editor.rawValue)")
                 return false
             }
             return true
         } catch {
-            print("[AppState] 启动失败: \(error.localizedDescription)")
+            TFLog.app.error("启动 \(editor.rawValue, privacy: .public) 失败: \(error.localizedDescription, privacy: .public)")
             return false
         }
         #else
@@ -1636,7 +1605,6 @@ class AppState: ObservableObject {
     // MARK: - Tab Helpers
     
     func ensureDefaultTab(for workspaceKey: String) {
-        print("[AppState] ensureDefaultTab called for: \(workspaceKey)")
         // 不再自动创建终端，仅确保字典有对应的键
         if workspaceTabs[workspaceKey] == nil {
             workspaceTabs[workspaceKey] = []
@@ -2065,7 +2033,6 @@ class AppState: ObservableObject {
     /// Save the active editor file (called by Cmd+S)
     func saveActiveEditorFile() {
         guard let path = activeEditorPath else {
-            print("[AppState] No active editor tab to save")
             return
         }
         // The actual save is triggered via WebBridge in CenterContentView
@@ -2195,7 +2162,7 @@ class AppState: ObservableObject {
     /// Handle terminal ready event from WebBridge (with tabId)
     func handleTerminalReady(tabId: String, sessionId: String, project: String, workspace: String, webBridge: WebBridge?) {
         guard let uuid = UUID(uuidString: tabId) else {
-            print("[AppState] Invalid tabId: \(tabId)")
+            TFLog.app.error("Invalid tabId: \(tabId, privacy: .public)")
             return
         }
 
@@ -2219,7 +2186,6 @@ class AppState: ObservableObject {
             // 检查 tab 的 payload，如果非空则执行自定义命令
             let payload = tabs[index].payload
             if !payload.isEmpty, let bridge = webBridge {
-                print("[AppState] Executing custom command: \(payload)")
                 bridge.terminalSendInput(sessionId: sessionId, input: payload)
                 
                 // 清空 payload，防止 attach 时重复执行命令
@@ -2230,7 +2196,6 @@ class AppState: ObservableObject {
 
         // Update global terminal state for status bar
         terminalState = .ready(sessionId: sessionId)
-        print("[AppState] Terminal ready: tabId=\(tabId), sessionId=\(sessionId), globalKey=\(globalKey)")
     }
 
     /// Handle terminal closed event from WebBridge
@@ -2248,14 +2213,12 @@ class AppState: ObservableObject {
                 break
             }
         }
-
-        print("[AppState] Terminal closed: tabId=\(tabId), code=\(code ?? -1)")
     }
 
     /// Handle terminal error event from WebBridge
     func handleTerminalError(tabId: String?, message: String) {
         terminalState = .error(message: message)
-        print("[AppState] Terminal error: \(message)")
+        TFLog.app.error("Terminal error: \(message, privacy: .public)")
     }
 
     /// Handle terminal connected event
@@ -2273,7 +2236,6 @@ class AppState: ObservableObject {
         }
         terminalSessionByTabId.removeAll()
         terminalState = .idle
-        print("[AppState] All terminal sessions marked as stale")
     }
 
     /// Check if a terminal tab needs respawn

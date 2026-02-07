@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 struct CenterContentView: View {
     @EnvironmentObject var appState: AppState
@@ -75,11 +76,9 @@ struct CenterContentView: View {
                 appState?.editorWebReady = true
                 // UX-1: Enable renderer-only mode when Web is ready
                 webBridge?.setRendererOnly(true)
-                print("[CenterContentView] Web ready with capabilities: \(info)")
 
                 // 在 WebView 准备好后设置 WebSocket URL
                 if let port = appState?.coreProcessManager.currentPort {
-                    print("[CenterContentView] Setting WebSocket URL after Web ready, port: \(port)")
                     webBridge?.setWsURL(port: port)
                 }
             }
@@ -143,13 +142,11 @@ struct CenterContentView: View {
 
         // Set Core ready callback to update WebBridge with the port
         appState.onCoreReadyWithPort = { [weak webBridge] port in
-            print("[CenterContentView] Core ready on port \(port), setting WebSocket URL")
             webBridge?.setWsURL(port: port)
         }
 
         // If Core is already running, set the WebSocket URL now
         if let port = appState.coreProcessManager.currentPort {
-            print("[CenterContentView] Core already running on port \(port), setting WebSocket URL")
             webBridge.setWsURL(port: port)
         }
 
@@ -159,14 +156,12 @@ struct CenterContentView: View {
                 guard let appState = appState else { return }
                 // Open file in editor tab with optional line
                 appState.addEditorTab(workspaceKey: workspace, path: path, line: line)
-                print("[CenterContentView] Opening file from diff: \(path), line: \(line ?? 0)")
             }
         }
 
         webBridge.onDiffError = { message in
             DispatchQueue.main.async {
-                print("[CenterContentView] Diff error: \(message)")
-                // Could show an alert or update status
+                TFLog.bridge.error("Diff error: \(message, privacy: .public)")
             }
         }
 

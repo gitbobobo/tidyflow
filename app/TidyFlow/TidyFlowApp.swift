@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -14,13 +15,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        print("[AppDelegate] App terminating, stopping Core process")
+        TFLog.app.info("App terminating, stopping Core process")
         appState?.stopCore()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        print("[AppDelegate] applicationShouldTerminate called")
-        
         // 如果已确认退出，直接退出
         if terminationConfirmed {
             appState?.stopCore()
@@ -54,8 +53,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - NSWindowDelegate
     
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        print("[AppDelegate] windowShouldClose called")
-        
         // 检查是否有活跃的终端会话
         let activeTerminalCount = appState?.terminalSessionByTabId.count ?? 0
         
@@ -106,7 +103,7 @@ struct TidyFlowApp: App {
             object: nil,
             queue: .main
         ) { _ in
-            print("[TidyFlowApp] willTerminateNotification received")
+            // willTerminateNotification received
         }
     }
 

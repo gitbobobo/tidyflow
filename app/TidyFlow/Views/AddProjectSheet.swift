@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 /// Add Project Sheet - Allows importing a local directory as a project
 /// UX-1: Minimal implementation using fileImporter
@@ -157,7 +158,7 @@ struct AddProjectSheet: View {
         // 添加超时保护（30秒，因为大型仓库的 git 操作可能较慢）
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak appState] in
             guard !timeoutCancelled else { return }
-            print("[AddProjectSheet] Import timeout")
+            TFLog.app.error("Import timeout for project at path: \(path.path, privacy: .public)")
             if didStartAccess {
                 path.stopAccessingSecurityScopedResource()
             }
@@ -170,7 +171,6 @@ struct AddProjectSheet: View {
         appState.wsClient.onProjectImported = { [weak appState] result in
             timeoutCancelled = true
             DispatchQueue.main.async {
-                print("[AddProjectSheet] Received project imported: \(result.name)")
                 if didStartAccess {
                     path.stopAccessingSecurityScopedResource()
                 }
@@ -187,7 +187,6 @@ struct AddProjectSheet: View {
         appState.wsClient.onError = { [weak appState] errorMsg in
             timeoutCancelled = true
             DispatchQueue.main.async {
-                print("[AddProjectSheet] Received error: \(errorMsg)")
                 if didStartAccess {
                     path.stopAccessingSecurityScopedResource()
                 }
@@ -199,7 +198,6 @@ struct AddProjectSheet: View {
             }
         }
 
-        print("[AddProjectSheet] Sending import request: name=\(trimmedName), path=\(path.path)")
         appState.wsClient.requestImportProject(
             name: trimmedName,
             path: path.path
