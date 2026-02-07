@@ -18,6 +18,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - **Communication**: WebSocket with MessagePack binary encoding (protocol v2, default port 47999)
 
 ## 经验总结
+- 用户要发布新版本时，严格按 `docs/RELEASE_CHECKLIST.md` 执行；版本号递增（如 `MARKETING_VERSION`、`CURRENT_PROJECT_VERSION`、`core/Cargo.toml`）由代理自动处理并同步。
 - 同一业务状态若在多个入口写入（如终端创建时间），应抽取统一路径或至少补齐兜底写入，避免分支遗漏导致 UI 状态不一致。
 - 对外返回列表数据时，不要依赖 `HashMap` 迭代顺序；应在服务端显式排序，确保启动与刷新顺序稳定可预期。
 
@@ -54,18 +55,21 @@ xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug
 ./scripts/build_dmg.sh                    # Unsigned DMG
 SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign  # Signed
 ./scripts/notarize.sh --profile tidyflow-notary  # Notarize
+./scripts/tools/gen_sha256.sh dist/<dmg-name>.dmg # Generate SHA256 (optional if using build_dmg.sh)
+./scripts/release_local.sh --upload-release # Local one-click release and upload assets to GitHub Release
+./scripts/release_local.sh --dry-run # Preview all release actions without side effects
 ```
 
 ## Testing
 
 ```bash
-./scripts/smoke-test.sh            # Basic functionality
-./scripts/verify_protocol.sh       # WebSocket protocol
-./scripts/workspace-demo.sh        # End-to-end workspace
-./scripts/git-tools-smoke.sh       # Git operations
+cargo test --manifest-path core/Cargo.toml    # Core 自动化测试
+./scripts/run-app.sh                            # 本地启动 App 做手工验证
+./scripts/build_dmg.sh --sign                   # 发布构建（需签名证书）
+./scripts/notarize.sh --profile tidyflow-notary # 发布公证
 ```
 
-Manual verification checklists are in `scripts/*-check.md`.
+发布手工检查清单见 `docs/RELEASE_CHECKLIST.md`。
 
 ## Architecture
 
@@ -113,7 +117,7 @@ Manual verification checklists are in `scripts/*-check.md`.
 - `en.lproj/`, `zh-Hans.lproj/` - 本地化字符串文件
 
 ### Design Documentation (`/design/`)
-设计文档，实现新功能时可参考。
+目前仅存放图标资源；协议和发布文档在 `docs/` 目录。
 
 ## Key Patterns
 

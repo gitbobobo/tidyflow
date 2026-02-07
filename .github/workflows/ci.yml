@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  core-and-scripts:
+    name: Core Tests + Script Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test (core)
+        run: cargo test --manifest-path core/Cargo.toml
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/build_dmg.sh
+          bash -n scripts/notarize.sh
+          bash -n scripts/run-app.sh
+          bash -n scripts/menu.sh
+          bash -n scripts/tools/read_version.sh
+          bash -n scripts/tools/gen_sha256.sh

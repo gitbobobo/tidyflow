@@ -1,6 +1,6 @@
 #!/bin/bash
 # Notarize signed DMG with Apple notary service
-# Usage: ./scripts/release/notarize.sh --profile <keychain-profile> [--dmg <path>]
+# Usage: ./scripts/notarize.sh --profile <keychain-profile> [--dmg <path>]
 #
 # Prerequisites:
 #   1. Signed DMG from build_dmg.sh --sign
@@ -9,12 +9,12 @@
 #        --apple-id <email> --team-id <TEAMID> --password <app-specific-password>
 #
 # Examples:
-#   ./scripts/release/notarize.sh --profile tidyflow-notary
-#   ./scripts/release/notarize.sh --profile tidyflow-notary --dmg dist/TidyFlow-1.0.0-1.dmg
+#   ./scripts/notarize.sh --profile tidyflow-notary
+#   ./scripts/notarize.sh --profile tidyflow-notary --dmg dist/TidyFlow-1.0.0-1.dmg
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Parse arguments
@@ -49,7 +49,7 @@ if [ -z "$PROFILE" ]; then
     echo "    --password <app-specific-password>"
     echo ""
     echo "Then run:"
-    echo "  ./scripts/release/notarize.sh --profile tidyflow-notary"
+    echo "  ./scripts/notarize.sh --profile tidyflow-notary"
     exit 1
 fi
 

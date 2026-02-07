@@ -47,7 +47,7 @@ TidyFlow 采用现代化的**混合原生架构**：
 - **Frontend (UI Shell)**: 使用 SwiftUI 和 AppKit 构建的 macOS 原生应用，负责窗口管理和系统集成。
 - **Terminal Container**: 通过 WKWebView 承载 xterm.js，提供业界标准的高性能终端渲染。
 - **Core Engine (Backend)**: 由 Rust 编写的高性能引擎，处理 PTY 管理、Git 操作、文件系统和状态持久化。
-- **Communication**: 前后端通过 JSON-RPC 2.0 协议在 WebSocket 上进行高效通信。
+- **Communication**: 前后端通过 WebSocket + MessagePack（二进制，Protocol v2）进行通信。
 
 ## ⌨️ 常用快捷键
 
@@ -89,6 +89,12 @@ open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
 - **构建未签名 DMG**: `./scripts/build_dmg.sh`
 - **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign`
 - **公证**: `./scripts/notarize.sh --profile tidyflow-notary`
+- **生成 SHA256**: `./scripts/tools/gen_sha256.sh dist/<dmg-name>.dmg`（`build_dmg.sh` 执行后也会自动生成）
+- **一键本地发布（可选自动上传 Release）**: `./scripts/release_local.sh` 或 `./scripts/release_local.sh --upload-release`
+- **发布预演（不执行）**: `./scripts/release_local.sh --dry-run`
+
+发布前请先执行清单：[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)  
+版本变更记录见：[`CHANGELOG.md`](CHANGELOG.md)
 
 ## 📄 开源协议
 

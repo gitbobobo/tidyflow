@@ -127,3 +127,6 @@ dist/
 
 # Sisyphus session data
 .sisyphus/
+
+# Local release helper (contains local signing identity/profile)
+scripts/release_local.sh

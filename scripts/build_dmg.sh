@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build DMG for distribution (optionally signed with Developer ID)
 # Usage: ./scripts/build_dmg.sh [--skip-core] [--sign] [--identity "Developer ID Application: ..."]
-# Output: dist/TidyFlow-<version>.dmg
+# Output: dist/TidyFlow-<version>.dmg + .sha256
 #
 # Signing requires:
 #   - Valid "Developer ID Application" certificate in Keychain
@@ -154,7 +154,13 @@ fi
 DMG_SIZE=$(ls -lh "$DMG_PATH" | awk '{print $5}')
 SIGN_STATUS="unsigned"
 [ "$DO_SIGN" = "1" ] && SIGN_STATUS="signed"
+
+# 10. Generate checksum
+SHA_FILE="${DMG_PATH}.sha256"
+"$PROJECT_ROOT/scripts/tools/gen_sha256.sh" "$DMG_PATH"
+
 echo "[build_dmg] SUCCESS: $DMG_PATH ($DMG_SIZE, $SIGN_STATUS)"
+echo "[build_dmg] SHA256: $SHA_FILE"
 echo ""
 echo "Next steps:"
 if [ "$DO_SIGN" = "1" ]; then

@@ -46,7 +46,7 @@ open app/TidyFlow.xcodeproj
 | `TidyFlowApp.swift` | App entry point |
 | `ContentView.swift` | Main view with WKWebView |
 | `Web/index.html` | Terminal HTML container |
-| `Web/main.js` | WebSocket + xterm.js integration |
+| `Web/main/*.js` | WebSocket 协议处理、终端 UI、Tab/项目状态管理 |
 | `Web/vendor/` | xterm.js and addons |
 | `Info.plist` | ATS configuration for localhost |
 | `TidyFlow.entitlements` | Network permissions |
@@ -57,6 +57,4 @@ Set `TIDYFLOW_PORT` environment variable to change the WebSocket port (default: 
 
 ## Protocol
 
-Uses WebSocket Protocol v0 as defined in `design/09-m0-contracts.md`:
-- `hello`, `output`, `exit`, `pong` (server → client)
-- `input`, `resize`, `ping` (client → server)
+使用 WebSocket + MessagePack（Protocol v2），协议说明见 `../docs/PROTOCOL.md`。

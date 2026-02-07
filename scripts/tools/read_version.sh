@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PBXPROJ="$PROJECT_ROOT/app/TidyFlow.xcodeproj/project.pbxproj"
 
 if [ ! -f "$PBXPROJ" ]; then
-    echo "0.1.0 dev" # Fallback
+    echo "1.0.0 dev" # Fallback
     exit 0
 fi
 
@@ -19,7 +19,7 @@ SHORT_VERSION=$(grep -m1 "MARKETING_VERSION" "$PBXPROJ" | sed 's/.*= *\([^;]*\);
 BUILD_NUMBER=$(grep -m1 "CURRENT_PROJECT_VERSION" "$PBXPROJ" | sed 's/.*= *\([^;]*\);/\1/' | tr -d ' ')
 
 # Defaults if not found
-SHORT_VERSION="${SHORT_VERSION:-0.1.0}"
+SHORT_VERSION="${SHORT_VERSION:-1.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-dev}"
 
 echo "$SHORT_VERSION $BUILD_NUMBER"

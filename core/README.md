@@ -7,7 +7,7 @@ Rust-based PTY host with WebSocket server and Workspace Engine.
 - PTY session management (spawn shell, read/write, resize)
 - WebSocket server on configurable port
 - **Workspace Engine v1**: Project and workspace management using git worktree
-- Protocol v0 with JSON messages and base64-encoded binary data
+- Protocol v2 with MessagePack binary messages
 - Structured logging with tracing
 
 ## Building
@@ -147,8 +147,8 @@ See `design/05-project-config-schema.md` for the full schema.
 
 ## State Persistence
 
-State is stored at `~/.tidyflow/state.json`. See `design/11-workspace-engine-contract.md` for the schema.
+State is stored at `~/.tidyflow/state.json`.
 
 ## Protocol
 
-See `design/09-m0-contracts.md` for the WebSocket protocol specification.
+See `../docs/PROTOCOL.md` for the WebSocket protocol specification.
