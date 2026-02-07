@@ -289,6 +289,8 @@ struct WorkspaceRowView: View {
     @State private var showAIMergeProgress = false
     @State private var aiMergeResult: AIMergeResult?
     @State private var showNoAgentAlert = false
+    @State private var showAICommitProgress = false
+    @State private var aiCommitResult: AICommitResult?
 
     /// 工作空间路径，用于复制与在编辑器中打开
     private var workspacePath: String? { workspace.root }
@@ -398,6 +400,15 @@ struct WorkspaceRowView: View {
                 }
             }
 
+            Divider()
+
+            Button {
+                triggerAICommit()
+            } label: {
+                Label("git.aiCommit".localized, systemImage: "sparkles")
+            }
+            .disabled(appState.clientSettings.selectedAIAgent == nil)
+
             // 只有非默认工作空间才显示 AI 合并和删除选项
             if !workspace.isDefault {
                 Divider()
@@ -441,6 +452,22 @@ struct WorkspaceRowView: View {
         .sheet(item: $aiMergeResult) { result in
             AIMergeResultSheet(result: result)
         }
+        .sheet(isPresented: $showAICommitProgress) {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("git.aiCommit.progress".localized)
+                    .font(.headline)
+                Text("git.aiCommit.progressHint".localized)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .frame(width: 300, height: 150)
+            .interactiveDismissDisabled()
+        }
+        .sheet(item: $aiCommitResult) { result in
+            AICommitResultSheet(result: result)
+        }
         .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 
@@ -463,6 +490,33 @@ struct WorkspaceRowView: View {
                 if result.success {
                     appState.gitCache.fetchGitStatus(workspaceKey: "default")
                     appState.gitCache.fetchGitLog(workspaceKey: "default")
+                }
+            }
+        }
+    }
+
+    /// 触发 AI 智能提交
+    private func triggerAICommit() {
+        guard appState.clientSettings.selectedAIAgent != nil else {
+            showNoAgentAlert = true
+            return
+        }
+        guard let path = workspacePath else { return }
+        let projPath = appState.projects.first(where: { $0.name == projectName })?.path
+        showAICommitProgress = true
+        Task {
+            let result = await appState.executeAICommit(
+                workspaceKey: workspace.name,
+                workspacePath: path,
+                projectPath: projPath
+            )
+            await MainActor.run {
+                showAICommitProgress = false
+                aiCommitResult = result
+                // 提交完成后刷新 Git 状态
+                if result.success {
+                    appState.gitCache.fetchGitStatus(workspaceKey: workspace.name)
+                    appState.gitCache.fetchGitLog(workspaceKey: workspace.name)
                 }
             }
         }
@@ -530,7 +584,7 @@ struct AIMergeResultSheet: View {
                         DisclosureGroup(
                             isExpanded: $showRawOutput,
                             content: {
-                                ScrollView(.horizontal, showsIndicators: true) {
+                                ScrollView([.horizontal, .vertical], showsIndicators: true) {
                                     Text(result.rawOutput)
                                         .font(.system(size: 11, design: .monospaced))
                                         .textSelection(.enabled)

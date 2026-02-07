@@ -560,6 +560,109 @@ struct GitCommitInputSection: View {
     }
 }
 
+// MARK: - AI 智能提交结果弹窗
+
+struct AICommitResultSheet: View {
+    let result: AICommitResult
+    @Environment(\.dismiss) private var dismiss
+    @State private var showRawOutput = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // 标题栏
+            HStack {
+                Text("git.aiCommit.result".localized)
+                    .font(.headline)
+                Spacer()
+                Button("common.close".localized) { dismiss() }
+            }
+            .padding(.horizontal)
+            .padding(.top)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    // 成功/失败状态
+                    HStack(spacing: 8) {
+                        Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(result.success ? .green : .red)
+                        Text(result.success ? "git.aiCommit.success".localized : "git.aiCommit.failed".localized)
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+
+                    // 消息
+                    if !result.message.isEmpty {
+                        Text(result.message)
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+
+                    // 提交数量
+                    if !result.commits.isEmpty {
+                        Text(String(format: "git.aiCommit.commitCount".localized, result.commits.count))
+                            .font(.system(size: 13, weight: .medium))
+                    }
+
+                    // 提交列表
+                    ForEach(result.commits) { commit in
+                        Divider()
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(commit.sha)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.accentColor)
+                                Text(commit.message)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(2)
+                            }
+                            ForEach(commit.files, id: \.self) { file in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.text")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                    Text(file)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.leading, 8)
+                            }
+                        }
+                    }
+
+                    // 原始输出（可折叠）
+                    if !result.rawOutput.isEmpty {
+                        Divider()
+                        DisclosureGroup(
+                            isExpanded: $showRawOutput,
+                            content: {
+                                ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                                    Text(result.rawOutput)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(maxHeight: 200)
+                                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                                .cornerRadius(4)
+                            },
+                            label: {
+                                Text("sidebar.aiMerge.rawOutput".localized)
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal)
+            }
+
+            Spacer()
+        }
+        .frame(width: 500, height: 450)
+    }
+}
+
 // MARK: - 可折叠 Section 组件
 
 struct CollapsibleSection<Content: View>: View {

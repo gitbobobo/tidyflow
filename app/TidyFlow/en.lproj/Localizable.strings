@@ -57,7 +57,7 @@
 /* AI Agent Settings */
 "settings.aiAgent" = "AI Agent";
 "settings.aiAgent.title" = "AI Agent Configuration";
-"settings.aiAgent.footer" = "Select the AI agent for \"AI Merge to Default Branch\"";
+"settings.aiAgent.footer" = "Select the AI agent for Git operations (AI Merge, AI Commit, etc.)";
 "settings.aiAgent.detecting" = "Detecting...";
 "settings.aiAgent.notInstalled" = "Not Installed";
 "settings.aiAgent.installed" = "Installed";
@@ -79,6 +79,17 @@
 "sidebar.aiMerge.launchFailed" = "Failed to launch AI Agent: %@";
 "sidebar.aiMerge.exitCode" = "AI Agent exited abnormally (code: %d)";
 "sidebar.aiMerge.noProjectPath" = "Cannot get project path";
+
+/* AI Smart Commit */
+"git.aiCommit" = "AI Smart Commit";
+"git.aiCommit.progress" = "AI is analyzing changes and committing...";
+"git.aiCommit.progressHint" = "AI will detect commit style, analyze changes and perform atomic commits";
+"git.aiCommit.result" = "AI Smart Commit Result";
+"git.aiCommit.success" = "Commit Succeeded";
+"git.aiCommit.failed" = "Commit Failed";
+"git.aiCommit.completed" = "Commit operation completed";
+"git.aiCommit.parseError" = "Error detected in output, please check raw output";
+"git.aiCommit.commitCount" = "%d commit(s) created";
 
 /* Main View - Toolbar */
 "toolbar.settings" = "Settings (⌘,)";

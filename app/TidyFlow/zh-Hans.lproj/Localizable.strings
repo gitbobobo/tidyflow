@@ -57,7 +57,7 @@
 /* AI Agent 设置 */
 "settings.aiAgent" = "AI Agent";
 "settings.aiAgent.title" = "AI Agent 配置";
-"settings.aiAgent.footer" = "选择用于「AI 合并到默认分支」的 AI 代理工具";
+"settings.aiAgent.footer" = "选择用于 Git 操作（AI 合并、AI 提交等）的 AI 代理工具";
 "settings.aiAgent.detecting" = "检测中...";
 "settings.aiAgent.notInstalled" = "未安装";
 "settings.aiAgent.installed" = "已安装";
@@ -79,6 +79,17 @@
 "sidebar.aiMerge.launchFailed" = "启动 AI Agent 失败: %@";
 "sidebar.aiMerge.exitCode" = "AI Agent 异常退出 (code: %d)";
 "sidebar.aiMerge.noProjectPath" = "无法获取项目路径";
+
+/* AI 智能提交 */
+"git.aiCommit" = "AI 智能提交";
+"git.aiCommit.progress" = "AI 正在分析变更并提交...";
+"git.aiCommit.progressHint" = "AI 将自动检测提交风格、分析变更并执行原子提交";
+"git.aiCommit.result" = "AI 智能提交结果";
+"git.aiCommit.success" = "提交成功";
+"git.aiCommit.failed" = "提交失败";
+"git.aiCommit.completed" = "提交操作已完成";
+"git.aiCommit.parseError" = "输出中检测到错误信息，请查看原始输出";
+"git.aiCommit.commitCount" = "共 %d 个提交";
 
 /* 主视图 - 工具栏 */
 "toolbar.settings" = "设置 (⌘,)";

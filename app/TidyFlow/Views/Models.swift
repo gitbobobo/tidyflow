@@ -285,13 +285,20 @@ enum AIAgent: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 构建非交互模式命令参数（默认启用 yolo 模式跳过权限确认）
-    func buildCommand(prompt: String) -> [String] {
+    /// 构建非交互模式命令参数
+    /// - Parameters:
+    ///   - prompt: AI Agent 执行的提示词
+    ///   - disableSandbox: 是否关闭沙箱（仅对支持该参数的代理生效）
+    func buildCommand(prompt: String, disableSandbox: Bool = false) -> [String] {
         switch self {
         case .claude:
             return ["claude", "--dangerously-skip-permissions", "-p", prompt, "--output-format", "json"]
         case .codex:
-            return ["codex", "--full-auto", "exec", prompt]
+            // 提交场景下允许写入 worktree 共享 git 元数据（如 .git/worktrees/*/index.lock）
+            var args = ["codex"]
+            args.append(disableSandbox ? "--dangerously-bypass-approvals-and-sandbox" : "--full-auto")
+            args += ["exec", prompt]
+            return args
         case .gemini:
             return ["gemini", prompt, "-o", "json"]
         case .opencode:
@@ -509,23 +516,19 @@ struct AIAgentOutputParser {
 
     /// 从文本中解析业务 JSON（第二层，通用）
     static func parseBusinessJSON(from text: String) -> (success: Bool, message: String, conflicts: [String])? {
-        let cleaned = stripMarkdownCodeBlock(text)
+        let normalized = sanitizeForJSONParsing(text)
+        let cleaned = stripMarkdownCodeBlock(normalized)
 
         // 尝试直接 JSON 解析
         if let result = extractFields(from: cleaned) {
             return result
         }
 
-        // 用正则提取第一个包含 "success" 的 {...} JSON 对象
-        if let jsonRange = cleaned.range(of: "\\{[^{}]*\"success\"[^{}]*\\}", options: .regularExpression),
-           let result = extractFields(from: String(cleaned[jsonRange])) {
-            return result
-        }
-
-        // 嵌套 JSON：贪婪匹配最外层 {...}
-        if let jsonRange = cleaned.range(of: "\\{[\\s\\S]*\"success\"[\\s\\S]*\\}", options: .regularExpression),
-           let result = extractFields(from: String(cleaned[jsonRange])) {
-            return result
+        // 回退：从混合输出中提取平衡的大括号 JSON 对象
+        for candidate in extractBalancedJSONObjects(from: cleaned) {
+            if let result = extractFields(from: candidate) {
+                return result
+            }
         }
 
         return nil
@@ -545,6 +548,87 @@ struct AIAgentOutputParser {
             }
         }
         return trimmed
+    }
+
+    /// 清理 ANSI 转义与不可见控制字符，降低 JSON 解析失败概率
+    static func sanitizeForJSONParsing(_ text: String) -> String {
+        var cleaned = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let patterns = [
+            "\u{001B}\\[[0-9;?]*[ -/]*[@-~]",                 // CSI
+            "\u{001B}\\][^\\u{0007}\\u{001B}]*(?:\\u{0007}|\\u{001B}\\\\)", // OSC
+        ]
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                let range = NSRange(cleaned.startIndex..., in: cleaned)
+                cleaned = regex.stringByReplacingMatches(
+                    in: cleaned,
+                    options: [],
+                    range: range,
+                    withTemplate: ""
+                )
+            }
+        }
+        let filteredScalars = cleaned.unicodeScalars.filter { scalar in
+            switch scalar.value {
+            case 0x09, 0x0A, 0x0D:
+                return true
+            default:
+                return scalar.value >= 0x20
+            }
+        }
+        return String(String.UnicodeScalarView(filteredScalars))
+    }
+
+    /// 提取文本中所有平衡的大括号 JSON 对象（按出现顺序）
+    static func extractBalancedJSONObjects(from text: String) -> [String] {
+        var objects: [String] = []
+        var stackDepth = 0
+        var startIndex: String.Index?
+        var inString = false
+        var escaping = false
+
+        var index = text.startIndex
+        while index < text.endIndex {
+            let ch = text[index]
+
+            if escaping {
+                escaping = false
+                index = text.index(after: index)
+                continue
+            }
+
+            if ch == "\\" && inString {
+                escaping = true
+                index = text.index(after: index)
+                continue
+            }
+
+            if ch == "\"" {
+                inString.toggle()
+                index = text.index(after: index)
+                continue
+            }
+
+            if !inString {
+                if ch == "{" {
+                    if stackDepth == 0 {
+                        startIndex = index
+                    }
+                    stackDepth += 1
+                } else if ch == "}" && stackDepth > 0 {
+                    stackDepth -= 1
+                    if stackDepth == 0, let start = startIndex {
+                        let end = text.index(after: index)
+                        objects.append(String(text[start..<end]))
+                        startIndex = nil
+                    }
+                }
+            }
+
+            index = text.index(after: index)
+        }
+
+        return objects
     }
 
     /// 从 JSON 字符串中提取业务字段
@@ -585,6 +669,82 @@ struct AIMergeResult: Identifiable {
             conflicts: [],
             rawOutput: output
         )
+    }
+}
+
+/// AI 提交条目
+struct AICommitEntry: Identifiable {
+    let id = UUID()
+    let sha: String
+    let message: String
+    let files: [String]
+}
+
+/// AI 智能提交结果
+struct AICommitResult: Identifiable {
+    let id = UUID()
+    let success: Bool
+    let message: String
+    let commits: [AICommitEntry]
+    let rawOutput: String
+
+    /// 从 AI 输出中解析提交结果
+    static func parse(from output: String, agent: AIAgent) -> AICommitResult {
+        // 第一层：提取 AI 回复文本
+        if let response = agent.extractResponse(from: output),
+           let result = parseCommitJSON(from: response) {
+            return AICommitResult(success: result.success, message: result.message, commits: result.commits, rawOutput: output)
+        }
+        // 回退：直接对原始输出尝试解析
+        if let result = parseCommitJSON(from: output) {
+            return AICommitResult(success: result.success, message: result.message, commits: result.commits, rawOutput: output)
+        }
+        // 无法解析 JSON 时，根据输出内容推断
+        let lowered = output.lowercased()
+        let hasError = lowered.contains("error") || lowered.contains("fatal")
+        return AICommitResult(
+            success: !hasError,
+            message: hasError ? "git.aiCommit.parseError".localized : "git.aiCommit.completed".localized,
+            commits: [],
+            rawOutput: output
+        )
+    }
+
+    /// 从文本中解析提交 JSON
+    private static func parseCommitJSON(from text: String) -> (success: Bool, message: String, commits: [AICommitEntry])? {
+        let normalized = AIAgentOutputParser.sanitizeForJSONParsing(text)
+        let cleaned = AIAgentOutputParser.stripMarkdownCodeBlock(normalized)
+
+        if let result = extractCommitFields(from: cleaned) { return result }
+
+        // 从混合输出中提取平衡的大括号 JSON 对象
+        for candidate in AIAgentOutputParser.extractBalancedJSONObjects(from: cleaned) {
+            if let result = extractCommitFields(from: candidate) {
+                return result
+            }
+        }
+        return nil
+    }
+
+    /// 从 JSON 字符串中提取提交字段
+    private static func extractCommitFields(from jsonString: String) -> (success: Bool, message: String, commits: [AICommitEntry])? {
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json.keys.contains("success") else {
+            return nil
+        }
+        let success = json["success"] as? Bool ?? false
+        let message = json["message"] as? String ?? ""
+        var commits: [AICommitEntry] = []
+        if let rawCommits = json["commits"] as? [[String: Any]] {
+            for c in rawCommits {
+                let sha = c["sha"] as? String ?? ""
+                let msg = c["message"] as? String ?? ""
+                let files = c["files"] as? [String] ?? []
+                commits.append(AICommitEntry(sha: sha, message: msg, files: files))
+            }
+        }
+        return (success, message, commits)
     }
 }
 
@@ -630,19 +790,91 @@ struct AIAgentPromptBuilder {
         只输出 JSON，不要输出其他内容。
         """
     }
+
+    /// 构建 AI 智能提交的 prompt
+    static func buildCommitPrompt(
+        stagedFiles: [String],
+        allChangedFiles: [String],
+        branchName: String
+    ) -> String {
+        let stagedList = stagedFiles.isEmpty ? "（无暂存文件）" : stagedFiles.joined(separator: "\n  - ")
+        let changedList = allChangedFiles.isEmpty ? "（无变更文件）" : allChangedFiles.joined(separator: "\n  - ")
+        return """
+        你是一个 Git 提交助手。请在当前目录分析变更并执行智能提交。这是纯本地操作，禁止任何网络请求。
+
+        当前分支：\(branchName)
+        暂存文件：
+          - \(stagedList)
+        所有变更文件：
+          - \(changedList)
+
+        请按以下步骤执行：
+
+        1. **风格检测**：执行 `git log --oneline -30` 分析现有提交风格（conventional commits / plain / sentence case）和语言（中文/英文/混合），后续提交消息必须匹配该风格和语言。
+
+        2. **变更分析**：执行 `git diff --staged`（如有暂存文件）和 `git diff`（如有未暂存变更）理解每个文件的修改意图。
+
+        3. **原子提交规划**：将变更按逻辑分组为原子提交：
+           - 按目录/模块/关注点分组
+           - 测试文件与对应实现文件配对
+           - 每个提交应有单一明确的目的
+           - 如果所有变更属于同一逻辑改动，合为一个提交即可
+
+        4. **执行提交**：按依赖顺序逐个执行：
+           - 对每组文件执行 `git add <files>`
+           - 执行 `git commit -m "<message>"`（消息匹配检测到的风格和语言）
+
+        5. **验证**：执行 `git status` 和 `git log --oneline -5` 确认结果。
+
+        严格禁止：
+        - 禁止执行 git pull、git fetch、git push 等任何网络操作
+        - 禁止修改任何文件内容（只能 git add 和 git commit）
+        - 禁止执行 git commit --amend、git rebase、git reset 等危险操作
+        - 禁止创建或切换分支
+
+        请以严格 JSON 格式输出结果：
+        {
+          "success": true/false,
+          "message": "操作结果描述",
+          "commits": [
+            {
+              "sha": "提交的短 SHA",
+              "message": "提交消息",
+              "files": ["提交包含的文件路径列表"]
+            }
+          ]
+        }
+
+        只输出 JSON，不要输出其他内容。
+        """
+    }
 }
 
 /// AI Agent 执行器
 class AIAgentRunner {
-    /// 执行 AI Agent 命令
-    static func run(
+    /// 原始进程执行结果
+    struct RawResult {
+        let stdout: String
+        let stderr: String
+        let exitCode: Int32
+        var fullOutput: String {
+            stdout + (stderr.isEmpty ? "" : "\n--- stderr ---\n\(stderr)")
+        }
+    }
+
+    /// 执行 AI Agent 命令，返回原始输出
+    static func runRaw(
         agent: AIAgent,
         prompt: String,
-        workingDirectory: String
-    ) async -> AIMergeResult {
-        let args = agent.buildCommand(prompt: prompt)
+        workingDirectory: String,
+        projectPath: String? = nil,
+        disableSandbox: Bool = false
+    ) async -> (raw: RawResult?, error: String?) {
+        let args = agent.buildCommand(prompt: prompt, disableSandbox: disableSandbox)
+        NSLog("[AIAgentRunner] agent=%@, workingDir=%@, disableSandbox=%@, cmd=%@",
+              agent.rawValue, workingDirectory, disableSandbox.description, args.joined(separator: " "))
         guard !args.isEmpty else {
-            return AIMergeResult(success: false, message: "sidebar.aiMerge.invalidAgent".localized, conflicts: [], rawOutput: "")
+            return (nil, "sidebar.aiMerge.invalidAgent".localized)
         }
 
         let process = Process()
@@ -659,12 +891,7 @@ class AIAgentRunner {
         do {
             try process.run()
         } catch {
-            return AIMergeResult(
-                success: false,
-                message: String(format: "sidebar.aiMerge.launchFailed".localized, error.localizedDescription),
-                conflicts: [],
-                rawOutput: error.localizedDescription
-            )
+            return (nil, String(format: "sidebar.aiMerge.launchFailed".localized, error.localizedDescription))
         }
 
         // 10 分钟超时
@@ -682,18 +909,69 @@ class AIAgentRunner {
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-        let fullOutput = stdout + (stderr.isEmpty ? "" : "\n--- stderr ---\n\(stderr)")
 
-        if process.terminationStatus != 0 && stdout.isEmpty {
+        return (RawResult(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus), nil)
+    }
+
+    /// 执行 AI Agent 合并命令
+    static func run(
+        agent: AIAgent,
+        prompt: String,
+        workingDirectory: String,
+        projectPath: String? = nil
+    ) async -> AIMergeResult {
+        let result = await runRaw(
+            agent: agent,
+            prompt: prompt,
+            workingDirectory: workingDirectory,
+            projectPath: projectPath
+        )
+        if let error = result.error {
+            return AIMergeResult(success: false, message: error, conflicts: [], rawOutput: "")
+        }
+        guard let raw = result.raw else {
+            return AIMergeResult(success: false, message: "sidebar.aiMerge.invalidAgent".localized, conflicts: [], rawOutput: "")
+        }
+        if raw.exitCode != 0 && raw.stdout.isEmpty {
             return AIMergeResult(
                 success: false,
-                message: String(format: "sidebar.aiMerge.exitCode".localized, process.terminationStatus),
+                message: String(format: "sidebar.aiMerge.exitCode".localized, raw.exitCode),
                 conflicts: [],
-                rawOutput: fullOutput
+                rawOutput: raw.fullOutput
             )
         }
+        return AIMergeResult.parse(from: raw.fullOutput, agent: agent)
+    }
 
-        return AIMergeResult.parse(from: fullOutput, agent: agent)
+    /// 执行 AI Agent 智能提交命令
+    static func runCommit(
+        agent: AIAgent,
+        prompt: String,
+        workingDirectory: String,
+        projectPath: String? = nil
+    ) async -> AICommitResult {
+        let result = await runRaw(
+            agent: agent,
+            prompt: prompt,
+            workingDirectory: workingDirectory,
+            projectPath: projectPath,
+            disableSandbox: agent == .codex
+        )
+        if let error = result.error {
+            return AICommitResult(success: false, message: error, commits: [], rawOutput: "")
+        }
+        guard let raw = result.raw else {
+            return AICommitResult(success: false, message: "sidebar.aiMerge.invalidAgent".localized, commits: [], rawOutput: "")
+        }
+        if raw.exitCode != 0 && raw.stdout.isEmpty {
+            return AICommitResult(
+                success: false,
+                message: String(format: "sidebar.aiMerge.exitCode".localized, raw.exitCode),
+                commits: [],
+                rawOutput: raw.fullOutput
+            )
+        }
+        return AICommitResult.parse(from: raw.fullOutput, agent: agent)
     }
 }
 
@@ -2278,7 +2556,46 @@ class AppState: ObservableObject {
         return await AIAgentRunner.run(
             agent: agent,
             prompt: prompt,
-            workingDirectory: projectPath
+            workingDirectory: projectPath,
+            projectPath: projectPath
+        )
+    }
+
+    // MARK: - AI Agent 智能提交
+
+    /// 执行 AI 智能提交
+    func executeAICommit(workspaceKey: String, workspacePath: String, projectPath: String? = nil) async -> AICommitResult {
+        // 1. 获取 AI Agent
+        guard let agentName = clientSettings.selectedAIAgent,
+              let agent = AIAgent(rawValue: agentName) else {
+            return AICommitResult(
+                success: false,
+                message: "settings.aiAgent.notConfigured".localized,
+                commits: [],
+                rawOutput: ""
+            )
+        }
+
+        // 2. 获取暂存/变更文件列表（仅用于 prompt 提示，不做前置校验）
+        let statusCache = gitCache.gitStatusCache[workspaceKey] ?? GitStatusCache.empty()
+        let stagedFiles = statusCache.items.filter { $0.staged == true }.map { $0.path }
+        let allChangedFiles = statusCache.items.map { $0.path }
+
+        // 3. 获取当前分支名
+        let branchName = gitCache.gitBranchCache[workspaceKey]?.current ?? "unknown"
+
+        // 4. 构建 prompt 并执行
+        let prompt = AIAgentPromptBuilder.buildCommitPrompt(
+            stagedFiles: stagedFiles,
+            allChangedFiles: allChangedFiles,
+            branchName: branchName
+        )
+
+        return await AIAgentRunner.runCommit(
+            agent: agent,
+            prompt: prompt,
+            workingDirectory: workspacePath,
+            projectPath: projectPath
         )
     }
 
