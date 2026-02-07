@@ -274,9 +274,9 @@ struct CompletedTaskRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
+            Image(systemName: task.status.completedIconName)
                 .font(.system(size: 12))
-                .foregroundColor(task.status == .completed ? .green : .red)
+                .foregroundColor(task.status.completedIconColor)
             Image(systemName: task.type.iconName)
                 .font(.system(size: 12))
             Text(task.displayTitle)
@@ -301,8 +301,8 @@ struct TaskResultDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 // 状态
                 HStack(spacing: 6) {
-                    Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(result.success ? .green : .red)
+                    Image(systemName: result.resultStatus.iconName)
+                        .foregroundColor(result.resultStatus.iconColor)
                     Text(result.message)
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)

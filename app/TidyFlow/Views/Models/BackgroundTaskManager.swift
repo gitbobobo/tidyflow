@@ -85,7 +85,13 @@ class BackgroundTaskManager: ObservableObject {
         appState: AppState
     ) {
         let key = task.workspaceGlobalKey
-        task.status = result.success ? .completed : .failed
+        task.status = {
+            switch result.resultStatus {
+            case .success: return .completed
+            case .failed: return .failed
+            case .unknown: return .unknown
+            }
+        }()
         task.result = result
         task.completedAt = Date()
 
@@ -113,7 +119,7 @@ class BackgroundTaskManager: ObservableObject {
 
     /// 任务完成后刷新 Git 缓存
     private func refreshGitCache(for task: BackgroundTask, appState: AppState) {
-        guard let result = task.result, result.success else { return }
+        guard let result = task.result, result.resultStatus == .success else { return }
         switch task.context {
         case .aiCommit(let ctx):
             appState.gitCache.fetchGitStatus(workspaceKey: ctx.workspaceKey)

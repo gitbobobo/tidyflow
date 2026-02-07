@@ -12,7 +12,7 @@ extension AppState {
         guard let agentName = clientSettings.selectedAIAgent,
               let agent = AIAgent(rawValue: agentName) else {
             return AIMergeResult(
-                success: false,
+                resultStatus: .failed,
                 message: "settings.aiAgent.notConfigured".localized,
                 conflicts: [],
                 rawOutput: ""
@@ -23,7 +23,7 @@ extension AppState {
         guard let project = projects.first(where: { $0.name == projectName }),
               let projectPath = project.path else {
             return AIMergeResult(
-                success: false,
+                resultStatus: .failed,
                 message: "sidebar.aiMerge.noProjectPath".localized,
                 conflicts: [],
                 rawOutput: ""
@@ -60,7 +60,7 @@ extension AppState {
         guard let agentName = clientSettings.selectedAIAgent,
               let agent = AIAgent(rawValue: agentName) else {
             return AICommitResult(
-                success: false,
+                resultStatus: .failed,
                 message: "settings.aiAgent.notConfigured".localized,
                 commits: [],
                 rawOutput: ""

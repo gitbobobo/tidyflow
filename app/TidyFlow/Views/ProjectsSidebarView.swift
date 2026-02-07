@@ -503,12 +503,12 @@ struct AIMergeResultSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    // 成功/失败状态
+                    // 成功/失败/未知状态
                     HStack(spacing: 8) {
-                        Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        Image(systemName: result.resultStatus.iconName)
                             .font(.system(size: 24))
-                            .foregroundColor(result.success ? .green : .red)
-                        Text(result.success ? "sidebar.aiMerge.success".localized : "sidebar.aiMerge.failed".localized)
+                            .foregroundColor(result.resultStatus.iconColor)
+                        Text(result.resultStatus.mergeDisplayText)
                             .font(.system(size: 16, weight: .semibold))
                     }
 

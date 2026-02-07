@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 
 // MARK: - 后台任务类型
 
@@ -32,6 +33,68 @@ enum BackgroundTaskStatus: String {
     case running
     case completed
     case failed
+    case unknown
+
+    /// 已完成任务行的图标名
+    var completedIconName: String {
+        switch self {
+        case .completed: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
+        default: return "circle"
+        }
+    }
+
+    /// 已完成任务行的图标颜色
+    var completedIconColor: Color {
+        switch self {
+        case .completed: return .green
+        case .failed: return .red
+        case .unknown: return .orange
+        default: return .secondary
+        }
+    }
+}
+
+/// 任务结果状态（三态）
+enum TaskResultStatus {
+    case success
+    case failed
+    case unknown
+
+    var iconName: String {
+        switch self {
+        case .success: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
+        }
+    }
+
+    var iconColor: Color {
+        switch self {
+        case .success: return .green
+        case .failed: return .red
+        case .unknown: return .orange
+        }
+    }
+
+    /// AI 合并结果弹窗的显示文本
+    var mergeDisplayText: String {
+        switch self {
+        case .success: return "sidebar.aiMerge.success".localized
+        case .failed: return "sidebar.aiMerge.failed".localized
+        case .unknown: return "sidebar.aiMerge.unknown".localized
+        }
+    }
+
+    /// AI 提交结果弹窗的显示文本
+    var commitDisplayText: String {
+        switch self {
+        case .success: return "git.aiCommit.success".localized
+        case .failed: return "git.aiCommit.failed".localized
+        case .unknown: return "git.aiCommit.unknown".localized
+        }
+    }
 }
 
 // MARK: - 后台任务上下文
@@ -61,10 +124,10 @@ enum BackgroundTaskResult {
     case aiCommit(AICommitResult)
     case aiMerge(AIMergeResult)
 
-    var success: Bool {
+    var resultStatus: TaskResultStatus {
         switch self {
-        case .aiCommit(let r): return r.success
-        case .aiMerge(let r): return r.success
+        case .aiCommit(let r): return r.resultStatus
+        case .aiMerge(let r): return r.resultStatus
         }
     }
 

@@ -70,11 +70,13 @@
 "sidebar.aiMerge.progress" = "AI 正在执行合并...";
 "sidebar.aiMerge.success" = "合并成功";
 "sidebar.aiMerge.failed" = "合并失败";
+"sidebar.aiMerge.unknown" = "结果未知";
 "sidebar.aiMerge.conflicts" = "冲突文件";
 "sidebar.aiMerge.rawOutput" = "原始输出";
 "sidebar.aiMerge.result" = "AI 合并结果";
 "sidebar.aiMerge.completed" = "合并操作已完成";
 "sidebar.aiMerge.parseError" = "输出中检测到错误信息，请查看原始输出";
+"sidebar.aiMerge.parseWarning" = "无法解析任务执行结果，请自行检查工作区状态";
 "sidebar.aiMerge.invalidAgent" = "无效的 AI Agent 配置";
 "sidebar.aiMerge.launchFailed" = "启动 AI Agent 失败: %@";
 "sidebar.aiMerge.exitCode" = "AI Agent 异常退出 (code: %d)";
@@ -87,8 +89,10 @@
 "git.aiCommit.result" = "AI 智能提交结果";
 "git.aiCommit.success" = "提交成功";
 "git.aiCommit.failed" = "提交失败";
+"git.aiCommit.unknown" = "结果未知";
 "git.aiCommit.completed" = "提交操作已完成";
 "git.aiCommit.parseError" = "输出中检测到错误信息，请查看原始输出";
+"git.aiCommit.parseWarning" = "无法解析任务执行结果，请自行检查工作区状态";
 "git.aiCommit.commitCount" = "共 %d 个提交";
 
 /* 主视图 - 工具栏 */

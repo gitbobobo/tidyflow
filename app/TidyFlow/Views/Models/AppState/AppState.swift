@@ -44,6 +44,7 @@ class AppState: ObservableObject {
 
     // 后台任务管理器
     let taskManager = BackgroundTaskManager()
+    private var taskManagerCancellable: AnyCancellable?
 
     // v1.24: 剪贴板是否有文件（驱动粘贴菜单显示）
     @Published var clipboardHasFiles: Bool = false
@@ -119,6 +120,11 @@ class AppState: ObservableObject {
         self.selectedWorkspaceKey = nil
 
         setupCommands()
+
+        // 转发 taskManager 变更到 AppState，驱动侧边栏等视图刷新
+        taskManagerCancellable = taskManager.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
 
         // 接线 GitCacheState 依赖
         setupGitCache()

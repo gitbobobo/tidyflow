@@ -626,12 +626,12 @@ struct AICommitResultSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    // 成功/失败状态
+                    // 成功/失败/未知状态
                     HStack(spacing: 8) {
-                        Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        Image(systemName: result.resultStatus.iconName)
                             .font(.system(size: 24))
-                            .foregroundColor(result.success ? .green : .red)
-                        Text(result.success ? "git.aiCommit.success".localized : "git.aiCommit.failed".localized)
+                            .foregroundColor(result.resultStatus.iconColor)
+                        Text(result.resultStatus.commitDisplayText)
                             .font(.system(size: 16, weight: .semibold))
                     }
 

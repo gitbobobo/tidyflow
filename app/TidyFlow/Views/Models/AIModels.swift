@@ -420,7 +420,7 @@ struct AIAgentOutputParser {
 /// AI 合并结果
 struct AIMergeResult: Identifiable {
     let id = UUID()
-    let success: Bool
+    let resultStatus: TaskResultStatus
     let message: String
     let conflicts: [String]
     let rawOutput: String
@@ -429,15 +429,13 @@ struct AIMergeResult: Identifiable {
     static func parse(from output: String, agent: AIAgent) -> AIMergeResult {
         // 使用通用解析器的两层架构
         if let result = AIAgentOutputParser.parse(from: output, agent: agent) {
-            return AIMergeResult(success: result.success, message: result.message, conflicts: result.conflicts, rawOutput: output)
+            return AIMergeResult(resultStatus: result.success ? .success : .failed, message: result.message, conflicts: result.conflicts, rawOutput: output)
         }
 
-        // 无法解析 JSON 时，根据输出内容推断
-        let lowered = output.lowercased()
-        let hasError = lowered.contains("error") || lowered.contains("fatal") || lowered.contains("conflict")
+        // 无法解析 JSON 时，标记为未知，提示用户自行检查
         return AIMergeResult(
-            success: !hasError,
-            message: hasError ? "sidebar.aiMerge.parseError".localized : "sidebar.aiMerge.completed".localized,
+            resultStatus: .unknown,
+            message: "sidebar.aiMerge.parseWarning".localized,
             conflicts: [],
             rawOutput: output
         )
@@ -455,7 +453,7 @@ struct AICommitEntry: Identifiable {
 /// AI 智能提交结果
 struct AICommitResult: Identifiable {
     let id = UUID()
-    let success: Bool
+    let resultStatus: TaskResultStatus
     let message: String
     let commits: [AICommitEntry]
     let rawOutput: String
@@ -465,18 +463,16 @@ struct AICommitResult: Identifiable {
         // 第一层：提取 AI 回复文本
         if let response = agent.extractResponse(from: output),
            let result = parseCommitJSON(from: response) {
-            return AICommitResult(success: result.success, message: result.message, commits: result.commits, rawOutput: output)
+            return AICommitResult(resultStatus: result.success ? .success : .failed, message: result.message, commits: result.commits, rawOutput: output)
         }
         // 回退：直接对原始输出尝试解析
         if let result = parseCommitJSON(from: output) {
-            return AICommitResult(success: result.success, message: result.message, commits: result.commits, rawOutput: output)
+            return AICommitResult(resultStatus: result.success ? .success : .failed, message: result.message, commits: result.commits, rawOutput: output)
         }
-        // 无法解析 JSON 时，根据输出内容推断
-        let lowered = output.lowercased()
-        let hasError = lowered.contains("error") || lowered.contains("fatal")
+        // 无法解析 JSON 时，标记为未知，提示用户自行检查
         return AICommitResult(
-            success: !hasError,
-            message: hasError ? "git.aiCommit.parseError".localized : "git.aiCommit.completed".localized,
+            resultStatus: .unknown,
+            message: "git.aiCommit.parseWarning".localized,
             commits: [],
             rawOutput: output
         )
@@ -698,14 +694,14 @@ class AIAgentRunner {
             projectPath: projectPath
         )
         if let error = result.error {
-            return AIMergeResult(success: false, message: error, conflicts: [], rawOutput: "")
+            return AIMergeResult(resultStatus: .failed, message: error, conflicts: [], rawOutput: "")
         }
         guard let raw = result.raw else {
-            return AIMergeResult(success: false, message: "sidebar.aiMerge.invalidAgent".localized, conflicts: [], rawOutput: "")
+            return AIMergeResult(resultStatus: .failed, message: "sidebar.aiMerge.invalidAgent".localized, conflicts: [], rawOutput: "")
         }
         if raw.exitCode != 0 && raw.stdout.isEmpty {
             return AIMergeResult(
-                success: false,
+                resultStatus: .failed,
                 message: String(format: "sidebar.aiMerge.exitCode".localized, raw.exitCode),
                 conflicts: [],
                 rawOutput: raw.fullOutput
@@ -728,14 +724,14 @@ class AIAgentRunner {
             projectPath: projectPath
         )
         if let error = result.error {
-            return AICommitResult(success: false, message: error, commits: [], rawOutput: "")
+            return AICommitResult(resultStatus: .failed, message: error, commits: [], rawOutput: "")
         }
         guard let raw = result.raw else {
-            return AICommitResult(success: false, message: "sidebar.aiMerge.invalidAgent".localized, commits: [], rawOutput: "")
+            return AICommitResult(resultStatus: .failed, message: "sidebar.aiMerge.invalidAgent".localized, commits: [], rawOutput: "")
         }
         if raw.exitCode != 0 && raw.stdout.isEmpty {
             return AICommitResult(
-                success: false,
+                resultStatus: .failed,
                 message: String(format: "sidebar.aiMerge.exitCode".localized, raw.exitCode),
                 commits: [],
                 rawOutput: raw.fullOutput
