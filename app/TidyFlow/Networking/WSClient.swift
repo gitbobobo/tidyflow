@@ -302,6 +302,19 @@ class WSClient: NSObject, ObservableObject {
         ])
     }
 
+    /// AI 智能提交
+    func requestGitAICommit(project: String, workspace: String, aiAgent: String? = nil) {
+        var dict: [String: Any] = [
+            "type": "git_ai_commit",
+            "project": project,
+            "workspace": workspace
+        ]
+        if let agent = aiAgent {
+            dict["ai_agent"] = agent
+        }
+        send(dict)
+    }
+
     // Phase UX-3a: Request git fetch
     func requestGitFetch(project: String, workspace: String) {
         send([

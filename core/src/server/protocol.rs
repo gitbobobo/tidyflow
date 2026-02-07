@@ -286,16 +286,24 @@ pub enum ClientMessage {
     FileCopy {
         dest_project: String,
         dest_workspace: String,
-        source_absolute_path: String,  // 源文件绝对路径
-        dest_dir: String,              // 目标目录（相对路径）
+        source_absolute_path: String, // 源文件绝对路径
+        dest_dir: String,             // 目标目录（相对路径）
     },
 
     // v1.25: File move (拖拽移动)
     FileMove {
         project: String,
         workspace: String,
-        old_path: String,   // 源文件相对路径
-        new_dir: String,    // 目标目录相对路径
+        old_path: String, // 源文件相对路径
+        new_dir: String,  // 目标目录相对路径
+    },
+
+    // v1.26: AI Git commit
+    GitAICommit {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ai_agent: Option<String>,
     },
 }
 
@@ -681,6 +689,13 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    // v1.26: AI Git commit result
+    GitAICommitResult {
+        success: bool,
+        message: String,
+        commits: Vec<AIGitCommit>,
+    },
 }
 
 // ============================================================================
@@ -698,8 +713,14 @@ pub struct ProjectInfo {
 pub struct WorkspaceInfo {
     pub name: String,
     pub root: String,
-    pub branch: String,
-    pub status: String,
+}
+
+/// AI Git commit information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIGitCommit {
+    pub sha: String,
+    pub message: String,
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
