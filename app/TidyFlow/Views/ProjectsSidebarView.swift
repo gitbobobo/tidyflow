@@ -471,6 +471,7 @@ struct WorkspaceRowView: View {
         appState.submitBackgroundTask(
             type: .aiCommit,
             context: .aiCommit(AICommitContext(
+                projectName: projectName,
                 workspaceKey: workspace.name,
                 workspacePath: path,
                 projectPath: projPath

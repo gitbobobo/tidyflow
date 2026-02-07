@@ -38,6 +38,7 @@ enum BackgroundTaskStatus: String {
 
 /// AI 提交上下文
 struct AICommitContext {
+    let projectName: String
     let workspaceKey: String
     let workspacePath: String
     let projectPath: String?
