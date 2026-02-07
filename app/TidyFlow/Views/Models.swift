@@ -248,6 +248,7 @@ enum BrandIcon: String, CaseIterable {
         switch self {
         case .claude: return "claude --dangerously-skip-permissions"
         case .codex: return "codex --full-auto"
+        case .gemini: return "gemini --approval-mode yolo --no-sandbox"
         default: return nil
         }
     }
@@ -286,21 +287,17 @@ enum AIAgent: String, CaseIterable, Identifiable {
     }
 
     /// 构建非交互模式命令参数
-    /// - Parameters:
-    ///   - prompt: AI Agent 执行的提示词
-    ///   - disableSandbox: 是否关闭沙箱（仅对支持该参数的代理生效）
-    func buildCommand(prompt: String, disableSandbox: Bool = false) -> [String] {
+    /// - Parameter prompt: AI Agent 执行的提示词
+    /// 同一代理在不同业务入口（AI 合并 / AI 提交）必须使用同一命令模板，差异只通过 prompt 表达。
+    func buildCommand(prompt: String) -> [String] {
         switch self {
         case .claude:
             return ["claude", "--dangerously-skip-permissions", "-p", prompt, "--output-format", "json"]
         case .codex:
-            // 提交场景下允许写入 worktree 共享 git 元数据（如 .git/worktrees/*/index.lock）
-            var args = ["codex"]
-            args.append(disableSandbox ? "--dangerously-bypass-approvals-and-sandbox" : "--full-auto")
-            args += ["exec", prompt]
-            return args
+            // worktree 场景下需要写入 .git/worktrees/* 元数据（如 index.lock），固定使用 bypass 参数避免被沙箱拦截。
+            return ["codex", "--dangerously-bypass-approvals-and-sandbox", "exec", prompt]
         case .gemini:
-            return ["gemini", prompt, "-o", "json"]
+            return ["gemini", "--approval-mode", "yolo", "--no-sandbox", "-p", prompt, "-o", "json"]
         case .opencode:
             return ["opencode", "run", prompt, "--format", "json"]
         case .cursor:
@@ -867,12 +864,11 @@ class AIAgentRunner {
         agent: AIAgent,
         prompt: String,
         workingDirectory: String,
-        projectPath: String? = nil,
-        disableSandbox: Bool = false
+        projectPath: String? = nil
     ) async -> (raw: RawResult?, error: String?) {
-        let args = agent.buildCommand(prompt: prompt, disableSandbox: disableSandbox)
-        NSLog("[AIAgentRunner] agent=%@, workingDir=%@, disableSandbox=%@, cmd=%@",
-              agent.rawValue, workingDirectory, disableSandbox.description, args.joined(separator: " "))
+        let args = agent.buildCommand(prompt: prompt)
+        NSLog("[AIAgentRunner] agent=%@, workingDir=%@, cmd=%@",
+              agent.rawValue, workingDirectory, args.joined(separator: " "))
         guard !args.isEmpty else {
             return (nil, "sidebar.aiMerge.invalidAgent".localized)
         }
@@ -954,8 +950,7 @@ class AIAgentRunner {
             agent: agent,
             prompt: prompt,
             workingDirectory: workingDirectory,
-            projectPath: projectPath,
-            disableSandbox: agent == .codex
+            projectPath: projectPath
         )
         if let error = result.error {
             return AICommitResult(success: false, message: error, commits: [], rawOutput: "")
