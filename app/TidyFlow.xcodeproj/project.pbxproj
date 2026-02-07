@@ -13,6 +13,23 @@
 		2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */; };
 		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
 		GCS000012 /* GitCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = GCS000011 /* GitCacheState.swift */; };
+		MDL000301 /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000101 /* Notifications.swift */; };
+		MDL000302 /* EditorTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000102 /* EditorTools.swift */; };
+		MDL000303 /* TabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000103 /* TabModels.swift */; };
+		MDL000304 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000104 /* ClientSettingsModels.swift */; };
+		MDL000305 /* AIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000105 /* AIModels.swift */; };
+		MDL000306 /* CommandPaletteModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000106 /* CommandPaletteModels.swift */; };
+		MDL000307 /* ProjectWorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000107 /* ProjectWorkspaceModels.swift */; };
+		MDL000308 /* FileBrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000108 /* FileBrowserModels.swift */; };
+		MDL000309 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000109 /* AppState.swift */; };
+		MDL00030A /* AppState+Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010A /* AppState+Workspace.swift */; };
+		MDL00030B /* AppState+CoreWS.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010B /* AppState+CoreWS.swift */; };
+		MDL00030C /* AppState+FileOps.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010C /* AppState+FileOps.swift */; };
+		MDL00030D /* AppState+Projects.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010D /* AppState+Projects.swift */; };
+		MDL00030E /* AppState+Tabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010E /* AppState+Tabs.swift */; };
+		MDL00030F /* AppState+AIActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010F /* AppState+AIActions.swift */; };
+		MDL000310 /* AppState+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000110 /* AppState+Settings.swift */; };
+		MDL000311 /* AppState+EditorTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000111 /* AppState+EditorTerminal.swift */; };
 		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
@@ -61,6 +78,23 @@
 		2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CenterContentView.swift; sourceTree = "<group>"; };
 		2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeftSidebarView.swift; sourceTree = "<group>"; };
 		2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		MDL000101 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
+		MDL000102 /* EditorTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTools.swift; sourceTree = "<group>"; };
+		MDL000103 /* TabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabModels.swift; sourceTree = "<group>"; };
+		MDL000104 /* ClientSettingsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientSettingsModels.swift; sourceTree = "<group>"; };
+		MDL000105 /* AIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModels.swift; sourceTree = "<group>"; };
+		MDL000106 /* CommandPaletteModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteModels.swift; sourceTree = "<group>"; };
+		MDL000107 /* ProjectWorkspaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectWorkspaceModels.swift; sourceTree = "<group>"; };
+		MDL000108 /* FileBrowserModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserModels.swift; sourceTree = "<group>"; };
+		MDL000109 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		MDL00010A /* AppState+Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Workspace.swift"; sourceTree = "<group>"; };
+		MDL00010B /* AppState+CoreWS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS.swift"; sourceTree = "<group>"; };
+		MDL00010C /* AppState+FileOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+FileOps.swift"; sourceTree = "<group>"; };
+		MDL00010D /* AppState+Projects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Projects.swift"; sourceTree = "<group>"; };
+		MDL00010E /* AppState+Tabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Tabs.swift"; sourceTree = "<group>"; };
+		MDL00010F /* AppState+AIActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+AIActions.swift"; sourceTree = "<group>"; };
+		MDL000110 /* AppState+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Settings.swift"; sourceTree = "<group>"; };
+		MDL000111 /* AppState+EditorTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EditorTerminal.swift"; sourceTree = "<group>"; };
 		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
 		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
 		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
@@ -120,6 +154,7 @@
 				GCS000011 /* GitCacheState.swift */,
 				B3A00012 /* KeybindingHandler.swift */,
 				2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */,
+				MDL000201 /* Models */,
 				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
 				B3A00018 /* NativeGitPanelView.swift */,
 				UX100011 /* ProjectsSidebarView.swift */,
@@ -131,6 +166,38 @@
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		MDL000201 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				MDL000105 /* AIModels.swift */,
+				MDL000202 /* AppState */,
+				MDL000104 /* ClientSettingsModels.swift */,
+				MDL000106 /* CommandPaletteModels.swift */,
+				MDL000102 /* EditorTools.swift */,
+				MDL000108 /* FileBrowserModels.swift */,
+				MDL000101 /* Notifications.swift */,
+				MDL000107 /* ProjectWorkspaceModels.swift */,
+				MDL000103 /* TabModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		MDL000202 /* AppState */ = {
+			isa = PBXGroup;
+			children = (
+				MDL00010F /* AppState+AIActions.swift */,
+				MDL00010B /* AppState+CoreWS.swift */,
+				MDL000111 /* AppState+EditorTerminal.swift */,
+				MDL00010C /* AppState+FileOps.swift */,
+				MDL00010D /* AppState+Projects.swift */,
+				MDL000110 /* AppState+Settings.swift */,
+				MDL00010E /* AppState+Tabs.swift */,
+				MDL00010A /* AppState+Workspace.swift */,
+				MDL000109 /* AppState.swift */,
+			);
+			path = AppState;
 			sourceTree = "<group>";
 		};
 		2AEE0BB12F2F0BAA009B67A9 /* WebView */ = {
@@ -331,11 +398,28 @@
 				2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */,
 				2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */,
 				2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */,
-				2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
-				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
-				GCS000012 /* GitCacheState.swift in Sources */,
-				2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
-				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
+					2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
+					2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
+					GCS000012 /* GitCacheState.swift in Sources */,
+					MDL000301 /* Notifications.swift in Sources */,
+					MDL000302 /* EditorTools.swift in Sources */,
+					MDL000303 /* TabModels.swift in Sources */,
+					MDL000304 /* ClientSettingsModels.swift in Sources */,
+					MDL000305 /* AIModels.swift in Sources */,
+					MDL000306 /* CommandPaletteModels.swift in Sources */,
+					MDL000307 /* ProjectWorkspaceModels.swift in Sources */,
+					MDL000308 /* FileBrowserModels.swift in Sources */,
+					MDL000309 /* AppState.swift in Sources */,
+					MDL00030A /* AppState+Workspace.swift in Sources */,
+					MDL00030B /* AppState+CoreWS.swift in Sources */,
+					MDL00030C /* AppState+FileOps.swift in Sources */,
+					MDL00030D /* AppState+Projects.swift in Sources */,
+					MDL00030E /* AppState+Tabs.swift in Sources */,
+					MDL00030F /* AppState+AIActions.swift in Sources */,
+					MDL000310 /* AppState+Settings.swift in Sources */,
+					MDL000311 /* AppState+EditorTerminal.swift in Sources */,
+					2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
+					2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				B3A00001 /* CommandPaletteView.swift in Sources */,
 				B3A00002 /* KeybindingHandler.swift in Sources */,
 				B3A00003 /* TabStripView.swift in Sources */,
