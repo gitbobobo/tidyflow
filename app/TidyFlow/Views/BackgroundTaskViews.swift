@@ -27,7 +27,7 @@ struct BackgroundTaskToolbarButton: View {
             if activeCount > 0 {
                 ZStack {
                     Circle()
-                        .fill(Color.accentColor)
+                        .fill(Color.white.opacity(0.25))
                         .frame(width: 16, height: 16)
                     Text("\(activeCount)")
                         .font(.system(size: 10, weight: .bold))
@@ -95,6 +95,11 @@ struct BackgroundTaskPopoverView: View {
             }
         }
         .frame(width: 380, height: 420)
+        .onAppear {
+            let hasActive = !taskManager.allRunningTasks(for: workspaceKey).isEmpty
+                || !taskManager.pendingTasks(for: workspaceKey).isEmpty
+            selectedTab = hasActive ? 0 : 1
+        }
     }
 }
 
