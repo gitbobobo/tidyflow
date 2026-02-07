@@ -106,20 +106,28 @@ enum AIAgent: String, CaseIterable, Identifiable {
             return response
 
         case .opencode:
-            // JSONL 多行，找最后一个 type=="text" 的 part.text
+            // JSONL 多行，取最后一个 type=="text" 事件内容。
             var lastText: String?
             for line in output.components(separatedBy: .newlines) {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.isEmpty,
                       let lineData = trimmed.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                      json["type"] as? String == "text",
-                      let part = json["part"] as? [String: Any],
-                      let text = part["text"] as? String else { continue }
+                      let text = extractOpenCodeText(from: json) else { continue }
                 lastText = text
             }
             return lastText
         }
+    }
+
+    /// 从 OpenCode 事件对象中提取 text 内容（兼容不同事件形态）
+    private func extractOpenCodeText(from json: [String: Any]) -> String? {
+        guard json["type"] as? String == "text" else { return nil }
+        if let part = json["part"] as? [String: Any],
+           let text = part["text"] as? String {
+            return text
+        }
+        return json["text"] as? String
     }
 
     /// 从混合输出中提取外层 JSON 的字符串字段（兼容 stdout + stderr 拼接）
