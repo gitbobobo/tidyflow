@@ -843,7 +843,9 @@ body.renderer-only #tab-content {
   font-size: 14px;
   line-height: 1.7;
   word-wrap: break-word;
+  width: 100%;
   max-width: 860px;
+  margin: 0 auto;
 }
 .markdown-body h1 {
   font-size: 2em;

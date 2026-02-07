@@ -126,9 +126,6 @@ cargo test --manifest-path core/Cargo.toml    # Core 自动化测试
 - `Process/` - 进程管理
 - `en.lproj/`, `zh-Hans.lproj/` - 本地化字符串文件
 
-### Design Documentation (`/design/`)
-目前仅存放图标资源；协议和发布文档在 `docs/` 目录。
-
 ## Key Patterns
 
 - **Workspace isolation**: Each workspace is a separate git worktree
@@ -139,21 +136,6 @@ cargo test --manifest-path core/Cargo.toml    # Core 自动化测试
 - **父进程监控**: Core 监控 Swift app 进程，父进程退出时自动终止
 - **本地化**: 运行时语言切换，使用 `"key".localized` 扩展，字符串文件在 `en.lproj/` 和 `zh-Hans.lproj/`
 
-## Protocol Features (v1.x)
-
-主要功能模块：
-- v1.0-v1.2: 工作空间管理、多终端支持
-- v1.3-v1.4: 文件操作、Quick Open 索引
-- v1.5-v1.10: Git 基础操作（status, diff, stage, commit, branch）
-- v1.11-v1.15: Git 高级操作（rebase, fetch, merge, integration worktree）
-- v1.16-v1.18: 项目/工作空间导入导出
-- v1.19-v1.20: Git log 和 commit 详情
-- v1.21: 客户端设置同步
-- v1.22: 文件监控
-- v1.23: 文件重命名/删除（macOS Trash）
-- v1.24: 文件复制（跨项目绝对路径）
-- v1.25: 文件移动（拖拽）
-
 ## CLI Commands
 
 ```bash
@@ -162,15 +144,3 @@ cargo run -- ws create --project my-project --workspace feature-1
 cargo run -- list projects
 cargo run -- list workspaces --project my-project
 ```
-
-## Keyboard Shortcuts (App)
-
-- `Cmd+Shift+P` - Command Palette
-- `Cmd+P` - Quick Open File
-- `Cmd+1/2/3` - Switch right panel (Explorer/Search/Git)
-- `Cmd+T` - New terminal tab
-- `Cmd+W` - Close tab
-- `Cmd+Option+T` - Close other tabs
-- `Ctrl+Tab` / `Ctrl+Shift+Tab` - Next/Previous tab
-- `Ctrl+1-9` - Switch to tab by index
-- `Cmd+1-9` - Switch to workspace by shortcut key (user-configurable)

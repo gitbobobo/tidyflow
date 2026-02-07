@@ -5,7 +5,8 @@
 <h1 align="center">TidyFlow</h1>
 
 <p align="center">
-  <strong>专为专业开发者打造的 macOS 原生多项目并行开发工具</strong>
+  <strong>从善如流</strong><br/>
+  AI 时代的多项目并行开发工具
 </p>
 
 <p align="center">
@@ -19,11 +20,9 @@
 
 ## 🌟 什么是 TidyFlow?
 
-TidyFlow 是一款 macOS 原生的工作流管理工具，旨在解决开发者在多项目、多分支开发时频繁切换上下文的痛点。
+TidyFlow 是一款 macOS 原生的多项目开发工具，聚焦多项目、多分支并行开发场景，减少上下文切换成本。
 
-如果你需要并行开发多个项目，并行开发多个功能，需要频繁在不同 AI Agent 之间切换，偶尔需要查看/编辑文件内容，那么 TidyFLow 可能就是你需要的。
-
-> "让你的开发流程像流水一样顺畅。"
+如果你需要同时推进多个项目/功能分支、频繁切换不同 AI Agent，并在终端与文件操作之间快速切换，TidyFlow 可以提供统一工作台。
 
 ## ✨ 核心特性
 
@@ -31,10 +30,7 @@ TidyFlow 是一款 macOS 原生的工作流管理工具，旨在解决开发者�
 - 🌿 **Git Worktree 原生支持**：基于 Git Worktree 实现真正的分支隔离，无需 `git stash` 或频繁切分支，多个分支同时开发。
 - 💻 **VS Code 级终端体验**：集成 xterm.js + 真实 PTY，完美支持 `vim`、`tmux`、`htop` 等复杂 TUI 工具，支持 256 色及 TrueColor。
 - 🍎 **纯正 macOS 原生体验**：使用 SwiftUI + AppKit 构建，遵循 macOS HIG，支持快捷键全键盘操作。
-- 🚀 **极致性能**：Rust 编写的核心后端，冷启动秒开，Workspace 创建瞬间完成。
-- 🛠️ **自动化环境准备**：克隆项目后自动检测类型并执行 `setup` 脚本，开箱即用。
-
-> 部分功能暂未实现，以实际使用为准。
+- ⚙️ **Rust Core 引擎**：核心后端使用 Rust，实现 PTY 管理、Git 操作、文件系统与状态持久化。
 
 ## 📸 界面预览
 
@@ -54,13 +50,16 @@ TidyFlow 采用现代化的**混合原生架构**：
 ### 全局操作
 - `Cmd + Shift + P`: 打开命令板 (Command Palette)
 - `Cmd + P`: 快速打开文件 (Quick Open)
-- `Cmd + R`: 重新连接后端引擎
+- `Cmd + 1/2/3`: 切换右侧面板（Explorer/Search/Git）
 
 ### 工作区操作
 - `Cmd + T`: 新建终端 Tab
 - `Cmd + W`: 关闭当前 Tab
+- `Cmd + Option + T`: 关闭其他 Tab
 - `Ctrl + Tab`: 切换下一个 Tab
 - `Ctrl + Shift + Tab`: 切换上一个 Tab
+- `Ctrl + 1-9`: 按序号切换 Tab
+- `Cmd + 1-9`: 按快捷键切换工作区
 
 ## 🛠️ 如何构建
 
@@ -90,8 +89,6 @@ open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
 - **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign`
 - **公证**: `./scripts/notarize.sh --profile tidyflow-notary`
 - **生成 SHA256**: `./scripts/tools/gen_sha256.sh dist/<dmg-name>.dmg`（`build_dmg.sh` 执行后也会自动生成）
-- **一键本地发布（可选自动上传 Release）**: `./scripts/release_local.sh` 或 `./scripts/release_local.sh --upload-release`
-- **发布预演（不执行）**: `./scripts/release_local.sh --dry-run`
 
 发布前请先执行清单：[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)  
 版本变更记录见：[`CHANGELOG.md`](CHANGELOG.md)
