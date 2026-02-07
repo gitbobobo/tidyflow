@@ -42,6 +42,9 @@ class AppState: ObservableObject {
     // Git 缓存状态（独立 ObservableObject，避免 Git 高频更新触发全局视图刷新）
     let gitCache = GitCacheState()
 
+    // 后台任务管理器
+    let taskManager = BackgroundTaskManager()
+
     // v1.24: 剪贴板是否有文件（驱动粘贴菜单显示）
     @Published var clipboardHasFiles: Bool = false
 

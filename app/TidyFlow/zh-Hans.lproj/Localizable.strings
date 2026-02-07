@@ -221,3 +221,16 @@
 "time.hoursAgo" = "%d 小时前";
 "time.daysAgo" = "%d 天前";
 "time.weeksAgo" = "%d 周前";
+
+/* 后台任务 */
+"task.title" = "后台任务";
+"task.tab.active" = "进行中";
+"task.tab.completed" = "已完成";
+"task.noActive" = "暂无任务";
+"task.noCompleted" = "暂无记录";
+"task.section.running" = "运行中";
+"task.section.pending" = "等待中";
+"task.selectToViewResult" = "选择任务查看结果";
+"task.aiCommit" = "AI 智能提交";
+"task.aiMerge" = "AI 合并";
+"toolbar.backgroundTasks" = "后台任务";

@@ -221,3 +221,16 @@
 "time.hoursAgo" = "%d hr ago";
 "time.daysAgo" = "%d days ago";
 "time.weeksAgo" = "%d weeks ago";
+
+/* Background Tasks */
+"task.title" = "Background Tasks";
+"task.tab.active" = "Active";
+"task.tab.completed" = "Completed";
+"task.noActive" = "No active tasks";
+"task.noCompleted" = "No completed tasks";
+"task.section.running" = "Running";
+"task.section.pending" = "Pending";
+"task.selectToViewResult" = "Select a task to view result";
+"task.aiCommit" = "AI Smart Commit";
+"task.aiMerge" = "AI Merge";
+"toolbar.backgroundTasks" = "Background Tasks";

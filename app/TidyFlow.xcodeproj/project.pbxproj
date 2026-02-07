@@ -30,6 +30,10 @@
 		MDL00030F /* AppState+AIActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010F /* AppState+AIActions.swift */; };
 		MDL000310 /* AppState+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000110 /* AppState+Settings.swift */; };
 		MDL000311 /* AppState+EditorTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000111 /* AppState+EditorTerminal.swift */; };
+		MDL000312 /* BackgroundTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000112 /* BackgroundTaskModels.swift */; };
+		MDL000313 /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000113 /* BackgroundTaskManager.swift */; };
+		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
+		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
 		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
@@ -95,6 +99,10 @@
 		MDL00010F /* AppState+AIActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+AIActions.swift"; sourceTree = "<group>"; };
 		MDL000110 /* AppState+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Settings.swift"; sourceTree = "<group>"; };
 		MDL000111 /* AppState+EditorTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EditorTerminal.swift"; sourceTree = "<group>"; };
+		MDL000112 /* BackgroundTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskModels.swift; sourceTree = "<group>"; };
+		MDL000113 /* BackgroundTaskManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskManager.swift; sourceTree = "<group>"; };
+		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
+		BGT00011 /* BackgroundTaskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskViews.swift; sourceTree = "<group>"; };
 		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
 		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
 		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
@@ -148,6 +156,7 @@
 			isa = PBXGroup;
 			children = (
 				UX100012 /* AddProjectSheet.swift */,
+				BGT00011 /* BackgroundTaskViews.swift */,
 				B3A00019 /* BranchPickerView.swift */,
 				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
 				B3A00011 /* CommandPaletteView.swift */,
@@ -173,6 +182,8 @@
 			children = (
 				MDL000105 /* AIModels.swift */,
 				MDL000202 /* AppState */,
+				MDL000113 /* BackgroundTaskManager.swift */,
+				MDL000112 /* BackgroundTaskModels.swift */,
 				MDL000104 /* ClientSettingsModels.swift */,
 				MDL000106 /* CommandPaletteModels.swift */,
 				MDL000102 /* EditorTools.swift */,
@@ -188,6 +199,7 @@
 			isa = PBXGroup;
 			children = (
 				MDL00010F /* AppState+AIActions.swift */,
+				MDL000114 /* AppState+BackgroundTasks.swift */,
 				MDL00010B /* AppState+CoreWS.swift */,
 				MDL000111 /* AppState+EditorTerminal.swift */,
 				MDL00010C /* AppState+FileOps.swift */,
@@ -418,6 +430,10 @@
 					MDL00030F /* AppState+AIActions.swift in Sources */,
 					MDL000310 /* AppState+Settings.swift in Sources */,
 					MDL000311 /* AppState+EditorTerminal.swift in Sources */,
+					MDL000312 /* BackgroundTaskModels.swift in Sources */,
+					MDL000313 /* BackgroundTaskManager.swift in Sources */,
+					MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
+					BGT00001 /* BackgroundTaskViews.swift in Sources */,
 					2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
 					2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				B3A00001 /* CommandPaletteView.swift in Sources */,

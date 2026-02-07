@@ -286,11 +286,7 @@ struct WorkspaceRowView: View {
     let isSelected: Bool
     @EnvironmentObject var appState: AppState
     @State private var showDeleteConfirmation = false
-    @State private var showAIMergeProgress = false
-    @State private var aiMergeResult: AIMergeResult?
     @State private var showNoAgentAlert = false
-    @State private var showAICommitProgress = false
-    @State private var aiCommitResult: AICommitResult?
 
     /// 工作空间路径，用于复制与在编辑器中打开
     private var workspacePath: String? { workspace.root }
@@ -368,6 +364,13 @@ struct WorkspaceRowView: View {
                 )
             }
         }
+        .overlay(alignment: .trailing) {
+            if appState.taskManager.activeTaskCount(for: globalWorkspaceKey) > 0 {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.trailing, 8)
+            }
+        }
         .tag(workspace.name)
         // 工作空间右键菜单：复制路径、在 Finder 中打开、在编辑器中打开(VSCode/Cursor)、快捷键配置、删除（默认工作空间不可删除）
         .contextMenu {
@@ -439,63 +442,25 @@ struct WorkspaceRowView: View {
         } message: {
             Text("settings.aiAgent.notConfigured.message".localized)
         }
-        .sheet(isPresented: $showAIMergeProgress) {
-            VStack(spacing: 16) {
-                ProgressView()
-                    .controlSize(.large)
-                Text("sidebar.aiMerge.progress".localized)
-                    .font(.headline)
-            }
-            .frame(width: 300, height: 150)
-            .interactiveDismissDisabled()
-        }
-        .sheet(item: $aiMergeResult) { result in
-            AIMergeResultSheet(result: result)
-        }
-        .sheet(isPresented: $showAICommitProgress) {
-            VStack(spacing: 16) {
-                ProgressView()
-                    .controlSize(.large)
-                Text("git.aiCommit.progress".localized)
-                    .font(.headline)
-                Text("git.aiCommit.progressHint".localized)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 300, height: 150)
-            .interactiveDismissDisabled()
-        }
-        .sheet(item: $aiCommitResult) { result in
-            AICommitResultSheet(result: result)
-        }
         .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 
-    /// 触发 AI 合并
+    /// 触发 AI 合并（后台任务）
     private func triggerAIMerge() {
         guard appState.clientSettings.selectedAIAgent != nil else {
             showNoAgentAlert = true
             return
         }
-        showAIMergeProgress = true
-        Task {
-            let result = await appState.executeAIMerge(
+        appState.submitBackgroundTask(
+            type: .aiMerge,
+            context: .aiMerge(AIMergeContext(
                 projectName: projectName,
                 workspaceName: workspace.name
-            )
-            await MainActor.run {
-                showAIMergeProgress = false
-                aiMergeResult = result
-                // 合并完成后刷新 Git 状态
-                if result.success {
-                    appState.gitCache.fetchGitStatus(workspaceKey: "default")
-                    appState.gitCache.fetchGitLog(workspaceKey: "default")
-                }
-            }
-        }
+            ))
+        )
     }
 
-    /// 触发 AI 智能提交
+    /// 触发 AI 智能提交（后台任务）
     private func triggerAICommit() {
         guard appState.clientSettings.selectedAIAgent != nil else {
             showNoAgentAlert = true
@@ -503,23 +468,14 @@ struct WorkspaceRowView: View {
         }
         guard let path = workspacePath else { return }
         let projPath = appState.projects.first(where: { $0.name == projectName })?.path
-        showAICommitProgress = true
-        Task {
-            let result = await appState.executeAICommit(
+        appState.submitBackgroundTask(
+            type: .aiCommit,
+            context: .aiCommit(AICommitContext(
                 workspaceKey: workspace.name,
                 workspacePath: path,
                 projectPath: projPath
-            )
-            await MainActor.run {
-                showAICommitProgress = false
-                aiCommitResult = result
-                // 提交完成后刷新 Git 状态
-                if result.success {
-                    appState.gitCache.fetchGitStatus(workspaceKey: workspace.name)
-                    appState.gitCache.fetchGitLog(workspaceKey: workspace.name)
-                }
-            }
-        }
+            ))
+        )
     }
 }
 

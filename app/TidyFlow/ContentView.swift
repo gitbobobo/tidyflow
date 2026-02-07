@@ -36,8 +36,12 @@ struct ContentView: View {
                 // 根据是否选中工作空间显示不同内容
                 if appState.selectedWorkspaceKey != nil {
                     ToolbarItem(placement: .principal) {
-                        ProjectBranchView()
-                            .environmentObject(appState)
+                        HStack(spacing: 4) {
+                            ProjectBranchView()
+                                .environmentObject(appState)
+                            BackgroundTaskToolbarButton(taskManager: appState.taskManager)
+                                .environmentObject(appState)
+                        }
                     }
                     ToolbarItem(placement: .principal) {
                         OpenInEditorButtonView()
