@@ -1091,9 +1091,10 @@ class AppState: ObservableObject {
         let currentState = directoryExpandState[key] ?? false
         directoryExpandState[key] = !currentState
         
-        // 如果展开且没有缓存，则请求文件列表
+        // 如果展开，且没有缓存或缓存已过期，则请求文件列表
         if !currentState {
-            if fileListCache[key] == nil {
+            let cache = fileListCache[key]
+            if cache == nil || cache!.isExpired {
                 fetchFileList(workspaceKey: workspaceKey, path: path)
             }
         }

@@ -355,7 +355,7 @@ struct FileTreeView: View {
             // 与源代码管理一致的面板标题
             PanelHeaderView(
                 title: "rightPanel.explorer".localized,
-                onRefresh: { appState.fetchFileList(workspaceKey: workspaceKey, path: ".") },
+                onRefresh: { appState.refreshFileList() },
                 isRefreshDisabled: false
             )
 
