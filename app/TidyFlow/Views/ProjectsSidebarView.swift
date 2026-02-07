@@ -210,8 +210,9 @@ struct ProjectRowView: View {
                 }
             }
         )
-        // 项目右键菜单：复制路径、在 Finder 中打开、在编辑器中打开(VSCode/Cursor)、新建工作空间、移除项目
+        // 项目右键菜单：路径操作 → 项目操作 → 危险操作
         .contextMenu {
+            // ── 路径 / 打开 ──
             if let path = projectPath {
                 Button {
                     copyPathToPasteboard(path)
@@ -239,13 +240,19 @@ struct ProjectRowView: View {
                 } label: {
                     Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
                 }
+                Divider()
             }
+
+            // ── 项目操作 ──
             Button {
                 appState.createWorkspace(projectName: project.name)
             } label: {
                 Label("sidebar.newWorkspace".localized, systemImage: "plus.square.on.square")
             }
+
             Divider()
+
+            // ── 危险操作 ──
             Button(role: .destructive) {
                 showDeleteConfirmation = true
             } label: {
@@ -372,8 +379,9 @@ struct WorkspaceRowView: View {
             }
         }
         .tag(workspace.name)
-        // 工作空间右键菜单：复制路径、在 Finder 中打开、在编辑器中打开(VSCode/Cursor)、快捷键配置、删除（默认工作空间不可删除）
+        // 工作空间右键菜单：路径操作 → AI 操作 → 危险操作
         .contextMenu {
+            // ── 路径 / 打开 ──
             if let path = workspacePath {
                 Button {
                     copyPathToPasteboard(path)
@@ -405,6 +413,7 @@ struct WorkspaceRowView: View {
 
             Divider()
 
+            // ── AI 操作 ──
             Button {
                 triggerAICommit()
             } label: {
@@ -412,15 +421,18 @@ struct WorkspaceRowView: View {
             }
             .disabled(appState.clientSettings.selectedAIAgent == nil)
 
-            // 只有非默认工作空间才显示 AI 合并和删除选项
             if !workspace.isDefault {
-                Divider()
                 Button {
                     triggerAIMerge()
                 } label: {
                     Label("sidebar.aiMerge".localized, systemImage: "cpu")
                 }
                 .disabled(appState.clientSettings.selectedAIAgent == nil)
+            }
+
+            // ── 危险操作 ──
+            if !workspace.isDefault {
+                Divider()
 
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
