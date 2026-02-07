@@ -8,11 +8,7 @@ struct BackgroundTaskToolbarButton: View {
     @State private var showPopover = false
 
     private var currentWorkspaceKey: String? {
-        guard let wsKey = appState.selectedWorkspaceKey else { return nil }
-        let projectName = appState.projects.first(where: {
-            $0.workspaces.contains(where: { $0.name == wsKey })
-        })?.name ?? ""
-        return "\(projectName):\(wsKey)"
+        appState.currentGlobalWorkspaceKey
     }
 
     private var activeCount: Int {
