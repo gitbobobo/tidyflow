@@ -713,6 +713,8 @@ pub struct ProjectInfo {
 pub struct WorkspaceInfo {
     pub name: String,
     pub root: String,
+    pub branch: String,
+    pub status: String,
 }
 
 /// AI Git commit information

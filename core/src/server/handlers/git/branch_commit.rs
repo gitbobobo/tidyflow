@@ -765,7 +765,7 @@ fn parse_ai_output(output: &str) -> Result<Vec<CommitPlan>, String> {
 
     let mut plans = Vec::new();
     for commit in commits {
-        let sha = commit
+        let _sha = commit
             .get("sha")
             .and_then(|v| v.as_str())
             .ok_or("Missing 'sha' in commit")?;
@@ -784,7 +784,6 @@ fn parse_ai_output(output: &str) -> Result<Vec<CommitPlan>, String> {
             .collect();
 
         plans.push(CommitPlan {
-            sha: sha.to_string(),
             message: message.to_string(),
             files: file_list,
         });
@@ -938,7 +937,6 @@ struct ChangeFile {
 /// 提交计划
 #[derive(Debug, Clone)]
 struct CommitPlan {
-    sha: String,
     message: String,
     files: Vec<String>,
 }

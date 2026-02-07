@@ -812,7 +812,8 @@ async fn handle_client_message(
         | ClientMessage::GitResetIntegrationWorktree { .. }
         | ClientMessage::GitCheckBranchUpToDate { .. }
         | ClientMessage::GitLog { .. }
-        | ClientMessage::GitShow { .. } => {
+        | ClientMessage::GitShow { .. }
+        | ClientMessage::GitAICommit { .. } => {
             unreachable!("Git messages should be handled by git handler");
         }
 
