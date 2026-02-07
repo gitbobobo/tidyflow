@@ -47,7 +47,8 @@ enum AIAgent: String, CaseIterable, Identifiable {
         case .opencode:
             return ["opencode", "run", prompt, "--format", "json"]
         case .cursor:
-            return ["cursor-agent", "-p", prompt, "--output-format", "json"]
+            // Cursor Agent 在提交场景需要关闭沙箱并强制放行命令，否则可能被外层审批拦截。
+            return ["cursor-agent", "-p", "--sandbox", "disabled", "-f", prompt, "--output-format", "json"]
         }
     }
 

@@ -106,6 +106,7 @@ enum BrandIcon: String, CaseIterable {
         case .claude: return "claude --dangerously-skip-permissions"
         case .codex: return "codex --full-auto"
         case .gemini: return "gemini --approval-mode yolo --no-sandbox"
+        case .cursor: return "cursor-agent --sandbox disabled -f"
         default: return nil
         }
     }
