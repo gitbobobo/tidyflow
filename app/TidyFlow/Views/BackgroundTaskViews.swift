@@ -25,18 +25,19 @@ struct BackgroundTaskToolbarButton: View {
             showPopover.toggle()
         } label: {
             if activeCount > 0 {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "checklist")
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 16, height: 16)
                     Text("\(activeCount)")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.accentColor))
-                        .offset(x: 6, y: -4)
                 }
             } else {
-                Image(systemName: "checklist")
+                Circle()
+                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                    .frame(width: 14, height: 14)
+                    .foregroundColor(.secondary)
             }
         }
         .help("toolbar.backgroundTasks".localized)
@@ -65,18 +66,18 @@ struct BackgroundTaskPopoverView: View {
             // 标题 + Tab 切换
             HStack {
                 Text("task.title".localized)
-                    .font(.headline)
+                    .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Picker("", selection: $selectedTab) {
                     Text("task.tab.active".localized).tag(0)
                     Text("task.tab.completed".localized).tag(1)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 180)
+                .controlSize(.small)
+                .frame(width: 150)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
 
             Divider()
 
@@ -127,12 +128,8 @@ struct ActiveTaskListView: View {
             .frame(maxWidth: .infinity)
         } else {
             List {
-                if !runningTasks.isEmpty {
-                    Section("task.section.running".localized) {
-                        ForEach(runningTasks) { task in
-                            RunningTaskRow(task: task)
-                        }
-                    }
+                ForEach(runningTasks) { task in
+                    RunningTaskRow(task: task)
                 }
                 if !pendingTasks.isEmpty {
                     Section("task.section.pending".localized) {
@@ -164,6 +161,9 @@ struct ActiveTaskListView: View {
 
 struct RunningTaskRow: View {
     @ObservedObject var task: BackgroundTask
+    /// 每秒递增，驱动 durationText 刷新
+    @State private var tick = 0
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 8) {
@@ -178,8 +178,12 @@ struct RunningTaskRow: View {
             Text(task.durationText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
+                .id(tick)
         }
         .padding(.vertical, 2)
+        .onReceive(timer) { _ in
+            tick += 1
+        }
     }
 }
 

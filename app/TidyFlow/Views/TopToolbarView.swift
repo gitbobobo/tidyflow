@@ -123,7 +123,8 @@ struct ProjectBranchView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, 8)
+            .padding(.trailing, 2)
         }
     }
 }

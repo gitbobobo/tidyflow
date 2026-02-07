@@ -36,7 +36,7 @@ struct ContentView: View {
                 // 根据是否选中工作空间显示不同内容
                 if appState.selectedWorkspaceKey != nil {
                     ToolbarItem(placement: .principal) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 0) {
                             ProjectBranchView()
                                 .environmentObject(appState)
                             BackgroundTaskToolbarButton(taskManager: appState.taskManager)
