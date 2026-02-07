@@ -332,9 +332,7 @@ enum AIAgent: String, CaseIterable, Identifiable {
         switch self {
         case .claude, .cursor:
             // 解析外层 JSON → 取 result 字段 → 去除 markdown 代码块
-            guard let data = output.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let result = json["result"] as? String else {
+            guard let result = extractEnvelopeStringField(named: "result", from: output) else {
                 return nil
             }
             return AIAgentOutputParser.stripMarkdownCodeBlock(result)
@@ -356,9 +354,7 @@ enum AIAgent: String, CaseIterable, Identifiable {
 
         case .gemini:
             // 解析外层 JSON → 取 response 字段
-            guard let data = output.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let response = json["response"] as? String else {
+            guard let response = extractEnvelopeStringField(named: "response", from: output) else {
                 return nil
             }
             return response
@@ -378,6 +374,30 @@ enum AIAgent: String, CaseIterable, Identifiable {
             }
             return lastText
         }
+    }
+
+    /// 从混合输出中提取外层 JSON 的字符串字段（兼容 stdout + stderr 拼接）
+    private func extractEnvelopeStringField(named key: String, from output: String) -> String? {
+        let normalized = AIAgentOutputParser.sanitizeForJSONParsing(output)
+        if let value = decodeStringField(named: key, from: normalized) {
+            return value
+        }
+        for candidate in AIAgentOutputParser.extractBalancedJSONObjects(from: normalized) {
+            if let value = decodeStringField(named: key, from: candidate) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    /// 解析 JSON 对象并读取指定字符串字段
+    private func decodeStringField(named key: String, from jsonString: String) -> String? {
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = json[key] as? String else {
+            return nil
+        }
+        return value
     }
 }
 

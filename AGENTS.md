@@ -23,6 +23,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 对外返回列表数据时，不要依赖 `HashMap` 迭代顺序；应在服务端显式排序，确保启动与刷新顺序稳定可预期。
 - 在 git worktree 场景调用 Codex CLI 执行提交时，若需要写 `.git/worktrees/*` 元数据（如 `index.lock`），应使用 `--dangerously-bypass-approvals-and-sandbox`，避免 `workspace-write` 沙箱拦截。
 - 同一 AI 代理在不同业务入口（如 AI 提交/AI 合并）应复用完全一致的 CLI 参数模板；业务差异仅通过 prompt 表达，避免入口分叉导致行为不一致。
+- 解析 AI CLI 的结构化 JSON 输出时，应兼容 `stdout` 与 `stderr` 混合场景：优先抽取外层 JSON 包络字段（如 `response`/`result`），再解析业务 JSON，避免日志噪音导致解析失败。
 
 ## Build Commands
 
