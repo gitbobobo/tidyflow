@@ -96,6 +96,7 @@
 "git.aiCommit.commitCount" = "%d commit(s) created";
 
 /* Main View - Toolbar */
+"toolbar.slogan" = "Flow with Grace";
 "toolbar.settings" = "Settings (⌘,)";
 "toolbar.showInspector" = "Show Inspector (⌘⌃I)";
 "toolbar.hideInspector" = "Hide Inspector (⌘⌃I)";

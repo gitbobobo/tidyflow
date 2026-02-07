@@ -96,6 +96,7 @@
 "git.aiCommit.commitCount" = "共 %d 个提交";
 
 /* 主视图 - 工具栏 */
+"toolbar.slogan" = "从善如流";
 "toolbar.settings" = "设置 (⌘,)";
 "toolbar.showInspector" = "显示检查器 (⌘⌃I)";
 "toolbar.hideInspector" = "隐藏检查器 (⌘⌃I)";

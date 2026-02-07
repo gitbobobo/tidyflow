@@ -139,8 +139,14 @@ struct AppTitleView: View {
                     .frame(width: 18, height: 18)
             }
             Text("TidyFlow")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary)
+            Text("·")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(.secondary.opacity(0.6))
+            Text("toolbar.slogan".localized)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
     }
