@@ -166,6 +166,8 @@ struct TreeRowView<CustomIcon: View>: View {
     var titleColor: Color? = nil
     /// 尾部文字颜色；nil 表示使用默认 .secondary
     var trailingTextColor: Color? = nil
+    /// 是否显示加载中指示器（如后台任务活跃时）
+    var isLoading: Bool = false
     /// 自定义图标视图，如果提供则替代默认的 SF Symbol 图标
     var customIconView: CustomIcon?
     var onTap: () -> Void
@@ -202,6 +204,10 @@ struct TreeRowView<CustomIcon: View>: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
             if let icon = trailingIcon {
                 Image(systemName: icon)
                     .font(.system(size: 10))
@@ -223,7 +229,7 @@ struct TreeRowView<CustomIcon: View>: View {
     }
 
     private var backgroundColor: Color {
-        if isSelected { return selectedBackgroundColor ?? Color.accentColor }
+        if isSelected { return selectedBackgroundColor ?? Color.accentColor.opacity(0.8) }
         if isHovering { return Color.primary.opacity(0.05) }
         return Color.clear
     }
@@ -245,6 +251,7 @@ extension TreeRowView where CustomIcon == EmptyView {
         trailingIcon: String? = nil,
         titleColor: Color? = nil,
         trailingTextColor: Color? = nil,
+        isLoading: Bool = false,
         onTap: @escaping () -> Void
     ) {
         self.isExpandable = isExpandable
@@ -259,6 +266,7 @@ extension TreeRowView where CustomIcon == EmptyView {
         self.trailingIcon = trailingIcon
         self.titleColor = titleColor
         self.trailingTextColor = trailingTextColor
+        self.isLoading = isLoading
         self.customIconView = nil
         self.onTap = onTap
     }
@@ -280,6 +288,7 @@ extension TreeRowView {
         trailingIcon: String? = nil,
         titleColor: Color? = nil,
         trailingTextColor: Color? = nil,
+        isLoading: Bool = false,
         customIconView: CustomIcon,
         onTap: @escaping () -> Void
     ) {
@@ -295,6 +304,7 @@ extension TreeRowView {
         self.trailingIcon = trailingIcon
         self.titleColor = titleColor
         self.trailingTextColor = trailingTextColor
+        self.isLoading = isLoading
         self.customIconView = customIconView
         self.onTap = onTap
     }

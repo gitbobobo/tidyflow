@@ -331,6 +331,11 @@ struct WorkspaceRowView: View {
         }
     }
 
+    /// 当前工作空间是否有活跃的后台任务
+    private var hasActiveTask: Bool {
+        appState.taskManager.activeTaskCount(for: globalWorkspaceKey) > 0
+    }
+
     var body: some View {
         Group {
             if terminalCount > 0 {
@@ -343,6 +348,7 @@ struct WorkspaceRowView: View {
                     depth: 1,
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
+                    isLoading: hasActiveTask,
                     customIconView: terminalCountBadge,
                     onTap: {
                         appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
@@ -358,17 +364,11 @@ struct WorkspaceRowView: View {
                     depth: 1,
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
+                    isLoading: hasActiveTask,
                     onTap: {
                         appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
                     }
                 )
-            }
-        }
-        .overlay(alignment: .trailing) {
-            if appState.taskManager.activeTaskCount(for: globalWorkspaceKey) > 0 {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(.trailing, 8)
             }
         }
         .tag(workspace.name)
