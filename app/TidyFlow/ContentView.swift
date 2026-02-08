@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var paletteState: CommandPaletteState
     // 使用 @StateObject 确保 WebBridge 只创建一次，不随视图更新而重建
     @StateObject private var webBridge = WebBridge()
 
@@ -73,9 +74,10 @@ struct ContentView: View {
             }
 
             // Command Palette Overlay
-            if appState.commandPalettePresented {
+            if paletteState.isPresented {
                 CommandPaletteView()
                     .environmentObject(appState)
+                    .environmentObject(paletteState)
                     .zIndex(100)
             }
 

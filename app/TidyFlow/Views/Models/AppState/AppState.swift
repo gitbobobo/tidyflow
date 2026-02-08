@@ -11,11 +11,26 @@ class AppState: ObservableObject {
     @Published var workspaceTabs: [String: TabSet] = [:]
     @Published var activeTabIdByWorkspace: [String: UUID] = [:]
 
-    // Command Palette State
-    @Published var commandPalettePresented: Bool = false
-    @Published var commandPaletteMode: PaletteMode = .command
-    @Published var commandQuery: String = ""
-    @Published var paletteSelectionIndex: Int = 0
+    // 命令面板状态（独立 ObservableObject，避免输入高频更新触发全局视图刷新）
+    let paletteState = CommandPaletteState()
+
+    // 向后兼容：保留原属性访问路径，代理到 paletteState
+    var commandPalettePresented: Bool {
+        get { paletteState.isPresented }
+        set { paletteState.isPresented = newValue }
+    }
+    var commandPaletteMode: PaletteMode {
+        get { paletteState.mode }
+        set { paletteState.mode = newValue }
+    }
+    var commandQuery: String {
+        get { paletteState.query }
+        set { paletteState.query = newValue }
+    }
+    var paletteSelectionIndex: Int {
+        get { paletteState.selectionIndex }
+        set { paletteState.selectionIndex = newValue }
+    }
 
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false

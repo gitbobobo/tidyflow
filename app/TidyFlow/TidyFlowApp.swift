@@ -113,6 +113,7 @@ struct TidyFlowApp: App {
                 .environmentObject(appState)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
+                .environmentObject(appState.paletteState)
                 .environmentObject(localizationManager)
                 .environment(\.locale, localizationManager.locale)
                 .onAppear {
@@ -141,6 +142,7 @@ struct TidyFlowApp: App {
                 .environmentObject(appState)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
+                .environmentObject(appState.paletteState)
                 .environmentObject(localizationManager)
                 .environment(\.locale, localizationManager.locale)
                 .frame(minWidth: 500, minHeight: 400)

@@ -3,12 +3,13 @@ import SwiftUI
 struct CommandPaletteView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var fileCache: FileCacheState
+    @EnvironmentObject var paletteState: CommandPaletteState
     @FocusState private var inputFocused: Bool
 
     // Derived data
     var filteredCommands: [Command] {
-        guard appState.commandPaletteMode == .command else { return [] }
-        let query = appState.commandQuery.lowercased()
+        guard paletteState.mode == .command else { return [] }
+        let query = paletteState.query.lowercased()
 
         return appState.commands.filter { cmd in
             // Filter by scope
@@ -29,7 +30,7 @@ struct CommandPaletteView: View {
     }
 
     var filteredFiles: [String] {
-        guard appState.commandPaletteMode == .file else { return [] }
+        guard paletteState.mode == .file else { return [] }
         guard let ws = appState.selectedWorkspaceKey else { return [] }
 
         // 直接从 fileCache 读取，确保文件索引变化时触发重绘
@@ -41,13 +42,13 @@ struct CommandPaletteView: View {
             files = []
         }
 
-        let query = appState.commandQuery.lowercased()
+        let query = paletteState.query.lowercased()
         if query.isEmpty { return files }
         return files.filter { $0.lowercased().contains(query) }
     }
 
     var fileListState: FileListState {
-        guard appState.commandPaletteMode == .file else { return .ready }
+        guard paletteState.mode == .file else { return .ready }
         guard appState.selectedWorkspaceKey != nil else { return .noWorkspace }
 
         if appState.connectionState == .disconnected {
@@ -73,14 +74,14 @@ struct CommandPaletteView: View {
         case noWorkspace
         case error(String)
     }
-    
+
     var resultCount: Int {
-        switch appState.commandPaletteMode {
+        switch paletteState.mode {
         case .command: return filteredCommands.count
         case .file: return filteredFiles.count
         }
     }
-    
+
     var body: some View {
         ZStack(alignment: .top) {
             // Dimmed background
@@ -89,41 +90,31 @@ struct CommandPaletteView: View {
                 .onTapGesture {
                     close()
                 }
-            
+
             // Palette Window
             VStack(spacing: 0) {
                 // Input Area
                 HStack {
-                    Image(systemName: appState.commandPaletteMode == .command ? "command" : "doc")
+                    Image(systemName: paletteState.mode == .command ? "command" : "doc")
                         .foregroundColor(.secondary)
-                    
-                    TextField(placeholderText, text: $appState.commandQuery)
+
+                    TextField(placeholderText, text: $paletteState.query)
                         .textFieldStyle(.plain)
                         .font(.title3)
                         .focused($inputFocused)
                         .onSubmit {
                             executeSelection()
                         }
-                        // Keyboard navigation handling via hidden shortcuts or onChange
-                        // Note: List selection via keyboard in SwiftUI is tricky without List focus.
-                        // We will use a custom approach: intercept keys if possible, or just rely on global shortcuts for Up/Down if focused.
-                        // However, TextField consumes keys.
-                        // Solution: Use .onKeyPress (macOS 14+) or just simple "Up/Down" buttons in UI for mouse, 
-                        // and try to capture arrows. 
-                        // Since we can't easily capture arrows in TextField without wrapping NSView, 
-                        // we will use a simpler approach: 
-                        // The user types, results update. User uses mouse to click.
-                        // OR: We add global keyboard shortcuts for Up/Down that are active only when palette is presented.
                 }
                 .padding()
                 .background(Color(nsColor: .windowBackgroundColor))
-                
+
                 Divider()
-                
+
                 // Results List
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        if appState.commandPaletteMode == .file {
+                        if paletteState.mode == .file {
                             fileResultsContent
                         } else if resultCount == 0 {
                             Text("No results found")
@@ -145,7 +136,7 @@ struct CommandPaletteView: View {
         .onAppear {
             inputFocused = true
             // Auto-fetch file index when opening Quick Open
-            if appState.commandPaletteMode == .file,
+            if paletteState.mode == .file,
                let ws = appState.selectedWorkspaceKey {
                 let cache = fileCache.fileIndexCache[ws]
                 if cache == nil || cache!.isExpired {
@@ -162,7 +153,7 @@ struct CommandPaletteView: View {
             Button("") {
                 let count = resultCount
                 if count > 0 {
-                    appState.paletteSelectionIndex = (appState.paletteSelectionIndex - 1 + count) % count
+                    paletteState.selectionIndex = (paletteState.selectionIndex - 1 + count) % count
                 }
             }
             .keyboardShortcut(.upArrow, modifiers: [])
@@ -172,29 +163,29 @@ struct CommandPaletteView: View {
             Button("") {
                 let count = resultCount
                 if count > 0 {
-                    appState.paletteSelectionIndex = (appState.paletteSelectionIndex + 1) % count
+                    paletteState.selectionIndex = (paletteState.selectionIndex + 1) % count
                 }
             }
             .keyboardShortcut(.downArrow, modifiers: [])
             .hidden()
         )
     }
-    
+
     var placeholderText: String {
-        switch appState.commandPaletteMode {
+        switch paletteState.mode {
         case .command: return "Type a command..."
         case .file: return "Search files by name..."
         }
     }
-    
+
     var resultsList: some View {
         ForEach(0..<resultCount, id: \.self) { index in
             Button {
-                appState.paletteSelectionIndex = index
+                paletteState.selectionIndex = index
                 executeSelection()
             } label: {
                 HStack {
-                    if appState.commandPaletteMode == .command {
+                    if paletteState.mode == .command {
                         renderCommandRow(index: index)
                     } else {
                         renderFileRow(index: index)
@@ -202,13 +193,13 @@ struct CommandPaletteView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-                .background(index == appState.paletteSelectionIndex ? Color.accentColor.opacity(0.2) : Color.clear)
+                .background(index == paletteState.selectionIndex ? Color.accentColor.opacity(0.2) : Color.clear)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
     }
-    
+
     func renderCommandRow(index: Int) -> some View {
         let cmd = filteredCommands[index]
         return HStack {
@@ -231,7 +222,7 @@ struct CommandPaletteView: View {
             }
         }
     }
-    
+
     func renderFileRow(index: Int) -> some View {
         let file = filteredFiles[index]
         return HStack {
@@ -302,25 +293,25 @@ struct CommandPaletteView: View {
     }
 
     func close() {
-        appState.commandPalettePresented = false
+        paletteState.isPresented = false
     }
-    
+
     func executeSelection() {
-        if appState.commandPaletteMode == .command {
-            guard indexIsValid(appState.paletteSelectionIndex, count: filteredCommands.count) else { return }
-            let cmd = filteredCommands[appState.paletteSelectionIndex]
+        if paletteState.mode == .command {
+            guard indexIsValid(paletteState.selectionIndex, count: filteredCommands.count) else { return }
+            let cmd = filteredCommands[paletteState.selectionIndex]
             cmd.action(appState)
             close()
         } else {
-            guard indexIsValid(appState.paletteSelectionIndex, count: filteredFiles.count) else { return }
-            let file = filteredFiles[appState.paletteSelectionIndex]
+            guard indexIsValid(paletteState.selectionIndex, count: filteredFiles.count) else { return }
+            let file = filteredFiles[paletteState.selectionIndex]
             if let ws = appState.selectedWorkspaceKey {
                 appState.addEditorTab(workspaceKey: ws, path: file)
             }
             close()
         }
     }
-    
+
     func indexIsValid(_ index: Int, count: Int) -> Bool {
         return index >= 0 && index < count
     }
