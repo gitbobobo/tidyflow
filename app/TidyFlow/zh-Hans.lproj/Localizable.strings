@@ -57,11 +57,10 @@
 /* AI Agent 设置 */
 "settings.aiAgent" = "AI Agent";
 "settings.aiAgent.title" = "AI Agent 配置";
-"settings.aiAgent.footer" = "选择用于 Git 操作（AI 合并、AI 提交等）的 AI 代理工具";
-"settings.aiAgent.detecting" = "检测中...";
-"settings.aiAgent.notInstalled" = "未安装";
-"settings.aiAgent.installed" = "已安装";
-"settings.aiAgent.redetect" = "重新检测";
+"settings.aiAgent.footer" = "分别选择用于提交和合并操作的 AI 代理工具";
+"settings.aiAgent.commitAgent" = "提交代理";
+"settings.aiAgent.mergeAgent" = "合并代理";
+"settings.aiAgent.notConfiguredOption" = "未配置";
 "settings.aiAgent.notConfigured" = "未配置 AI Agent";
 "settings.aiAgent.notConfigured.message" = "请先在设置中选择一个 AI Agent";
 

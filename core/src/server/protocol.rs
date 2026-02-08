@@ -258,6 +258,13 @@ pub enum ClientMessage {
         custom_commands: Vec<CustomCommandInfo>,
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
+        /// 用于提交操作的 AI Agent
+        #[serde(default)]
+        commit_ai_agent: Option<String>,
+        /// 用于合并操作的 AI Agent
+        #[serde(default)]
+        merge_ai_agent: Option<String>,
+        /// 旧字段，兼容旧客户端
         #[serde(default)]
         selected_ai_agent: Option<String>,
     },
@@ -629,7 +636,9 @@ pub enum ServerMessage {
         custom_commands: Vec<CustomCommandInfo>,
         workspace_shortcuts: std::collections::HashMap<String, String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        selected_ai_agent: Option<String>,
+        commit_ai_agent: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        merge_ai_agent: Option<String>,
     },
     ClientSettingsSaved {
         ok: bool,

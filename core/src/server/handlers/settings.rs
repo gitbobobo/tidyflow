@@ -34,9 +34,13 @@ pub async fn handle_settings_message(
                         .client_settings
                         .workspace_shortcuts
                         .clone(),
-                    selected_ai_agent: state
+                    commit_ai_agent: state
                         .client_settings
-                        .selected_ai_agent
+                        .commit_ai_agent
+                        .clone(),
+                    merge_ai_agent: state
+                        .client_settings
+                        .merge_ai_agent
                         .clone(),
                 },
             )
@@ -48,6 +52,8 @@ pub async fn handle_settings_message(
         ClientMessage::SaveClientSettings {
             custom_commands,
             workspace_shortcuts,
+            commit_ai_agent,
+            merge_ai_agent,
             selected_ai_agent,
         } => {
             info!("SaveClientSettings request");
@@ -63,7 +69,14 @@ pub async fn handle_settings_message(
                     })
                     .collect();
                 state.client_settings.workspace_shortcuts = workspace_shortcuts.clone();
-                state.client_settings.selected_ai_agent = selected_ai_agent.clone();
+                // 优先使用新字段；若新字段为空则回退兼容旧客户端的 selected_ai_agent
+                if commit_ai_agent.is_some() || merge_ai_agent.is_some() {
+                    state.client_settings.commit_ai_agent = commit_ai_agent.clone();
+                    state.client_settings.merge_ai_agent = merge_ai_agent.clone();
+                } else if let Some(old) = selected_ai_agent {
+                    state.client_settings.commit_ai_agent = Some(old.clone());
+                    state.client_settings.merge_ai_agent = Some(old.clone());
+                }
             }
 
             // 触发防抖保存，不等待磁盘写入完成

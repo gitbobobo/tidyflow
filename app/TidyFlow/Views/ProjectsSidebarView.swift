@@ -429,7 +429,7 @@ struct WorkspaceRowView: View {
                 } label: {
                     Label("git.aiCommit".localized, systemImage: "sparkles")
                 }
-                .disabled(appState.clientSettings.selectedAIAgent == nil)
+                .disabled(appState.clientSettings.commitAIAgent == nil)
 
                 if !workspace.isDefault {
                     Button {
@@ -437,7 +437,7 @@ struct WorkspaceRowView: View {
                     } label: {
                         Label("sidebar.aiMerge".localized, systemImage: "cpu")
                     }
-                    .disabled(appState.clientSettings.selectedAIAgent == nil)
+                    .disabled(appState.clientSettings.mergeAIAgent == nil)
                 }
 
                 // ── 危险操作 ──
@@ -470,7 +470,7 @@ struct WorkspaceRowView: View {
 
     /// 触发 AI 合并（后台任务）
     private func triggerAIMerge() {
-        guard appState.clientSettings.selectedAIAgent != nil else {
+        guard appState.clientSettings.mergeAIAgent != nil else {
             showNoAgentAlert = true
             return
         }
@@ -485,7 +485,7 @@ struct WorkspaceRowView: View {
 
     /// 触发 AI 智能提交（后台任务）
     private func triggerAICommit() {
-        guard appState.clientSettings.selectedAIAgent != nil else {
+        guard appState.clientSettings.commitAIAgent != nil else {
             showNoAgentAlert = true
             return
         }

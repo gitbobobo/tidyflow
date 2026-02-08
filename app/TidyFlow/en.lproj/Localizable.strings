@@ -57,11 +57,10 @@
 /* AI Agent Settings */
 "settings.aiAgent" = "AI Agent";
 "settings.aiAgent.title" = "AI Agent Configuration";
-"settings.aiAgent.footer" = "Select the AI agent for Git operations (AI Merge, AI Commit, etc.)";
-"settings.aiAgent.detecting" = "Detecting...";
-"settings.aiAgent.notInstalled" = "Not Installed";
-"settings.aiAgent.installed" = "Installed";
-"settings.aiAgent.redetect" = "Re-detect";
+"settings.aiAgent.footer" = "Select the AI agents for commit and merge operations separately";
+"settings.aiAgent.commitAgent" = "Commit Agent";
+"settings.aiAgent.mergeAgent" = "Merge Agent";
+"settings.aiAgent.notConfiguredOption" = "Not Configured";
 "settings.aiAgent.notConfigured" = "AI Agent Not Configured";
 "settings.aiAgent.notConfigured.message" = "Please select an AI Agent in Settings first";
 

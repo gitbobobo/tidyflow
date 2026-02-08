@@ -550,8 +550,11 @@ class WSClient: NSObject, ObservableObject {
             "custom_commands": commandsData,
             "workspace_shortcuts": settings.workspaceShortcuts
         ]
-        if let agent = settings.selectedAIAgent {
-            payload["selected_ai_agent"] = agent
+        if let agent = settings.commitAIAgent {
+            payload["commit_ai_agent"] = agent
+        }
+        if let agent = settings.mergeAIAgent {
+            payload["merge_ai_agent"] = agent
         }
         send(payload)
     }
@@ -816,8 +819,9 @@ class WSClient: NSObject, ObservableObject {
             // 解析工作空间快捷键映射
             let workspaceShortcuts = json["workspace_shortcuts"] as? [String: String] ?? [:]
             // 解析选择的 AI Agent
-            let selectedAIAgent = json["selected_ai_agent"] as? String
-            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts, selectedAIAgent: selectedAIAgent)
+            let commitAIAgent = json["commit_ai_agent"] as? String
+            let mergeAIAgent = json["merge_ai_agent"] as? String
+            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts, commitAIAgent: commitAIAgent, mergeAIAgent: mergeAIAgent)
             onClientSettingsResult?(settings)
 
         case "client_settings_saved":

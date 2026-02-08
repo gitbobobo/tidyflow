@@ -38,9 +38,30 @@ pub struct ClientSettings {
     /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
     #[serde(default)]
     pub workspace_shortcuts: HashMap<String, String>,
-    /// 用户选择的 AI Agent（如 "claude"、"codex"、"gemini" 等）
+    /// 用于提交操作的 AI Agent
     #[serde(default)]
+    pub commit_ai_agent: Option<String>,
+    /// 用于合并操作的 AI Agent
+    #[serde(default)]
+    pub merge_ai_agent: Option<String>,
+    /// 旧字段，仅用于反序列化迁移
+    #[serde(default, skip_serializing)]
     pub selected_ai_agent: Option<String>,
+}
+
+impl ClientSettings {
+    /// 迁移旧字段：若 selected_ai_agent 有值且新字段为空，则复制到两个新字段
+    pub fn migrate(&mut self) {
+        if let Some(ref old) = self.selected_ai_agent {
+            if self.commit_ai_agent.is_none() {
+                self.commit_ai_agent = Some(old.clone());
+            }
+            if self.merge_ai_agent.is_none() {
+                self.merge_ai_agent = Some(old.clone());
+            }
+        }
+        self.selected_ai_agent = None;
+    }
 }
 
 /// Application state - persisted to JSON
@@ -124,7 +145,10 @@ impl AppState {
         let content =
             fs::read_to_string(&path).map_err(|e| StateError::ReadError(e.to_string()))?;
 
-        serde_json::from_str(&content).map_err(|e| StateError::ParseError(e.to_string()))
+        let mut state: Self =
+            serde_json::from_str(&content).map_err(|e| StateError::ParseError(e.to_string()))?;
+        state.client_settings.migrate();
+        Ok(state)
     }
 
     /// Save state to disk

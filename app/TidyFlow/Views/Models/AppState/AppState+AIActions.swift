@@ -8,8 +8,8 @@ extension AppState {
         projectName: String,
         workspaceName: String
     ) async -> AIMergeResult {
-        // 1. 获取 AI Agent
-        guard let agentName = clientSettings.selectedAIAgent,
+        // 1. 获取 AI Agent（合并使用 mergeAIAgent）
+        guard let agentName = clientSettings.mergeAIAgent,
               let agent = AIAgent(rawValue: agentName) else {
             return AIMergeResult(
                 resultStatus: .failed,
@@ -56,8 +56,8 @@ extension AppState {
 
     /// 执行 AI 智能提交
     func executeAICommit(workspaceKey: String, workspacePath: String, projectPath: String? = nil) async -> AICommitResult {
-        // 1. 获取 AI Agent
-        guard let agentName = clientSettings.selectedAIAgent,
+        // 1. 获取 AI Agent（提交使用 commitAIAgent）
+        guard let agentName = clientSettings.commitAIAgent,
               let agent = AIAgent(rawValue: agentName) else {
             return AICommitResult(
                 resultStatus: .failed,

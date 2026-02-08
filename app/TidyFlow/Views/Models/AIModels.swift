@@ -52,28 +52,6 @@ enum AIAgent: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 用于检测 --help 输出中是否支持非交互模式的关键字
-    var helpCheckKeyword: String {
-        switch self {
-        case .claude: return "--print"
-        case .codex: return "exec"
-        case .gemini: return "--prompt"
-        case .opencode: return "run"
-        case .cursor: return "--print"
-        }
-    }
-
-    /// CLI 可执行文件名
-    var executableName: String {
-        switch self {
-        case .claude: return "claude"
-        case .codex: return "codex"
-        case .gemini: return "gemini"
-        case .opencode: return "opencode"
-        case .cursor: return "cursor-agent"
-        }
-    }
-
     /// 从代理原始输出中提取 AI 回复文本（第一层解析）
     func extractResponse(from output: String) -> String? {
         switch self {
@@ -177,98 +155,6 @@ private func buildExtendedPATH() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = fullPath
     return env
-}
-
-/// AI Agent 检测器
-class AIAgentDetector {
-    /// 检测单个 AI Agent 是否可用
-    static func detect(_ agent: AIAgent) async -> Bool {
-        let env = buildExtendedPATH()
-        // 1. 检查是否安装（which）
-        let whichResult = await runProcess(
-            executable: "/usr/bin/which",
-            arguments: [agent.executableName],
-            environment: env
-        )
-        guard whichResult.exitCode == 0 else { return false }
-
-        // 2. 检查 --help 输出是否包含非交互模式关键字
-        let helpResult = await runProcess(
-            executable: "/usr/bin/env",
-            arguments: [agent.executableName, "--help"],
-            environment: env
-        )
-        let output = helpResult.stdout + helpResult.stderr
-        return output.contains(agent.helpCheckKeyword)
-    }
-
-    /// 批量检测所有 AI Agent
-    static func detectAll() async -> [AIAgent: Bool] {
-        var results: [AIAgent: Bool] = [:]
-        await withTaskGroup(of: (AIAgent, Bool).self) { group in
-            for agent in AIAgent.allCases {
-                group.addTask {
-                    let available = await detect(agent)
-                    return (agent, available)
-                }
-            }
-            for await (agent, available) in group {
-                results[agent] = available
-            }
-        }
-        return results
-    }
-
-    /// 运行进程并捕获输出
-    private static func runProcess(
-        executable: String,
-        arguments: [String],
-        workingDirectory: String? = nil,
-        environment: [String: String]? = nil,
-        timeout: TimeInterval = 10
-    ) async -> (stdout: String, stderr: String, exitCode: Int32) {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-            if let dir = workingDirectory {
-                process.currentDirectoryURL = URL(fileURLWithPath: dir)
-            }
-            if let env = environment {
-                process.environment = env
-            }
-
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: ("", error.localizedDescription, -1))
-                return
-            }
-
-            // 超时处理
-            let timer = DispatchSource.makeTimerSource()
-            timer.schedule(deadline: .now() + timeout)
-            timer.setEventHandler {
-                if process.isRunning { process.terminate() }
-            }
-            timer.resume()
-
-            process.waitUntilExit()
-            timer.cancel()
-
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-            continuation.resume(returning: (stdout, stderr, process.terminationStatus))
-        }
-    }
 }
 
 /// 通用 AI 代理输出解析器（两层架构）

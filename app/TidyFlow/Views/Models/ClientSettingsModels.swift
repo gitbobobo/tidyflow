@@ -23,26 +23,48 @@ struct ClientSettings: Codable {
     var customCommands: [CustomCommand]
     /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
     var workspaceShortcuts: [String: String]
-    /// 用户选择的 AI Agent（如 "claude"、"codex"、"gemini" 等）
-    var selectedAIAgent: String?
+    /// 用于提交操作的 AI Agent
+    var commitAIAgent: String?
+    /// 用于合并操作的 AI Agent
+    var mergeAIAgent: String?
 
     enum CodingKeys: String, CodingKey {
         case customCommands
         case workspaceShortcuts
-        case selectedAIAgent
+        case commitAIAgent = "commit_ai_agent"
+        case mergeAIAgent = "merge_ai_agent"
+        // 旧字段，仅用于解码迁移
+        case selectedAIAgent = "selected_ai_agent"
     }
 
-    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:], selectedAIAgent: String? = nil) {
+    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:], commitAIAgent: String? = nil, mergeAIAgent: String? = nil) {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
-        self.selectedAIAgent = selectedAIAgent
+        self.commitAIAgent = commitAIAgent
+        self.mergeAIAgent = mergeAIAgent
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         customCommands = try container.decodeIfPresent([CustomCommand].self, forKey: .customCommands) ?? []
         workspaceShortcuts = try container.decodeIfPresent([String: String].self, forKey: .workspaceShortcuts) ?? [:]
-        selectedAIAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
+        commitAIAgent = try container.decodeIfPresent(String.self, forKey: .commitAIAgent)
+        mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
+        // 兼容旧字段迁移
+        let oldAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
+        if let old = oldAgent {
+            if commitAIAgent == nil { commitAIAgent = old }
+            if mergeAIAgent == nil { mergeAIAgent = old }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(customCommands, forKey: .customCommands)
+        try container.encode(workspaceShortcuts, forKey: .workspaceShortcuts)
+        try container.encodeIfPresent(commitAIAgent, forKey: .commitAIAgent)
+        try container.encodeIfPresent(mergeAIAgent, forKey: .mergeAIAgent)
+        // 不编码旧字段 selectedAIAgent
     }
 }
 
