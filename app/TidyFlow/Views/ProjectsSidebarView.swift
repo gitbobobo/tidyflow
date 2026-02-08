@@ -10,6 +10,8 @@ struct ProjectsSidebarView: View {
 
     /// 缓存排序后的项目索引，避免每次 body 重算都执行 O(n log n) 排序
     @State private var cachedSortedIndices: [Int] = []
+    /// 排序防抖定时器
+    @State private var sortDebounceTask: DispatchWorkItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,17 +35,17 @@ struct ProjectsSidebarView: View {
         .onAppear {
             cachedSortedIndices = computeSortedIndices()
         }
-        // 项目列表变化（增删、名称修改等）时重新排序
-        .onChange(of: appState.projects.map { $0.id }) { _ in
-            cachedSortedIndices = computeSortedIndices()
+        // 项目列表变化（增删、名称修改等）时重新排序（防抖 100ms）
+        .onChange(of: appState.projects.map { $0.id }) {
+            debouncedSort()
         }
         // 快捷键分配或终端打开时间变化时重新排序
-        .onChange(of: appState.workspaceTerminalOpenTime) { _ in
-            cachedSortedIndices = computeSortedIndices()
+        .onChange(of: appState.workspaceTerminalOpenTime) {
+            debouncedSort()
         }
         // 工作空间删除状态变化时重新排序
-        .onChange(of: appState.deletingWorkspaces) { _ in
-            cachedSortedIndices = computeSortedIndices()
+        .onChange(of: appState.deletingWorkspaces) {
+            debouncedSort()
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -154,6 +156,16 @@ struct ProjectsSidebarView: View {
             // 3. 默认按项目名称字母序，确保启动时排序稳定
             return projectA.name.localizedCaseInsensitiveCompare(projectB.name) == .orderedAscending
         }
+    }
+
+    /// 防抖排序：100ms 内多次触发只执行最后一次
+    private func debouncedSort() {
+        sortDebounceTask?.cancel()
+        let task = DispatchWorkItem { [self] in
+            cachedSortedIndices = computeSortedIndices()
+        }
+        sortDebounceTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
     }
 
     /// 将项目和工作空间扁平化为单一列表（使用缓存的排序索引）

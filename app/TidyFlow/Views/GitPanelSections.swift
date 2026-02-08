@@ -77,10 +77,18 @@ struct GitStagedChangesSection: View {
     @EnvironmentObject var gitCache: GitCacheState
     @State private var isExpanded: Bool = true
 
+    /// 缓存过滤结果，避免 stagedCount 和 stagedItems 分别过滤一次
+    private var cachedStagedItems: [GitStatusItem] {
+        guard let ws = appState.selectedWorkspaceKey,
+              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return [] }
+        return cache.items.filter { $0.staged == true }
+    }
+
     var body: some View {
+        let staged = cachedStagedItems
         CollapsibleSection(
             title: "git.stagedChanges".localized,
-            count: stagedCount,
+            count: staged.count,
             isExpanded: $isExpanded,
             headerActions: {
                 AnyView(
@@ -97,24 +105,12 @@ struct GitStagedChangesSection: View {
             }
         ) {
             VStack(spacing: 0) {
-                ForEach(stagedItems) { item in
+                ForEach(staged) { item in
                     GitStatusRow(item: item, isStaged: true)
                         .environmentObject(appState)
                 }
             }
         }
-    }
-
-    private var stagedCount: Int {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return 0 }
-        return cache.items.filter { $0.staged == true }.count
-    }
-
-    private var stagedItems: [GitStatusItem] {
-        guard let ws = appState.selectedWorkspaceKey,
-              let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return [] }
-        return cache.items.filter { $0.staged == true }
     }
 
     private func unstageAll() {
