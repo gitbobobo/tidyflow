@@ -156,40 +156,45 @@
         const { tab_id, session_id } = payload;
         console.log("[NativeBridge] terminal_attach:", tab_id, session_id);
 
-        if (!TF.terminalSessions.has(session_id)) {
-          postToNative("terminal_error", { tab_id: tab_id, message: "Session not found, respawn needed" });
+        // JS 层已有该 session（WS 未断场景），走本地附着
+        if (TF.terminalSessions.has(session_id)) {
+          TF.activeSessionId = session_id;
+          TF.nativeTerminalReady = true;
+
+          for (const [, tabSet] of TF.workspaceTabs) {
+            if (tabSet.tabs.has(session_id)) {
+              const tab = tabSet.tabs.get(session_id);
+              if (tab.term) {
+                tab.term.focus();
+                if (tab.fitAddon) {
+                  tab.fitAddon.fit();
+                  TF.sendResize(session_id, tab.term.cols, tab.term.rows);
+                }
+              }
+              TF.switchToTab(session_id);
+              break;
+            }
+          }
+
+          const session = TF.terminalSessions.get(session_id);
+          postToNative("terminal_ready", {
+            tab_id: tab_id,
+            session_id: session_id,
+            project: session ? session.project : "",
+            workspace: session ? session.workspace : "",
+          });
+          break;
+        }
+
+        // JS 层没有该 session（WS 重连场景），向服务端请求附着
+        if (!TF.transport || !TF.transport.isConnected) {
+          postToNative("terminal_error", { tab_id: tab_id, message: "Not connected to core" });
           return;
         }
 
-        TF.activeSessionId = session_id;
-        TF.nativeTerminalReady = true;
-
-        for (const [, tabSet] of TF.workspaceTabs) {
-          if (tabSet.tabs.has(session_id)) {
-            const tab = tabSet.tabs.get(session_id);
-            if (tab.term) {
-              // 不再 clear + 重放 session.buffer：
-              // 1. xterm 本身有 scrollback 缓冲，内容已保留
-              // 2. session.buffer 用 TextDecoder 解码，会把二进制转义序列变成乱码文本
-              // 3. 重放乱码文本会导致切换 Tab 后屏幕出现 "rgb:..." 等可见字符
-              tab.term.focus();
-              if (tab.fitAddon) {
-                tab.fitAddon.fit();
-                TF.sendResize(session_id, tab.term.cols, tab.term.rows);
-              }
-            }
-            TF.switchToTab(session_id);
-            break;
-          }
-        }
-
-        const session = TF.terminalSessions.get(session_id);
-        postToNative("terminal_ready", {
-          tab_id: tab_id,
-          session_id: session_id,
-          project: session ? session.project : "",
-          workspace: session ? session.workspace : "",
-        });
+        console.log("[NativeBridge] Session not in JS, requesting server attach:", session_id);
+        TF.pendingTerminalAttach = { tabId: tab_id, termId: session_id };
+        TF.sendControlMessage({ type: "term_attach", term_id: session_id });
         break;
       }
 

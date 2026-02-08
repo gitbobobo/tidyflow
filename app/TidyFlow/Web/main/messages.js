@@ -187,6 +187,60 @@
           TF.notifySwift("term_list", { items: msg.items });
           break;
 
+        case "term_attached": {
+          // WS 重连后服务端返回的附着响应，包含 scrollback 回放数据
+          const termId = msg.term_id;
+          const pending = TF.pendingTerminalAttach;
+          const tabId = pending && pending.termId === termId ? pending.tabId : termId;
+          TF.pendingTerminalAttach = null;
+
+          console.log("[Messages] term_attached:", termId, "project:", msg.project, "workspace:", msg.workspace);
+
+          // 创建 xterm.js 实例
+          const tabInfo = TF.createTerminalTab(
+            termId,
+            msg.cwd,
+            msg.project,
+            msg.workspace,
+          );
+          TF.switchToTab(termId);
+
+          if (tabInfo.term) {
+            // 写入 scrollback 数据回放
+            if (msg.scrollback && msg.scrollback.length > 0) {
+              tabInfo.term.write(msg.scrollback);
+            }
+
+            tabInfo.fitAddon.fit();
+            TF.sendResize(termId, tabInfo.term.cols, tabInfo.term.rows);
+            tabInfo.term.focus();
+          }
+
+          TF.terminalSessions.set(termId, {
+            buffer: [],
+            tabId: tabId,
+            project: msg.project,
+            workspace: msg.workspace,
+          });
+          TF.activeSessionId = termId;
+          TF.nativeTerminalReady = true;
+
+          TF.postToNative("terminal_ready", {
+            tab_id: tabId,
+            session_id: termId,
+            project: msg.project,
+            workspace: msg.workspace,
+          });
+
+          TF.notifySwift("term_attached", {
+            term_id: termId,
+            project: msg.project,
+            workspace: msg.workspace,
+            cwd: msg.cwd,
+          });
+          break;
+        }
+
         case "term_closed":
           for (const [wsKey, tabSet] of TF.workspaceTabs) {
             if (tabSet.tabs.has(msg.term_id)) {
