@@ -507,4 +507,14 @@ extension WSClient {
             "command_id": commandId
         ])
     }
+
+    /// 取消正在运行的项目命令
+    func requestCancelProjectCommand(project: String, workspace: String, commandId: String) {
+        send([
+            "type": "cancel_project_command",
+            "project": project,
+            "workspace": workspace,
+            "command_id": commandId
+        ])
+    }
 }

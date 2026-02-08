@@ -19,6 +19,7 @@ use std::os::unix::process::parent_id;
 use crate::server::handlers::file;
 use crate::server::handlers::git;
 use crate::server::handlers::project;
+use crate::server::handlers::project::SharedRunningCommands;
 use crate::server::handlers::settings;
 use crate::server::handlers::terminal;
 use crate::server::protocol::{
@@ -187,6 +188,9 @@ async fn handle_socket(
     // Create file watcher
     let watcher = Arc::new(Mutex::new(WorkspaceWatcher::new(tx_watch)));
 
+    // 正在运行的项目命令注册表
+    let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
+
     // 不再自动创建默认终端，前端重连时通过 TermAttach 附着已有终端
 
     // Send Hello message with v1 capabilities（session_id/shell 发空，前端需兼容）
@@ -244,6 +248,7 @@ async fn handle_socket(
                             &scrollback_tx,
                             &subscribed_terms,
                             &agg_tx,
+                            &running_commands,
                         ).await {
                             warn!("Error handling client message: {}", e);
                             if let Err(send_err) = send_message(&mut socket, &ServerMessage::Error {
@@ -506,6 +511,7 @@ async fn handle_client_message(
     scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    running_commands: &SharedRunningCommands,
 ) -> Result<(), String> {
     trace!(
         "handle_client_message called with data length: {}",
@@ -555,6 +561,7 @@ async fn handle_client_message(
         subscribed_terms,
         agg_tx,
         save_tx,
+        running_commands,
     )
     .await?
     {
@@ -694,7 +701,8 @@ async fn handle_client_message(
         | ClientMessage::RemoveProject { .. }
         | ClientMessage::RemoveWorkspace { .. }
         | ClientMessage::SaveProjectCommands { .. }
-        | ClientMessage::RunProjectCommand { .. } => {
+        | ClientMessage::RunProjectCommand { .. }
+        | ClientMessage::CancelProjectCommand { .. } => {
             unreachable!("Project messages should be handled by project handler");
         }
 

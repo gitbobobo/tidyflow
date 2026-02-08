@@ -334,6 +334,11 @@ pub enum ClientMessage {
         workspace: String,
         command_id: String,
     },
+    CancelProjectCommand {
+        project: String,
+        workspace: String,
+        command_id: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -760,6 +765,12 @@ pub enum ServerMessage {
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+    },
+    ProjectCommandCancelled {
+        project: String,
+        workspace: String,
+        command_id: String,
+        task_id: String,
     },
 }
 

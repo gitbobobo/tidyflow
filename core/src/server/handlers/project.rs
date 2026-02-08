@@ -14,6 +14,9 @@ use crate::workspace::project::ProjectManager;
 use crate::workspace::state::WorkspaceStatus;
 use crate::workspace::workspace::WorkspaceManager;
 
+/// 正在运行的项目命令注册表（task_id → Child 进程句柄）
+pub type SharedRunningCommands = Arc<Mutex<HashMap<String, tokio::process::Child>>>;
+
 /// 处理项目和工作空间相关的客户端消息
 pub async fn handle_project_message(
     client_msg: &ClientMessage,
@@ -24,6 +27,7 @@ pub async fn handle_project_message(
     subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     save_tx: &tokio::sync::mpsc::Sender<()>,
+    running_commands: &SharedRunningCommands,
 ) -> Result<bool, String> {
     match client_msg {
         // v1: List projects
@@ -538,35 +542,109 @@ pub async fn handle_project_message(
                 },
             ).await?;
 
-            // 执行命令（异步等待完成）
-            let output = tokio::process::Command::new("sh")
+            // 启动子进程并注册到 running_commands
+            let mut child = match tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(&command_text)
                 .current_dir(&cwd)
-                .output()
-                .await;
-
-            let (ok, message) = match output {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    let combined = if stderr.is_empty() {
-                        stdout.to_string()
-                    } else if stdout.is_empty() {
-                        stderr.to_string()
-                    } else {
-                        format!("{}\n{}", stdout, stderr)
-                    };
-                    // 截断过长的输出
-                    let truncated = if combined.len() > 4096 {
-                        format!("{}...(truncated)", &combined[..4096])
-                    } else {
-                        combined
-                    };
-                    (out.status.success(), truncated)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(e) => {
+                    send_message(
+                        socket,
+                        &ServerMessage::ProjectCommandCompleted {
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            command_id: command_id.clone(),
+                            task_id,
+                            ok: false,
+                            message: Some(format!("执行失败: {}", e)),
+                        },
+                    ).await?;
+                    return Ok(true);
                 }
-                Err(e) => (false, format!("执行失败: {}", e)),
             };
+
+            // 先取出管道，再将 child 注册（wait() 不需要所有权转移）
+            let stdout_pipe = child.stdout.take();
+            let stderr_pipe = child.stderr.take();
+
+            // 注册子进程句柄供取消使用
+            running_commands.lock().await.insert(task_id.clone(), child);
+
+            // 并发读取 stdout/stderr
+            let stdout_handle = tokio::spawn(async move {
+                if let Some(mut pipe) = stdout_pipe {
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = Vec::new();
+                    let _ = pipe.read_to_end(&mut buf).await;
+                    String::from_utf8_lossy(&buf).to_string()
+                } else {
+                    String::new()
+                }
+            });
+            let stderr_handle = tokio::spawn(async move {
+                if let Some(mut pipe) = stderr_pipe {
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = Vec::new();
+                    let _ = pipe.read_to_end(&mut buf).await;
+                    String::from_utf8_lossy(&buf).to_string()
+                } else {
+                    String::new()
+                }
+            });
+
+            // 等待子进程退出
+            let wait_result = {
+                let mut cmds = running_commands.lock().await;
+                if let Some(child) = cmds.get_mut(&task_id) {
+                    Some(child.wait().await)
+                } else {
+                    None // 已被取消移除
+                }
+            };
+
+            // 清理注册表
+            running_commands.lock().await.remove(&task_id);
+
+            // 若被取消，不再发送 Completed（CancelProjectCommand 已发送 Cancelled）
+            let exit_status = match wait_result {
+                Some(Ok(status)) => status,
+                Some(Err(e)) => {
+                    send_message(
+                        socket,
+                        &ServerMessage::ProjectCommandCompleted {
+                            project: project.clone(),
+                            workspace: workspace.clone(),
+                            command_id: command_id.clone(),
+                            task_id,
+                            ok: false,
+                            message: Some(format!("执行失败: {}", e)),
+                        },
+                    ).await?;
+                    return Ok(true);
+                }
+                None => return Ok(true),
+            };
+
+            let stdout = stdout_handle.await.unwrap_or_default();
+            let stderr = stderr_handle.await.unwrap_or_default();
+            let combined = if stderr.is_empty() {
+                stdout
+            } else if stdout.is_empty() {
+                stderr
+            } else {
+                format!("{}\n{}", stdout, stderr)
+            };
+            let message = if combined.len() > 4096 {
+                format!("{}...(truncated)", &combined[..4096])
+            } else {
+                combined
+            };
+            let ok = exit_status.success();
 
             info!(
                 "ProjectCommand completed: project={}, command_id={}, ok={}",
@@ -584,6 +662,43 @@ pub async fn handle_project_message(
                     message: Some(message),
                 },
             ).await?;
+
+            Ok(true)
+        }
+
+        // 取消正在运行的项目命令
+        ClientMessage::CancelProjectCommand { project, workspace, command_id } => {
+            info!("CancelProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
+
+            // 遍历找到匹配的 task_id 并 kill 子进程
+            let mut cmds = running_commands.lock().await;
+            let mut cancelled_task_id = None;
+            for (task_id, child) in cmds.iter_mut() {
+                // kill 所有匹配的子进程（按 task_id 追踪）
+                if let Err(e) = child.kill().await {
+                    warn!("Failed to kill command process {}: {}", task_id, e);
+                } else {
+                    cancelled_task_id = Some(task_id.clone());
+                    break;
+                }
+            }
+
+            if let Some(task_id) = cancelled_task_id {
+                cmds.remove(&task_id);
+                drop(cmds);
+
+                info!("ProjectCommand cancelled: project={}, command_id={}, task_id={}", project, command_id, task_id);
+
+                send_message(
+                    socket,
+                    &ServerMessage::ProjectCommandCancelled {
+                        project: project.clone(),
+                        workspace: workspace.clone(),
+                        command_id: command_id.clone(),
+                        task_id,
+                    },
+                ).await?;
+            }
 
             Ok(true)
         }
