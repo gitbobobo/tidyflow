@@ -15,7 +15,13 @@ extension AppState {
         case .aiCommit(let ctx):
             key = "\(ctx.projectName):\(ctx.workspaceKey)"
         case .aiMerge(let ctx):
-            key = "\(ctx.projectName):\(ctx.workspaceName)"
+            // AI 合并虽然从功能分支入口触发，但实际修改落在默认工作空间
+            let defaultWorkspaceName = projects
+                .first(where: { $0.name == ctx.projectName })?
+                .workspaces
+                .first(where: { $0.isDefault })?
+                .name ?? "default"
+            key = "\(ctx.projectName):\(defaultWorkspaceName)"
         }
 
         let task = BackgroundTask(type: type, context: context, workspaceGlobalKey: key)
