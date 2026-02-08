@@ -41,7 +41,7 @@ struct GitDiffResult {
 }
 
 /// Cached diff for a specific file/mode combination
-struct DiffCache {
+struct DiffCache: Equatable {
     var text: String
     var parsedLines: [DiffLine]
     var isLoading: Bool
@@ -71,7 +71,7 @@ struct DiffCache {
 }
 
 /// Parsed diff line model
-struct DiffLine: Identifiable {
+struct DiffLine: Identifiable, Equatable {
     let id: Int  // Line index in the diff
     let kind: DiffLineKind
     let oldLineNumber: Int?
@@ -105,7 +105,7 @@ struct DiffLine: Identifiable {
     }
 }
 
-enum DiffLineKind: String {
+enum DiffLineKind: String, Equatable {
     case header   // diff --git, ---, +++
     case hunk     // @@ -x,y +a,b @@
     case context  // ' ' unchanged line
@@ -370,7 +370,7 @@ struct DiffParser {
 // MARK: - Phase C3-1: Git Status Protocol Models
 
 /// Single item in git status list
-struct GitStatusItem: Identifiable {
+struct GitStatusItem: Identifiable, Equatable {
     let id: String  // Use path as unique ID
     let path: String
     let status: String  // M, A, D, ??, R, C, etc.
@@ -480,7 +480,7 @@ struct GitStatusResult {
 }
 
 /// Cached git status for a workspace
-struct GitStatusCache {
+struct GitStatusCache: Equatable {
     var items: [GitStatusItem]
     var isLoading: Bool
     var error: String?
@@ -520,7 +520,7 @@ struct GitStatusCache {
 // MARK: - Git Log (Commit History) Protocol Models
 
 /// 单条提交记录
-struct GitLogEntry: Identifiable {
+struct GitLogEntry: Identifiable, Equatable {
     let id: String       // 使用 sha 作为 ID
     let sha: String      // 短 SHA (7字符)
     let message: String  // 提交消息（首行）
@@ -615,7 +615,7 @@ struct GitLogResult {
 }
 
 /// Git 日志缓存
-struct GitLogCache {
+struct GitLogCache: Equatable {
     var entries: [GitLogEntry]
     var isLoading: Bool
     var error: String?

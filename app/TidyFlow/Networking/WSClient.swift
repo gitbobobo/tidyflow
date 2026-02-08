@@ -80,16 +80,25 @@ class WSClient: NSObject, ObservableObject {
     /// 合并窗口定时器
     private var coalesceTimer: DispatchWorkItem?
 
+    /// 后台串行队列，用于 MessagePack 解码（避免阻塞主线程）
+    private let decodeQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.tidyflow.ws.decode"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
     override init() {
         super.init()
-        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: decodeQueue)
     }
 
     /// Initialize with a specific URL
     init(url: URL) {
         super.init()
         self.currentURL = url
-        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: decodeQueue)
     }
 
     /// Update the base URL and optionally reconnect

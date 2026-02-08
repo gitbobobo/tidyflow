@@ -13,10 +13,12 @@ extension WSClient {
                 self?.handleMessage(message)
                 self?.receiveMessage() // Continue listening
             case .failure(let error):
-                // Connection closed or error
-                if self?.isConnected == true {
-                    self?.onError?("Receive error: \(error.localizedDescription)")
-                    self?.updateConnectionState(false)
+                // Connection closed or error — 切回主线程更新状态
+                DispatchQueue.main.async {
+                    if self?.isConnected == true {
+                        self?.onError?("Receive error: \(error.localizedDescription)")
+                        self?.updateConnectionState(false)
+                    }
                 }
             }
         }
@@ -34,6 +36,7 @@ extension WSClient {
     }
 
     /// 解析并分发二进制 MessagePack 消息
+    /// 解码在后台队列执行，分发回调切回主线程
     private func parseAndDispatchBinary(_ data: Data) {
         do {
             let decoded = try msgpackDecoder.decode(AnyCodable.self, from: data)
@@ -41,7 +44,9 @@ extension WSClient {
                 TFLog.ws.error("MessagePack decoded value is not a dictionary")
                 return
             }
-            dispatchMessage(json)
+            DispatchQueue.main.async { [weak self] in
+                self?.dispatchMessage(json)
+            }
         } catch {
             TFLog.ws.error("MessagePack decode failed: \(error.localizedDescription, privacy: .public)")
         }
