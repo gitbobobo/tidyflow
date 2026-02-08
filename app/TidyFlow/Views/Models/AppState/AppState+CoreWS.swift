@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 extension AppState {
     // MARK: - GitCacheState 接线
@@ -57,6 +58,15 @@ extension AppState {
             TFLog.core.error("Core restart limit reached: \(message, privacy: .public)")
             self?.connectionState = .disconnected
         }
+
+        // 注册系统唤醒通知，用于探活 + 自动重连
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleSystemWake()
+        }
     }
 
     /// Start Core process if not already running
@@ -76,6 +86,10 @@ extension AppState {
 
     /// Stop Core process (called on app termination)
     func stopCore() {
+        if let observer = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            wakeObserver = nil
+        }
         coreProcessManager.stop()
     }
 
@@ -85,8 +99,17 @@ extension AppState {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
             if connected {
+                self?.reconnectAttempt = 0  // 重置自动重连计数
                 self?.wsClient.requestListProjects()
                 self?.wsClient.requestGetClientSettings()
+                // 重连后尝试附着已有终端会话
+                self?.requestTerminalReattach()
+            } else if !(self?.wsClient.isIntentionalDisconnect ?? true),
+                      self?.coreProcessManager.isRunning == true {
+                // 意外断连且 Core 仍在运行，触发自动重连
+                TFLog.core.warning("WebSocket 意外断连，触发自动重连")
+                self?.markAllTerminalSessionsStale()
+                self?.startAutoReconnect()
             }
         }
 
@@ -281,5 +304,68 @@ extension AppState {
             error: nil
         )
         fileIndexCache[result.workspace] = cache
+    }
+
+    // MARK: - 系统唤醒探活 + 自动重连
+
+    private static let maxReconnectAttempts = 5
+    private static let reconnectDelays: [TimeInterval] = [0.5, 1.0, 2.0, 4.0, 8.0]
+
+    private func handleSystemWake() {
+        TFLog.core.info("系统唤醒，延迟探活 WebSocket")
+        // 延迟 1s 等待系统网络栈恢复
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.probeAndReconnectIfNeeded()
+        }
+    }
+
+    private func probeAndReconnectIfNeeded() {
+        wsClient.sendPing(timeout: 2.0) { [weak self] alive in
+            DispatchQueue.main.async {
+                if alive {
+                    TFLog.core.info("WebSocket 探活成功，无需重连")
+                } else {
+                    TFLog.core.warning("WebSocket 探活失败，触发自动重连")
+                    self?.markAllTerminalSessionsStale()
+                    self?.startAutoReconnect()
+                }
+            }
+        }
+    }
+
+    private func startAutoReconnect() {
+        // 防止重复触发（唤醒探活 + 意外断连回调可能同时触发）
+        guard reconnectAttempt == 0 else {
+            TFLog.core.info("自动重连已在进行中，跳过")
+            return
+        }
+        attemptReconnect()
+    }
+
+    private func attemptReconnect() {
+        guard reconnectAttempt < Self.maxReconnectAttempts else {
+            TFLog.core.error("自动重连失败，已达最大重试次数 \(Self.maxReconnectAttempts)")
+            return
+        }
+
+        let delay = Self.reconnectDelays[min(reconnectAttempt, Self.reconnectDelays.count - 1)]
+        reconnectAttempt += 1
+        TFLog.core.info("自动重连第 \(self.reconnectAttempt) 次，延迟 \(delay)s")
+
+        // 重连 Swift WSClient (WS①)
+        wsClient.reconnect()
+        // 重连 JS WebSocket (WS②)
+        onReconnectJS?()
+
+        // 等待连接结果后判断是否需要继续重试
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay + 2.0) { [weak self] in
+            guard let self else { return }
+            if self.connectionState == .connected {
+                TFLog.core.info("自动重连成功")
+                self.reconnectAttempt = 0
+            } else {
+                self.attemptReconnect()
+            }
+        }
     }
 }

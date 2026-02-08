@@ -100,6 +100,13 @@ class AppState: ObservableObject {
     // Callback for editor file changed on disk (通知 JS 层文件在磁盘上发生变化)
     // Parameters: project, workspace, paths, isDirtyFlags, kind
     var onEditorFileChanged: ((String, String, [String], [Bool], String) -> Void)?
+    // Callback for JS WebSocket reconnect (通知 JS 层重连 WebSocket)
+    var onReconnectJS: (() -> Void)?
+
+    // 系统唤醒通知观察者
+    var wakeObserver: NSObjectProtocol?
+    // 自动重连状态
+    var reconnectAttempt = 0
 
     // WebSocket Client
     let wsClient = WSClient()

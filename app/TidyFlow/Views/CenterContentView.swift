@@ -130,6 +130,11 @@ struct CenterContentView: View {
         appState.onTerminalAttach = { [weak webBridge] tabId, sessionId in
             webBridge?.terminalAttach(tabId: tabId, sessionId: sessionId)
         }
+
+        // 设置 JS 层 WebSocket 重连回调（系统唤醒自动重连时使用）
+        appState.onReconnectJS = { [weak webBridge] in
+            webBridge?.reconnectJS()
+        }
         
         // 设置终端 spawn 回调，当创建新终端 Tab 时调用
         appState.onTerminalSpawn = { [weak webBridge, weak appState] tabId, project, workspace in

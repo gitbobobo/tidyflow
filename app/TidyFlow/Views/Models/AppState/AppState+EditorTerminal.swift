@@ -360,6 +360,23 @@ extension AppState {
         terminalState = .idle
     }
 
+    /// WS 重连后尝试附着已有终端会话
+    /// 遍历所有 stale terminal tabs，对有 terminalSessionId 的 tab 发起 attach
+    func requestTerminalReattach() {
+        guard !staleTerminalTabs.isEmpty else { return }
+
+        for (_, tabs) in workspaceTabs {
+            for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
+                if let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
+                    // 有 sessionId，尝试通过 WebBridge 发起 attach
+                    TFLog.app.info("终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public)")
+                    onTerminalAttach?(tab.id.uuidString, sessionId)
+                }
+                // 没有 sessionId 的 stale tab 会在 sendTerminalMode() 中走 respawn 流程
+            }
+        }
+    }
+
     /// Check if a terminal tab needs respawn
     func terminalNeedsRespawn(_ tabId: UUID) -> Bool {
         return staleTerminalTabs.contains(tabId) || terminalSessionByTabId[tabId] == nil

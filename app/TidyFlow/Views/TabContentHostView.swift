@@ -183,7 +183,7 @@ struct TerminalContentView: View {
         }
         .onChange(of: appState.currentGlobalWorkspaceKey) { _, newGlobalKey in
             // 当全局工作空间键切换时（包括项目切换），重新发送 terminal mode 命令
-            guard let newGlobalKey = newGlobalKey else { return }
+            guard newGlobalKey != nil else { return }
             guard appState.editorWebReady else { return }
             guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
 
@@ -203,6 +203,10 @@ struct TerminalContentView: View {
         // Phase C1-2: Check if this tab has a session
         if let sessionId = appState.getTerminalSessionId(for: tab.id) {
             // Attach to existing session
+            webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
+        } else if appState.staleTerminalTabs.contains(tab.id),
+                  let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
+            // Stale tab 且有 terminalSessionId → 尝试通过服务端 attach（WS 重连场景）
             webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
         } else if appState.terminalNeedsRespawn(tab.id) {
             // Respawn session (was stale or never had one)

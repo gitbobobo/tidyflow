@@ -301,6 +301,17 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
 
     // MARK: - Terminal Refresh
 
+    /// 通知 WKWebView 中的 JavaScript 层重连 WebSocket
+    func reconnectJS() {
+        guard let webView = webView else { return }
+        let js = "window.tidyflow && window.tidyflow.reconnect()"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                TFLog.bridge.error("reconnectJS error: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     /// 刷新当前活跃的终端，用于解决应用切换后的花屏问题
     func refreshActiveTerminal() {
         guard let webView = webView else { return }
