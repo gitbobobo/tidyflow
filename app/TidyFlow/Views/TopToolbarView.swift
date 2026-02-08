@@ -239,8 +239,11 @@ struct OpenInEditorButtonView: View {
                 .disabled(!editor.isInstalled)
             }
         } label: {
-            toolbarButtonIcon
-                .help("toolbar.openInEditor".localized)
+            HStack(spacing: 4) {
+                toolbarButtonIcon
+                Text("toolbar.open".localized)
+            }
+            .help("toolbar.openInEditor".localized)
         }
         .menuStyle(.borderlessButton)
         .padding(.horizontal, 8)

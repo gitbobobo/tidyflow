@@ -96,6 +96,7 @@
 "toolbar.settings" = "设置 (⌘,)";
 "toolbar.showInspector" = "显示检查器 (⌘⌃I)";
 "toolbar.hideInspector" = "隐藏检查器 (⌘⌃I)";
+"toolbar.open" = "打开";
 "toolbar.openInEditor" = "在外部编辑器中打开";
 "toolbar.openFailed" = "打开失败";
 "toolbar.openEditorFailed" = "打开编辑器失败";

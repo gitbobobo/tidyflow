@@ -96,6 +96,7 @@
 "toolbar.settings" = "Settings (⌘,)";
 "toolbar.showInspector" = "Show Inspector (⌘⌃I)";
 "toolbar.hideInspector" = "Hide Inspector (⌘⌃I)";
+"toolbar.open" = "Open";
 "toolbar.openInEditor" = "Open in External Editor";
 "toolbar.openFailed" = "Open Failed";
 "toolbar.openEditorFailed" = "Failed to Open Editor";
