@@ -160,9 +160,6 @@ struct IconPickerSheet: View {
         "wand.and.stars"
     ]
     
-    // 自定义图标（从 ~/.tidyflow/assets 加载）
-    @State private var customIcons: [String] = []
-    
     var body: some View {
         VStack(spacing: 0) {
             // 标题
@@ -186,7 +183,7 @@ struct IconPickerSheet: View {
                         
                         LazyVGrid(columns: Array(repeating: GridItem(.fixed(44), spacing: 8), count: 8), spacing: 8) {
                             ForEach(builtInIcons, id: \.self) { icon in
-                                iconButton(icon: icon, isCustom: false)
+                                iconButton(icon: icon)
                             }
                         }
                     }
@@ -206,65 +203,27 @@ struct IconPickerSheet: View {
                         }
                     }
                     
-                    // 自定义图标
-                    if !customIcons.isEmpty {
-                        Divider()
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("settings.iconPicker.custom".localized)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            
-                            LazyVGrid(columns: Array(repeating: GridItem(.fixed(44), spacing: 8), count: 8), spacing: 8) {
-                                ForEach(customIcons, id: \.self) { icon in
-                                    iconButton(icon: icon, isCustom: true)
-                                }
-                            }
-                        }
-                    }
-                    
-                    Divider()
-                    
-                    // 上传自定义图标按钮
-                    Button(action: uploadCustomIcon) {
-                        Label("settings.iconPicker.upload".localized, systemImage: "plus.circle")
-                    }
-                    .buttonStyle(.bordered)
                 }
                 .padding()
             }
         }
         .frame(width: 450, height: 400)
-        .onAppear {
-            loadCustomIcons()
-        }
     }
     
-    private func iconButton(icon: String, isCustom: Bool) -> some View {
+    private func iconButton(icon: String) -> some View {
         Button(action: {
-            selectedIcon = isCustom ? "custom:\(icon)" : icon
+            selectedIcon = icon
             dismiss()
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selectedIcon == (isCustom ? "custom:\(icon)" : icon) 
+                    .fill(selectedIcon == icon 
                           ? Color.accentColor.opacity(0.2) 
                           : Color(NSColor.controlBackgroundColor))
                     .frame(width: 40, height: 40)
                 
-                if isCustom {
-                    // 自定义图标 - 从文件加载
-                    if let image = loadCustomIconImage(icon) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 24, height: 24)
-                    }
-                } else {
-                    // SF Symbol
-                    Image(systemName: icon)
-                        .font(.system(size: 18))
-                }
+                Image(systemName: icon)
+                    .font(.system(size: 18))
             }
         }
         .buttonStyle(.plain)
@@ -293,53 +252,6 @@ struct IconPickerSheet: View {
         .help(brand.displayName)
     }
     
-    private func loadCustomIcons() {
-        let assetsPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".tidyflow/assets")
-        
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: assetsPath,
-            includingPropertiesForKeys: nil
-        ) else { return }
-        
-        customIcons = contents
-            .filter { $0.pathExtension == "png" || $0.pathExtension == "jpg" || $0.pathExtension == "jpeg" }
-            .map { $0.lastPathComponent }
-    }
-    
-    private func loadCustomIconImage(_ filename: String) -> NSImage? {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".tidyflow/assets/\(filename)")
-        return NSImage(contentsOf: path)
-    }
-    
-    private func uploadCustomIcon() {
-        #if canImport(AppKit)
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowedContentTypes = [.png, .jpeg]
-        panel.message = "settings.iconPicker.uploadMessage".localized
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            // 创建 assets 目录
-            let assetsDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".tidyflow/assets")
-            try? FileManager.default.createDirectory(at: assetsDir, withIntermediateDirectories: true)
-            
-            // 复制文件
-            let destURL = assetsDir.appendingPathComponent(url.lastPathComponent)
-            try? FileManager.default.copyItem(at: url, to: destURL)
-            
-            // 刷新列表
-            loadCustomIcons()
-            
-            // 选中新上传的图标
-            selectedIcon = "custom:\(url.lastPathComponent)"
-        }
-        #endif
-    }
 }
 
 // MARK: - 命令图标视图

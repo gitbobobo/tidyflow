@@ -48,9 +48,6 @@
 "settings.iconPicker.title" = "选择图标";
 "settings.iconPicker.system" = "系统图标";
 "settings.iconPicker.brand" = "品牌图标";
-"settings.iconPicker.custom" = "自定义图标";
-"settings.iconPicker.upload" = "上传图标";
-"settings.iconPicker.uploadMessage" = "选择图标文件（推荐 32x32 或 64x64 PNG）";
 "settings.about.version" = "版本 %@ (%@)";
 "settings.about.description" = "macOS 原生多项目开发工具";
 

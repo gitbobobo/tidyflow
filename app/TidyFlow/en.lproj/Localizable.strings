@@ -48,9 +48,6 @@
 "settings.iconPicker.title" = "Choose Icon";
 "settings.iconPicker.system" = "System Icons";
 "settings.iconPicker.brand" = "Brand Icons";
-"settings.iconPicker.custom" = "Custom Icons";
-"settings.iconPicker.upload" = "Upload Icon";
-"settings.iconPicker.uploadMessage" = "Choose an icon file (recommended 32x32 or 64x64 PNG)";
 "settings.about.version" = "Version %@ (%@)";
 "settings.about.description" = "Native macOS multi-project development tool";
 
