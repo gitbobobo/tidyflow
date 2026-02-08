@@ -54,23 +54,23 @@
 /* AI Agent 设置 */
 "settings.aiAgent" = "AI Agent";
 "settings.aiAgent.title" = "AI Agent 配置";
-"settings.aiAgent.footer" = "分别选择用于提交和合并操作的 AI 代理工具";
-"settings.aiAgent.commitAgent" = "提交代理";
-"settings.aiAgent.mergeAgent" = "合并代理";
+"settings.aiAgent.footer" = "分别选择用于一键提交和智能合并的 AI 代理工具";
+"settings.aiAgent.commitAgent" = "一键提交代理";
+"settings.aiAgent.mergeAgent" = "智能合并代理";
 "settings.aiAgent.notConfiguredOption" = "未配置";
 "settings.aiAgent.notConfigured" = "未配置 AI Agent";
 "settings.aiAgent.notConfigured.message" = "请先在设置中选择一个 AI Agent";
 
-/* AI 合并 */
-"sidebar.aiMerge" = "AI 合并到默认分支";
-"sidebar.aiMerge.progress" = "AI 正在执行合并...";
+/* 智能合并 */
+"sidebar.aiMerge" = "智能合并";
+"sidebar.aiMerge.progress" = "正在执行智能合并...";
 "sidebar.aiMerge.success" = "合并成功";
 "sidebar.aiMerge.failed" = "合并失败";
 "sidebar.aiMerge.unknown" = "结果未知";
 "sidebar.aiMerge.conflicts" = "冲突文件";
 "sidebar.aiMerge.rawOutput" = "原始输出";
-"sidebar.aiMerge.result" = "AI 合并结果";
-"sidebar.aiMerge.completed" = "合并操作已完成";
+"sidebar.aiMerge.result" = "智能合并结果";
+"sidebar.aiMerge.completed" = "智能合并已完成";
 "sidebar.aiMerge.parseError" = "输出中检测到错误信息，请查看原始输出";
 "sidebar.aiMerge.parseWarning" = "无法解析任务执行结果，请自行检查工作区状态";
 "sidebar.aiMerge.invalidAgent" = "无效的 AI Agent 配置";
@@ -78,15 +78,15 @@
 "sidebar.aiMerge.exitCode" = "AI Agent 异常退出 (code: %d)";
 "sidebar.aiMerge.noProjectPath" = "无法获取项目路径";
 
-/* AI 智能提交 */
-"git.aiCommit" = "AI 智能提交";
-"git.aiCommit.progress" = "AI 正在分析变更并提交...";
-"git.aiCommit.progressHint" = "AI 将自动检测提交风格、分析变更并执行原子提交";
-"git.aiCommit.result" = "AI 智能提交结果";
+/* 一键提交 */
+"git.aiCommit" = "一键提交";
+"git.aiCommit.progress" = "正在执行一键提交...";
+"git.aiCommit.progressHint" = "将自动检测提交风格、分析变更并执行原子提交";
+"git.aiCommit.result" = "一键提交结果";
 "git.aiCommit.success" = "提交成功";
 "git.aiCommit.failed" = "提交失败";
 "git.aiCommit.unknown" = "结果未知";
-"git.aiCommit.completed" = "提交操作已完成";
+"git.aiCommit.completed" = "一键提交已完成";
 "git.aiCommit.parseError" = "输出中检测到错误信息，请查看原始输出";
 "git.aiCommit.parseWarning" = "无法解析任务执行结果，请自行检查工作区状态";
 "git.aiCommit.commitCount" = "共 %d 个提交";
@@ -233,8 +233,8 @@
 "task.section.running" = "运行中";
 "task.section.pending" = "等待中";
 "task.selectToViewResult" = "选择任务查看结果";
-"task.aiCommit" = "AI 智能提交";
-"task.aiMerge" = "AI 合并";
+"task.aiCommit" = "一键提交";
+"task.aiMerge" = "智能合并";
 "task.projectCommand" = "项目命令";
 "toolbar.backgroundTasks" = "后台任务";
 "toolbar.projectCommands" = "项目命令";

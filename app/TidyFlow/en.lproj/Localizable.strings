@@ -54,23 +54,23 @@
 /* AI Agent Settings */
 "settings.aiAgent" = "AI Agent";
 "settings.aiAgent.title" = "AI Agent Configuration";
-"settings.aiAgent.footer" = "Select the AI agents for commit and merge operations separately";
-"settings.aiAgent.commitAgent" = "Commit Agent";
-"settings.aiAgent.mergeAgent" = "Merge Agent";
+"settings.aiAgent.footer" = "Select the AI agents for One-Click Commit and Smart Merge separately";
+"settings.aiAgent.commitAgent" = "One-Click Commit Agent";
+"settings.aiAgent.mergeAgent" = "Smart Merge Agent";
 "settings.aiAgent.notConfiguredOption" = "Not Configured";
 "settings.aiAgent.notConfigured" = "AI Agent Not Configured";
 "settings.aiAgent.notConfigured.message" = "Please select an AI Agent in Settings first";
 
-/* AI Merge */
-"sidebar.aiMerge" = "AI Merge to Default Branch";
-"sidebar.aiMerge.progress" = "AI is performing merge...";
+/* Smart Merge */
+"sidebar.aiMerge" = "Smart Merge";
+"sidebar.aiMerge.progress" = "Performing Smart Merge...";
 "sidebar.aiMerge.success" = "Merge Succeeded";
 "sidebar.aiMerge.failed" = "Merge Failed";
 "sidebar.aiMerge.unknown" = "Result Unknown";
 "sidebar.aiMerge.conflicts" = "Conflict Files";
 "sidebar.aiMerge.rawOutput" = "Raw Output";
-"sidebar.aiMerge.result" = "AI Merge Result";
-"sidebar.aiMerge.completed" = "Merge operation completed";
+"sidebar.aiMerge.result" = "Smart Merge Result";
+"sidebar.aiMerge.completed" = "Smart Merge completed";
 "sidebar.aiMerge.parseError" = "Error detected in output, please check raw output";
 "sidebar.aiMerge.parseWarning" = "Unable to parse task result, please check workspace status manually";
 "sidebar.aiMerge.invalidAgent" = "Invalid AI Agent configuration";
@@ -78,15 +78,15 @@
 "sidebar.aiMerge.exitCode" = "AI Agent exited abnormally (code: %d)";
 "sidebar.aiMerge.noProjectPath" = "Cannot get project path";
 
-/* AI Smart Commit */
-"git.aiCommit" = "AI Smart Commit";
-"git.aiCommit.progress" = "AI is analyzing changes and committing...";
-"git.aiCommit.progressHint" = "AI will detect commit style, analyze changes and perform atomic commits";
-"git.aiCommit.result" = "AI Smart Commit Result";
+/* One-Click Commit */
+"git.aiCommit" = "One-Click Commit";
+"git.aiCommit.progress" = "Performing One-Click Commit...";
+"git.aiCommit.progressHint" = "Will detect commit style, analyze changes and perform atomic commits";
+"git.aiCommit.result" = "One-Click Commit Result";
 "git.aiCommit.success" = "Commit Succeeded";
 "git.aiCommit.failed" = "Commit Failed";
 "git.aiCommit.unknown" = "Result Unknown";
-"git.aiCommit.completed" = "Commit operation completed";
+"git.aiCommit.completed" = "One-Click Commit completed";
 "git.aiCommit.parseError" = "Error detected in output, please check raw output";
 "git.aiCommit.parseWarning" = "Unable to parse task result, please check workspace status manually";
 "git.aiCommit.commitCount" = "%d commit(s) created";
@@ -233,8 +233,8 @@
 "task.section.running" = "Running";
 "task.section.pending" = "Pending";
 "task.selectToViewResult" = "Select a task to view result";
-"task.aiCommit" = "AI Smart Commit";
-"task.aiMerge" = "AI Merge";
+"task.aiCommit" = "One-Click Commit";
+"task.aiMerge" = "Smart Merge";
 "task.projectCommand" = "Project Command";
 "toolbar.backgroundTasks" = "Background Tasks";
 "toolbar.projectCommands" = "Project Commands";
