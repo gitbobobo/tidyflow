@@ -9,40 +9,50 @@ import AppKit
 // MARK: - VSCode 风格 Git 面板主视图
 
 /// 按照 VSCode 源代码管理面板布局设计的 Git 面板
+/// 布局：顶部固定（标题 + 提交区）→ 中间可滚动（暂存 + 更改）→ 底部固定（图形，可折叠）
 struct NativeGitPanelView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
     @State private var showDiscardAllConfirm: Bool = false
+    @State private var isStagedExpanded: Bool = true
+    @State private var isChangesExpanded: Bool = true
+    @State private var isGraphExpanded: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 0) {
-                    // 1. 顶部工具栏（源代码管理）
-                    GitPanelHeader()
-                        .environmentObject(appState)
-                    
-                    // 2. 提交消息输入框 + 提交按钮
-                    GitCommitInputSection()
-                        .environmentObject(appState)
-                    
-                    // 3. 暂存的更改（顶层，仅在有暂存时显示）
-                    if hasStagedChangesInWorkspace {
-                        GitStagedChangesSection()
-                            .environmentObject(appState)
-                    }
-                    
-                    // 4. 更改（顶层，未暂存）
-                    GitChangesSection(showDiscardAllConfirm: $showDiscardAllConfirm)
-                        .environmentObject(appState)
-                    
-                    // 5. 可折叠的图形/历史区域
-                    GitGraphSection()
-                        .environmentObject(appState)
-                    
-                    Spacer(minLength: 20)
-                }
+            // ── 顶部固定区域 ──
+            // 1. 顶部工具栏（源代码管理）
+            GitPanelHeader()
+                .environmentObject(appState)
+
+            // 2. 提交消息输入框 + 提交按钮
+            GitCommitInputSection()
+                .environmentObject(appState)
+
+            // ── 下方区域：各 Section 均分剩余空间 ──
+
+            // 3. 暂存的更改
+            if hasStagedChangesInWorkspace {
+                Divider()
+                GitStagedChangesSection(isExpanded: $isStagedExpanded)
+                    .environmentObject(appState)
+                    .modifier(EqualExpandModifier(isExpanded: isStagedExpanded))
             }
+
+            // 4. 更改（未暂存）
+            Divider()
+            GitChangesSection(isExpanded: $isChangesExpanded, showDiscardAllConfirm: $showDiscardAllConfirm)
+                .environmentObject(appState)
+                .modifier(EqualExpandModifier(isExpanded: isChangesExpanded))
+
+            // 5. 图形/提交历史
+            Divider()
+            GitGraphSection(isExpanded: $isGraphExpanded)
+                .environmentObject(appState)
+                .modifier(EqualExpandModifier(isExpanded: isGraphExpanded))
+
+            // 兜底：全部折叠时把内容顶到上方
+            Spacer(minLength: 0)
         }
         .onAppear {
             loadDataIfNeeded()
@@ -110,6 +120,24 @@ struct NativeGitPanelView: View {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
         return cache.hasStagedChanges
+    }
+}
+
+// MARK: - 均分展开修饰符
+
+/// 展开时占据均分空间（`.frame(maxHeight: .infinity)`），折叠时仅保留自然高度
+/// `layoutPriority(1)` 确保展开区域优先于底部 Spacer 获取空间
+private struct EqualExpandModifier: ViewModifier {
+    let isExpanded: Bool
+
+    func body(content: Content) -> some View {
+        if isExpanded {
+            content
+                .frame(maxHeight: .infinity)
+                .layoutPriority(1)
+        } else {
+            content
+        }
     }
 }
 

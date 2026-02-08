@@ -1,61 +1,47 @@
 import SwiftUI
 import AppKit
 
-// MARK: - 图形/历史区域
+// MARK: - 图形/历史区域（均分区域，内部可滚动）
 
 struct GitGraphSection: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
-    @State private var isExpanded: Bool = true
+    @Binding var isExpanded: Bool
 
     var body: some View {
-        CollapsibleSection(
-            title: "git.graph".localized,
-            count: nil,
-            isExpanded: $isExpanded,
-            headerActions: {
-                AnyView(
-                    HStack(spacing: 4) {
-                        // 自动刷新（占位）
-                        Text("git.auto".localized)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                        
-                        // 刷新按钮
-                        Button(action: refreshLog) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("git.refreshHistory".localized)
-                    }
-                )
+        VStack(spacing: 0) {
+            // 小标题（始终显示）
+            SectionHeader(
+                title: "git.graph".localized,
+                isExpanded: $isExpanded
+            ) {
+                EmptyView()
             }
-        ) {
-            VStack(spacing: 0) {
-                if let ws = appState.selectedWorkspaceKey {
-                    if let cache = gitCache.getGitLogCache(workspaceKey: ws) {
-                        if cache.isLoading && cache.entries.isEmpty {
-                            LoadingRow()
-                        } else if cache.entries.isEmpty {
-                            EmptyRow(text: "git.noCommitHistory".localized)
-                        } else {
-                            ForEach(cache.entries) { entry in
-                                GitLogRow(entry: entry)
-                                    .environmentObject(appState)
+
+            // 展开时显示提交历史列表（可滚动）
+            if isExpanded {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if let ws = appState.selectedWorkspaceKey {
+                            if let cache = gitCache.getGitLogCache(workspaceKey: ws) {
+                                if cache.isLoading && cache.entries.isEmpty {
+                                    LoadingRow()
+                                } else if cache.entries.isEmpty {
+                                    EmptyRow(text: "git.noCommitHistory".localized)
+                                } else {
+                                    ForEach(cache.entries) { entry in
+                                        GitLogRow(entry: entry)
+                                            .environmentObject(appState)
+                                    }
+                                }
+                            } else {
+                                LoadingRow()
                             }
                         }
-                    } else {
-                        LoadingRow()
                     }
                 }
             }
         }
-    }
-
-    private func refreshLog() {
-        gitCache.refreshGitLog()
     }
 }
 

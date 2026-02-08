@@ -1,81 +1,11 @@
 import SwiftUI
 
-// MARK: - 可折叠 Section 组件
-
-struct CollapsibleSection<Content: View>: View {
-    let title: String
-    let count: Int?
-    let isExpanded: Binding<Bool>
-    let content: () -> Content
-    var headerActions: (() -> AnyView)?
-
-    init(
-        title: String,
-        count: Int? = nil,
-        isExpanded: Binding<Bool>,
-        headerActions: (() -> AnyView)? = nil,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.title = title
-        self.count = count
-        self.isExpanded = isExpanded
-        self.headerActions = headerActions
-        self.content = content
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header：整行可点击展开/折叠（含标题与空白区域）
-            HStack(spacing: 6) {
-                Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 12)
-                
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.primary)
-                
-                if let count = count, count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.accentColor)
-                        .cornerRadius(8)
-                }
-                
-                Spacer()
-                
-                if let actions = headerActions {
-                    actions()
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.wrappedValue.toggle()
-                }
-            }
-            
-            // Content
-            if isExpanded.wrappedValue {
-                content()
-            }
-        }
-    }
-}
-
-// MARK: - 暂存的更改（顶层）
+// MARK: - 暂存的更改（均分区域，内部可滚动）
 
 struct GitStagedChangesSection: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
-    @State private var isExpanded: Bool = true
+    @Binding var isExpanded: Bool
 
     /// 缓存过滤结果，避免 stagedCount 和 stagedItems 分别过滤一次
     private var cachedStagedItems: [GitStatusItem] {
@@ -86,28 +16,31 @@ struct GitStagedChangesSection: View {
 
     var body: some View {
         let staged = cachedStagedItems
-        CollapsibleSection(
-            title: "git.stagedChanges".localized,
-            count: staged.count,
-            isExpanded: $isExpanded,
-            headerActions: {
-                AnyView(
-                    HStack(spacing: 4) {
-                        Button(action: unstageAll) {
-                            Image(systemName: "minus")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("git.unstageAll".localized)
-                    }
-                )
+        VStack(spacing: 0) {
+            // 小标题（始终显示）
+            SectionHeader(
+                title: "git.stagedChanges".localized,
+                count: staged.count,
+                isExpanded: $isExpanded
+            ) {
+                Button(action: unstageAll) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("git.unstageAll".localized)
             }
-        ) {
-            VStack(spacing: 0) {
-                ForEach(staged) { item in
-                    GitStatusRow(item: item, isStaged: true)
-                        .environmentObject(appState)
+
+            // 展开时显示文件列表（可滚动）
+            if isExpanded {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(staged) { item in
+                            GitStatusRow(item: item, isStaged: true)
+                                .environmentObject(appState)
+                        }
+                    }
                 }
             }
         }
@@ -119,63 +52,68 @@ struct GitStagedChangesSection: View {
     }
 }
 
-// MARK: - 更改区域（仅未暂存）
+// MARK: - 更改区域（均分区域，内部可滚动）
 
 struct GitChangesSection: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
-    @State private var isExpanded: Bool = true
+    @Binding var isExpanded: Bool
     @Binding var showDiscardAllConfirm: Bool
 
     var body: some View {
-        CollapsibleSection(
-            title: "git.changes".localized,
-            count: unstagedCount,
-            isExpanded: $isExpanded,
-            headerActions: {
-                AnyView(
-                    HStack(spacing: 4) {
-                        Button(action: stageAll) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("git.stageAll".localized)
-                        .disabled(!hasUnstagedChanges || isStageAllInFlight)
-                        
-                        Button(action: { showDiscardAllConfirm = true }) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("git.discardAll".localized)
-                        .disabled(!hasTrackedChanges && !hasUntrackedChanges)
+        VStack(spacing: 0) {
+            // 小标题（始终显示）
+            SectionHeader(
+                title: "git.changes".localized,
+                count: unstagedCount,
+                isExpanded: $isExpanded
+            ) {
+                HStack(spacing: 4) {
+                    Button(action: stageAll) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
                     }
-                )
+                    .buttonStyle(.plain)
+                    .help("git.stageAll".localized)
+                    .disabled(!hasUnstagedChanges || isStageAllInFlight)
+
+                    Button(action: { showDiscardAllConfirm = true }) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("git.discardAll".localized)
+                    .disabled(!hasTrackedChanges && !hasUntrackedChanges)
+                }
             }
-        ) {
-            VStack(spacing: 0) {
-                if let ws = appState.selectedWorkspaceKey {
-                    if let cache = gitCache.getGitStatusCache(workspaceKey: ws) {
-                        if cache.isLoading && cache.items.isEmpty {
-                            LoadingRow()
-                        } else if !cache.isGitRepo {
-                            EmptyRow(text: "git.notGitRepo".localized)
-                        } else {
-                            let unstaged = unstagedItems(cache.items)
-                            if unstaged.isEmpty {
-                                EmptyRow(text: "git.noChanges".localized)
-                            } else {
-                                ForEach(unstaged) { item in
-                                    GitStatusRow(item: item, isStaged: false)
-                                        .environmentObject(appState)
+
+            // 展开时显示文件列表（可滚动）
+            if isExpanded {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if let ws = appState.selectedWorkspaceKey {
+                            if let cache = gitCache.getGitStatusCache(workspaceKey: ws) {
+                                if cache.isLoading && cache.items.isEmpty {
+                                    LoadingRow()
+                                } else if !cache.isGitRepo {
+                                    EmptyRow(text: "git.notGitRepo".localized)
+                                } else {
+                                    let unstaged = unstagedItems(cache.items)
+                                    if unstaged.isEmpty {
+                                        EmptyRow(text: "git.noChanges".localized)
+                                    } else {
+                                        ForEach(unstaged) { item in
+                                            GitStatusRow(item: item, isStaged: false)
+                                                .environmentObject(appState)
+                                        }
+                                    }
                                 }
+                            } else {
+                                LoadingRow()
                             }
                         }
-                    } else {
-                        LoadingRow()
                     }
                 }
             }
@@ -218,6 +156,52 @@ struct GitChangesSection: View {
     private func stageAll() {
         guard let ws = appState.selectedWorkspaceKey else { return }
         gitCache.gitStage(workspaceKey: ws, path: nil, scope: "all")
+    }
+}
+
+// MARK: - 通用可折叠区域标题栏
+
+/// 各 Section 通用的标题栏：展开/折叠箭头 + 标题 + 数量徽标 + 操作按钮
+struct SectionHeader<Actions: View>: View {
+    let title: String
+    var count: Int? = nil
+    @Binding var isExpanded: Bool
+    @ViewBuilder let actions: () -> Actions
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: 12)
+
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.primary)
+
+            if let count = count, count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.accentColor)
+                    .cornerRadius(8)
+            }
+
+            Spacer()
+
+            actions()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isExpanded.toggle()
+            }
+        }
     }
 }
 
