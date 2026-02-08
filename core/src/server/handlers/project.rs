@@ -375,6 +375,22 @@ pub async fn handle_project_message(
                 "RemoveWorkspace request: project={}, workspace={}",
                 project, workspace
             );
+
+            // 关闭该工作空间的所有终端
+            {
+                let mut reg = registry.lock().await;
+                let term_ids: Vec<String> = reg
+                    .list()
+                    .into_iter()
+                    .filter(|t| t.project == *project && t.workspace == *workspace)
+                    .map(|t| t.term_id)
+                    .collect();
+                for tid in &term_ids {
+                    reg.close(tid);
+                    info!("Closed terminal {} for workspace {}/{}", tid, project, workspace);
+                }
+            }
+
             let mut state = app_state.lock().await;
 
             match WorkspaceManager::remove(&mut state, project, workspace) {

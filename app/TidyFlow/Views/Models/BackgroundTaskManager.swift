@@ -132,6 +132,13 @@ class BackgroundTaskManager: ObservableObject {
 
     // MARK: - 队列操作
 
+    /// 取消指定工作空间的所有任务（pending + running + completed）
+    func cancelAllTasks(for key: String) {
+        pendingQueues.removeValue(forKey: key)
+        runningBlockingTask.removeValue(forKey: key)
+        completedQueues.removeValue(forKey: key)
+    }
+
     /// 从 pending 队列删除任务
     func removePendingTask(_ taskId: UUID) {
         for (key, queue) in pendingQueues {

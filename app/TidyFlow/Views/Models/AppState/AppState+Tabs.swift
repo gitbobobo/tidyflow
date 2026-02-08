@@ -64,6 +64,14 @@ extension AppState {
         }
     }
 
+    /// 强制关闭所有标签页（跳过未保存检查，用于工作空间删除）
+    func forceCloseAllTabs(workspaceKey: String) {
+        guard let tabs = workspaceTabs[workspaceKey] else { return }
+        for tab in tabs {
+            performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
+        }
+    }
+
     /// 实际执行关闭 Tab（跳过 dirty 检查）
     func performCloseTab(workspaceKey: String, tabId: UUID) {
         guard var tabs = workspaceTabs[workspaceKey] else { return }

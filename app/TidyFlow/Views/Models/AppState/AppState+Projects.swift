@@ -89,6 +89,11 @@ extension AppState {
 
     /// Handle workspace removed result from WebSocket
     func handleWorkspaceRemoved(_ result: WorkspaceRemovedResult) {
+        let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+
+        // 移除删除中标记
+        deletingWorkspaces.remove(globalKey)
+
         if result.ok {
             if let index = projects.firstIndex(where: { $0.name == result.project }) {
                 projects[index].workspaces.removeAll { $0.name == result.workspace }
@@ -96,6 +101,11 @@ extension AppState {
                     selectedWorkspaceKey = projects[index].workspaces.first?.name
                 }
             }
+            // 清理残留缓存
+            workspaceTabs.removeValue(forKey: globalKey)
+            activeTabIdByWorkspace.removeValue(forKey: globalKey)
+            fileIndexCache.removeValue(forKey: globalKey)
+            workspaceTerminalOpenTime.removeValue(forKey: globalKey)
         }
     }
 
@@ -137,6 +147,25 @@ extension AppState {
     /// Remove a workspace from a project
     func removeWorkspace(projectName: String, workspaceName: String) {
         guard connectionState == .connected else { return }
+        let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
+
+        // 标记为删除中
+        deletingWorkspaces.insert(globalKey)
+
+        // 如果当前选中的就是要删除的工作空间，先切换到其他工作空间
+        if selectedWorkspaceKey == workspaceName,
+           let project = projects.first(where: { $0.name == projectName }),
+           let other = project.workspaces.first(where: { $0.name != workspaceName }) {
+            selectWorkspace(projectId: project.id, workspaceName: other.name)
+        }
+
+        // 强制关闭所有 tab（含终端 kill）
+        forceCloseAllTabs(workspaceKey: globalKey)
+
+        // 取消所有后台任务
+        taskManager.cancelAllTasks(for: globalKey)
+
+        // 发送删除请求
         wsClient.requestRemoveWorkspace(project: projectName, workspace: workspaceName)
     }
 

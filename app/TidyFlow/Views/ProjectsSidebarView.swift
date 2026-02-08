@@ -343,6 +343,11 @@ struct WorkspaceRowView: View {
         appState.taskManager.activeTaskCount(for: globalWorkspaceKey) > 0
     }
 
+    /// 当前工作空间是否正在删除中
+    private var isDeleting: Bool {
+        appState.deletingWorkspaces.contains(globalWorkspaceKey)
+    }
+
     var body: some View {
         Group {
             if terminalCount > 0 {
@@ -355,10 +360,12 @@ struct WorkspaceRowView: View {
                     depth: 1,
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
-                    isLoading: hasActiveTask,
+                    isLoading: hasActiveTask || isDeleting,
                     customIconView: terminalCountBadge,
                     onTap: {
-                        appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                        if !isDeleting {
+                            appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                        }
                     }
                 )
             } else {
@@ -371,73 +378,77 @@ struct WorkspaceRowView: View {
                     depth: 1,
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
-                    isLoading: hasActiveTask,
+                    isLoading: hasActiveTask || isDeleting,
                     onTap: {
-                        appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                        if !isDeleting {
+                            appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
+                        }
                     }
                 )
             }
         }
         .tag(workspace.name)
-        // 工作空间右键菜单：路径操作 → AI 操作 → 危险操作
+        // 工作空间右键菜单：删除中时不显示
         .contextMenu {
-            // ── 路径 / 打开 ──
-            if let path = workspacePath {
-                Button {
-                    copyPathToPasteboard(path)
-                } label: {
-                    Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
-                }
-                Button {
-                    openInFinder(path)
-                } label: {
-                    Label("sidebar.openInFinder".localized, systemImage: "folder")
-                }
-                Menu {
-                    ForEach(ExternalEditor.allCases, id: \.self) { editor in
-                        Button {
-                            _ = appState.openPathInEditor(path, editor: editor)
-                        } label: {
-                            Label {
-                                Text(editor.rawValue)
-                            } icon: {
-                                editorMenuIcon(editor)
-                            }
-                        }
-                        .disabled(!editor.isInstalled)
+            if !isDeleting {
+                // ── 路径 / 打开 ──
+                if let path = workspacePath {
+                    Button {
+                        copyPathToPasteboard(path)
+                    } label: {
+                        Label("sidebar.copyPath".localized, systemImage: "doc.on.doc")
                     }
-                } label: {
-                    Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
+                    Button {
+                        openInFinder(path)
+                    } label: {
+                        Label("sidebar.openInFinder".localized, systemImage: "folder")
+                    }
+                    Menu {
+                        ForEach(ExternalEditor.allCases, id: \.self) { editor in
+                            Button {
+                                _ = appState.openPathInEditor(path, editor: editor)
+                            } label: {
+                                Label {
+                                    Text(editor.rawValue)
+                                } icon: {
+                                    editorMenuIcon(editor)
+                                }
+                            }
+                            .disabled(!editor.isInstalled)
+                        }
+                    } label: {
+                        Label("sidebar.openInEditor".localized, systemImage: "square.and.arrow.up")
+                    }
                 }
-            }
 
-            Divider()
-
-            // ── AI 操作 ──
-            Button {
-                triggerAICommit()
-            } label: {
-                Label("git.aiCommit".localized, systemImage: "sparkles")
-            }
-            .disabled(appState.clientSettings.selectedAIAgent == nil)
-
-            if !workspace.isDefault {
-                Button {
-                    triggerAIMerge()
-                } label: {
-                    Label("sidebar.aiMerge".localized, systemImage: "cpu")
-                }
-                .disabled(appState.clientSettings.selectedAIAgent == nil)
-            }
-
-            // ── 危险操作 ──
-            if !workspace.isDefault {
                 Divider()
 
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
+                // ── AI 操作 ──
+                Button {
+                    triggerAICommit()
                 } label: {
-                    Label("common.delete".localized, systemImage: "trash")
+                    Label("git.aiCommit".localized, systemImage: "sparkles")
+                }
+                .disabled(appState.clientSettings.selectedAIAgent == nil)
+
+                if !workspace.isDefault {
+                    Button {
+                        triggerAIMerge()
+                    } label: {
+                        Label("sidebar.aiMerge".localized, systemImage: "cpu")
+                    }
+                    .disabled(appState.clientSettings.selectedAIAgent == nil)
+                }
+
+                // ── 危险操作 ──
+                if !workspace.isDefault {
+                    Divider()
+
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label("common.delete".localized, systemImage: "trash")
+                    }
                 }
             }
         }

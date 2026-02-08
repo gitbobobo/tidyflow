@@ -5,6 +5,12 @@ import SwiftUI
 struct QuickActionsView: View {
     @EnvironmentObject var appState: AppState
 
+    /// 当前工作空间是否正在删除中
+    private var isDeleting: Bool {
+        guard let key = appState.currentGlobalWorkspaceKey else { return false }
+        return appState.deletingWorkspaces.contains(key)
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 32) {
@@ -34,6 +40,8 @@ struct QuickActionsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.windowBackgroundColor))
+        .allowsHitTesting(!isDeleting)
+        .opacity(isDeleting ? 0.5 : 1.0)
     }
 
     // MARK: - 快捷键提示
