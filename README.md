@@ -5,8 +5,8 @@
 <h1 align="center">TidyFlow</h1>
 
 <p align="center">
-  <strong>从善如流</strong><br/>
-  AI 时代的多项目并行开发工具
+  <strong>Flow with Grace</strong><br/>
+  A multi-project parallel development tool for the AI era
 </p>
 
 <p align="center">
@@ -16,84 +16,88 @@
   <a href="https://developer.apple.com/xcode/swiftui/"><img src="https://img.shields.io/badge/UI-SwiftUI-red.svg" alt="SwiftUI"></a>
 </p>
 
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 ---
 
-## 🌟 什么是 TidyFlow?
+## 🌟 What is TidyFlow?
 
-TidyFlow 是一款 macOS 原生的多项目开发工具，聚焦多项目、多分支并行开发场景，减少上下文切换成本。
+TidyFlow is a macOS-native multi-project development tool focused on parallel development across projects and branches, reducing context-switching overhead.
 
-如果你需要同时推进多个项目/功能分支、频繁切换不同 AI Agent，并在终端与文件操作之间快速切换，TidyFlow 可以提供统一工作台。
+If you need to move multiple projects or feature branches forward at the same time, frequently switch between different AI agents, and jump quickly between terminal and file workflows, TidyFlow provides a unified workspace.
 
-## ✨ 核心特性
+## ✨ Core Features
 
-- 📂 **多项目并行管理**：在一个界面中同时管理多个独立项目，互不干扰。
-- 🌿 **Git Worktree 原生支持**：基于 Git Worktree 实现真正的分支隔离，无需 `git stash` 或频繁切分支，多个分支同时开发。
-- 💻 **VS Code 级终端体验**：集成 xterm.js + 真实 PTY，完美支持 `vim`、`tmux`、`htop` 等复杂 TUI 工具，支持 256 色及 TrueColor。
-- 🍎 **纯正 macOS 原生体验**：使用 SwiftUI + AppKit 构建，遵循 macOS HIG，支持快捷键全键盘操作。
-- ⚙️ **Rust Core 引擎**：核心后端使用 Rust，实现 PTY 管理、Git 操作、文件系统与状态持久化。
+- 📂 **Parallel Multi-Project Management**: Manage multiple independent projects in one interface without interference.
+- 🌿 **Native Git Worktree Support**: True branch isolation based on Git Worktree, so you can develop multiple branches in parallel without `git stash` or constant branch switching.
+- 💻 **VS Code-Level Terminal Experience**: Built with xterm.js + real PTY, with full support for advanced TUI tools like `vim`, `tmux`, and `htop`, including 256-color and TrueColor.
+- 🍎 **Authentic macOS Native Experience**: Built with SwiftUI + AppKit, aligned with macOS HIG, and optimized for keyboard-first workflows.
+- ⚙️ **Rust Core Engine**: A Rust backend powering PTY management, Git operations, filesystem handling, and state persistence.
 
-## 📸 界面预览
+## 📸 UI Preview
 
 ![](./docs/images/screenshot.png)
 
-## 🏗️ 技术架构
+## 🏗️ Architecture
 
-TidyFlow 采用现代化的**混合原生架构**：
+TidyFlow uses a modern **hybrid native architecture**:
 
-- **Frontend (UI Shell)**: 使用 SwiftUI 和 AppKit 构建的 macOS 原生应用，负责窗口管理和系统集成。
-- **Terminal Container**: 通过 WKWebView 承载 xterm.js，提供业界标准的高性能终端渲染。
-- **Core Engine (Backend)**: 由 Rust 编写的高性能引擎，处理 PTY 管理、Git 操作、文件系统和状态持久化。
-- **Communication**: 前后端通过 WebSocket + MessagePack（二进制，Protocol v2）进行通信。
+- **Frontend (UI Shell)**: A macOS-native app built with SwiftUI and AppKit for window management and system integration.
+- **Terminal Container**: xterm.js running inside WKWebView for high-performance terminal rendering.
+- **Core Engine (Backend)**: A high-performance Rust engine handling PTY management, Git operations, filesystem access, and state persistence.
+- **Communication**: Frontend and backend communicate via WebSocket + MessagePack (binary, Protocol v2).
 
-## ⌨️ 常用快捷键
+## ⌨️ Common Shortcuts
 
-### 全局操作
-- `Cmd + Shift + P`: 打开命令板 (Command Palette)
-- `Cmd + P`: 快速打开文件 (Quick Open)
-- `Cmd + 1/2/3`: 切换右侧面板（Explorer/Search/Git）
+### Global
+- `Cmd + Shift + P`: Open Command Palette
+- `Cmd + P`: Quick Open files
+- `Cmd + 1/2/3`: Switch right panel (Explorer/Search/Git)
 
-### 工作区操作
-- `Cmd + T`: 新建终端 Tab
-- `Cmd + W`: 关闭当前 Tab
-- `Cmd + Option + T`: 关闭其他 Tab
-- `Ctrl + Tab`: 切换下一个 Tab
-- `Ctrl + Shift + Tab`: 切换上一个 Tab
-- `Ctrl + 1-9`: 按序号切换 Tab
-- `Cmd + 1-9`: 按快捷键切换工作区
+### Workspace
+- `Cmd + T`: New terminal tab
+- `Cmd + W`: Close current tab
+- `Cmd + Option + T`: Close other tabs
+- `Ctrl + Tab`: Next tab
+- `Ctrl + Shift + Tab`: Previous tab
+- `Ctrl + 1-9`: Switch tab by index
+- `Cmd + 1-9`: Switch workspace by shortcut
 
-## 🛠️ 如何构建
+## 🛠️ Build from Source
 
-如果你想从源代码构建 TidyFlow，请确保你的系统已安装 **Rust** 和 **Xcode**。
+If you want to build TidyFlow from source, make sure **Rust** and **Xcode** are installed.
 
-### 1. 快速启动 (推荐)
+### 1. Quick Start (Recommended)
 ```bash
-./scripts/run-app.sh  # 自动构建核心引擎、应用并启动
+./scripts/run-app.sh  # Build core + app and launch
 ```
 
-### 2. 手动构建核心 (Rust Core)
+### 2. Build Core Manually (Rust Core)
 ```bash
 cd core
 cargo build --release
 ```
 
-### 3. 手动构建应用 (macOS App)
+### 3. Build App Manually (macOS App)
 ```bash
-open app/TidyFlow.xcodeproj  # 使用 Xcode 打开并运行 (Cmd+R)
+open app/TidyFlow.xcodeproj  # Open in Xcode and run (Cmd+R)
 ```
 
-## 📦 打包发布
+## 📦 Packaging & Release
 
-项目支持自动化的签名与公证流程，确保在其他 macOS 设备上顺畅运行。
+The project supports automated signing and notarization so it runs smoothly on other macOS devices.
 
-- **构建未签名 DMG**: `./scripts/build_dmg.sh`
-- **签名构建**: `SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign`
-- **公证**: `./scripts/notarize.sh --profile tidyflow-notary`
-- **生成 SHA256**: `./scripts/tools/gen_sha256.sh dist/<dmg-name>.dmg`（`build_dmg.sh` 执行后也会自动生成）
+- **Build unsigned DMG**: `./scripts/build_dmg.sh`
+- **Signed build**: `SIGN_IDENTITY="Developer ID..." ./scripts/build_dmg.sh --sign`
+- **Notarize**: `./scripts/notarize.sh --profile tidyflow-notary`
+- **Generate SHA256**: `./scripts/tools/gen_sha256.sh dist/<dmg-name>.dmg` (`build_dmg.sh` also generates this automatically)
 
-发布前请先执行清单：[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)  
-版本变更记录见：[`CHANGELOG.md`](CHANGELOG.md)
+Before release, run: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)  
+Version history: [`CHANGELOG.md`](CHANGELOG.md)
 
-## 📄 开源协议
+## 📄 License
 
-本项目采用 **LGPL-3.0** 协议开源。
-详细内容请参阅 [LICENSE](LICENSE) 与 [COPYING](COPYING)。
+This project is open source under **LGPL-3.0**.  
+See [LICENSE](LICENSE) and [COPYING](COPYING) for details.
