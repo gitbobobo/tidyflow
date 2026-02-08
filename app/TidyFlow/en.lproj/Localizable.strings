@@ -238,6 +238,7 @@
 "task.projectCommand" = "Project Command";
 "toolbar.backgroundTasks" = "Background Tasks";
 "toolbar.projectCommands" = "Project Commands";
+"toolbar.run" = "Run";
 
 // 项目配置页面
 "projectConfig.info" = "Project Info";

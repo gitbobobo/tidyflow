@@ -238,6 +238,7 @@
 "task.projectCommand" = "项目命令";
 "toolbar.backgroundTasks" = "后台任务";
 "toolbar.projectCommands" = "项目命令";
+"toolbar.run" = "执行";
 
 // 项目配置页面
 "projectConfig.info" = "项目信息";

@@ -49,10 +49,11 @@ struct ProjectCommandsMenuView: View {
                     Image(systemName: "play.circle")
                         .font(.system(size: 14))
                 }
+                Text("toolbar.run".localized)
             }
-            .frame(width: 24, height: 22)
         }
         .menuStyle(.borderlessButton)
+        .padding(.horizontal, 8)
         .fixedSize()
         .help("toolbar.projectCommands".localized)
     }
