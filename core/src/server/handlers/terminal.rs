@@ -1,20 +1,26 @@
 use axum::extract::ws::WebSocket;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::server::protocol::{ClientMessage, ServerMessage};
-use crate::server::ws::{send_message, SharedAppState, TerminalManager};
+use crate::server::terminal_registry::SharedTerminalRegistry;
+use crate::server::ws::{
+    send_message, subscribe_terminal, unsubscribe_terminal, SharedAppState,
+};
 
 /// 处理终端相关的客户端消息
 pub async fn handle_terminal_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    manager: &Arc<Mutex<TerminalManager>>,
+    registry: &SharedTerminalRegistry,
     app_state: &SharedAppState,
-    tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
+    scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> Result<bool, String> {
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
@@ -25,33 +31,28 @@ pub async fn handle_terminal_message(
                 data.len()
             );
 
-            let mut mgr = manager.lock().await;
-            let resolved_id = mgr.resolve_term_id(term_id.as_deref());
+            let mut reg = registry.lock().await;
+            let resolved_id = reg.resolve_term_id(term_id.as_deref());
             info!(
                 "[DEBUG] Resolved term_id: {:?}, available_terms: {:?}",
                 resolved_id,
-                mgr.term_ids()
+                reg.term_ids()
             );
 
             if let Some(id) = resolved_id {
-                if let Some(handle) = mgr.get_mut(&id) {
-                    info!("[DEBUG] Writing input to PTY: term_id={}", id);
-                    handle
-                        .session
-                        .write_input(data)
-                        .map_err(|e| format!("Write error: {}", e))?;
-                    info!("[DEBUG] Input written successfully");
-                } else {
-                    info!("[DEBUG] Handle not found for term_id={}", id);
-                }
+                info!("[DEBUG] Writing input to PTY: term_id={}", id);
+                reg.write_input(&id, data)
+                    .map_err(|e| format!("Write error: {}", e))?;
+                info!("[DEBUG] Input written successfully");
             } else if term_id.is_some() {
-                // Invalid term_id provided
-                info!("[DEBUG] Term not found: {:?}", term_id);
                 send_message(
                     socket,
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
-                        message: format!("Terminal '{}' not found", term_id.as_ref().unwrap()),
+                        message: format!(
+                            "Terminal '{}' not found",
+                            term_id.as_ref().unwrap()
+                        ),
                     },
                 )
                 .await?;
@@ -66,16 +67,12 @@ pub async fn handle_terminal_message(
             rows,
             term_id,
         } => {
-            let mgr = manager.lock().await;
-            let resolved_id = mgr.resolve_term_id(term_id.as_deref());
+            let reg = registry.lock().await;
+            let resolved_id = reg.resolve_term_id(term_id.as_deref());
 
             if let Some(id) = resolved_id {
-                if let Some(handle) = mgr.get(&id) {
-                    handle
-                        .session
-                        .resize(*cols, *rows)
-                        .map_err(|e| format!("Resize error: {}", e))?;
-                }
+                reg.resize(&id, *cols, *rows)
+                    .map_err(|e| format!("Resize error: {}", e))?;
             }
             Ok(true)
         }
@@ -94,18 +91,25 @@ pub async fn handle_terminal_message(
                 return Ok(true);
             }
 
-            // v1.2: Spawn new terminal WITHOUT closing existing (parallel support)
             let (session_id, shell_name) = {
-                let mut mgr = manager.lock().await;
-                mgr.spawn(
+                let mut reg = registry.lock().await;
+                reg.spawn(
                     Some(cwd_path.clone()),
                     None,
                     None,
-                    tx_output.clone(),
-                    tx_exit.clone(),
+                    scrollback_tx.clone(),
                 )
                 .map_err(|e| format!("Spawn error: {}", e))?
             };
+
+            // 自动订阅新创建的终端
+            subscribe_terminal(
+                &session_id,
+                registry,
+                subscribed_terms,
+                agg_tx,
+            )
+            .await;
 
             info!(
                 cwd = %cwd,
@@ -126,30 +130,43 @@ pub async fn handle_terminal_message(
         }
 
         ClientMessage::KillTerminal => {
-            let session_id = {
-                let mut mgr = manager.lock().await;
-                if let Some(default_id) = mgr.default_term_id.clone() {
-                    mgr.close(&default_id);
-                    default_id
-                } else {
-                    return Ok(true);
-                }
+            // 关闭默认终端
+            let term_id = {
+                let reg = registry.lock().await;
+                reg.resolve_term_id(None)
             };
 
-            info!(term_id = %session_id, "Terminal killed by client request");
-            send_message(socket, &ServerMessage::TerminalKilled { session_id }).await?;
+            if let Some(id) = term_id {
+                unsubscribe_terminal(&id, subscribed_terms).await;
+                let mut reg = registry.lock().await;
+                reg.close(&id);
+                drop(reg);
+
+                info!(term_id = %id, "Terminal killed by client request");
+                send_message(
+                    socket,
+                    &ServerMessage::TerminalKilled { session_id: id },
+                )
+                .await?;
+            }
             Ok(true)
         }
 
         // v1.2: Multi-workspace extension
         ClientMessage::TermCreate { project, workspace } => {
-            info!(project = %project, workspace = %workspace, "TermCreate request received");
+            info!(
+                project = %project,
+                workspace = %workspace,
+                "TermCreate request received"
+            );
             let state = app_state.lock().await;
             match state.get_project(project) {
                 Some(p) => {
-                    // 处理默认工作空间：如果 workspace 是 "default"，使用项目根目录
                     let root_path = if workspace == "default" {
-                        info!(project = %project, "Using project root for default workspace");
+                        info!(
+                            project = %project,
+                            "Using project root for default workspace"
+                        );
                         p.root_path.clone()
                     } else {
                         match p.get_workspace(workspace) {
@@ -159,7 +176,8 @@ pub async fn handle_terminal_message(
                                 send_message(
                                     socket,
                                     &ServerMessage::Error {
-                                        code: "workspace_not_found".to_string(),
+                                        code: "workspace_not_found"
+                                            .to_string(),
                                         message: format!(
                                             "Workspace '{}' not found in project '{}'",
                                             workspace, project
@@ -174,16 +192,24 @@ pub async fn handle_terminal_message(
                     drop(state);
 
                     let (term_id, shell_name) = {
-                        let mut mgr = manager.lock().await;
-                        mgr.spawn(
+                        let mut reg = registry.lock().await;
+                        reg.spawn(
                             Some(root_path.clone()),
                             Some(project.clone()),
                             Some(workspace.clone()),
-                            tx_output.clone(),
-                            tx_exit.clone(),
+                            scrollback_tx.clone(),
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };
+
+                    // 自动订阅新创建的终端
+                    subscribe_terminal(
+                        &term_id,
+                        registry,
+                        subscribed_terms,
+                        agg_tx,
+                    )
+                    .await;
 
                     info!(
                         project = %project,
@@ -209,7 +235,10 @@ pub async fn handle_terminal_message(
                         socket,
                         &ServerMessage::Error {
                             code: "project_not_found".to_string(),
-                            message: format!("Project '{}' not found", project),
+                            message: format!(
+                                "Project '{}' not found",
+                                project
+                            ),
                         },
                     )
                     .await?;
@@ -219,16 +248,17 @@ pub async fn handle_terminal_message(
         }
 
         ClientMessage::TermList => {
-            let mgr = manager.lock().await;
-            let items = mgr.list();
+            let reg = registry.lock().await;
+            let items = reg.list();
             send_message(socket, &ServerMessage::TermList { items }).await?;
             Ok(true)
         }
 
         ClientMessage::TermClose { term_id } => {
+            unsubscribe_terminal(term_id, subscribed_terms).await;
             let closed = {
-                let mut mgr = manager.lock().await;
-                mgr.close(term_id)
+                let mut reg = registry.lock().await;
+                reg.close(term_id)
             };
 
             if closed {
@@ -245,7 +275,10 @@ pub async fn handle_terminal_message(
                     socket,
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
-                        message: format!("Terminal '{}' not found", term_id),
+                        message: format!(
+                            "Terminal '{}' not found",
+                            term_id
+                        ),
                     },
                 )
                 .await?;
@@ -254,8 +287,60 @@ pub async fn handle_terminal_message(
         }
 
         ClientMessage::TermFocus { term_id } => {
-            // Optional: server can use this for optimization
-            tracing::debug!(term_id = %term_id, "Client focused terminal");
+            tracing::debug!(
+                term_id = %term_id,
+                "Client focused terminal"
+            );
+            Ok(true)
+        }
+
+        // v1.27: Terminal persistence — 重连附着
+        ClientMessage::TermAttach { term_id } => {
+            info!(term_id = %term_id, "TermAttach request received");
+
+            let reg = registry.lock().await;
+            if let Some((project, workspace, cwd, shell)) =
+                reg.get_info(term_id)
+            {
+                let scrollback =
+                    reg.get_scrollback(term_id).unwrap_or_default();
+                drop(reg);
+
+                // 订阅终端输出
+                subscribe_terminal(
+                    term_id,
+                    registry,
+                    subscribed_terms,
+                    agg_tx,
+                )
+                .await;
+
+                send_message(
+                    socket,
+                    &ServerMessage::TermAttached {
+                        term_id: term_id.clone(),
+                        project,
+                        workspace,
+                        cwd,
+                        shell,
+                        scrollback,
+                    },
+                )
+                .await?;
+            } else {
+                drop(reg);
+                send_message(
+                    socket,
+                    &ServerMessage::Error {
+                        code: "term_not_found".to_string(),
+                        message: format!(
+                            "Terminal '{}' not found (may have exited)",
+                            term_id
+                        ),
+                    },
+                )
+                .await?;
+            }
             Ok(true)
         }
 

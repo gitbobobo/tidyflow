@@ -1,11 +1,16 @@
 use axum::extract::ws::WebSocket;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::server::protocol::{ClientMessage, ProjectInfo, ServerMessage, WorkspaceInfo};
-use crate::server::ws::{send_message, SharedAppState, TerminalManager};
+use crate::server::protocol::{
+    ClientMessage, ProjectInfo, ServerMessage, WorkspaceInfo,
+};
+use crate::server::terminal_registry::SharedTerminalRegistry;
+use crate::server::ws::{send_message, subscribe_terminal, SharedAppState};
 use crate::workspace::project::ProjectManager;
 use crate::workspace::state::WorkspaceStatus;
 use crate::workspace::workspace::WorkspaceManager;
@@ -14,10 +19,11 @@ use crate::workspace::workspace::WorkspaceManager;
 pub async fn handle_project_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    manager: &Arc<Mutex<TerminalManager>>,
+    registry: &SharedTerminalRegistry,
     app_state: &SharedAppState,
-    tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
+    scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> Result<bool, String> {
     match client_msg {
         // v1: List projects
@@ -33,8 +39,11 @@ pub async fn handle_project_message(
                 })
                 .collect();
             // HashMap 迭代顺序不稳定；在服务端固定字母序，避免客户端启动时顺序随机
-            items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-            send_message(socket, &ServerMessage::Projects { items }).await?;
+            items.sort_by(|a, b| {
+                a.name.to_lowercase().cmp(&b.name.to_lowercase())
+            });
+            send_message(socket, &ServerMessage::Projects { items })
+                .await?;
             Ok(true)
         }
 
@@ -43,25 +52,35 @@ pub async fn handle_project_message(
             let state = app_state.lock().await;
             match state.get_project(project) {
                 Some(p) => {
-                    // 收集所有真实的工作空间
                     let mut items: Vec<WorkspaceInfo> = p
                         .workspaces
                         .values()
                         .map(|w| WorkspaceInfo {
                             name: w.name.clone(),
-                            root: w.worktree_path.to_string_lossy().to_string(),
+                            root: w.worktree_path
+                                .to_string_lossy()
+                                .to_string(),
                             branch: w.branch.clone(),
                             status: match w.status {
-                                WorkspaceStatus::Ready => "ready".to_string(),
-                                WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
-                                WorkspaceStatus::Creating => "creating".to_string(),
-                                WorkspaceStatus::Initializing => "initializing".to_string(),
-                                WorkspaceStatus::Destroying => "destroying".to_string(),
+                                WorkspaceStatus::Ready => {
+                                    "ready".to_string()
+                                }
+                                WorkspaceStatus::SetupFailed => {
+                                    "setup_failed".to_string()
+                                }
+                                WorkspaceStatus::Creating => {
+                                    "creating".to_string()
+                                }
+                                WorkspaceStatus::Initializing => {
+                                    "initializing".to_string()
+                                }
+                                WorkspaceStatus::Destroying => {
+                                    "destroying".to_string()
+                                }
                             },
                         })
                         .collect();
 
-                    // 在列表开头添加虚拟的 "default" 工作空间，指向项目根目录
                     let default_ws = WorkspaceInfo {
                         name: "default".to_string(),
                         root: p.root_path.to_string_lossy().to_string(),
@@ -84,7 +103,10 @@ pub async fn handle_project_message(
                         socket,
                         &ServerMessage::Error {
                             code: "project_not_found".to_string(),
-                            message: format!("Project '{}' not found", project),
+                            message: format!(
+                                "Project '{}' not found",
+                                project
+                            ),
                         },
                     )
                     .await?;
@@ -98,18 +120,20 @@ pub async fn handle_project_message(
             let state = app_state.lock().await;
             match state.get_project(project) {
                 Some(p) => {
-                    // 处理默认工作空间：如果 workspace 是 "default"，使用项目根目录
                     let (root_path, _branch) = if workspace == "default" {
                         (p.root_path.clone(), p.default_branch.clone())
                     } else {
                         match p.get_workspace(workspace) {
-                            Some(w) => (w.worktree_path.clone(), w.branch.clone()),
+                            Some(w) => {
+                                (w.worktree_path.clone(), w.branch.clone())
+                            }
                             None => {
                                 drop(state);
                                 send_message(
                                     socket,
                                     &ServerMessage::Error {
-                                        code: "workspace_not_found".to_string(),
+                                        code: "workspace_not_found"
+                                            .to_string(),
                                         message: format!(
                                             "Workspace '{}' not found in project '{}'",
                                             workspace, project
@@ -123,19 +147,25 @@ pub async fn handle_project_message(
                     };
                     drop(state);
 
-                    // v1.2: Create new terminal in workspace WITHOUT closing existing terminals
-                    // This enables multi-workspace parallel support
                     let (session_id, shell_name) = {
-                        let mut mgr = manager.lock().await;
-                        mgr.spawn(
+                        let mut reg = registry.lock().await;
+                        reg.spawn(
                             Some(root_path.clone()),
                             Some(project.clone()),
                             Some(workspace.clone()),
-                            tx_output.clone(),
-                            tx_exit.clone(),
+                            scrollback_tx.clone(),
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };
+
+                    // 自动订阅新创建的终端
+                    subscribe_terminal(
+                        &session_id,
+                        registry,
+                        subscribed_terms,
+                        agg_tx,
+                    )
+                    .await;
 
                     info!(
                         project = %project,
@@ -162,7 +192,10 @@ pub async fn handle_project_message(
                         socket,
                         &ServerMessage::Error {
                             code: "project_not_found".to_string(),
-                            message: format!("Project '{}' not found", project),
+                            message: format!(
+                                "Project '{}' not found",
+                                project
+                            ),
                         },
                     )
                     .await?;
@@ -177,13 +210,19 @@ pub async fn handle_project_message(
             let path_buf = PathBuf::from(&path);
             info!("Acquiring app_state lock...");
             let mut state = app_state.lock().await;
-            info!("app_state lock acquired, calling ProjectManager::import_local");
+            info!(
+                "app_state lock acquired, calling ProjectManager::import_local"
+            );
 
             match ProjectManager::import_local(&mut state, name, &path_buf) {
                 Ok(project) => {
-                    info!("Project imported successfully: {}", project.name);
+                    info!(
+                        "Project imported successfully: {}",
+                        project.name
+                    );
                     let default_branch = project.default_branch.clone();
-                    let root = project.root_path.to_string_lossy().to_string();
+                    let root =
+                        project.root_path.to_string_lossy().to_string();
 
                     info!("Sending ProjectImported response...");
                     send_message(
@@ -192,7 +231,7 @@ pub async fn handle_project_message(
                             name: name.clone(),
                             root,
                             default_branch,
-                            workspace: None, // 不再自动创建工作空间
+                            workspace: None,
                         },
                     )
                     .await?;
@@ -211,20 +250,29 @@ pub async fn handle_project_message(
                         }
                         _ => ("import_error".to_string(), e.to_string()),
                     };
-                    send_message(socket, &ServerMessage::Error { code, message }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::Error { code, message },
+                    )
+                    .await?;
                 }
             }
             Ok(true)
         }
 
-        // v1.16: Create workspace（名称由 Core 用 petname 生成）
+        // v1.16: Create workspace
         ClientMessage::CreateWorkspace {
             project,
             from_branch,
         } => {
             let mut state = app_state.lock().await;
 
-            match WorkspaceManager::create(&mut state, project, from_branch.as_deref(), false) {
+            match WorkspaceManager::create(
+                &mut state,
+                project,
+                from_branch.as_deref(),
+                false,
+            ) {
                 Ok(ws) => {
                     send_message(
                         socket,
@@ -232,14 +280,27 @@ pub async fn handle_project_message(
                             project: project.clone(),
                             workspace: WorkspaceInfo {
                                 name: ws.name,
-                                root: ws.worktree_path.to_string_lossy().to_string(),
+                                root: ws
+                                    .worktree_path
+                                    .to_string_lossy()
+                                    .to_string(),
                                 branch: ws.branch,
                                 status: match ws.status {
-                                    WorkspaceStatus::Ready => "ready".to_string(),
-                                    WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
-                                    WorkspaceStatus::Creating => "creating".to_string(),
-                                    WorkspaceStatus::Initializing => "initializing".to_string(),
-                                    WorkspaceStatus::Destroying => "destroying".to_string(),
+                                    WorkspaceStatus::Ready => {
+                                        "ready".to_string()
+                                    }
+                                    WorkspaceStatus::SetupFailed => {
+                                        "setup_failed".to_string()
+                                    }
+                                    WorkspaceStatus::Creating => {
+                                        "creating".to_string()
+                                    }
+                                    WorkspaceStatus::Initializing => {
+                                        "initializing".to_string()
+                                    }
+                                    WorkspaceStatus::Destroying => {
+                                        "destroying".to_string()
+                                    }
                                 },
                             },
                         },
@@ -257,9 +318,15 @@ pub async fn handle_project_message(
                         crate::workspace::workspace::WorkspaceError::NotGitRepo(_) => {
                             ("not_git_repo".to_string(), e.to_string())
                         }
-                        _ => ("workspace_error".to_string(), e.to_string()),
+                        _ => {
+                            ("workspace_error".to_string(), e.to_string())
+                        }
                     };
-                    send_message(socket, &ServerMessage::Error { code, message }).await?;
+                    send_message(
+                        socket,
+                        &ServerMessage::Error { code, message },
+                    )
+                    .await?;
                 }
             }
             Ok(true)
@@ -284,7 +351,10 @@ pub async fn handle_project_message(
                     .await?;
                 }
                 Err(e) => {
-                    warn!("Failed to remove project: {}, error: {}", name, e);
+                    warn!(
+                        "Failed to remove project: {}, error: {}",
+                        name, e
+                    );
                     send_message(
                         socket,
                         &ServerMessage::ProjectRemoved {
@@ -344,6 +414,6 @@ pub async fn handle_project_message(
             Ok(true)
         }
 
-        _ => Ok(false), // 不处理的消息返回 false
+        _ => Ok(false),
     }
 }

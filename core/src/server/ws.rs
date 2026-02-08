@@ -9,21 +9,22 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
 
-use crate::pty::PtySession;
 use crate::server::handlers::file;
 use crate::server::handlers::git;
 use crate::server::handlers::project;
 use crate::server::handlers::settings;
 use crate::server::handlers::terminal;
 use crate::server::protocol::{
-    v1_capabilities, ClientMessage, ServerMessage, TerminalInfo,
-    PROTOCOL_VERSION,
+    v1_capabilities, ClientMessage, ServerMessage, PROTOCOL_VERSION,
+};
+use crate::server::terminal_registry::{
+    spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
 use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
 use crate::workspace::state::{AppState, Project};
@@ -41,131 +42,6 @@ fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
     }
 }
 
-/// 查找数据末尾不完整的 ANSI 转义序列的起始位置
-/// 返回 Some(index) 表示从 index 开始是不完整的序列，需要保留到下次发送
-/// 返回 None 表示数据完整，可以直接发送
-///
-/// ANSI 转义序列格式：
-/// - CSI (Control Sequence Introducer): ESC [ ... 终止符 (字母)
-/// - OSC (Operating System Command): ESC ] ... BEL 或 ESC \
-/// - DCS (Device Control String): ESC P ... ESC \
-/// - 简单序列: ESC 后跟单个字符
-fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
-    if data.is_empty() {
-        return None;
-    }
-
-    // 从末尾向前查找 ESC (0x1b)
-    // 只检查最后 256 字节，避免性能问题
-    let search_start = data.len().saturating_sub(256);
-
-    for i in (search_start..data.len()).rev() {
-        if data[i] == 0x1b {
-            // 找到 ESC，检查后续序列是否完整
-            let remaining = &data[i..];
-
-            if remaining.len() < 2 {
-                // ESC 后没有字符，不完整
-                return Some(i);
-            }
-
-            match remaining[1] {
-                // CSI 序列: ESC [ ... 终止符
-                b'[' => {
-                    // 查找终止符（字母 0x40-0x7E）
-                    if remaining.len() == 2 {
-                        // 只有 ESC [，缺少参数和终止符
-                        return Some(i);
-                    }
-                    let found_terminator = remaining
-                        .iter()
-                        .skip(2)
-                        .any(|&c| (0x40..=0x7E).contains(&c));
-                    if !found_terminator {
-                        // 到达末尾仍未找到终止符，不完整
-                        return Some(i);
-                    }
-                }
-                // OSC 序列: ESC ] ... BEL(0x07) 或 ST(ESC \)
-                b']' => {
-                    let mut found_terminator = false;
-                    for j in 2..remaining.len() {
-                        if remaining[j] == 0x07 {
-                            // BEL 终止符
-                            found_terminator = true;
-                            break;
-                        }
-                        if remaining[j] == 0x1b
-                            && j + 1 < remaining.len()
-                            && remaining[j + 1] == b'\\'
-                        {
-                            // ST 终止符 (ESC \)
-                            found_terminator = true;
-                            break;
-                        }
-                    }
-                    if !found_terminator {
-                        return Some(i);
-                    }
-                }
-                // DCS 序列: ESC P ... ESC \
-                b'P' => {
-                    let mut found_terminator = false;
-                    for j in 2..remaining.len() {
-                        if remaining[j] == 0x1b
-                            && j + 1 < remaining.len()
-                            && remaining[j + 1] == b'\\'
-                        {
-                            found_terminator = true;
-                            break;
-                        }
-                    }
-                    if !found_terminator {
-                        return Some(i);
-                    }
-                }
-                // 简单转义序列: ESC 后跟单个字符
-                _ => {
-                    // 已经有第二个字符，序列完整
-                }
-            }
-        }
-    }
-
-    // 检查 UTF-8 多字节字符是否被截断
-    // UTF-8 编码规则：
-    // - 1 字节: 0xxxxxxx
-    // - 2 字节: 110xxxxx 10xxxxxx
-    // - 3 字节: 1110xxxx 10xxxxxx 10xxxxxx
-    // - 4 字节: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-    if !data.is_empty() {
-        let last = data[data.len() - 1];
-        // 如果最后一个字节是多字节序列的起始字节，检查是否完整
-        if last >= 0xC0 {
-            // 这是一个多字节序列的起始字节，但后面没有续字节
-            return Some(data.len() - 1);
-        }
-        // 检查倒数第二个字节
-        if data.len() >= 2 {
-            let second_last = data[data.len() - 2];
-            if second_last >= 0xE0 && (0x80..0xC0).contains(&last) {
-                // 3 字节序列只有 2 字节
-                return Some(data.len() - 2);
-            }
-        }
-        // 检查倒数第三个字节
-        if data.len() >= 3 {
-            let third_last = data[data.len() - 3];
-            if third_last >= 0xF0 && data[data.len() - 2] >= 0x80 && last >= 0x80 {
-                // 4 字节序列只有 3 字节
-                return Some(data.len() - 3);
-            }
-        }
-    }
-
-    None
-}
-
 /// Shared application state for the WebSocket server
 pub type SharedAppState = Arc<Mutex<AppState>>;
 
@@ -174,6 +50,8 @@ pub type SharedAppState = Arc<Mutex<AppState>>;
 pub struct AppContext {
     pub app_state: SharedAppState,
     pub save_tx: tokio::sync::mpsc::Sender<()>,
+    pub terminal_registry: SharedTerminalRegistry,
+    pub scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 }
 
 /// Run the WebSocket server on the specified port
@@ -191,9 +69,18 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     // 启动防抖保存 actor
     let save_tx = spawn_state_saver(shared_state.clone());
 
+    // 创建全局终端注册表
+    let terminal_registry: SharedTerminalRegistry =
+        Arc::new(Mutex::new(TerminalRegistry::new()));
+
+    // 启动 scrollback 写入 task
+    let scrollback_tx = spawn_scrollback_writer(terminal_registry.clone());
+
     let ctx = AppContext {
         app_state: shared_state,
         save_tx,
+        terminal_registry,
+        scrollback_tx,
     };
 
     let app = Router::new()
@@ -249,226 +136,49 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     State(ctx): State<AppContext>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, ctx.app_state, ctx.save_tx))
-}
-
-/// Single terminal session handle with workspace binding (v1.2)
-pub struct TerminalHandle {
-    pub session: PtySession,
-    pub term_id: String,
-    pub project: String,
-    pub workspace: String,
-    pub cwd: PathBuf,
-}
-
-/// Terminal manager for a connection - manages multiple terminals (v1.2: multi-workspace)
-pub struct TerminalManager {
-    pub terminals: HashMap<String, TerminalHandle>,
-    pub default_term_id: Option<String>,
-}
-
-impl Default for TerminalManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TerminalManager {
-    pub fn new() -> Self {
-        Self {
-            terminals: HashMap::new(),
-            default_term_id: None,
-        }
-    }
-
-    pub fn spawn(
-        &mut self,
-        cwd: Option<PathBuf>,
-        project: Option<String>,
-        workspace: Option<String>,
-        tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-        _tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
-    ) -> Result<(String, String), String> {
-        let term_id = Uuid::new_v4().to_string();
-        let cwd_path = cwd.unwrap_or_else(|| {
-            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string()))
-        });
-
-        let mut session = PtySession::new(Some(cwd_path.clone()))
-            .map_err(|e| format!("Failed to create PTY: {}", e))?;
-
-        let shell_name = session.shell_name().to_string();
-
-        // 为这个终端创建独立的读取线程
-        let reader_term_id = term_id.clone();
-        let reader = session
-            .take_reader()
-            .map_err(|e| format!("Failed to take reader: {}", e))?;
-
-        std::thread::spawn(move || {
-            use std::io::Read;
-            let mut reader = reader;
-            let mut buf = [0u8; 8192];
-            // 保存不完整的 ANSI 转义序列，避免在缓冲区边界截断导致花屏
-            let mut pending: Vec<u8> = Vec::new();
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        // EOF - terminal closed
-                        // 发送剩余的 pending 数据
-                        if !pending.is_empty() {
-                            let _ = tx_output.blocking_send((reader_term_id.clone(), pending));
-                        }
-                        break;
-                    }
-                    Ok(n) => {
-                        // 合并 pending 数据和新读取的数据
-                        let mut data = if pending.is_empty() {
-                            buf[..n].to_vec()
-                        } else {
-                            let mut combined = std::mem::take(&mut pending);
-                            combined.extend_from_slice(&buf[..n]);
-                            combined
-                        };
-
-                        // 检查数据末尾是否有不完整的 ANSI 转义序列
-                        // ANSI 转义序列以 ESC (0x1b) 开头
-                        if let Some(incomplete_start) = find_incomplete_escape_sequence(&data) {
-                            // 将不完整的序列保存到 pending
-                            pending = data.split_off(incomplete_start);
-                        }
-
-                        // 发送完整的数据
-                        if !data.is_empty()
-                            && tx_output
-                                .blocking_send((reader_term_id.clone(), data))
-                                .is_err()
-                        {
-                            // Channel closed, exit
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        debug!("PTY read error for {}: {}", reader_term_id, e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        let handle = TerminalHandle {
-            session,
-            term_id: term_id.clone(),
-            project: project.unwrap_or_default(),
-            workspace: workspace.unwrap_or_default(),
-            cwd: cwd_path,
-        };
-
-        // Set as default if first terminal
-        if self.default_term_id.is_none() {
-            self.default_term_id = Some(term_id.clone());
-        }
-
-        self.terminals.insert(term_id.clone(), handle);
-
-        Ok((term_id, shell_name))
-    }
-
-    pub fn get(&self, term_id: &str) -> Option<&TerminalHandle> {
-        self.terminals.get(term_id)
-    }
-
-    pub fn get_mut(&mut self, term_id: &str) -> Option<&mut TerminalHandle> {
-        self.terminals.get_mut(term_id)
-    }
-
-    pub fn resolve_term_id(&self, term_id: Option<&str>) -> Option<String> {
-        match term_id {
-            Some(id) if self.terminals.contains_key(id) => Some(id.to_string()),
-            Some(_) => None,                      // Invalid term_id
-            None => self.default_term_id.clone(), // Use default
-        }
-    }
-
-    pub fn close(&mut self, term_id: &str) -> bool {
-        if let Some(mut handle) = self.terminals.remove(term_id) {
-            handle.session.kill();
-            // Update default if we closed the default terminal
-            if self.default_term_id.as_ref() == Some(&term_id.to_string()) {
-                self.default_term_id = self.terminals.keys().next().cloned();
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn close_all(&mut self) {
-        for (_, mut handle) in self.terminals.drain() {
-            handle.session.kill();
-        }
-        self.default_term_id = None;
-    }
-
-    pub fn list(&self) -> Vec<TerminalInfo> {
-        self.terminals
-            .values()
-            .map(|h| TerminalInfo {
-                term_id: h.term_id.clone(),
-                project: h.project.clone(),
-                workspace: h.workspace.clone(),
-                cwd: h.cwd.to_string_lossy().to_string(),
-                status: "running".to_string(),
-            })
-            .collect()
-    }
-
-    pub fn term_ids(&self) -> Vec<String> {
-        self.terminals.keys().cloned().collect()
-    }
+    ws.on_upgrade(move |socket| {
+        handle_socket(
+            socket,
+            ctx.app_state,
+            ctx.save_tx,
+            ctx.terminal_registry,
+            ctx.scrollback_tx,
+        )
+    })
 }
 
 /// Handle a WebSocket connection
-async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx: tokio::sync::mpsc::Sender<()>) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    app_state: SharedAppState,
+    save_tx: tokio::sync::mpsc::Sender<()>,
+    registry: SharedTerminalRegistry,
+    scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+) {
     info!("New WebSocket connection established");
 
-    // Create channels for terminal output and exit events
-    let (tx_output, mut rx_output) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(100);
-    let (tx_exit, mut rx_exit) = tokio::sync::mpsc::channel::<(String, i32)>(10);
+    // 聚合输出通道：所有订阅终端的输出汇聚到这里
+    let (agg_tx, mut agg_rx) =
+        tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
+
+    // 跟踪当前 WS 连接订阅的终端及其转发 task
+    let subscribed_terms: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     // Create channel for file watcher events
-    let (tx_watch, mut rx_watch) = tokio::sync::mpsc::channel::<WatchEvent>(100);
-
-    // Create terminal manager
-    let manager = Arc::new(Mutex::new(TerminalManager::new()));
+    let (tx_watch, mut rx_watch) =
+        tokio::sync::mpsc::channel::<WatchEvent>(100);
 
     // Create file watcher
     let watcher = Arc::new(Mutex::new(WorkspaceWatcher::new(tx_watch)));
 
-    // Auto-spawn a default terminal session
-    let (default_term_id, shell_name) = {
-        let mut mgr = manager.lock().await;
-        match mgr.spawn(None, None, None, tx_output.clone(), tx_exit.clone()) {
-            Ok((term_id, shell)) => (term_id, shell),
-            Err(e) => {
-                error!("Failed to create initial PTY session: {}", e);
-                let _ = socket.close().await;
-                return;
-            }
-        }
-    };
+    // 不再自动创建默认终端，前端重连时通过 TermAttach 附着已有终端
 
-    info!(
-        term_id = %default_term_id,
-        shell = %shell_name,
-        "Default PTY session created for WebSocket connection"
-    );
-
-    // Send Hello message with v1 capabilities
+    // Send Hello message with v1 capabilities（session_id/shell 发空，前端需兼容）
     let hello_msg = ServerMessage::Hello {
         version: PROTOCOL_VERSION,
-        session_id: default_term_id.clone(),
-        shell: shell_name.clone(),
+        session_id: String::new(),
+        shell: String::new(),
         capabilities: Some(v1_capabilities()),
     };
 
@@ -476,9 +186,6 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx
         error!("Failed to send Hello message: {}", e);
         return;
     }
-
-    // 注意：PTY 读取现在由每个终端的独立线程处理，
-    // 在 TerminalManager::spawn() 中创建
 
     // Main loop: handle WebSocket messages and PTY output
     info!("Entering main WebSocket loop");
@@ -488,7 +195,6 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx
     loop {
         loop_count += 1;
 
-        // Log first iteration and every 5 seconds
         if loop_count == 1 {
             info!("First loop iteration, about to call tokio::select!");
             crate::util::flush_logs();
@@ -516,15 +222,15 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx
                         if let Err(e) = handle_client_message(
                             &data,
                             &mut socket,
-                            &manager,
+                            &registry,
                             &watcher,
                             &app_state,
                             &save_tx,
-                            tx_output.clone(),
-                            tx_exit.clone(),
+                            &scrollback_tx,
+                            &subscribed_terms,
+                            &agg_tx,
                         ).await {
                             warn!("Error handling client message: {}", e);
-                            // 发送错误消息给客户端
                             if let Err(send_err) = send_message(&mut socket, &ServerMessage::Error {
                                 code: "message_error".to_string(),
                                 message: e.clone(),
@@ -554,8 +260,8 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx
                 }
             }
 
-            // Handle PTY output
-            Some((term_id, output)) = rx_output.recv() => {
+            // Handle aggregated PTY output from subscribed terminals
+            Some((term_id, output)) = agg_rx.recv() => {
                 debug!("PTY output received for term_id: {}, {} bytes", term_id, output.len());
                 let msg = ServerMessage::Output {
                     data: output,
@@ -565,16 +271,6 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx
                     error!("Failed to send output message: {}", e);
                     break;
                 }
-            }
-
-            // Handle process exit
-            Some((term_id, exit_code)) = rx_exit.recv() => {
-                info!(term_id = %term_id, exit_code, "Sending exit message");
-                let exit_msg = ServerMessage::Exit {
-                    code: exit_code,
-                    term_id: Some(term_id),
-                };
-                let _ = send_message(&mut socket, &exit_msg).await;
             }
 
             // Handle file watcher events
@@ -612,10 +308,13 @@ async fn handle_socket(mut socket: WebSocket, app_state: SharedAppState, save_tx
         }
     }
 
-    // Clean up all terminals
+    // WS 断开：只清理订阅关系，不杀终端
     {
-        let mut mgr = manager.lock().await;
-        mgr.close_all();
+        let mut subs = subscribed_terms.lock().await;
+        for (term_id, handle) in subs.drain() {
+            info!("Unsubscribing from terminal {} on WS disconnect", term_id);
+            handle.abort();
+        }
     }
 
     info!("WebSocket connection handler finished");
@@ -632,16 +331,75 @@ pub async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// 订阅终端输出：从 registry 的 broadcast 接收数据，转发到聚合通道
+pub async fn subscribe_terminal(
+    term_id: &str,
+    registry: &SharedTerminalRegistry,
+    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+) -> bool {
+    let reg = registry.lock().await;
+    let rx = match reg.subscribe(term_id) {
+        Some(rx) => rx,
+        None => return false,
+    };
+    drop(reg);
+
+    let agg_tx = agg_tx.clone();
+    let tid = term_id.to_string();
+
+    let handle = tokio::spawn(async move {
+        let mut rx = rx;
+        loop {
+            match rx.recv().await {
+                Ok((id, data)) => {
+                    if id == tid {
+                        if agg_tx.send((id, data)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Terminal {} output lagged by {} messages", tid, n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+
+    let mut subs = subscribed_terms.lock().await;
+    // 如果已有旧订阅，先取消
+    if let Some(old) = subs.remove(term_id) {
+        old.abort();
+    }
+    subs.insert(term_id.to_string(), handle);
+    true
+}
+
+/// 取消订阅终端输出
+pub async fn unsubscribe_terminal(
+    term_id: &str,
+    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+) {
+    let mut subs = subscribed_terms.lock().await;
+    if let Some(handle) = subs.remove(term_id) {
+        handle.abort();
+    }
+}
+
 /// Handle a client message
 async fn handle_client_message(
     data: &[u8],
     socket: &mut WebSocket,
-    manager: &Arc<Mutex<TerminalManager>>,
+    registry: &SharedTerminalRegistry,
     watcher: &Arc<Mutex<WorkspaceWatcher>>,
     app_state: &SharedAppState,
     save_tx: &tokio::sync::mpsc::Sender<()>,
-    tx_output: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    tx_exit: tokio::sync::mpsc::Sender<(String, i32)>,
+    scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> Result<(), String> {
     info!(
         "handle_client_message called with data length: {}",
@@ -660,10 +418,11 @@ async fn handle_client_message(
     if terminal::handle_terminal_message(
         &client_msg,
         socket,
-        manager,
+        registry,
         app_state,
-        tx_output.clone(),
-        tx_exit.clone(),
+        scrollback_tx,
+        subscribed_terms,
+        agg_tx,
     )
     .await?
     {
@@ -684,10 +443,11 @@ async fn handle_client_message(
     if project::handle_project_message(
         &client_msg,
         socket,
-        manager,
+        registry,
         app_state,
-        tx_output.clone(),
-        tx_exit.clone(),
+        scrollback_tx,
+        subscribed_terms,
+        agg_tx,
     )
     .await?
     {
@@ -772,7 +532,8 @@ async fn handle_client_message(
         | ClientMessage::TermCreate { .. }
         | ClientMessage::TermList
         | ClientMessage::TermClose { .. }
-        | ClientMessage::TermFocus { .. } => {
+        | ClientMessage::TermFocus { .. }
+        | ClientMessage::TermAttach { .. } => {
             unreachable!("Terminal messages should be handled by terminal handler");
         }
 
@@ -834,64 +595,4 @@ async fn handle_client_message(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_find_incomplete_escape_sequence_complete() {
-        // 完整的 CSI 序列
-        let data = b"\x1b[31mHello\x1b[0m";
-        assert_eq!(find_incomplete_escape_sequence(data), None);
-
-        // 完整的 OSC 序列 (BEL 终止)
-        let data = b"\x1b]0;Title\x07";
-        assert_eq!(find_incomplete_escape_sequence(data), None);
-
-        // 普通文本
-        let data = b"Hello World";
-        assert_eq!(find_incomplete_escape_sequence(data), None);
-    }
-
-    #[test]
-    fn test_find_incomplete_escape_sequence_incomplete_csi() {
-        // 不完整的 CSI 序列 - 只有 ESC [
-        let data = b"Hello\x1b[";
-        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
-
-        // 不完整的 CSI 序列 - 缺少终止符
-        let data = b"Hello\x1b[38;2;255";
-        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
-    }
-
-    #[test]
-    fn test_find_incomplete_escape_sequence_incomplete_osc() {
-        // 不完整的 OSC 序列
-        let data = b"Hello\x1b]0;Title";
-        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
-    }
-
-    #[test]
-    fn test_find_incomplete_escape_sequence_lone_esc() {
-        // 单独的 ESC
-        let data = b"Hello\x1b";
-        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
-    }
-
-    #[test]
-    fn test_find_incomplete_escape_sequence_utf8() {
-        // 完整的 UTF-8 中文
-        let data = "你好".as_bytes();
-        assert_eq!(find_incomplete_escape_sequence(data), None);
-
-        // 不完整的 UTF-8 - 3 字节字符只有 1 字节
-        let data = b"Hello\xe4";
-        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
-
-        // 不完整的 UTF-8 - 3 字节字符只有 2 字节
-        let data = b"Hello\xe4\xbd";
-        assert_eq!(find_incomplete_escape_sequence(data), Some(5));
-    }
 }

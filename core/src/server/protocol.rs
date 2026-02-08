@@ -305,6 +305,11 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         ai_agent: Option<String>,
     },
+
+    // v1.27: Terminal persistence — 重连附着
+    TermAttach {
+        term_id: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -696,6 +701,17 @@ pub enum ServerMessage {
         message: String,
         commits: Vec<AIGitCommit>,
     },
+
+    // v1.27: Terminal persistence — 附着响应
+    TermAttached {
+        term_id: String,
+        project: String,
+        workspace: String,
+        cwd: String,
+        shell: String,
+        #[serde(with = "serde_bytes")]
+        scrollback: Vec<u8>,
+    },
 }
 
 // ============================================================================
@@ -732,6 +748,8 @@ pub struct TerminalInfo {
     pub workspace: String,
     pub cwd: String,
     pub status: String, // "running" or "exited"
+    #[serde(default)]
+    pub shell: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -824,6 +842,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "file_rename_delete".to_string(),
         "file_copy".to_string(),
         "file_move".to_string(),
+        "terminal_persistence".to_string(),
     ]
 }
 
