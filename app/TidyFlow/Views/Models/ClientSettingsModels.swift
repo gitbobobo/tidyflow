@@ -77,6 +77,7 @@ enum BrandIcon: String, CaseIterable {
     case codex = "codex"
     case gemini = "gemini"
     case opencode = "opencode"
+    case copilot = "copilot"
     
     var assetName: String {
         switch self {
@@ -87,6 +88,7 @@ enum BrandIcon: String, CaseIterable {
         case .codex: return "codex-icon"
         case .gemini: return "gemini-icon"
         case .opencode: return "opencode-icon"
+        case .copilot: return "copilot-icon"
         }
     }
     
@@ -99,6 +101,7 @@ enum BrandIcon: String, CaseIterable {
         case .codex: return "Codex CLI"
         case .gemini: return "Gemini CLI"
         case .opencode: return "OpenCode"
+        case .copilot: return "Copilot CLI"
         }
     }
 
@@ -118,6 +121,7 @@ enum BrandIcon: String, CaseIterable {
         case .codex: return "codex"
         case .gemini: return "gemini"
         case .opencode: return "opencode"
+        case .copilot: return "copilot"
         case .vscode, .trae: return nil
         }
     }
@@ -129,6 +133,7 @@ enum BrandIcon: String, CaseIterable {
         case .codex: return "codex --full-auto"
         case .gemini: return "gemini --approval-mode yolo --no-sandbox"
         case .cursor: return "cursor-agent --sandbox disabled -f"
+        case .copilot: return "copilot --allow-all"
         default: return nil
         }
     }

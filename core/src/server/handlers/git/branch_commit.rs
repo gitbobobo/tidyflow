@@ -716,6 +716,12 @@ fn build_ai_agent_command(agent: &str, prompt: &str) -> Result<Vec<String>, Stri
             "--output-format".to_string(),
             "json".to_string(),
         ]),
+        "copilot" => Ok(vec![
+            "copilot".to_string(),
+            "--allow-all".to_string(),
+            "-p".to_string(),
+            prompt.to_string(),
+        ]),
         _ => Err(format!("Unknown AI agent: {}", agent)),
     }
 }

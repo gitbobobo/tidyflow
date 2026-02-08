@@ -9,6 +9,7 @@ enum AIAgent: String, CaseIterable, Identifiable {
     case gemini
     case opencode
     case cursor
+    case copilot
 
     var id: String { rawValue }
 
@@ -19,6 +20,7 @@ enum AIAgent: String, CaseIterable, Identifiable {
         case .gemini: return "Gemini CLI"
         case .opencode: return "OpenCode"
         case .cursor: return "Cursor Agent"
+        case .copilot: return "Copilot CLI"
         }
     }
 
@@ -29,6 +31,7 @@ enum AIAgent: String, CaseIterable, Identifiable {
         case .gemini: return .gemini
         case .opencode: return .opencode
         case .cursor: return .cursor
+        case .copilot: return .copilot
         }
     }
 
@@ -49,6 +52,8 @@ enum AIAgent: String, CaseIterable, Identifiable {
         case .cursor:
             // Cursor Agent 在提交场景需要关闭沙箱并强制放行命令，否则可能被外层审批拦截。
             return ["cursor-agent", "-p", "--sandbox", "disabled", "-f", prompt, "--output-format", "json"]
+        case .copilot:
+            return ["copilot", "--allow-all", "-p", prompt]
         }
     }
 
@@ -96,6 +101,12 @@ enum AIAgent: String, CaseIterable, Identifiable {
                 lastText = text
             }
             return lastText
+
+        case .copilot:
+            // 纯文本输出，无 JSON 包装层，直接去除 markdown 代码块后返回
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return AIAgentOutputParser.stripMarkdownCodeBlock(trimmed)
         }
     }
 
