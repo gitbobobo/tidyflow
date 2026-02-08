@@ -9,6 +9,8 @@ class WSClient: NSObject, ObservableObject {
     private let msgpackEncoder = MessagePackEncoder()
     private let msgpackDecoder = MessagePackDecoder()
     @Published private(set) var isConnected: Bool = false
+    /// 标记当前断连是否为主动行为（disconnect/reconnect），用于区分意外断连
+    private(set) var isIntentionalDisconnect: Bool = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
@@ -105,6 +107,7 @@ class WSClient: NSObject, ObservableObject {
             return
         }
 
+        isIntentionalDisconnect = false
         TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
         webSocketTask = urlSession?.webSocketTask(with: url)
         webSocketTask?.resume()
@@ -118,6 +121,7 @@ class WSClient: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        isIntentionalDisconnect = true
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         updateConnectionState(false)
@@ -127,6 +131,37 @@ class WSClient: NSObject, ObservableObject {
         disconnect()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.connect()
+        }
+    }
+
+    /// 发送 WebSocket ping 探活，超时则回调 false
+    func sendPing(timeout: TimeInterval = 2.0, completion: @escaping (Bool) -> Void) {
+        guard let task = webSocketTask, isConnected else {
+            completion(false)
+            return
+        }
+
+        var completed = false
+        let lock = NSLock()
+
+        // 超时计时器
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+            lock.lock()
+            defer { lock.unlock() }
+            if !completed {
+                completed = true
+                completion(false)
+            }
+        }
+
+        // URLSessionWebSocketTask 内置 ping/pong
+        task.sendPing { error in
+            lock.lock()
+            defer { lock.unlock() }
+            if !completed {
+                completed = true
+                completion(error == nil)
+            }
         }
     }
 
