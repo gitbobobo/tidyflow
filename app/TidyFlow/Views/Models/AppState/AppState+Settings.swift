@@ -32,6 +32,71 @@ extension AppState {
         clientSettings.customCommands.removeAll { $0.id == id }
         saveClientSettings()
     }
+
+    // MARK: - 项目命令管理
+
+    /// 保存项目命令配置
+    func saveProjectCommands(projectName: String) {
+        guard let project = projects.first(where: { $0.name == projectName }) else { return }
+        wsClient.requestSaveProjectCommands(project: projectName, commands: project.commands)
+    }
+
+    /// 添加项目命令
+    func addProjectCommand(projectName: String, _ command: ProjectCommand) {
+        if let index = projects.firstIndex(where: { $0.name == projectName }) {
+            projects[index].commands.append(command)
+            saveProjectCommands(projectName: projectName)
+        }
+    }
+
+    /// 更新项目命令
+    func updateProjectCommand(projectName: String, _ command: ProjectCommand) {
+        if let pIndex = projects.firstIndex(where: { $0.name == projectName }),
+           let cIndex = projects[pIndex].commands.firstIndex(where: { $0.id == command.id }) {
+            projects[pIndex].commands[cIndex] = command
+            saveProjectCommands(projectName: projectName)
+        }
+    }
+
+    /// 删除项目命令
+    func deleteProjectCommand(projectName: String, commandId: String) {
+        if let index = projects.firstIndex(where: { $0.name == projectName }) {
+            projects[index].commands.removeAll { $0.id == commandId }
+            saveProjectCommands(projectName: projectName)
+        }
+    }
+
+    /// 执行项目命令（通过 WebSocket 发送到 Core）
+    func executeProjectCommand(projectName: String, workspaceName: String, commandId: String) async -> ProjectCommandResult {
+        return await withCheckedContinuation { continuation in
+            // 注册一次性回调
+            wsClient.onProjectCommandCompleted = { project, workspace, cmdId, taskId, ok, message in
+                if project == projectName && cmdId == commandId {
+                    continuation.resume(returning: ProjectCommandResult(ok: ok, message: message ?? ""))
+                }
+            }
+            wsClient.requestRunProjectCommand(
+                project: projectName,
+                workspace: workspaceName,
+                commandId: commandId
+            )
+        }
+    }
+
+    /// 提交项目命令为后台任务
+    func runProjectCommand(projectName: String, workspaceName: String, command: ProjectCommand) {
+        submitBackgroundTask(
+            type: .projectCommand,
+            context: .projectCommand(ProjectCommandContext(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                commandId: command.id,
+                commandName: command.name,
+                commandIcon: command.icon,
+                blocking: command.blocking
+            ))
+        )
+    }
     
     // MARK: - 自动工作空间快捷键
 

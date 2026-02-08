@@ -7,6 +7,8 @@ extension AppState {
     func selectWorkspace(projectId: UUID, workspaceName: String) {
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
+        // 选中工作空间时关闭项目配置页面
+        selectedProjectForConfig = nil
         
         // Update selectedProjectName for WS protocol
         // 注意：使用原始项目名称，不进行格式转换，因为服务端使用原始名称索引项目

@@ -7,11 +7,13 @@ import SwiftUI
 enum BackgroundTaskType: String, CaseIterable {
     case aiCommit
     case aiMerge
+    case projectCommand
 
     var displayName: String {
         switch self {
         case .aiCommit: return "task.aiCommit".localized
         case .aiMerge: return "task.aiMerge".localized
+        case .projectCommand: return "task.projectCommand".localized
         }
     }
 
@@ -19,11 +21,17 @@ enum BackgroundTaskType: String, CaseIterable {
         switch self {
         case .aiCommit: return "sparkles"
         case .aiMerge: return "cpu"
+        case .projectCommand: return "terminal"
         }
     }
 
     /// 阻塞任务：同一工作空间同时只能运行一个
-    var isBlocking: Bool { true }
+    var isBlocking: Bool {
+        switch self {
+        case .aiCommit, .aiMerge: return true
+        case .projectCommand: return false // 由命令配置决定
+        }
+    }
 }
 
 // MARK: - 后台任务状态
@@ -113,9 +121,20 @@ struct AIMergeContext {
     let workspaceName: String
 }
 
+/// 项目命令上下文
+struct ProjectCommandContext {
+    let projectName: String
+    let workspaceName: String
+    let commandId: String
+    let commandName: String
+    let commandIcon: String
+    let blocking: Bool
+}
+
 enum BackgroundTaskContext {
     case aiCommit(AICommitContext)
     case aiMerge(AIMergeContext)
+    case projectCommand(ProjectCommandContext)
 }
 
 // MARK: - 后台任务结果
@@ -123,11 +142,13 @@ enum BackgroundTaskContext {
 enum BackgroundTaskResult {
     case aiCommit(AICommitResult)
     case aiMerge(AIMergeResult)
+    case projectCommand(ProjectCommandResult)
 
     var resultStatus: TaskResultStatus {
         switch self {
         case .aiCommit(let r): return r.resultStatus
         case .aiMerge(let r): return r.resultStatus
+        case .projectCommand(let r): return r.ok ? .success : .failed
         }
     }
 
@@ -135,8 +156,15 @@ enum BackgroundTaskResult {
         switch self {
         case .aiCommit(let r): return r.message
         case .aiMerge(let r): return r.message
+        case .projectCommand(let r): return r.message
         }
     }
+}
+
+/// 项目命令执行结果
+struct ProjectCommandResult {
+    let ok: Bool
+    let message: String
 }
 
 // MARK: - 后台任务
@@ -161,7 +189,12 @@ class BackgroundTask: ObservableObject, Identifiable {
     }
 
     var displayTitle: String {
-        type.displayName
+        switch context {
+        case .projectCommand(let ctx):
+            return ctx.commandName
+        default:
+            return type.displayName
+        }
     }
 
     /// 格式化耗时文本

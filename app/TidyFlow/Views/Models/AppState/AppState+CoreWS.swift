@@ -279,6 +279,13 @@ extension AppState {
             self?.handleFileWriteResult(result)
         }
 
+        // 项目命令回调
+        wsClient.onProjectCommandsSaved = { [weak self] project, ok, message in
+            if !ok {
+                TFLog.app.warning("项目命令保存失败: \(message ?? "未知错误", privacy: .public)")
+            }
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {

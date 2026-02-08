@@ -477,4 +477,34 @@ extension WSClient {
             "content": [UInt8](content)
         ])
     }
+
+    // MARK: - v1.29: 项目命令
+
+    /// 保存项目命令配置
+    func requestSaveProjectCommands(project: String, commands: [ProjectCommand]) {
+        let commandsData = commands.map { cmd -> [String: Any] in
+            return [
+                "id": cmd.id,
+                "name": cmd.name,
+                "icon": cmd.icon,
+                "command": cmd.command,
+                "blocking": cmd.blocking
+            ]
+        }
+        send([
+            "type": "save_project_commands",
+            "project": project,
+            "commands": commandsData
+        ])
+    }
+
+    /// 执行项目命令
+    func requestRunProjectCommand(project: String, workspace: String, commandId: String) {
+        send([
+            "type": "run_project_command",
+            "project": project,
+            "workspace": workspace,
+            "command_id": commandId
+        ])
+    }
 }

@@ -78,6 +78,10 @@
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
 		L10N0001 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
 		L10N0002 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = L10N0020 /* Localizable.strings */; };
+		UX100003 /* ProjectConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100013 /* ProjectConfigView.swift */; };
+		UX100004 /* ProjectCommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100014 /* ProjectCommandEditSheet.swift */; };
+		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
+		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -168,6 +172,10 @@
 		L10N0011 /* LocalizationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationManager.swift; sourceTree = "<group>"; };
 		L10N0021 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		L10N0022 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		UX100013 /* ProjectConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectConfigView.swift; sourceTree = "<group>"; };
+		UX100014 /* ProjectCommandEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandEditSheet.swift; sourceTree = "<group>"; };
+		UX100015 /* ProjectCommandsMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandsMenuView.swift; sourceTree = "<group>"; };
+		MDL000115 /* ProjectCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -206,6 +214,9 @@
 				MDL000201 /* Models */,
 				2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */,
 				B3A00018 /* NativeGitPanelView.swift */,
+				UX100014 /* ProjectCommandEditSheet.swift */,
+				UX100015 /* ProjectCommandsMenuView.swift */,
+				UX100013 /* ProjectConfigView.swift */,
 				UX100011 /* ProjectsSidebarView.swift */,
 				QAV00011 /* QuickActionsView.swift */,
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
@@ -229,6 +240,7 @@
 				MDL000102 /* EditorTools.swift */,
 				MDL000108 /* FileBrowserModels.swift */,
 				MDL000101 /* Notifications.swift */,
+				MDL000115 /* ProjectCommandModels.swift */,
 				MDL000107 /* ProjectWorkspaceModels.swift */,
 				MDL000103 /* TabModels.swift */,
 			);
@@ -513,6 +525,10 @@
 				E4200001 /* LogWriter.swift in Sources */,
 				E4200002 /* TFLogger.swift in Sources */,
 				L10N0001 /* LocalizationManager.swift in Sources */,
+				UX100003 /* ProjectConfigView.swift in Sources */,
+				UX100004 /* ProjectCommandEditSheet.swift in Sources */,
+				UX100005 /* ProjectCommandsMenuView.swift in Sources */,
+				MDL000315 /* ProjectCommandModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

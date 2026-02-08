@@ -315,6 +315,8 @@ struct TaskResultDetailView: View {
                     aiCommitDetail(r)
                 case .aiMerge(let r):
                     aiMergeDetail(r)
+                case .projectCommand:
+                    EmptyView()
                 }
             }
             .padding(.horizontal, 12)

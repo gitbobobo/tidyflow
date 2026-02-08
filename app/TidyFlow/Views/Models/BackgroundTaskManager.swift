@@ -7,6 +7,8 @@ class BackgroundTaskManager: ObservableObject {
     @Published var pendingQueues: [String: [BackgroundTask]] = [:]
     /// 每个工作空间最多一个阻塞任务在运行
     @Published var runningBlockingTask: [String: BackgroundTask] = [:]
+    /// 非阻塞任务（可并行运行）
+    @Published var runningNonBlockingTasks: [String: [BackgroundTask]] = [:]
     /// 已完成历史（每个工作空间最多 5 条）
     @Published var completedQueues: [String: [BackgroundTask]] = [:]
 
@@ -23,6 +25,11 @@ class BackgroundTaskManager: ObservableObject {
     }
 
     // MARK: - 调度
+
+    /// 非阻塞任务直接执行（不进入等待队列）
+    func executeNonBlockingTask(_ task: BackgroundTask, appState: AppState) {
+        executeTask(task, appState: appState)
+    }
 
     func scheduleNext(for key: String, appState: AppState) {
         // 若已有阻塞任务在运行，等待
@@ -43,8 +50,22 @@ class BackgroundTaskManager: ObservableObject {
         task.status = .running
         task.startedAt = Date()
 
-        if task.type.isBlocking {
+        // 项目命令的阻塞性由命令配置决定
+        let shouldBlock: Bool
+        switch task.context {
+        case .projectCommand(let ctx):
+            shouldBlock = ctx.blocking
+        default:
+            shouldBlock = task.type.isBlocking
+        }
+
+        if shouldBlock {
             runningBlockingTask[key] = task
+        } else {
+            if runningNonBlockingTasks[key] == nil {
+                runningNonBlockingTasks[key] = []
+            }
+            runningNonBlockingTasks[key]?.append(task)
         }
 
         Task {
@@ -74,6 +95,13 @@ class BackgroundTaskManager: ObservableObject {
                 workspaceName: ctx.workspaceName
             )
             return .aiMerge(result)
+        case .projectCommand(let ctx):
+            let result = await appState.executeProjectCommand(
+                projectName: ctx.projectName,
+                workspaceName: ctx.workspaceName,
+                commandId: ctx.commandId
+            )
+            return .projectCommand(result)
         }
     }
 
@@ -99,6 +127,7 @@ class BackgroundTaskManager: ObservableObject {
         if runningBlockingTask[key]?.id == task.id {
             runningBlockingTask.removeValue(forKey: key)
         }
+        runningNonBlockingTasks[key]?.removeAll { $0.id == task.id }
 
         // 加入 completed 队列
         if completedQueues[key] == nil {
@@ -127,6 +156,9 @@ class BackgroundTaskManager: ObservableObject {
         case .aiMerge:
             appState.gitCache.fetchGitStatus(workspaceKey: "default")
             appState.gitCache.fetchGitLog(workspaceKey: "default")
+        case .projectCommand:
+            // 项目命令完成后不自动刷新 Git 缓存
+            break
         }
     }
 
@@ -160,15 +192,20 @@ class BackgroundTaskManager: ObservableObject {
     func activeTaskCount(for key: String) -> Int {
         let pending = pendingQueues[key]?.count ?? 0
         let running = runningBlockingTask[key] != nil ? 1 : 0
-        return pending + running
+        let nonBlocking = runningNonBlockingTasks[key]?.count ?? 0
+        return pending + running + nonBlocking
     }
 
     /// 所有运行中任务
     func allRunningTasks(for key: String) -> [BackgroundTask] {
+        var result: [BackgroundTask] = []
         if let task = runningBlockingTask[key] {
-            return [task]
+            result.append(task)
         }
-        return []
+        if let tasks = runningNonBlockingTasks[key] {
+            result.append(contentsOf: tasks)
+        }
+        return result
     }
 
     /// 等待中任务

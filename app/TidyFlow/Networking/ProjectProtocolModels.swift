@@ -66,6 +66,7 @@ struct ProjectInfo {
     let name: String
     let root: String
     let workspaceCount: Int
+    let commands: [ProjectCommand]
 
     static func from(json: [String: Any]) -> ProjectInfo? {
         guard let name = json["name"] as? String,
@@ -73,7 +74,20 @@ struct ProjectInfo {
             return nil
         }
         let workspaceCount = json["workspace_count"] as? Int ?? 0
-        return ProjectInfo(name: name, root: root, workspaceCount: workspaceCount)
+        var commands: [ProjectCommand] = []
+        if let cmdsJson = json["commands"] as? [[String: Any]] {
+            commands = cmdsJson.compactMap { cmdJson -> ProjectCommand? in
+                guard let id = cmdJson["id"] as? String,
+                      let cmdName = cmdJson["name"] as? String,
+                      let icon = cmdJson["icon"] as? String,
+                      let command = cmdJson["command"] as? String else {
+                    return nil
+                }
+                let blocking = cmdJson["blocking"] as? Bool ?? false
+                return ProjectCommand(id: id, name: cmdName, icon: icon, command: command, blocking: blocking)
+            }
+        }
+        return ProjectInfo(name: name, root: root, workspaceCount: workspaceCount, commands: commands)
     }
 }
 

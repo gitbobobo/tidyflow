@@ -554,6 +554,7 @@ async fn handle_client_message(
         scrollback_tx,
         subscribed_terms,
         agg_tx,
+        save_tx,
     )
     .await?
     {
@@ -691,7 +692,9 @@ async fn handle_client_message(
         | ClientMessage::ImportProject { .. }
         | ClientMessage::CreateWorkspace { .. }
         | ClientMessage::RemoveProject { .. }
-        | ClientMessage::RemoveWorkspace { .. } => {
+        | ClientMessage::RemoveWorkspace { .. }
+        | ClientMessage::SaveProjectCommands { .. }
+        | ClientMessage::RunProjectCommand { .. } => {
             unreachable!("Project messages should be handled by project handler");
         }
 

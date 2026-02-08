@@ -14,6 +14,15 @@ struct ContentView: View {
         )
     }
 
+    /// 当前项目是否有配置命令
+    private var currentProjectHasCommands: Bool {
+        let projectName = appState.selectedProjectName
+        guard let project = appState.projects.first(where: { $0.name == projectName }) else {
+            return false
+        }
+        return !project.commands.isEmpty
+    }
+
     var body: some View {
         ZStack {
             // 主布局：左侧边栏 + 中心内容
@@ -47,6 +56,13 @@ struct ContentView: View {
                     ToolbarItem(placement: .principal) {
                         OpenInEditorButtonView()
                             .environmentObject(appState)
+                    }
+                    // 项目命令菜单（仅当有命令配置时显示）
+                    if currentProjectHasCommands {
+                        ToolbarItem(placement: .principal) {
+                            ProjectCommandsMenuView()
+                                .environmentObject(appState)
+                        }
                     }
                 } else {
                     ToolbarItem(placement: .principal) {

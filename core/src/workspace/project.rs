@@ -61,6 +61,7 @@ impl ProjectManager {
             default_branch,
             created_at: Utc::now(),
             workspaces: HashMap::new(),
+            commands: Vec::new(),
         };
 
         state.add_project(project.clone());

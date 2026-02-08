@@ -169,16 +169,16 @@ struct ProjectsSidebarView: View {
     }
 
     /// 将项目和工作空间扁平化为单一列表（使用缓存的排序索引）
+    /// 项目始终展开，不可折叠
     private var flattenedRows: [SidebarRow] {
         var rows: [SidebarRow] = []
         for index in cachedSortedIndices where index < appState.projects.count {
             let projectBinding = $appState.projects[index]
             let project = projectBinding.wrappedValue
             rows.append(.project(projectBinding))
-            if project.isExpanded {
-                for workspace in project.workspaces {
-                    rows.append(.workspace(workspace, projectId: project.id, projectName: project.name))
-                }
+            // 项目始终展开
+            for workspace in project.workspaces {
+                rows.append(.workspace(workspace, projectId: project.id, projectName: project.name))
             }
         }
         return rows
@@ -229,16 +229,22 @@ struct ProjectRowView: View {
 
     var body: some View {
         TreeRowView(
-            isExpandable: true,
-            isExpanded: project.isExpanded,
-            iconName: project.isExpanded ? "folder.fill" : "folder",
+            isExpandable: false,
+            isExpanded: true,
+            iconName: "folder.fill",
             iconColor: .accentColor,
             title: project.name,
             depth: 0,
-            isSelected: false,
+            isSelected: appState.selectedProjectForConfig == project.name,
             onTap: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    project.isExpanded.toggle()
+                // 点击项目名称打开项目配置页面
+                if appState.selectedProjectForConfig == project.name {
+                    appState.selectedProjectForConfig = nil
+                } else {
+                    appState.selectedProjectForConfig = project.name
+                    // 清除工作空间选中状态，避免工具栏和右侧面板显示旧数据
+                    appState.selectedWorkspaceKey = nil
+                    appState.selectedProjectId = nil
                 }
             }
         )

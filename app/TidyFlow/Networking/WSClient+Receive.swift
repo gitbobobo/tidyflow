@@ -229,6 +229,28 @@ extension WSClient {
                 onFileWriteResult?(result)
             }
 
+        case "project_commands_saved":
+            let project = json["project"] as? String ?? ""
+            let ok = json["ok"] as? Bool ?? false
+            let message = json["message"] as? String
+            onProjectCommandsSaved?(project, ok, message)
+
+        case "project_command_started":
+            let project = json["project"] as? String ?? ""
+            let workspace = json["workspace"] as? String ?? ""
+            let commandId = json["command_id"] as? String ?? ""
+            let taskId = json["task_id"] as? String ?? ""
+            onProjectCommandStarted?(project, workspace, commandId, taskId)
+
+        case "project_command_completed":
+            let project = json["project"] as? String ?? ""
+            let workspace = json["workspace"] as? String ?? ""
+            let commandId = json["command_id"] as? String ?? ""
+            let taskId = json["task_id"] as? String ?? ""
+            let ok = json["ok"] as? Bool ?? false
+            let message = json["message"] as? String
+            onProjectCommandCompleted?(project, workspace, commandId, taskId, ok, message)
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)

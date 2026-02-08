@@ -15,7 +15,8 @@ extension AppState {
                 name: info.name,
                 path: info.root,
                 workspaces: oldProject?.workspaces ?? [], // Keep old workspaces while loading
-                isExpanded: oldProject?.isExpanded ?? true
+                isExpanded: oldProject?.isExpanded ?? true,
+                commands: info.commands
             )
         }
 

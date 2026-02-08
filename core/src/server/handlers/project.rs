@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::server::protocol::{
-    ClientMessage, ProjectInfo, ServerMessage, WorkspaceInfo,
+    ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, WorkspaceInfo,
 };
 use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::server::ws::{send_message, subscribe_terminal, SharedAppState, TermSubscription};
@@ -23,6 +23,7 @@ pub async fn handle_project_message(
     scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    save_tx: &tokio::sync::mpsc::Sender<()>,
 ) -> Result<bool, String> {
     match client_msg {
         // v1: List projects
@@ -35,6 +36,13 @@ pub async fn handle_project_message(
                     name: p.name.clone(),
                     root: p.root_path.to_string_lossy().to_string(),
                     workspace_count: p.workspaces.len(),
+                    commands: p.commands.iter().map(|c| ProjectCommandInfo {
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                        icon: c.icon.clone(),
+                        command: c.command.clone(),
+                        blocking: c.blocking,
+                    }).collect(),
                 })
                 .collect();
             // HashMap 迭代顺序不稳定；在服务端固定字母序，避免客户端启动时顺序随机
@@ -426,6 +434,157 @@ pub async fn handle_project_message(
                     .await?;
                 }
             }
+            Ok(true)
+        }
+
+        // v1.29: 保存项目命令配置
+        ClientMessage::SaveProjectCommands { project, commands } => {
+            info!("SaveProjectCommands request: project={}", project);
+            {
+                let mut state = app_state.write().await;
+                match state.get_project_mut(project) {
+                    Some(p) => {
+                        p.commands = commands.iter().map(|c| {
+                            crate::workspace::state::ProjectCommand {
+                                id: c.id.clone(),
+                                name: c.name.clone(),
+                                icon: c.icon.clone(),
+                                command: c.command.clone(),
+                                blocking: c.blocking,
+                            }
+                        }).collect();
+                    }
+                    None => {
+                        send_message(
+                            socket,
+                            &ServerMessage::ProjectCommandsSaved {
+                                project: project.clone(),
+                                ok: false,
+                                message: Some(format!("Project '{}' not found", project)),
+                            },
+                        ).await?;
+                        return Ok(true);
+                    }
+                }
+            }
+
+            // 触发防抖保存
+            let _ = save_tx.send(()).await;
+
+            send_message(
+                socket,
+                &ServerMessage::ProjectCommandsSaved {
+                    project: project.clone(),
+                    ok: true,
+                    message: None,
+                },
+            ).await?;
+            Ok(true)
+        }
+
+        // v1.29: 执行项目命令
+        ClientMessage::RunProjectCommand { project, workspace, command_id } => {
+            info!("RunProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
+
+            // 查找命令和工作目录
+            let (command_text, cwd) = {
+                let state = app_state.read().await;
+                match state.get_project(project) {
+                    Some(p) => {
+                        let ws_root = if workspace == "default" {
+                            Some(p.root_path.clone())
+                        } else {
+                            p.get_workspace(workspace).map(|w| w.worktree_path.clone())
+                        };
+
+                        match (p.commands.iter().find(|c| c.id == *command_id), ws_root) {
+                            (Some(cmd), Some(cwd)) => (cmd.command.clone(), cwd),
+                            _ => {
+                                drop(state);
+                                send_message(
+                                    socket,
+                                    &ServerMessage::Error {
+                                        code: "command_not_found".to_string(),
+                                        message: format!("Command '{}' not found or workspace '{}' not found", command_id, workspace),
+                                    },
+                                ).await?;
+                                return Ok(true);
+                            }
+                        }
+                    }
+                    None => {
+                        send_message(
+                            socket,
+                            &ServerMessage::Error {
+                                code: "project_not_found".to_string(),
+                                message: format!("Project '{}' not found", project),
+                            },
+                        ).await?;
+                        return Ok(true);
+                    }
+                }
+            };
+
+            let task_id = uuid::Uuid::new_v4().to_string();
+
+            // 发送开始通知
+            send_message(
+                socket,
+                &ServerMessage::ProjectCommandStarted {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    command_id: command_id.clone(),
+                    task_id: task_id.clone(),
+                },
+            ).await?;
+
+            // 执行命令（异步等待完成）
+            let output = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(&command_text)
+                .current_dir(&cwd)
+                .output()
+                .await;
+
+            let (ok, message) = match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let combined = if stderr.is_empty() {
+                        stdout.to_string()
+                    } else if stdout.is_empty() {
+                        stderr.to_string()
+                    } else {
+                        format!("{}\n{}", stdout, stderr)
+                    };
+                    // 截断过长的输出
+                    let truncated = if combined.len() > 4096 {
+                        format!("{}...(truncated)", &combined[..4096])
+                    } else {
+                        combined
+                    };
+                    (out.status.success(), truncated)
+                }
+                Err(e) => (false, format!("执行失败: {}", e)),
+            };
+
+            info!(
+                "ProjectCommand completed: project={}, command_id={}, ok={}",
+                project, command_id, ok
+            );
+
+            send_message(
+                socket,
+                &ServerMessage::ProjectCommandCompleted {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    command_id: command_id.clone(),
+                    task_id,
+                    ok,
+                    message: Some(message),
+                },
+            ).await?;
+
             Ok(true)
         }
 

@@ -45,6 +45,8 @@ class AppState: ObservableObject {
     // UX-2: Project Import State
     @Published var projectImportInFlight: Bool = false
     @Published var projectImportError: String?
+    // 项目配置页面：当前选中配置的项目名称
+    @Published var selectedProjectForConfig: String?
 
     // 文件缓存状态（独立 ObservableObject，避免文件高频更新触发全局视图刷新）
     let fileCache = FileCacheState()

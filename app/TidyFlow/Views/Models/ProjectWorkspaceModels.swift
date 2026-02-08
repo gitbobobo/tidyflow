@@ -18,4 +18,5 @@ struct ProjectModel: Identifiable, Equatable {
     var path: String?
     var workspaces: [WorkspaceModel]
     var isExpanded: Bool = true
+    var commands: [ProjectCommand] = []
 }

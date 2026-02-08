@@ -21,6 +21,17 @@ pub enum StateError {
     WorkspaceNotFound(String),
 }
 
+/// 项目级命令（后台任务）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectCommand {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub command: String,
+    #[serde(default)]
+    pub blocking: bool,
+}
+
 /// 自定义终端命令
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomCommand {
@@ -95,6 +106,9 @@ pub struct Project {
     pub default_branch: String,
     pub created_at: DateTime<Utc>,
     pub workspaces: HashMap<String, Workspace>,
+    /// 项目级命令配置
+    #[serde(default)]
+    pub commands: Vec<ProjectCommand>,
 }
 
 /// Workspace metadata

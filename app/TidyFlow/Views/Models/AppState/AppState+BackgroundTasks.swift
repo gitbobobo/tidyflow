@@ -22,11 +22,19 @@ extension AppState {
                 .first(where: { $0.isDefault })?
                 .name ?? "default"
             key = "\(ctx.projectName):\(defaultWorkspaceName)"
+        case .projectCommand(let ctx):
+            key = "\(ctx.projectName):\(ctx.workspaceName)"
         }
 
         let task = BackgroundTask(type: type, context: context, workspaceGlobalKey: key)
-        taskManager.enqueue(task)
-        taskManager.scheduleNext(for: key, appState: self)
+
+        // 非阻塞项目命令直接执行，不进入等待队列
+        if case .projectCommand(let ctx) = context, !ctx.blocking {
+            taskManager.executeNonBlockingTask(task, appState: self)
+        } else {
+            taskManager.enqueue(task)
+            taskManager.scheduleNext(for: key, appState: self)
+        }
         return task
     }
 

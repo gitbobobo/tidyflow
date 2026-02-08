@@ -16,21 +16,27 @@ struct CenterContentView: View {
             
             // 内容区域
             ZStack {
-                // WebView layer - visible when editor or terminal tab is active
-                WebViewContainer(bridge: webBridge, isVisible: $webViewVisible)
-                    .opacity(shouldShowWebView ? 1 : 0)
-                    .allowsHitTesting(shouldShowWebView)
-
-                // Native UI layer
-                if appState.selectedWorkspaceKey != nil {
-                    TabContentHostView(
-                        webBridge: webBridge,
-                        webViewVisible: $webViewVisible
-                    )
-                    .background(shouldShowWebView ? Color.clear : Color(NSColor.windowBackgroundColor))
+                // 项目配置页面（优先级最高）
+                if let projectName = appState.selectedProjectForConfig {
+                    ProjectConfigView(projectName: projectName)
+                        .transition(.opacity)
                 } else {
-                    // 未选择 workspace 时显示欢迎/提示视图
-                    NoActiveTabView()
+                    // WebView layer - visible when editor or terminal tab is active
+                    WebViewContainer(bridge: webBridge, isVisible: $webViewVisible)
+                        .opacity(shouldShowWebView ? 1 : 0)
+                        .allowsHitTesting(shouldShowWebView)
+
+                    // Native UI layer
+                    if appState.selectedWorkspaceKey != nil {
+                        TabContentHostView(
+                            webBridge: webBridge,
+                            webViewVisible: $webViewVisible
+                        )
+                        .background(shouldShowWebView ? Color.clear : Color(NSColor.windowBackgroundColor))
+                    } else {
+                        // 未选择 workspace 时显示欢迎/提示视图
+                        NoActiveTabView()
+                    }
                 }
             } // ZStack
         } // VStack

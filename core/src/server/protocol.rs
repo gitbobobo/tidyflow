@@ -323,6 +323,17 @@ pub enum ClientMessage {
         term_id: String,
         bytes: u64,
     },
+
+    // v1.29: 项目命令管理
+    SaveProjectCommands {
+        project: String,
+        commands: Vec<ProjectCommandInfo>,
+    },
+    RunProjectCommand {
+        project: String,
+        workspace: String,
+        command_id: String,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -727,6 +738,29 @@ pub enum ServerMessage {
         #[serde(with = "serde_bytes")]
         scrollback: Vec<u8>,
     },
+
+    // v1.29: 项目命令结果
+    ProjectCommandsSaved {
+        project: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    ProjectCommandStarted {
+        project: String,
+        workspace: String,
+        command_id: String,
+        task_id: String,
+    },
+    ProjectCommandCompleted {
+        project: String,
+        workspace: String,
+        command_id: String,
+        task_id: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -738,6 +772,8 @@ pub struct ProjectInfo {
     pub name: String,
     pub root: String,
     pub workspace_count: usize,
+    #[serde(default)]
+    pub commands: Vec<ProjectCommandInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -831,6 +867,17 @@ pub struct CustomCommandInfo {
     pub command: String,
 }
 
+/// 项目命令信息（用于协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectCommandInfo {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub command: String,
+    #[serde(default)]
+    pub blocking: bool,
+}
+
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -858,6 +905,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "file_copy".to_string(),
         "file_move".to_string(),
         "terminal_persistence".to_string(),
+        "project_commands".to_string(),
     ]
 }
 
