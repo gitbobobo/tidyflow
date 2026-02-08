@@ -162,6 +162,7 @@ struct ActiveTaskListView: View {
 
 struct RunningTaskRow: View {
     @ObservedObject var task: BackgroundTask
+    @EnvironmentObject var appState: AppState
     /// 每秒递增，驱动 durationText 刷新
     @State private var tick = 0
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -180,6 +181,15 @@ struct RunningTaskRow: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
                 .id(tick)
+            Button {
+                appState.stopBackgroundTask(task)
+            } label: {
+                Image(systemName: "stop.circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("task.stop".localized)
         }
         .padding(.vertical, 2)
         .onReceive(timer) { _ in
@@ -192,6 +202,7 @@ struct RunningTaskRow: View {
 
 struct PendingTaskRow: View {
     @ObservedObject var task: BackgroundTask
+    @EnvironmentObject var appState: AppState
 
     var body: some View {
         HStack(spacing: 8) {
@@ -204,6 +215,15 @@ struct PendingTaskRow: View {
             Text(task.displayTitle)
                 .font(.system(size: 13))
             Spacer()
+            Button {
+                appState.removeBackgroundTask(task)
+            } label: {
+                Image(systemName: "xmark.circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("task.remove".localized)
         }
         .padding(.vertical, 2)
     }

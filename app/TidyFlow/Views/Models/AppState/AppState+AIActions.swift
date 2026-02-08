@@ -6,7 +6,8 @@ extension AppState {
     /// 执行 AI 合并到默认分支
     func executeAIMerge(
         projectName: String,
-        workspaceName: String
+        workspaceName: String,
+        task: BackgroundTask? = nil
     ) async -> AIMergeResult {
         // 1. 获取 AI Agent（合并使用 mergeAIAgent）
         guard let agentName = clientSettings.mergeAIAgent,
@@ -48,14 +49,15 @@ extension AppState {
             agent: agent,
             prompt: prompt,
             workingDirectory: projectPath,
-            projectPath: projectPath
+            projectPath: projectPath,
+            task: task
         )
     }
 
     // MARK: - AI Agent 智能提交
 
     /// 执行 AI 智能提交
-    func executeAICommit(workspaceKey: String, workspacePath: String, projectPath: String? = nil) async -> AICommitResult {
+    func executeAICommit(workspaceKey: String, workspacePath: String, projectPath: String? = nil, task: BackgroundTask? = nil) async -> AICommitResult {
         // 1. 获取 AI Agent（提交使用 commitAIAgent）
         guard let agentName = clientSettings.commitAIAgent,
               let agent = AIAgent(rawValue: agentName) else {
@@ -86,7 +88,8 @@ extension AppState {
             agent: agent,
             prompt: prompt,
             workingDirectory: workspacePath,
-            projectPath: projectPath
+            projectPath: projectPath,
+            task: task
         )
     }
 }

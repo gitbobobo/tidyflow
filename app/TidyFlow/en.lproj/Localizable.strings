@@ -236,6 +236,9 @@
 "task.aiCommit" = "One-Click Commit";
 "task.aiMerge" = "Smart Merge";
 "task.projectCommand" = "Project Command";
+"task.stop" = "Stop Task";
+"task.remove" = "Remove Task";
+"task.cancelled" = "Cancelled";
 "toolbar.backgroundTasks" = "Background Tasks";
 "toolbar.projectCommands" = "Project Commands";
 "toolbar.run" = "Run";

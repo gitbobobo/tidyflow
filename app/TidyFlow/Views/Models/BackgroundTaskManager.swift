@@ -86,13 +86,15 @@ class BackgroundTaskManager: ObservableObject {
             let result = await appState.executeAICommit(
                 workspaceKey: ctx.workspaceKey,
                 workspacePath: ctx.workspacePath,
-                projectPath: ctx.projectPath
+                projectPath: ctx.projectPath,
+                task: task
             )
             return .aiCommit(result)
         case .aiMerge(let ctx):
             let result = await appState.executeAIMerge(
                 projectName: ctx.projectName,
-                workspaceName: ctx.workspaceName
+                workspaceName: ctx.workspaceName,
+                task: task
             )
             return .aiMerge(result)
         case .projectCommand(let ctx):
@@ -112,6 +114,9 @@ class BackgroundTaskManager: ObservableObject {
         result: BackgroundTaskResult,
         appState: AppState
     ) {
+        // 若任务已被取消（stopRunningTask 提前处理），跳过重复完成
+        if task.status == .cancelled { return }
+
         let key = task.workspaceGlobalKey
         task.status = {
             switch result.resultStatus {
@@ -178,6 +183,76 @@ class BackgroundTaskManager: ObservableObject {
                 pendingQueues[key]?.remove(at: idx)
                 return
             }
+        }
+    }
+
+    /// 停止正在运行的任务
+    func stopRunningTask(_ taskId: UUID, appState: AppState) {
+        // 在 blocking 和 non-blocking 中查找
+        let key: String
+        let task: BackgroundTask
+
+        if let (k, t) = findRunningTask(taskId) {
+            key = k
+            task = t
+        } else {
+            return
+        }
+
+        // 终止进程
+        switch task.context {
+        case .aiCommit, .aiMerge:
+            // AI 任务：直接终止 Swift Process
+            if let process = task.process, process.isRunning {
+                process.terminate()
+            }
+        case .projectCommand(let ctx):
+            // 项目命令：通过 WebSocket 通知 Rust Core 取消
+            appState.wsClient.requestCancelProjectCommand(
+                project: ctx.projectName,
+                workspace: ctx.workspaceName,
+                commandId: ctx.commandId
+            )
+        }
+
+        // 标记为已取消并移入 completed 队列
+        markTaskCancelled(task, key: key)
+
+        // 驱动下一个任务
+        scheduleNext(for: key, appState: appState)
+    }
+
+    /// 在运行中的任务里查找指定 ID
+    private func findRunningTask(_ taskId: UUID) -> (String, BackgroundTask)? {
+        for (key, task) in runningBlockingTask {
+            if task.id == taskId { return (key, task) }
+        }
+        for (key, tasks) in runningNonBlockingTasks {
+            if let task = tasks.first(where: { $0.id == taskId }) {
+                return (key, task)
+            }
+        }
+        return nil
+    }
+
+    /// 将任务标记为 cancelled 并移入 completed 队列
+    private func markTaskCancelled(_ task: BackgroundTask, key: String) {
+        task.status = .cancelled
+        task.completedAt = Date()
+
+        // 从 running 移除
+        if runningBlockingTask[key]?.id == task.id {
+            runningBlockingTask.removeValue(forKey: key)
+        }
+        runningNonBlockingTasks[key]?.removeAll { $0.id == task.id }
+
+        // 加入 completed 队列
+        if completedQueues[key] == nil {
+            completedQueues[key] = []
+        }
+        completedQueues[key]?.insert(task, at: 0)
+        if let count = completedQueues[key]?.count, count > maxCompletedPerWorkspace {
+            completedQueues[key] = Array(completedQueues[key]!.prefix(maxCompletedPerWorkspace))
         }
     }
 

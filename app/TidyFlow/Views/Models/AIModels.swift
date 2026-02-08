@@ -532,7 +532,8 @@ class AIAgentRunner {
         agent: AIAgent,
         prompt: String,
         workingDirectory: String,
-        projectPath: String? = nil
+        projectPath: String? = nil,
+        task: BackgroundTask? = nil
     ) async -> (raw: RawResult?, error: String?) {
         let args = agent.buildCommand(prompt: prompt)
         NSLog("[AIAgentRunner] agent=%@, workingDir=%@, cmd=%@",
@@ -546,6 +547,9 @@ class AIAgentRunner {
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         process.environment = buildExtendedPATH()
+
+        // 保存进程句柄，供外部停止任务时使用
+        task?.process = process
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -582,13 +586,15 @@ class AIAgentRunner {
         agent: AIAgent,
         prompt: String,
         workingDirectory: String,
-        projectPath: String? = nil
+        projectPath: String? = nil,
+        task: BackgroundTask? = nil
     ) async -> AIMergeResult {
         let result = await runRaw(
             agent: agent,
             prompt: prompt,
             workingDirectory: workingDirectory,
-            projectPath: projectPath
+            projectPath: projectPath,
+            task: task
         )
         if let error = result.error {
             return AIMergeResult(resultStatus: .failed, message: error, conflicts: [], rawOutput: "")
@@ -612,13 +618,15 @@ class AIAgentRunner {
         agent: AIAgent,
         prompt: String,
         workingDirectory: String,
-        projectPath: String? = nil
+        projectPath: String? = nil,
+        task: BackgroundTask? = nil
     ) async -> AICommitResult {
         let result = await runRaw(
             agent: agent,
             prompt: prompt,
             workingDirectory: workingDirectory,
-            projectPath: projectPath
+            projectPath: projectPath,
+            task: task
         )
         if let error = result.error {
             return AICommitResult(resultStatus: .failed, message: error, commits: [], rawOutput: "")

@@ -236,6 +236,9 @@
 "task.aiCommit" = "一键提交";
 "task.aiMerge" = "智能合并";
 "task.projectCommand" = "项目命令";
+"task.stop" = "停止任务";
+"task.remove" = "移除任务";
+"task.cancelled" = "已取消";
 "toolbar.backgroundTasks" = "后台任务";
 "toolbar.projectCommands" = "项目命令";
 "toolbar.run" = "执行";

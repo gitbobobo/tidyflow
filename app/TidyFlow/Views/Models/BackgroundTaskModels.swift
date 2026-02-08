@@ -42,6 +42,7 @@ enum BackgroundTaskStatus: String {
     case completed
     case failed
     case unknown
+    case cancelled
 
     /// 已完成任务行的图标名
     var completedIconName: String {
@@ -49,6 +50,7 @@ enum BackgroundTaskStatus: String {
         case .completed: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         case .unknown: return "questionmark.circle.fill"
+        case .cancelled: return "stop.circle.fill"
         default: return "circle"
         }
     }
@@ -59,6 +61,7 @@ enum BackgroundTaskStatus: String {
         case .completed: return .green
         case .failed: return .red
         case .unknown: return .orange
+        case .cancelled: return .secondary
         default: return .secondary
         }
     }
@@ -180,6 +183,8 @@ class BackgroundTask: ObservableObject, Identifiable {
     @Published var result: BackgroundTaskResult?
     var startedAt: Date?
     var completedAt: Date?
+    /// AI 任务的进程句柄，用于停止任务
+    var process: Process?
 
     init(type: BackgroundTaskType, context: BackgroundTaskContext, workspaceGlobalKey: String) {
         self.type = type

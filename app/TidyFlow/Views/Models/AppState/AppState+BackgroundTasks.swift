@@ -43,6 +43,11 @@ extension AppState {
         taskManager.removePendingTask(task.id)
     }
 
+    /// 停止正在运行的后台任务
+    func stopBackgroundTask(_ task: BackgroundTask) {
+        taskManager.stopRunningTask(task.id, appState: self)
+    }
+
     /// 调整等待队列顺序
     func reorderPendingTasks(for key: String, fromOffsets: IndexSet, toOffset: Int) {
         taskManager.reorderPendingTasks(for: key, fromOffsets: fromOffsets, toOffset: toOffset)
