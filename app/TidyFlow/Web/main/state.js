@@ -96,6 +96,11 @@
 
   TF.workspaceFileIndex = new Map();
 
+  // v1.28: 终端输出流控 ACK 追踪
+  // key: termId, value: { pending: number } — 已写入 xterm.js 但尚未 ACK 的字节数
+  TF.termAckedBytes = new Map();
+  TF.ACK_THRESHOLD = 50 * 1024; // 50KB：累计超过此值时发送 ACK
+
   TF.tabBar = null;
   TF.tabContent = null;
   TF.placeholder = null;

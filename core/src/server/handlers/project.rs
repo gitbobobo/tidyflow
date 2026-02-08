@@ -3,14 +3,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::server::protocol::{
     ClientMessage, ProjectInfo, ServerMessage, WorkspaceInfo,
 };
 use crate::server::terminal_registry::SharedTerminalRegistry;
-use crate::server::ws::{send_message, subscribe_terminal, SharedAppState};
+use crate::server::ws::{send_message, subscribe_terminal, SharedAppState, TermSubscription};
 use crate::workspace::project::ProjectManager;
 use crate::workspace::state::WorkspaceStatus;
 use crate::workspace::workspace::WorkspaceManager;
@@ -22,7 +21,7 @@ pub async fn handle_project_message(
     registry: &SharedTerminalRegistry,
     app_state: &SharedAppState,
     scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> Result<bool, String> {
     match client_msg {

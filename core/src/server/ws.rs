@@ -7,10 +7,11 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
@@ -45,6 +46,19 @@ fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
 
 /// Shared application state for the WebSocket server
 pub type SharedAppState = Arc<RwLock<AppState>>;
+
+/// 终端输出流控：per-terminal per-WS-connection 的背压状态
+/// 当 unacked 超过 HIGH_WATER_MARK 时暂停转发，等待前端 ACK
+pub struct FlowControl {
+    pub unacked: AtomicU64,
+    pub notify: Notify,
+}
+
+/// 流控高水位（100KB）：未确认字节数超过此值时暂停转发
+const FLOW_CONTROL_HIGH_WATER: u64 = 100 * 1024;
+
+/// subscribed_terms 的 value 类型：(转发任务句柄, 流控状态)
+pub type TermSubscription = (JoinHandle<()>, Arc<FlowControl>);
 
 /// WebSocket 服务器上下文，包含共享状态和防抖保存通道
 #[derive(Clone)]
@@ -162,8 +176,8 @@ async fn handle_socket(
     let (agg_tx, mut agg_rx) =
         tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
 
-    // 跟踪当前 WS 连接订阅的终端及其转发 task
-    let subscribed_terms: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
+    // 跟踪当前 WS 连接订阅的终端及其转发 task + 流控状态
+    let subscribed_terms: Arc<Mutex<HashMap<String, TermSubscription>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     // Create channel for file watcher events
@@ -197,10 +211,10 @@ async fn handle_socket(
         loop_count += 1;
 
         if loop_count == 1 {
-            info!("First loop iteration, about to call tokio::select!");
+            debug!("First loop iteration, about to call tokio::select!");
             crate::util::flush_logs();
         } else if last_log_time.elapsed().as_secs() >= 5 {
-            info!("Main loop still running, iteration {}", loop_count);
+            trace!("Main loop still running, iteration {}", loop_count);
             crate::util::flush_logs();
             last_log_time = std::time::Instant::now();
         }
@@ -210,7 +224,7 @@ async fn handle_socket(
 
             // Handle WebSocket messages (优先)
             msg_result = socket.recv() => {
-                info!("socket.recv() returned: {:?}", msg_result.as_ref().map(|r| r.as_ref().map(|m| match m {
+                trace!("socket.recv() returned: {:?}", msg_result.as_ref().map(|r| r.as_ref().map(|m| match m {
                     Message::Text(t) => format!("Text({}...)", &t[..t.len().min(50)]),
                     Message::Binary(b) => format!("Binary({} bytes)", b.len()),
                     Message::Ping(_) => "Ping".to_string(),
@@ -219,7 +233,7 @@ async fn handle_socket(
                 })));
                 match msg_result {
                     Some(Ok(Message::Binary(data))) => {
-                        info!("Received binary client message: {} bytes", data.len());
+                        trace!("Received binary client message: {} bytes", data.len());
                         if let Err(e) = handle_client_message(
                             &data,
                             &mut socket,
@@ -262,14 +276,41 @@ async fn handle_socket(
             }
 
             // Handle aggregated PTY output from subscribed terminals
+            // 批量合并：一次性取出多条消息，合并同一终端的输出为单个 WS 帧
             Some((term_id, output)) = agg_rx.recv() => {
-                debug!("PTY output received for term_id: {}, {} bytes", term_id, output.len());
-                let msg = ServerMessage::Output {
-                    data: output,
-                    term_id: Some(term_id),
-                };
-                if let Err(e) = send_message(&mut socket, &msg).await {
-                    error!("Failed to send output message: {}", e);
+                const MAX_BATCH_SIZE: usize = 256 * 1024; // 256KB
+                let mut batched: HashMap<String, Vec<u8>> = HashMap::new();
+                let first_len = output.len();
+                batched.entry(term_id).or_default().extend(output);
+                let mut total = first_len;
+
+                // 继续 try_recv 直到通道为空或达到预算上限
+                while total < MAX_BATCH_SIZE {
+                    match agg_rx.try_recv() {
+                        Ok((id, data)) => {
+                            total += data.len();
+                            batched.entry(id).or_default().extend(data);
+                        }
+                        Err(_) => break,
+                    }
+                }
+
+                trace!("Batched PTY output: {} terminals, {} bytes total", batched.len(), total);
+
+                // 逐终端发送合并后的数据
+                let mut send_failed = false;
+                for (id, data) in batched {
+                    let msg = ServerMessage::Output {
+                        data,
+                        term_id: Some(id),
+                    };
+                    if let Err(e) = send_message(&mut socket, &msg).await {
+                        error!("Failed to send output message: {}", e);
+                        send_failed = true;
+                        break;
+                    }
+                }
+                if send_failed {
                     break;
                 }
             }
@@ -334,7 +375,7 @@ async fn handle_socket(
     // WS 断开：只清理订阅关系，不杀终端
     {
         let mut subs = subscribed_terms.lock().await;
-        for (term_id, handle) in subs.drain() {
+        for (term_id, (handle, _fc)) in subs.drain() {
             info!("Unsubscribing from terminal {} on WS disconnect", term_id);
             handle.abort();
         }
@@ -355,10 +396,11 @@ pub async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result
 }
 
 /// 订阅终端输出：从 registry 的 broadcast 接收数据，转发到聚合通道
+/// 带流控：当 unacked 超过高水位时暂停转发，等待前端 ACK
 pub async fn subscribe_terminal(
     term_id: &str,
     registry: &SharedTerminalRegistry,
-    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> bool {
     let reg = registry.lock().await;
@@ -371,15 +413,37 @@ pub async fn subscribe_terminal(
     let agg_tx = agg_tx.clone();
     let tid = term_id.to_string();
 
+    let fc = Arc::new(FlowControl {
+        unacked: AtomicU64::new(0),
+        notify: Notify::new(),
+    });
+    let fc_clone = fc.clone();
+
     let handle = tokio::spawn(async move {
         let mut rx = rx;
         loop {
+            // 流控：unacked 超过高水位时暂停，等待 ACK 唤醒
+            while fc_clone.unacked.load(Ordering::Relaxed) > FLOW_CONTROL_HIGH_WATER {
+                // 带超时等待，防止前端 ACK 丢失导致永久阻塞
+                tokio::select! {
+                    _ = fc_clone.notify.notified() => {}
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {
+                        // 超时后强制重置 unacked，避免死锁
+                        warn!("Terminal {} flow control timeout, resetting unacked", tid);
+                        fc_clone.unacked.store(0, Ordering::Relaxed);
+                    }
+                }
+            }
+
             match rx.recv().await {
                 Ok((id, data)) => {
                     if id == tid {
+                        let data_len = data.len() as u64;
                         if agg_tx.send((id, data)).await.is_err() {
                             break;
                         }
+                        // 记录未确认字节数
+                        fc_clone.unacked.fetch_add(data_len, Ordering::Relaxed);
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -394,21 +458,40 @@ pub async fn subscribe_terminal(
 
     let mut subs = subscribed_terms.lock().await;
     // 如果已有旧订阅，先取消
-    if let Some(old) = subs.remove(term_id) {
-        old.abort();
+    if let Some((old_handle, _old_fc)) = subs.remove(term_id) {
+        old_handle.abort();
     }
-    subs.insert(term_id.to_string(), handle);
+    subs.insert(term_id.to_string(), (handle, fc));
     true
 }
 
 /// 取消订阅终端输出
 pub async fn unsubscribe_terminal(
     term_id: &str,
-    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
 ) {
     let mut subs = subscribed_terms.lock().await;
-    if let Some(handle) = subs.remove(term_id) {
+    if let Some((handle, _fc)) = subs.remove(term_id) {
         handle.abort();
+    }
+}
+
+/// 处理前端 ACK，释放流控背压
+pub async fn ack_terminal_output(
+    term_id: &str,
+    bytes: u64,
+    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
+) {
+    let subs = subscribed_terms.lock().await;
+    if let Some((_handle, fc)) = subs.get(term_id) {
+        // 减少未确认字节数（使用饱和减法避免下溢）
+        let prev = fc.unacked.load(Ordering::Relaxed);
+        let new_val = prev.saturating_sub(bytes);
+        fc.unacked.store(new_val, Ordering::Relaxed);
+        // 如果降至高水位以下，唤醒转发 task
+        if prev > FLOW_CONTROL_HIGH_WATER && new_val <= FLOW_CONTROL_HIGH_WATER {
+            fc.notify.notify_one();
+        }
     }
 }
 
@@ -421,10 +504,10 @@ async fn handle_client_message(
     app_state: &SharedAppState,
     save_tx: &tokio::sync::mpsc::Sender<()>,
     scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    subscribed_terms: &Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> Result<(), String> {
-    info!(
+    trace!(
         "handle_client_message called with data length: {}",
         data.len()
     );
@@ -432,7 +515,7 @@ async fn handle_client_message(
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;
-    info!(
+    trace!(
         "Parsed client message: {:?}",
         std::mem::discriminant(&client_msg)
     );
@@ -556,7 +639,8 @@ async fn handle_client_message(
         | ClientMessage::TermList
         | ClientMessage::TermClose { .. }
         | ClientMessage::TermFocus { .. }
-        | ClientMessage::TermAttach { .. } => {
+        | ClientMessage::TermAttach { .. }
+        | ClientMessage::TermOutputAck { .. } => {
             unreachable!("Terminal messages should be handled by terminal handler");
         }
 

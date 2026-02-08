@@ -155,12 +155,10 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
 
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: payload)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-            let escapedJson = jsonString
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "'", with: "\\'")
+            // 使用 Base64 编码替代多层字符串转义，避免反斜杠/引号嵌套问题
+            let base64String = jsonData.base64EncodedString()
 
-            let js = "window.tidyflowNative && window.tidyflowNative.receive('\(type)', '\(escapedJson)')"
+            let js = "window.tidyflowNative && window.tidyflowNative.receiveBase64('\(type)', '\(base64String)')"
 
             webView.evaluateJavaScript(js) { result, error in
                 if let error = error {
@@ -361,7 +359,22 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         (function() {
             // Native bridge object
             window.tidyflowNative = {
-                // Called by Native to send events to Web
+                // Called by Native to send events to Web (Base64 编码，避免多层字符串转义)
+                receiveBase64: function(type, base64Payload) {
+                    try {
+                        const jsonStr = atob(base64Payload);
+                        const payload = JSON.parse(jsonStr);
+                        console.log('[NativeBridge] Received:', type, payload);
+
+                        if (window.tidyflowNative.onEvent) {
+                            window.tidyflowNative.onEvent(type, payload);
+                        }
+                    } catch (e) {
+                        console.error('[NativeBridge] Base64/Parse error:', e);
+                    }
+                },
+
+                // Legacy: Called by Native to send events to Web (字符串转义方式，向后兼容)
                 receive: function(type, payloadJson) {
                     try {
                         const payload = JSON.parse(payloadJson);

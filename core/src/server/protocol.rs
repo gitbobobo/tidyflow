@@ -317,6 +317,12 @@ pub enum ClientMessage {
     TermAttach {
         term_id: String,
     },
+
+    // v1.28: Terminal output flow control — 背压 ACK
+    TermOutputAck {
+        term_id: String,
+        bytes: u64,
+    },
 }
 
 fn default_diff_mode() -> String {

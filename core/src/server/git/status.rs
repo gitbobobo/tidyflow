@@ -351,12 +351,26 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
         }
     };
 
+    // 并行执行 git status 和两个 diff --numstat 命令，减少子进程串行等待
+    let (status_result, unstaged_stats, staged_stats) = std::thread::scope(|s| {
+        let h_status = s.spawn(|| {
+            Command::new("git")
+                .args(["status", "--porcelain=v1", "-z"])
+                .current_dir(workspace_root)
+                .output()
+        });
+        let h_unstaged = s.spawn(|| get_diff_numstat(workspace_root, false));
+        let h_staged = s.spawn(|| get_diff_numstat(workspace_root, true));
+
+        (
+            h_status.join().expect("git status thread panicked"),
+            h_unstaged.join().expect("diff unstaged thread panicked"),
+            h_staged.join().expect("diff staged thread panicked"),
+        )
+    });
+
     // Run git status
-    let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-z"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(GitError::IoError)?;
+    let output = status_result.map_err(GitError::IoError)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -365,10 +379,6 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut items = parse_porcelain_status(&stdout);
-
-    // 获取行数统计
-    let unstaged_stats = get_diff_numstat(workspace_root, false);
-    let staged_stats = get_diff_numstat(workspace_root, true);
 
     // 合并行数统计到每个 entry
     for item in &mut items {

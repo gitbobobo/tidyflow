@@ -42,12 +42,36 @@
           }
 
           if (termId) {
+            const dataLen = msg.data ? msg.data.length || msg.data.byteLength || 0 : 0;
             // 总是将数据写入 xterm.js，它会维护自己的屏幕缓冲区
             // 切换回来时通过 resize 触发 TUI 应用重绘
             for (const [wsKey, tabSet] of TF.workspaceTabs) {
               if (tabSet.tabs.has(termId)) {
                 const tab = tabSet.tabs.get(termId);
-                if (tab.term) tab.term.write(msg.data);
+                if (tab.term) {
+                  // 使用回调形式：xterm.js 解析完数据后触发，用于流控 ACK
+                  tab.term.write(msg.data, () => {
+                    // 累加已消费字节数
+                    let state = TF.termAckedBytes.get(termId);
+                    if (!state) {
+                      state = { pending: 0 };
+                      TF.termAckedBytes.set(termId, state);
+                    }
+                    state.pending += dataLen;
+                    // 超过阈值时发送 ACK
+                    if (state.pending >= TF.ACK_THRESHOLD) {
+                      const ackBytes = state.pending;
+                      state.pending = 0;
+                      if (TF.transport && TF.transport.isConnected) {
+                        TF.transport.send({
+                          type: "term_output_ack",
+                          term_id: termId,
+                          bytes: ackBytes,
+                        });
+                      }
+                    }
+                  });
+                }
                 break;
               }
             }
