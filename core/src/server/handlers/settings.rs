@@ -14,7 +14,7 @@ pub async fn handle_settings_message(
     match client_msg {
         // v1.21: Get client settings
         ClientMessage::GetClientSettings => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             let commands: Vec<CustomCommandInfo> = state
                 .client_settings
                 .custom_commands
@@ -58,7 +58,7 @@ pub async fn handle_settings_message(
         } => {
             info!("SaveClientSettings request");
             {
-                let mut state = app_state.lock().await;
+                let mut state = app_state.write().await;
                 state.client_settings.custom_commands = custom_commands
                     .iter()
                     .map(|c| crate::workspace::state::CustomCommand {

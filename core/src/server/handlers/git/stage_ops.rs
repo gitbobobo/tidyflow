@@ -19,7 +19,7 @@ pub async fn try_handle_git_message(
             path,
             scope,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -107,7 +107,7 @@ pub async fn try_handle_git_message(
             path,
             scope,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -196,7 +196,7 @@ pub async fn try_handle_git_message(
             scope,
             include_untracked,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {

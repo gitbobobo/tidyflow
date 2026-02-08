@@ -28,7 +28,7 @@ pub async fn handle_project_message(
     match client_msg {
         // v1: List projects
         ClientMessage::ListProjects => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             let mut items: Vec<ProjectInfo> = state
                 .projects
                 .values()
@@ -49,7 +49,7 @@ pub async fn handle_project_message(
 
         // v1: List workspaces for a project
         ClientMessage::ListWorkspaces { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let mut items: Vec<WorkspaceInfo> = p
@@ -117,7 +117,7 @@ pub async fn handle_project_message(
 
         // v1.2: Select workspace and spawn terminal
         ClientMessage::SelectWorkspace { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let (root_path, _branch) = if workspace == "default" {
@@ -209,7 +209,7 @@ pub async fn handle_project_message(
             info!("ImportProject request: name={}, path={}", name, path);
             let path_buf = PathBuf::from(&path);
             info!("Acquiring app_state lock...");
-            let mut state = app_state.lock().await;
+            let mut state = app_state.write().await;
             info!(
                 "app_state lock acquired, calling ProjectManager::import_local"
             );
@@ -265,7 +265,7 @@ pub async fn handle_project_message(
             project,
             from_branch,
         } => {
-            let mut state = app_state.lock().await;
+            let mut state = app_state.write().await;
 
             match WorkspaceManager::create(
                 &mut state,
@@ -335,7 +335,7 @@ pub async fn handle_project_message(
         // v1.17: Remove project
         ClientMessage::RemoveProject { name } => {
             info!("RemoveProject request: name={}", name);
-            let mut state = app_state.lock().await;
+            let mut state = app_state.write().await;
 
             match ProjectManager::remove(&mut state, name) {
                 Ok(_) => {
@@ -391,7 +391,7 @@ pub async fn handle_project_message(
                 }
             }
 
-            let mut state = app_state.lock().await;
+            let mut state = app_state.write().await;
 
             match WorkspaceManager::remove(&mut state, project, workspace) {
                 Ok(_) => {

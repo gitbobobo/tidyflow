@@ -72,6 +72,14 @@ class WSClient: NSObject, ObservableObject {
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
+    // MARK: - 高频消息合并队列
+    /// 合并窗口时长（秒），窗口内同 key 的消息只保留最后一条
+    private let coalesceInterval: TimeInterval = 0.05 // 50ms
+    /// 合并队列：key 为 "消息类型:项目:工作空间"，value 为待处理的原始字典
+    private var coalesceQueue: [String: [String: Any]] = [:]
+    /// 合并窗口定时器
+    private var coalesceTimer: DispatchWorkItem?
+
     override init() {
         super.init()
         urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
@@ -175,6 +183,55 @@ class WSClient: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.isConnected = connected
             self?.onConnectionStateChanged?(connected)
+        }
+    }
+
+    // MARK: - 高频消息合并
+
+    /// 需要合并的高频消息类型集合
+    private static let coalescibleTypes: Set<String> = [
+        "file_changed",
+        "git_status_changed",
+        "file_index_result",
+        "file_list_result"
+    ]
+
+    /// 判断消息是否需要合并处理
+    func isCoalescible(_ type: String) -> Bool {
+        WSClient.coalescibleTypes.contains(type)
+    }
+
+    /// 生成合并队列的 key：类型 + 项目 + 工作空间，确保同一上下文的消息被合并
+    func coalesceKey(for json: [String: Any]) -> String {
+        let type = json["type"] as? String ?? ""
+        let project = json["project"] as? String ?? ""
+        let workspace = json["workspace"] as? String ?? ""
+        return "\(type):\(project):\(workspace)"
+    }
+
+    /// 将高频消息放入合并队列，在窗口到期后统一处理
+    func enqueueForCoalesce(_ json: [String: Any]) {
+        let key = coalesceKey(for: json)
+        coalesceQueue[key] = json
+
+        // 如果已有定时器在等待，不重复创建
+        if coalesceTimer != nil { return }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.flushCoalesceQueue()
+        }
+        coalesceTimer = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + coalesceInterval, execute: workItem)
+    }
+
+    /// 刷新合并队列，对每个 key 只处理最后一条消息
+    private func flushCoalesceQueue() {
+        coalesceTimer = nil
+        let pending = coalesceQueue
+        coalesceQueue.removeAll()
+
+        for (_, json) in pending {
+            dispatchCoalescedMessage(json)
         }
     }
 }

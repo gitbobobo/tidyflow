@@ -17,7 +17,7 @@ pub async fn try_handle_git_message(
     match client_msg {
         // v1.8: Git branches
         ClientMessage::GitBranches { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -98,7 +98,7 @@ pub async fn try_handle_git_message(
             workspace,
             branch,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -184,7 +184,7 @@ pub async fn try_handle_git_message(
             workspace,
             branch,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -270,7 +270,7 @@ pub async fn try_handle_git_message(
             workspace,
             message,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -367,7 +367,7 @@ pub async fn try_handle_git_ai_commit(
     socket: &mut WebSocket,
     app_state: &SharedAppState,
 ) -> Result<bool, String> {
-    let state = app_state.lock().await;
+    let state = app_state.read().await;
     match state.get_project(&project) {
         Some(p) => match get_workspace_root(p, &workspace) {
             Some(root) => {

@@ -54,20 +54,16 @@ extension WSClient {
             return
         }
 
+        // 高频消息走合并队列，避免淹没 UI 线程
+        if isCoalescible(type) {
+            enqueueForCoalesce(json)
+            return
+        }
+
         switch type {
         case "hello":
             // Connection established, ignore or log
             break
-
-        case "file_index_result":
-            if let result = FileIndexResult.from(json: json) {
-                onFileIndexResult?(result)
-            }
-
-        case "file_list_result":
-            if let result = FileListResult.from(json: json) {
-                onFileListResult?(result)
-            }
 
         case "git_diff_result":
             if let result = GitDiffResult.from(json: json) {
@@ -203,16 +199,6 @@ extension WSClient {
         case "watch_unsubscribed":
             onWatchUnsubscribed?()
 
-        case "file_changed":
-            if let notification = FileChangedNotification.from(json: json) {
-                onFileChanged?(notification)
-            }
-
-        case "git_status_changed":
-            if let notification = GitStatusChangedNotification.from(json: json) {
-                onGitStatusChanged?(notification)
-            }
-
         case "file_rename_result":
             if let result = FileRenameResult.from(json: json) {
                 onFileRenameResult?(result)
@@ -244,6 +230,36 @@ extension WSClient {
 
         default:
             // Unknown message type, ignore
+            break
+        }
+    }
+
+    /// 处理合并队列刷新后的高频消息（由 flushCoalesceQueue 调用）
+    func dispatchCoalescedMessage(_ json: [String: Any]) {
+        guard let type = json["type"] as? String else { return }
+
+        switch type {
+        case "file_changed":
+            if let notification = FileChangedNotification.from(json: json) {
+                onFileChanged?(notification)
+            }
+
+        case "git_status_changed":
+            if let notification = GitStatusChangedNotification.from(json: json) {
+                onGitStatusChanged?(notification)
+            }
+
+        case "file_index_result":
+            if let result = FileIndexResult.from(json: json) {
+                onFileIndexResult?(result)
+            }
+
+        case "file_list_result":
+            if let result = FileListResult.from(json: json) {
+                onFileListResult?(result)
+            }
+
+        default:
             break
         }
     }

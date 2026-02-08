@@ -8,6 +8,9 @@ import AppKit
 struct ProjectsSidebarView: View {
     @EnvironmentObject var appState: AppState
 
+    /// 缓存排序后的项目索引，避免每次 body 重算都执行 O(n log n) 排序
+    @State private var cachedSortedIndices: [Int] = []
+
     var body: some View {
         VStack(spacing: 0) {
             // 标题栏
@@ -27,6 +30,21 @@ struct ProjectsSidebarView: View {
             }
         }
         .frame(minWidth: 200)
+        .onAppear {
+            cachedSortedIndices = computeSortedIndices()
+        }
+        // 项目列表变化（增删、名称修改等）时重新排序
+        .onChange(of: appState.projects.map { $0.id }) { _ in
+            cachedSortedIndices = computeSortedIndices()
+        }
+        // 快捷键分配或终端打开时间变化时重新排序
+        .onChange(of: appState.workspaceTerminalOpenTime) { _ in
+            cachedSortedIndices = computeSortedIndices()
+        }
+        // 工作空间删除状态变化时重新排序
+        .onChange(of: appState.deletingWorkspaces) { _ in
+            cachedSortedIndices = computeSortedIndices()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: {
@@ -110,10 +128,9 @@ struct ProjectsSidebarView: View {
         return minKey
     }
 
-    /// 将项目和工作空间扁平化为单一列表（已分配快捷键的项目按最早终端创建时间排序）
-    private var flattenedRows: [SidebarRow] {
-        // 先对项目进行排序
-        let sortedIndices = appState.projects.indices.sorted { i, j in
+    /// 计算项目排序索引（纯排序逻辑，不含 Binding）
+    private func computeSortedIndices() -> [Int] {
+        appState.projects.indices.sorted { i, j in
             let projectA = appState.projects[i]
             let projectB = appState.projects[j]
 
@@ -137,9 +154,12 @@ struct ProjectsSidebarView: View {
             // 3. 默认按项目名称字母序，确保启动时排序稳定
             return projectA.name.localizedCaseInsensitiveCompare(projectB.name) == .orderedAscending
         }
+    }
 
+    /// 将项目和工作空间扁平化为单一列表（使用缓存的排序索引）
+    private var flattenedRows: [SidebarRow] {
         var rows: [SidebarRow] = []
-        for index in sortedIndices {
+        for index in cachedSortedIndices where index < appState.projects.count {
             let projectBinding = $appState.projects[index]
             let project = projectBinding.wrappedValue
             rows.append(.project(projectBinding))

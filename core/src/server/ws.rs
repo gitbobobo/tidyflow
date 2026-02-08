@@ -8,7 +8,7 @@ use axum::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
@@ -27,6 +27,7 @@ use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
 use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
+use crate::server::git::status::invalidate_git_status_cache;
 use crate::workspace::state::{AppState, Project};
 use crate::workspace::state_saver::spawn_state_saver;
 
@@ -43,7 +44,7 @@ fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
 }
 
 /// Shared application state for the WebSocket server
-pub type SharedAppState = Arc<Mutex<AppState>>;
+pub type SharedAppState = Arc<RwLock<AppState>>;
 
 /// WebSocket 服务器上下文，包含共享状态和防抖保存通道
 #[derive(Clone)]
@@ -64,7 +65,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     // Load application state
     let app_state = AppState::load().unwrap_or_default();
-    let shared_state: SharedAppState = Arc::new(Mutex::new(app_state));
+    let shared_state: SharedAppState = Arc::new(RwLock::new(app_state));
 
     // 启动防抖保存 actor
     let save_tx = spawn_state_saver(shared_state.clone());
@@ -278,6 +279,17 @@ async fn handle_socket(
                 match watch_event {
                     WatchEvent::FileChanged { project, workspace, paths, kind } => {
                         debug!("File changed: project={}, workspace={}, paths={:?}", project, workspace, paths);
+
+                        // 文件变化可能影响 git status，主动失效缓存
+                        {
+                            let state = app_state.read().await;
+                            if let Some(proj) = state.projects.get(&project) {
+                                if let Some(root) = get_workspace_root(proj, &workspace) {
+                                    invalidate_git_status_cache(&root);
+                                }
+                            }
+                        }
+
                         let msg = ServerMessage::FileChanged {
                             project,
                             workspace,
@@ -290,6 +302,17 @@ async fn handle_socket(
                     }
                     WatchEvent::GitStatusChanged { project, workspace } => {
                         debug!("Git status changed: project={}, workspace={}", project, workspace);
+
+                        // Git 元数据变化（index/HEAD/refs），主动失效缓存
+                        {
+                            let state = app_state.read().await;
+                            if let Some(proj) = state.projects.get(&project) {
+                                if let Some(root) = get_workspace_root(proj, &workspace) {
+                                    invalidate_git_status_cache(&root);
+                                }
+                            }
+                        }
+
                         let msg = ServerMessage::GitStatusChanged {
                             project,
                             workspace,
@@ -472,7 +495,7 @@ async fn handle_client_message(
             );
 
             // 获取工作空间路径
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             let watch_path = state
                 .projects
                 .get(&project)

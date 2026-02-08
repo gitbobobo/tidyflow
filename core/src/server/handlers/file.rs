@@ -48,7 +48,7 @@ pub async fn handle_file_message(
             workspace,
             path,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -119,7 +119,7 @@ pub async fn handle_file_message(
             workspace,
             path,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -200,7 +200,7 @@ pub async fn handle_file_message(
             path,
             content,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     match get_workspace_root(p, workspace) {
@@ -274,7 +274,7 @@ pub async fn handle_file_message(
 
         // v1.4: File index for Quick Open
         ClientMessage::FileIndex { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     match get_workspace_root(p, workspace) {
@@ -354,7 +354,7 @@ pub async fn handle_file_message(
             old_path,
             new_name,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -430,7 +430,7 @@ pub async fn handle_file_message(
             workspace,
             path,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -503,7 +503,7 @@ pub async fn handle_file_message(
             source_absolute_path,
             dest_dir,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(dest_project) {
                 Some(p) => match get_workspace_root(p, dest_workspace) {
                     Some(root) => {
@@ -580,7 +580,7 @@ pub async fn handle_file_message(
             old_path,
             new_dir,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {

@@ -15,7 +15,7 @@ pub async fn try_handle_git_message(
     match client_msg {
         // v1.11: Git fetch (UX-3a)
         ClientMessage::GitFetch { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -98,7 +98,7 @@ pub async fn try_handle_git_message(
             workspace,
             onto_branch,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -178,7 +178,7 @@ pub async fn try_handle_git_message(
 
         // v1.11: Git rebase continue (UX-3a)
         ClientMessage::GitRebaseContinue { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -256,7 +256,7 @@ pub async fn try_handle_git_message(
 
         // v1.11: Git rebase abort (UX-3a)
         ClientMessage::GitRebaseAbort { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -333,7 +333,7 @@ pub async fn try_handle_git_message(
 
         // v1.11: Git operation status (UX-3a)
         ClientMessage::GitOpStatus { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => match get_workspace_root(p, workspace) {
                     Some(root) => {
@@ -406,7 +406,7 @@ pub async fn try_handle_git_message(
 
         // v1.12: Git ensure integration worktree (UX-3b)
         ClientMessage::GitEnsureIntegrationWorktree { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let root = p.root_path.clone();
@@ -486,7 +486,7 @@ pub async fn try_handle_git_message(
             workspace,
             default_branch,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     // 获取源分支：如果是默认工作空间，使用项目默认分支
@@ -597,7 +597,7 @@ pub async fn try_handle_git_message(
 
         // v1.12: Git merge continue (UX-3b)
         ClientMessage::GitMergeContinue { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let project_name = p.name.clone();
@@ -666,7 +666,7 @@ pub async fn try_handle_git_message(
 
         // v1.12: Git merge abort (UX-3b)
         ClientMessage::GitMergeAbort { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let project_name = p.name.clone();
@@ -734,7 +734,7 @@ pub async fn try_handle_git_message(
 
         // v1.12: Git integration status (UX-3b)
         ClientMessage::GitIntegrationStatus { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let project_name = p.name.clone();
@@ -808,7 +808,7 @@ pub async fn try_handle_git_message(
             workspace,
             default_branch,
         } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     // 获取源分支：如果是默认工作空间，使用项目默认分支
@@ -919,7 +919,7 @@ pub async fn try_handle_git_message(
 
         // v1.13: Git rebase onto default continue (UX-4)
         ClientMessage::GitRebaseOntoDefaultContinue { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let project_name = p.name.clone();
@@ -989,7 +989,7 @@ pub async fn try_handle_git_message(
 
         // v1.13: Git rebase onto default abort (UX-4)
         ClientMessage::GitRebaseOntoDefaultAbort { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let project_name = p.name.clone();
@@ -1059,7 +1059,7 @@ pub async fn try_handle_git_message(
 
         // v1.14: Git reset integration worktree (UX-5)
         ClientMessage::GitResetIntegrationWorktree { project } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let project_name = p.name.clone();
@@ -1133,7 +1133,7 @@ pub async fn try_handle_git_message(
 
         // v1.15: Git check branch up to date (UX-6)
         ClientMessage::GitCheckBranchUpToDate { project, workspace } => {
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     // 获取工作空间信息：如果是默认工作空间，使用项目根目录和默认分支

@@ -16,8 +16,8 @@ struct CacheEntry {
     created_at: Instant,
 }
 
-/// 缓存 TTL（1 秒）
-const CACHE_TTL_SECS: u64 = 1;
+/// 缓存 TTL（5 秒），文件监控事件会主动失效缓存
+const CACHE_TTL_SECS: u64 = 5;
 
 /// 全局 git status 缓存
 static GIT_STATUS_CACHE: LazyLock<Mutex<HashMap<String, CacheEntry>>> =

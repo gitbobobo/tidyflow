@@ -159,7 +159,7 @@ pub async fn handle_terminal_message(
                 workspace = %workspace,
                 "TermCreate request received"
             );
-            let state = app_state.lock().await;
+            let state = app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let root_path = if workspace == "default" {
