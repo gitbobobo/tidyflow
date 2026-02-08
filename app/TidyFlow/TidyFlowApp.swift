@@ -112,6 +112,7 @@ struct TidyFlowApp: App {
             ContentView()
                 .environmentObject(appState)
                 .environmentObject(appState.gitCache)
+                .environmentObject(appState.fileCache)
                 .environmentObject(localizationManager)
                 .environment(\.locale, localizationManager.locale)
                 .onAppear {
@@ -139,6 +140,7 @@ struct TidyFlowApp: App {
             SettingsContentView()
                 .environmentObject(appState)
                 .environmentObject(appState.gitCache)
+                .environmentObject(appState.fileCache)
                 .environmentObject(localizationManager)
                 .environment(\.locale, localizationManager.locale)
                 .frame(minWidth: 500, minHeight: 400)

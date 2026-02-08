@@ -4,7 +4,7 @@
 //! 避免在 async WebSocket 处理循环中同步阻塞 tokio 线程。
 
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info};
 
 use super::state::AppState;
@@ -16,7 +16,7 @@ use super::state::AppState;
 /// 中执行序列化 + 磁盘写入，不阻塞 tokio 工作线程。
 ///
 /// channel 关闭时会执行最后一次保存。
-pub fn spawn_state_saver(app_state: Arc<Mutex<AppState>>) -> mpsc::Sender<()> {
+pub fn spawn_state_saver(app_state: Arc<RwLock<AppState>>) -> mpsc::Sender<()> {
     let (tx, mut rx) = mpsc::channel::<()>(32);
 
     tokio::spawn(async move {
@@ -61,8 +61,8 @@ pub fn spawn_state_saver(app_state: Arc<Mutex<AppState>>) -> mpsc::Sender<()> {
 }
 
 /// 短暂持锁 clone 状态，然后在 spawn_blocking 中序列化写入磁盘
-async fn do_save(app_state: &Arc<Mutex<AppState>>) {
-    let mut state = app_state.lock().await;
+async fn do_save(app_state: &Arc<RwLock<AppState>>) {
+    let mut state = app_state.write().await;
     // clone 后立即释放锁，最小化持锁时间
     let mut snapshot = state.clone();
     // 更新 last_updated 到原始状态和快照中，保持一致

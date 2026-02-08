@@ -31,13 +31,22 @@ class AppState: ObservableObject {
     @Published var projectImportInFlight: Bool = false
     @Published var projectImportError: String?
 
-    // File Index Cache (workspace key -> cache)
-    @Published var fileIndexCache: [String: FileIndexCache] = [:]
+    // 文件缓存状态（独立 ObservableObject，避免文件高频更新触发全局视图刷新）
+    let fileCache = FileCacheState()
 
-    // 文件列表缓存 (key: "workspace:path" -> FileListCache)
-    @Published var fileListCache: [String: FileListCache] = [:]
-    // 目录展开状态 (key: "workspace:path" -> isExpanded)
-    @Published var directoryExpandState: [String: Bool] = [:]
+    // 向后兼容：保留原属性访问路径，代理到 fileCache
+    var fileIndexCache: [String: FileIndexCache] {
+        get { fileCache.fileIndexCache }
+        set { fileCache.fileIndexCache = newValue }
+    }
+    var fileListCache: [String: FileListCache] {
+        get { fileCache.fileListCache }
+        set { fileCache.fileListCache = newValue }
+    }
+    var directoryExpandState: [String: Bool] {
+        get { fileCache.directoryExpandState }
+        set { fileCache.directoryExpandState = newValue }
+    }
 
     // Git 缓存状态（独立 ObservableObject，避免 Git 高频更新触发全局视图刷新）
     let gitCache = GitCacheState()

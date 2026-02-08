@@ -166,15 +166,17 @@ struct FileTreeView: View {
 /// 文件列表内容（递归）
 struct FileListContent: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var fileCache: FileCacheState
     let workspaceKey: String
     let path: String
     let depth: Int
-    
+
     private var cacheKey: String {
         "\(workspaceKey):\(path)"
     }
-    
+
     private var cache: FileListCache? {
+        // 直接从 fileCache 读取，确保文件缓存变化时触发重绘
         appState.getFileListCache(workspaceKey: workspaceKey, path: path)
     }
     
@@ -213,6 +215,7 @@ struct FileListContent: View {
 struct FileRowView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
+    @EnvironmentObject var fileCache: FileCacheState
     let workspaceKey: String
     let item: FileEntry
     let depth: Int

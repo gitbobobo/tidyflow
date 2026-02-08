@@ -13,6 +13,7 @@
 		2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */; };
 		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
 		GCS000012 /* GitCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = GCS000011 /* GitCacheState.swift */; };
+		FCS000012 /* FileCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCS000011 /* FileCacheState.swift */; };
 		SPL00041 /* GitCacheState+DiffStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00031 /* GitCacheState+DiffStatus.swift */; };
 		SPL00042 /* GitCacheState+Operations.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00032 /* GitCacheState+Operations.swift */; };
 		MDL000301 /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000101 /* Notifications.swift */; };
@@ -118,6 +119,7 @@
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
 		BGT00011 /* BackgroundTaskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskViews.swift; sourceTree = "<group>"; };
 		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
+		FCS000011 /* FileCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCacheState.swift; sourceTree = "<group>"; };
 		SPL00031 /* GitCacheState+DiffStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+DiffStatus.swift"; sourceTree = "<group>"; };
 		SPL00032 /* GitCacheState+Operations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+Operations.swift"; sourceTree = "<group>"; };
 		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
@@ -192,6 +194,7 @@
 				B3A00011 /* CommandPaletteView.swift */,
 				SPL00024 /* ExplorerView.swift */,
 				SPL00025 /* FileDialogViews.swift */,
+				FCS000011 /* FileCacheState.swift */,
 				SPL00021 /* FloatingPanelController.swift */,
 				GCS000011 /* GitCacheState.swift */,
 				SPL00031 /* GitCacheState+DiffStatus.swift */,
@@ -455,6 +458,7 @@
 					2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
 					2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
 					GCS000012 /* GitCacheState.swift in Sources */,
+					FCS000012 /* FileCacheState.swift in Sources */,
 				SPL00041 /* GitCacheState+DiffStatus.swift in Sources */,
 				SPL00042 /* GitCacheState+Operations.swift in Sources */,
 					MDL000301 /* Notifications.swift in Sources */,

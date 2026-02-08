@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CommandPaletteView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var fileCache: FileCacheState
     @FocusState private var inputFocused: Bool
 
     // Derived data
@@ -24,15 +25,15 @@ struct CommandPaletteView: View {
 
     var currentFileCache: FileIndexCache? {
         guard let ws = appState.selectedWorkspaceKey else { return nil }
-        return appState.fileIndexCache[ws]
+        return fileCache.fileIndexCache[ws]
     }
 
     var filteredFiles: [String] {
         guard appState.commandPaletteMode == .file else { return [] }
         guard let ws = appState.selectedWorkspaceKey else { return [] }
 
-        // Get files from cache
-        let cache = appState.fileIndexCache[ws]
+        // 直接从 fileCache 读取，确保文件索引变化时触发重绘
+        let cache = fileCache.fileIndexCache[ws]
         let files: [String]
         if let cache = cache, !cache.items.isEmpty {
             files = cache.items
@@ -146,7 +147,7 @@ struct CommandPaletteView: View {
             // Auto-fetch file index when opening Quick Open
             if appState.commandPaletteMode == .file,
                let ws = appState.selectedWorkspaceKey {
-                let cache = appState.fileIndexCache[ws]
+                let cache = fileCache.fileIndexCache[ws]
                 if cache == nil || cache!.isExpired {
                     appState.fetchFileIndex(workspaceKey: ws)
                 }
