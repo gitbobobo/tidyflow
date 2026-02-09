@@ -445,8 +445,14 @@ pub async fn handle_project_message(
                 },
             ).await?;
 
-            // 启动子进程并注册到 running_commands
-            let mut child = match tokio::process::Command::new("sh")
+            // 使用登录 shell 执行，确保加载用户环境变量（PATH 等）
+            let shell = if std::path::Path::new("/bin/zsh").exists() {
+                "/bin/zsh"
+            } else {
+                "/bin/bash"
+            };
+            let mut child = match tokio::process::Command::new(shell)
+                .arg("-l")
                 .arg("-c")
                 .arg(&command_text)
                 .current_dir(&cwd)
