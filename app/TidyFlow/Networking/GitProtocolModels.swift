@@ -482,6 +482,10 @@ struct GitStatusResult {
 /// Cached git status for a workspace
 struct GitStatusCache: Equatable {
     var items: [GitStatusItem]
+    /// 预计算的暂存文件列表，避免视图层每次重绘都 filter
+    var stagedItems: [GitStatusItem]
+    /// 预计算的未暂存文件列表
+    var unstagedItems: [GitStatusItem]
     var isLoading: Bool
     var error: String?
     var isGitRepo: Bool
@@ -493,6 +497,27 @@ struct GitStatusCache: Equatable {
     var aheadBy: Int?
     var behindBy: Int?
     var comparedBranch: String?
+
+    /// 从 items 构建缓存，自动拆分 staged/unstaged
+    init(items: [GitStatusItem], isLoading: Bool, error: String?, isGitRepo: Bool,
+         updatedAt: Date, hasStagedChanges: Bool, stagedCount: Int,
+         currentBranch: String?, defaultBranch: String?,
+         aheadBy: Int?, behindBy: Int?, comparedBranch: String?) {
+        self.items = items
+        self.stagedItems = items.filter { $0.staged == true }
+        self.unstagedItems = items.filter { $0.staged != true }
+        self.isLoading = isLoading
+        self.error = error
+        self.isGitRepo = isGitRepo
+        self.updatedAt = updatedAt
+        self.hasStagedChanges = hasStagedChanges
+        self.stagedCount = stagedCount
+        self.currentBranch = currentBranch
+        self.defaultBranch = defaultBranch
+        self.aheadBy = aheadBy
+        self.behindBy = behindBy
+        self.comparedBranch = comparedBranch
+    }
 
     static func empty() -> GitStatusCache {
         GitStatusCache(

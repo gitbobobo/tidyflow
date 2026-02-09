@@ -7,11 +7,11 @@ struct GitStagedChangesSection: View {
     @EnvironmentObject var gitCache: GitCacheState
     @Binding var isExpanded: Bool
 
-    /// 缓存过滤结果，避免 stagedCount 和 stagedItems 分别过滤一次
+    /// 直接使用缓存中预计算的 stagedItems，避免每次 body 重绘都 filter
     private var cachedStagedItems: [GitStatusItem] {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return [] }
-        return cache.items.filter { $0.staged == true }
+        return cache.stagedItems
     }
 
     var body: some View {
@@ -100,7 +100,7 @@ struct GitChangesSection: View {
                                 } else if !cache.isGitRepo {
                                     EmptyRow(text: "git.notGitRepo".localized)
                                 } else {
-                                    let unstaged = unstagedItems(cache.items)
+                                    let unstaged = cache.unstagedItems
                                     if unstaged.isEmpty {
                                         EmptyRow(text: "git.noChanges".localized)
                                     } else {
@@ -123,34 +123,30 @@ struct GitChangesSection: View {
     private var unstagedCount: Int {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return 0 }
-        return cache.items.filter { $0.staged != true }.count
+        return cache.unstagedItems.count
     }
 
     private var hasUnstagedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.items.contains { $0.status == "??" || $0.status == "M" || $0.status == "A" || $0.status == "D" }
+        return !cache.unstagedItems.isEmpty
     }
 
     private var hasTrackedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.items.contains { $0.staged != true && $0.status != "??" }
+        return cache.unstagedItems.contains { $0.status != "??" }
     }
 
     private var hasUntrackedChanges: Bool {
         guard let ws = appState.selectedWorkspaceKey,
               let cache = gitCache.getGitStatusCache(workspaceKey: ws) else { return false }
-        return cache.items.contains { $0.staged != true && $0.status == "??" }
+        return cache.unstagedItems.contains { $0.status == "??" }
     }
 
     private var isStageAllInFlight: Bool {
         guard let ws = appState.selectedWorkspaceKey else { return false }
         return gitCache.isGitOpInFlight(workspaceKey: ws, path: nil, op: "stage")
-    }
-
-    private func unstagedItems(_ items: [GitStatusItem]) -> [GitStatusItem] {
-        items.filter { $0.staged != true }
     }
 
     private func stageAll() {
