@@ -727,6 +727,10 @@
 
       const rows = buildSplitRows(hunk.lines);
 
+      // 使用 DocumentFragment 批量构建，减少 DOM reflow
+      const oldFrag = document.createDocumentFragment();
+      const newFrag = document.createDocumentFragment();
+
       rows.forEach((row) => {
         const oldRow = document.createElement("div");
         oldRow.className = "diff-split-row";
@@ -759,7 +763,7 @@
           lt.className = "diff-line-text";
           oldRow.appendChild(lt);
         }
-        oldPane.appendChild(oldRow);
+        oldFrag.appendChild(oldRow);
 
         const newRow = document.createElement("div");
         newRow.className = "diff-split-row";
@@ -790,9 +794,11 @@
           lt2.className = "diff-line-text";
           newRow.appendChild(lt2);
         }
-        newPane.appendChild(newRow);
+        newFrag.appendChild(newRow);
       });
 
+      oldPane.appendChild(oldFrag);
+      newPane.appendChild(newFrag);
       splitEl.appendChild(oldPane);
       splitEl.appendChild(newPane);
       container.appendChild(splitEl);
