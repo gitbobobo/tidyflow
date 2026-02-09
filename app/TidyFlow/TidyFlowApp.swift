@@ -1,8 +1,9 @@
 import SwiftUI
+import UserNotifications
 import os
 
 /// App delegate to handle lifecycle events
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     var appState: AppState?
     /// 用于跟踪是否已确认退出（避免重复弹框）
     private var terminationConfirmed = false
@@ -12,6 +13,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let window = NSApplication.shared.windows.first {
             window.delegate = self
         }
+
+        // 请求系统通知权限（横幅 + 声音）
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error = error {
+                TFLog.app.error("请求通知权限失败: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // 用户回到应用时，清除通知中心中的已投递通知（临时通知）
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// 应用在前台时不显示系统通知，交由应用内 Toast 处理
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([])
     }
 
     func applicationWillTerminate(_ notification: Notification) {

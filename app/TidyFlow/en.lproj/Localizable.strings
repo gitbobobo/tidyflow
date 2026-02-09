@@ -243,6 +243,10 @@
 "toolbar.projectCommands" = "Project Commands";
 "toolbar.run" = "Run";
 
+/* System Notifications */
+"notification.task.completed" = "Task Completed";
+"notification.task.failed" = "Task Failed";
+
 /* Toast Notifications */
 "toast.status.success" = "Completed";
 "toast.status.failed" = "Failed";

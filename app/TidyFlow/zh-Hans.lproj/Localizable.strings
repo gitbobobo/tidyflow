@@ -243,6 +243,10 @@
 "toolbar.projectCommands" = "项目命令";
 "toolbar.run" = "执行";
 
+/* 系统通知 */
+"notification.task.completed" = "任务已完成";
+"notification.task.failed" = "任务失败";
+
 /* Toast 通知 */
 "toast.status.success" = "已完成";
 "toast.status.failed" = "失败";

@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import UserNotifications
+import AppKit
 
 /// 后台任务管理器，以工作空间为粒度管理任务队列
 class BackgroundTaskManager: ObservableObject {
@@ -148,6 +150,11 @@ class BackgroundTaskManager: ObservableObject {
         let toast = ToastManager.makeToast(from: task)
         appState.toastManager.push(toast)
 
+        // 应用不在前台时，发送系统通知提醒用户
+        if !NSApp.isActive {
+            sendSystemNotification(for: task)
+        }
+
         // 刷新 Git 缓存
         refreshGitCache(for: task, appState: appState)
 
@@ -295,5 +302,38 @@ class BackgroundTaskManager: ObservableObject {
     /// 已完成任务
     func completedTasks(for key: String) -> [BackgroundTask] {
         completedQueues[key] ?? []
+    }
+
+    // MARK: - 系统通知
+
+    /// 发送 macOS 系统通知（仅在应用不在前台时调用）
+    private func sendSystemNotification(for task: BackgroundTask) {
+        let content = UNMutableNotificationContent()
+
+        let resultStatus = task.result?.resultStatus ?? .unknown
+        switch resultStatus {
+        case .success:
+            content.title = "notification.task.completed".localized
+        case .failed:
+            content.title = "notification.task.failed".localized
+        case .unknown:
+            content.title = "notification.task.failed".localized
+        }
+
+        content.subtitle = task.displayTitle
+        content.body = task.result?.message ?? ""
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: task.id.uuidString,
+            content: content,
+            trigger: nil // 立即投递
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                TFLog.app.error("发送系统通知失败: \(error.localizedDescription)")
+            }
+        }
     }
 }
