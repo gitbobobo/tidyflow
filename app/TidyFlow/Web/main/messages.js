@@ -373,6 +373,10 @@
                   tab.statusBar.textContent = "Saved: " + msg.path;
                   setTimeout(() => { tab.statusBar.textContent = ""; }, 3000);
                 }
+                // 保存后刷新 gutter 变更指示器
+                if (TF.requestEditorGutterDiff) {
+                  TF.requestEditorGutterDiff(tabId);
+                }
               }
             }
             TF.notifyNativeSaved(msg.path);
@@ -418,6 +422,13 @@
           break;
 
         case "git_diff_result":
+          // base 存在时，为编辑器 gutter 变更指示器的 diff 结果
+          if (msg.base && msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
+            if (TF.handleEditorGutterDiffResult) {
+              TF.handleEditorGutterDiffResult(msg.path, msg.text);
+            }
+            break;
+          }
           if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
             TF.renderDiffContent(msg.path, msg.code, msg.text, msg.is_binary, msg.truncated);
           }

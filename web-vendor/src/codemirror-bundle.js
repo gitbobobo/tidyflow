@@ -6,7 +6,8 @@
 // 核心模块
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState, StateEffect, StateField } from "@codemirror/state";
-import { Decoration } from "@codemirror/view";
+import { Decoration, GutterMarker } from "@codemirror/view";
+import { gutter } from "@codemirror/view";
 import { StreamLanguage } from "@codemirror/language";
 
 // 主题
@@ -107,6 +108,9 @@ window.CodeMirror = {
   Decoration,
   StateEffect,
   StateField,
+  // 用于自定义 gutter（如 git 变更指示器）
+  gutter,
+  GutterMarker,
   // 导出语言工厂函数供直接使用
   languages: {
     javascript,

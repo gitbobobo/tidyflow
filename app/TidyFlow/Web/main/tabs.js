@@ -10,6 +10,180 @@
   // undefined = 尚未检测，'dom' = 建议使用 DOM 渲染器
   let suggestedRendererType = undefined;
 
+  // ============================================
+  // Git Change Gutter（VS Code 风格变更指示器）
+  // ============================================
+
+  /**
+   * 解析 unified diff 文本为行级变更信息
+   * @param {string} diffText - unified diff 输出
+   * @returns {Array<{line: number, type: "add"|"del"|"mod"}>} 变更列表（line 为 1-based 行号）
+   */
+  function parseUnifiedDiffToLineChanges(diffText) {
+    if (!diffText) return [];
+    const changes = [];
+    const lines = diffText.split("\n");
+    let newLine = 0;
+    let pendingDelLine = -1; // 记录连续删除块结束后的位置，用于判断 "修改"
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // 解析 hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+      const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (hunkMatch) {
+        newLine = parseInt(hunkMatch[1], 10);
+        pendingDelLine = -1;
+        continue;
+      }
+      if (line.startsWith("---") || line.startsWith("+++") || line.startsWith("diff ") || line.startsWith("index ")) {
+        continue;
+      }
+      if (line.startsWith("-")) {
+        // 记录删除发生的位置（当前 newLine 处）
+        if (pendingDelLine < 0) pendingDelLine = newLine;
+        continue;
+      }
+      if (line.startsWith("+")) {
+        if (pendingDelLine >= 0) {
+          // 删除后紧跟新增 = 修改行
+          changes.push({ line: newLine, type: "mod" });
+        } else {
+          changes.push({ line: newLine, type: "add" });
+        }
+        newLine++;
+        continue;
+      }
+      if (line.startsWith(" ") || line === "") {
+        // context 行：如果之前有未配对的删除，标记为纯删除
+        if (pendingDelLine >= 0) {
+          changes.push({ line: pendingDelLine, type: "del" });
+          pendingDelLine = -1;
+        }
+        if (newLine > 0) newLine++;
+        continue;
+      }
+      // 其他行（如 "\ No newline at end of file"）忽略
+    }
+    // 文件末尾的未配对删除
+    if (pendingDelLine >= 0) {
+      changes.push({ line: pendingDelLine, type: "del" });
+    }
+    return changes;
+  }
+
+  /**
+   * 创建 Git 变更 gutter 扩展（CodeMirror 6）
+   * 返回 { extensions, updateEffect } 供编辑器使用
+   */
+  function createChangeGutter() {
+    if (!window.CodeMirror) return null;
+    const { StateEffect, StateField, gutter, GutterMarker } = window.CodeMirror;
+    if (!gutter || !GutterMarker) return null;
+
+    // 三种 Marker
+    class AddedMarker extends GutterMarker {
+      toDOM() {
+        const el = document.createElement("div");
+        el.className = "cm-change-added";
+        return el;
+      }
+    }
+    class ModifiedMarker extends GutterMarker {
+      toDOM() {
+        const el = document.createElement("div");
+        el.className = "cm-change-modified";
+        return el;
+      }
+    }
+    class DeletedMarker extends GutterMarker {
+      toDOM() {
+        const el = document.createElement("div");
+        el.className = "cm-change-deleted";
+        return el;
+      }
+    }
+    const addedMarker = new AddedMarker();
+    const modifiedMarker = new ModifiedMarker();
+    const deletedMarker = new DeletedMarker();
+
+    const updateEffect = StateEffect.define();
+
+    const changeState = StateField.define({
+      create() { return []; },
+      update(value, tr) {
+        for (const e of tr.effects) {
+          if (e.is(updateEffect)) return e.value;
+        }
+        return value;
+      },
+    });
+
+    const changeGutter = gutter({
+      class: "cm-change-gutter",
+      lineMarker(view, line) {
+        const changes = view.state.field(changeState);
+        const lineNum = view.state.doc.lineAt(line.from).number;
+        for (const ch of changes) {
+          if (ch.line === lineNum) {
+            if (ch.type === "add") return addedMarker;
+            if (ch.type === "mod") return modifiedMarker;
+            if (ch.type === "del") return deletedMarker;
+          }
+        }
+        return null;
+      },
+      initialSpacer() { return addedMarker; },
+    });
+
+    return {
+      extensions: [changeState, changeGutter],
+      updateEffect,
+    };
+  }
+
+  /**
+   * 为编辑器 tab 请求 HEAD diff 并更新 gutter
+   */
+  function requestEditorGutterDiff(tabId) {
+    const wsKey = TF.getCurrentWorkspaceKey();
+    if (!wsKey) return;
+    const tabSet = TF.workspaceTabs.get(wsKey);
+    if (!tabSet) return;
+    const tab = tabSet.tabs.get(tabId);
+    if (!tab || tab.type !== "editor" || !tab.editorView) return;
+    if (!TF.currentProject || !TF.currentWorkspace) return;
+
+    TF.sendControlMessage({
+      type: "git_diff",
+      project: TF.currentProject,
+      workspace: TF.currentWorkspace,
+      path: tab.filePath,
+      base: "HEAD",
+      mode: "working",
+    });
+  }
+
+  /**
+   * 处理 git_diff_result 并更新对应编辑器的 gutter markers
+   */
+  function handleEditorGutterDiffResult(path, diffText) {
+    const wsKey = TF.getCurrentWorkspaceKey();
+    if (!wsKey) return;
+    const tabSet = TF.workspaceTabs.get(wsKey);
+    if (!tabSet) return;
+
+    const tabId = "editor-" + path.replace(/[^a-zA-Z0-9]/g, "-");
+    const tab = tabSet.tabs.get(tabId);
+    if (!tab || !tab.editorView || !tab._gutterUpdateEffect) {
+      return;
+    }
+
+    const changes = parseUnifiedDiffToLineChanges(diffText);
+    tab.editorView.dispatch({
+      effects: tab._gutterUpdateEffect.of(changes),
+    });
+  }
+
   /**
    * 检测 xterm.js 生成的终端查询响应，避免发送到服务器被 shell 回显
    * 
@@ -539,8 +713,13 @@
     TF.tabContent.appendChild(pane);
 
     let editorView = null;
+    let gutterUpdateEffect = null;
     if (window.CodeMirror) {
       const { EditorView, basicSetup, getLanguageExtension, oneDark } = window.CodeMirror;
+
+      // Git 变更 gutter
+      const changeGutter = createChangeGutter();
+      if (changeGutter) gutterUpdateEffect = changeGutter.updateEffect;
 
       // 构建扩展列表
       const extensions = [
@@ -565,6 +744,11 @@
           { dark: true },
         ),
       ];
+
+      // 添加 git 变更 gutter 扩展
+      if (changeGutter) {
+        extensions.push(...changeGutter.extensions);
+      }
 
       // 根据文件类型添加语言扩展
       const langExt = getLanguageExtension(filePath);
@@ -632,10 +816,16 @@
       previewMode: false,
       previewBtn,
       previewContainer,
+      _gutterUpdateEffect: gutterUpdateEffect,
     };
 
     tabSet.tabs.set(tabId, tabInfo);
     tabSet.tabOrder.push(tabId);
+
+    // 文件打开后请求 HEAD diff 更新 gutter
+    if (gutterUpdateEffect) {
+      requestEditorGutterDiff(tabId);
+    }
 
     return tabInfo;
   }
@@ -1087,4 +1277,6 @@
   TF.handleFileConflict = handleFileConflict;
   TF.handleFileDeleted = handleFileDeleted;
   TF.replaceEditorContent = replaceEditorContent;
+  TF.requestEditorGutterDiff = requestEditorGutterDiff;
+  TF.handleEditorGutterDiffResult = handleEditorGutterDiffResult;
 })();
