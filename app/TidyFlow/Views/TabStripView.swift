@@ -10,7 +10,7 @@ struct TabStripView: View {
                let tabs = appState.workspaceTabs[globalKey] {
                 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 1) {
+                    HStack(spacing: 2) {
                         ForEach(tabs) { tab in
                             TabItemView(
                                 tab: tab,
@@ -36,8 +36,8 @@ struct TabStripView: View {
                 Spacer()
             }
         }
-        .frame(height: 32)
-        .background(Color(NSColor.controlBackgroundColor))
+        .frame(height: 34)
+        .background(Color(NSColor.windowBackgroundColor))
         .overlay(
             Divider(), alignment: .bottom
         )
@@ -54,6 +54,17 @@ struct TabItemView: View {
     
     @State private var isHovered: Bool = false
     
+    /// tab 背景色
+    private var tabBackground: Color {
+        if isActive {
+            return Color(NSColor.controlBackgroundColor)
+        } else if isHovered {
+            return Color(NSColor.controlBackgroundColor).opacity(0.5)
+        } else {
+            return Color.clear
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // 文件图标位置：dirty 时显示橙色圆点，否则显示类型图标（终端快捷命令 tab 使用 commandIcon）
@@ -89,8 +100,19 @@ struct TabItemView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(isActive ? Color(NSColor.controlBackgroundColor) : Color(NSColor.windowBackgroundColor))
-        .cornerRadius(isActive ? 4 : 0)
+        .background(tabBackground)
+        .cornerRadius(4)
+        .overlay(alignment: .bottom) {
+            // 选中态底部指示条
+            if isActive {
+                RoundedRectangle(cornerRadius: 0.5)
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .padding(.horizontal, 8)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
         .onTapGesture {
             onActivate()
         }
