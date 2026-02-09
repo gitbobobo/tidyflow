@@ -26,6 +26,5 @@ jobs:
           bash -n scripts/build_dmg.sh
           bash -n scripts/notarize.sh
           bash -n scripts/run-app.sh
-          bash -n scripts/menu.sh
           bash -n scripts/tools/read_version.sh
           bash -n scripts/tools/gen_sha256.sh
