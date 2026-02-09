@@ -386,6 +386,11 @@ struct WorkspaceRowView: View {
         appState.deletingWorkspaces.contains(globalWorkspaceKey)
     }
 
+    /// 该工作空间是否有未读完成的后台任务（侧边栏铃铛提示）
+    private var hasUnseenCompletion: Bool {
+        appState.taskManager.workspaceKeysWithUnseenCompletion.contains(globalWorkspaceKey)
+    }
+
     var body: some View {
         Group {
             if terminalCount > 0 {
@@ -398,6 +403,7 @@ struct WorkspaceRowView: View {
                     depth: 1,
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
+                    trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
                     isLoading: hasActiveTask || isDeleting,
                     customIconView: terminalCountBadge,
                     onTap: {
@@ -416,6 +422,7 @@ struct WorkspaceRowView: View {
                     depth: 1,
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
+                    trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
                     isLoading: hasActiveTask || isDeleting,
                     onTap: {
                         if !isDeleting {

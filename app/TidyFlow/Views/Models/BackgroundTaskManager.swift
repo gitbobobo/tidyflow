@@ -13,6 +13,8 @@ class BackgroundTaskManager: ObservableObject {
     @Published var runningNonBlockingTasks: [String: [BackgroundTask]] = [:]
     /// 已完成历史（每个工作空间最多 5 条）
     @Published var completedQueues: [String: [BackgroundTask]] = [:]
+    /// 有“未读完成”的工作空间（用于侧边栏铃铛提示），用户切换到此工作空间后清除
+    @Published var workspaceKeysWithUnseenCompletion: Set<String> = []
 
     private let maxCompletedPerWorkspace = 5
 
@@ -161,6 +163,16 @@ class BackgroundTaskManager: ObservableObject {
 
         // 驱动下一个任务
         scheduleNext(for: key, appState: appState)
+
+        // 若完成的工作空间不是当前选中，加入未读集合，侧边栏显示铃铛
+        if key != appState.currentGlobalWorkspaceKey {
+            workspaceKeysWithUnseenCompletion.insert(key)
+        }
+    }
+
+    /// 用户切换到某工作空间后清除该工作空间的未读完成提示
+    func clearUnseenCompletion(for key: String) {
+        workspaceKeysWithUnseenCompletion.remove(key)
     }
 
     /// 任务完成后刷新 Git 缓存

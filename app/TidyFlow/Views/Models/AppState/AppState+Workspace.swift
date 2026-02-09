@@ -38,6 +38,9 @@ extension AppState {
             gitCache.fetchGitBranches(workspaceKey: workspaceName)
             gitCache.fetchGitLog(workspaceKey: workspaceName)
         }
+
+        // 切换到此工作空间后清除侧边栏“任务完成”铃铛提示
+        taskManager.clearUnseenCompletion(for: globalKey)
     }
     
     /// 生成全局唯一的工作空间键（包含项目名称）
