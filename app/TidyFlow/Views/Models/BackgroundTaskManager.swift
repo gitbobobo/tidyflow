@@ -144,6 +144,10 @@ class BackgroundTaskManager: ObservableObject {
             completedQueues[key] = Array(completedQueues[key]!.prefix(maxCompletedPerWorkspace))
         }
 
+        // 推送 Toast 通知
+        let toast = ToastManager.makeToast(from: task)
+        appState.toastManager.push(toast)
+
         // 刷新 Git 缓存
         refreshGitCache(for: task, appState: appState)
 

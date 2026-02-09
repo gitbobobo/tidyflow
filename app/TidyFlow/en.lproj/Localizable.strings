@@ -243,6 +243,11 @@
 "toolbar.projectCommands" = "Project Commands";
 "toolbar.run" = "Run";
 
+/* Toast Notifications */
+"toast.status.success" = "Completed";
+"toast.status.failed" = "Failed";
+"toast.status.unknown" = "Unknown";
+
 // 项目配置页面
 "projectConfig.info" = "Project Info";
 "projectConfig.path" = "Path:";

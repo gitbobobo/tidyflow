@@ -72,6 +72,9 @@ class AppState: ObservableObject {
     let taskManager = BackgroundTaskManager()
     private var taskManagerCancellable: AnyCancellable?
 
+    // Toast 通知管理器
+    let toastManager = ToastManager()
+
     // v1.24: 剪贴板是否有文件（驱动粘贴菜单显示）
     @Published var clipboardHasFiles: Bool = false
 

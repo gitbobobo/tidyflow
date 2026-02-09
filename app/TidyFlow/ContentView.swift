@@ -89,6 +89,11 @@ struct ContentView: View {
                 }
             }
 
+            // Toast 通知覆盖层（右上角，不拦截下层交互）
+            ToastOverlayView(toastManager: appState.toastManager)
+                .allowsHitTesting(!appState.toastManager.toasts.isEmpty)
+                .zIndex(98)
+
             // Command Palette Overlay
             if paletteState.isPresented {
                 CommandPaletteView()

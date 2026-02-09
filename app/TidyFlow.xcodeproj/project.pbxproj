@@ -37,6 +37,8 @@
 		MDL000313 /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000113 /* BackgroundTaskManager.swift */; };
 		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
 		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
+		TST00001 /* ToastManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00011 /* ToastManager.swift */; };
+		TST00002 /* ToastOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00012 /* ToastOverlayView.swift */; };
 		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		SPL00009 /* ExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00024 /* ExplorerView.swift */; };
@@ -122,6 +124,8 @@
 		MDL000113 /* BackgroundTaskManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskManager.swift; sourceTree = "<group>"; };
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
 		BGT00011 /* BackgroundTaskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskViews.swift; sourceTree = "<group>"; };
+		TST00011 /* ToastManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastManager.swift; sourceTree = "<group>"; };
+		TST00012 /* ToastOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastOverlayView.swift; sourceTree = "<group>"; };
 		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
 		FCS000011 /* FileCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCacheState.swift; sourceTree = "<group>"; };
 		SPL00031 /* GitCacheState+DiffStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+DiffStatus.swift"; sourceTree = "<group>"; };
@@ -223,6 +227,7 @@
 				SET00011 /* SettingsView.swift */,
 				B3A00014 /* TabContentHostView.swift */,
 				B3A00013 /* TabStripView.swift */,
+				TST00012 /* ToastOverlayView.swift */,
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
 			);
 			path = Views;
@@ -242,6 +247,7 @@
 				MDL000101 /* Notifications.swift */,
 				MDL000115 /* ProjectCommandModels.swift */,
 				MDL000107 /* ProjectWorkspaceModels.swift */,
+				TST00011 /* ToastManager.swift */,
 				MDL000103 /* TabModels.swift */,
 			);
 			path = Models;
@@ -494,6 +500,8 @@
 					MDL000313 /* BackgroundTaskManager.swift in Sources */,
 					MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
 					BGT00001 /* BackgroundTaskViews.swift in Sources */,
+					TST00001 /* ToastManager.swift in Sources */,
+					TST00002 /* ToastOverlayView.swift in Sources */,
 					2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
 					2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				SPL00009 /* ExplorerView.swift in Sources */,
