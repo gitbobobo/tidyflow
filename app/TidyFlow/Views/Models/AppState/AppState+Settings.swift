@@ -79,12 +79,12 @@ extension AppState {
                 }
             }
             // 注册开始回调：记录 Rust 分配的 remoteTaskId
+            // 注意：必须同步设置 remoteTaskId（不走 DispatchQueue.main.async），
+            // 否则后续 output 回调在同一线程上检查 remoteTaskId 时会因主线程延迟而匹配失败
             wsClient.onProjectCommandStarted = { [weak task] project, workspace, cmdId, taskId in
                 guard let task = task else { return }
                 if project == projectName && cmdId == commandId {
-                    DispatchQueue.main.async {
-                        task.remoteTaskId = taskId
-                    }
+                    task.remoteTaskId = taskId
                 }
             }
             // 注册完成回调
