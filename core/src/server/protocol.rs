@@ -783,6 +783,11 @@ pub enum ServerMessage {
         command_id: String,
         task_id: String,
     },
+    /// v1.30: 项目命令实时输出（逐行推送）
+    ProjectCommandOutput {
+        task_id: String,
+        line: String,
+    },
 }
 
 // ============================================================================

@@ -168,27 +168,38 @@ struct RunningTaskRow: View {
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            CommandIconView(iconName: task.taskIconName, size: 12)
-                .foregroundColor(.accentColor)
-            Text(task.displayTitle)
-                .font(.system(size: 13))
-            Spacer()
-            Text(task.durationText)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.secondary)
-                .id(tick)
-            Button {
-                appState.stopBackgroundTask(task)
-            } label: {
-                Image(systemName: "stop.circle")
-                    .font(.system(size: 14))
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                CommandIconView(iconName: task.taskIconName, size: 12)
+                    .foregroundColor(.accentColor)
+                Text(task.displayTitle)
+                    .font(.system(size: 13))
+                Spacer()
+                Text(task.durationText)
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
+                    .id(tick)
+                Button {
+                    appState.stopBackgroundTask(task)
+                } label: {
+                    Image(systemName: "stop.circle")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("task.stop".localized)
             }
-            .buttonStyle(.plain)
-            .help("task.stop".localized)
+            // 项目命令实时输出最后一行
+            if let line = task.lastOutputLine, !line.isEmpty {
+                Text(line)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.leading, 28) // 与任务名对齐（ProgressView + icon 宽度）
+            }
         }
         .padding(.vertical, 2)
         .onReceive(timer) { _ in

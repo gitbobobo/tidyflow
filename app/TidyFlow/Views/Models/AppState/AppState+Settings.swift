@@ -67,9 +67,27 @@ extension AppState {
     }
 
     /// 执行项目命令（通过 WebSocket 发送到 Core）
-    func executeProjectCommand(projectName: String, workspaceName: String, commandId: String) async -> ProjectCommandResult {
+    func executeProjectCommand(projectName: String, workspaceName: String, commandId: String, task: BackgroundTask) async -> ProjectCommandResult {
         return await withCheckedContinuation { continuation in
-            // 注册一次性回调
+            // 注册实时输出回调：根据 taskId 更新对应 BackgroundTask 的 lastOutputLine
+            wsClient.onProjectCommandOutput = { [weak task] taskId, line in
+                guard let task = task else { return }
+                if task.remoteTaskId == taskId {
+                    DispatchQueue.main.async {
+                        task.lastOutputLine = line
+                    }
+                }
+            }
+            // 注册开始回调：记录 Rust 分配的 remoteTaskId
+            wsClient.onProjectCommandStarted = { [weak task] project, workspace, cmdId, taskId in
+                guard let task = task else { return }
+                if project == projectName && cmdId == commandId {
+                    DispatchQueue.main.async {
+                        task.remoteTaskId = taskId
+                    }
+                }
+            }
+            // 注册完成回调
             wsClient.onProjectCommandCompleted = { project, workspace, cmdId, taskId, ok, message in
                 if project == projectName && cmdId == commandId {
                     continuation.resume(returning: ProjectCommandResult(ok: ok, message: message ?? ""))

@@ -2,6 +2,7 @@ use axum::extract::ws::WebSocket;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -28,6 +29,7 @@ pub async fn handle_project_message(
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     save_tx: &tokio::sync::mpsc::Sender<()>,
     running_commands: &SharedRunningCommands,
+    cmd_output_tx: &tokio::sync::mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
     match client_msg {
         // v1: List projects
@@ -486,7 +488,7 @@ pub async fn handle_project_message(
             Ok(true)
         }
 
-        // v1.29: 执行项目命令
+        // v1.29: 执行项目命令（非阻塞，后台 task 逐行推送输出）
         ClientMessage::RunProjectCommand { project, workspace, command_id } => {
             info!("RunProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
 
@@ -553,17 +555,15 @@ pub async fn handle_project_message(
             {
                 Ok(child) => child,
                 Err(e) => {
-                    send_message(
-                        socket,
-                        &ServerMessage::ProjectCommandCompleted {
-                            project: project.clone(),
-                            workspace: workspace.clone(),
-                            command_id: command_id.clone(),
-                            task_id,
-                            ok: false,
-                            message: Some(format!("执行失败: {}", e)),
-                        },
-                    ).await?;
+                    // spawn 失败通过 channel 发送 Completed
+                    let _ = cmd_output_tx.send(ServerMessage::ProjectCommandCompleted {
+                        project: project.clone(),
+                        workspace: workspace.clone(),
+                        command_id: command_id.clone(),
+                        task_id,
+                        ok: false,
+                        message: Some(format!("执行失败: {}", e)),
+                    }).await;
                     return Ok(true);
                 }
             };
@@ -575,93 +575,110 @@ pub async fn handle_project_message(
             // 注册子进程句柄供取消使用
             running_commands.lock().await.insert(task_id.clone(), child);
 
-            // 并发读取 stdout/stderr
-            let stdout_handle = tokio::spawn(async move {
-                if let Some(mut pipe) = stdout_pipe {
-                    use tokio::io::AsyncReadExt;
-                    let mut buf = Vec::new();
-                    let _ = pipe.read_to_end(&mut buf).await;
-                    String::from_utf8_lossy(&buf).to_string()
-                } else {
-                    String::new()
-                }
-            });
-            let stderr_handle = tokio::spawn(async move {
-                if let Some(mut pipe) = stderr_pipe {
-                    use tokio::io::AsyncReadExt;
-                    let mut buf = Vec::new();
-                    let _ = pipe.read_to_end(&mut buf).await;
-                    String::from_utf8_lossy(&buf).to_string()
-                } else {
-                    String::new()
-                }
-            });
+            // Clone 到后台 task 使用的变量
+            let tx = cmd_output_tx.clone();
+            let rc = running_commands.clone();
+            let p = project.clone();
+            let w = workspace.clone();
+            let c = command_id.clone();
+            let tid = task_id.clone();
 
-            // 等待子进程退出
-            let wait_result = {
-                let mut cmds = running_commands.lock().await;
-                if let Some(child) = cmds.get_mut(&task_id) {
-                    Some(child.wait().await)
-                } else {
-                    None // 已被取消移除
-                }
-            };
+            // spawn 后台 task：逐行读取并流式推送，handler 立即返回不阻塞主循环
+            tokio::spawn(async move {
+                let collected = Arc::new(Mutex::new(Vec::<String>::new()));
 
-            // 清理注册表
-            running_commands.lock().await.remove(&task_id);
+                // 并发逐行读取 stdout 和 stderr
+                let stdout_collected = collected.clone();
+                let stdout_tx = tx.clone();
+                let stdout_tid = tid.clone();
+                let stdout_handle = tokio::spawn(async move {
+                    if let Some(pipe) = stdout_pipe {
+                        let reader = tokio::io::BufReader::new(pipe);
+                        let mut lines = reader.lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            stdout_collected.lock().await.push(line.clone());
+                            let _ = stdout_tx.send(ServerMessage::ProjectCommandOutput {
+                                task_id: stdout_tid.clone(),
+                                line,
+                            }).await;
+                        }
+                    }
+                });
 
-            // 若被取消，不再发送 Completed（CancelProjectCommand 已发送 Cancelled）
-            let exit_status = match wait_result {
-                Some(Ok(status)) => status,
-                Some(Err(e)) => {
-                    send_message(
-                        socket,
-                        &ServerMessage::ProjectCommandCompleted {
-                            project: project.clone(),
-                            workspace: workspace.clone(),
-                            command_id: command_id.clone(),
-                            task_id,
+                let stderr_collected = collected.clone();
+                let stderr_tx = tx.clone();
+                let stderr_tid = tid.clone();
+                let stderr_handle = tokio::spawn(async move {
+                    if let Some(pipe) = stderr_pipe {
+                        let reader = tokio::io::BufReader::new(pipe);
+                        let mut lines = reader.lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            stderr_collected.lock().await.push(line.clone());
+                            let _ = stderr_tx.send(ServerMessage::ProjectCommandOutput {
+                                task_id: stderr_tid.clone(),
+                                line,
+                            }).await;
+                        }
+                    }
+                });
+
+                // 等待读取完成
+                let _ = stdout_handle.await;
+                let _ = stderr_handle.await;
+
+                // 等待子进程退出
+                let wait_result = {
+                    let mut cmds = rc.lock().await;
+                    if let Some(child) = cmds.get_mut(&tid) {
+                        Some(child.wait().await)
+                    } else {
+                        None // 已被取消移除
+                    }
+                };
+
+                // 清理注册表
+                rc.lock().await.remove(&tid);
+
+                // 若被取消，不再发送 Completed
+                let exit_status = match wait_result {
+                    Some(Ok(status)) => status,
+                    Some(Err(e)) => {
+                        let _ = tx.send(ServerMessage::ProjectCommandCompleted {
+                            project: p,
+                            workspace: w,
+                            command_id: c,
+                            task_id: tid,
                             ok: false,
                             message: Some(format!("执行失败: {}", e)),
-                        },
-                    ).await?;
-                    return Ok(true);
-                }
-                None => return Ok(true),
-            };
+                        }).await;
+                        return;
+                    }
+                    None => return, // 已取消
+                };
 
-            let stdout = stdout_handle.await.unwrap_or_default();
-            let stderr = stderr_handle.await.unwrap_or_default();
-            let combined = if stderr.is_empty() {
-                stdout
-            } else if stdout.is_empty() {
-                stderr
-            } else {
-                format!("{}\n{}", stdout, stderr)
-            };
-            let message = if combined.len() > 4096 {
-                format!("{}...(truncated)", &combined[..4096])
-            } else {
-                combined
-            };
-            let ok = exit_status.success();
+                let all_lines = collected.lock().await;
+                let combined = all_lines.join("\n");
+                let message = if combined.len() > 4096 {
+                    format!("{}...(truncated)", &combined[..4096])
+                } else {
+                    combined
+                };
+                let ok = exit_status.success();
 
-            info!(
-                "ProjectCommand completed: project={}, command_id={}, ok={}",
-                project, command_id, ok
-            );
+                info!(
+                    "ProjectCommand completed: project={}, command_id={}, ok={}",
+                    p, c, ok
+                );
 
-            send_message(
-                socket,
-                &ServerMessage::ProjectCommandCompleted {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    command_id: command_id.clone(),
-                    task_id,
+                let _ = tx.send(ServerMessage::ProjectCommandCompleted {
+                    project: p,
+                    workspace: w,
+                    command_id: c,
+                    task_id: tid,
                     ok,
                     message: Some(message),
-                },
-            ).await?;
+                }).await;
+            });
 
             Ok(true)
         }

@@ -251,6 +251,11 @@ extension WSClient {
             let message = json["message"] as? String
             onProjectCommandCompleted?(project, workspace, commandId, taskId, ok, message)
 
+        case "project_command_output":
+            let taskId = json["task_id"] as? String ?? ""
+            let line = json["line"] as? String ?? ""
+            onProjectCommandOutput?(taskId, line)
+
         case "project_command_cancelled":
             // 服务端确认取消，客户端已在 stopRunningTask 中提前处理，此处仅日志
             let taskId = json["task_id"] as? String ?? ""

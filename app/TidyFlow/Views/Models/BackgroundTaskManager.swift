@@ -103,7 +103,8 @@ class BackgroundTaskManager: ObservableObject {
             let result = await appState.executeProjectCommand(
                 projectName: ctx.projectName,
                 workspaceName: ctx.workspaceName,
-                commandId: ctx.commandId
+                commandId: ctx.commandId,
+                task: task
             )
             return .projectCommand(result)
         }

@@ -192,6 +192,10 @@ async fn handle_socket(
     // 正在运行的项目命令注册表
     let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
 
+    // 项目命令输出通道：后台 task 逐行推送 → 主循环转发到 WebSocket
+    let (cmd_output_tx, mut cmd_output_rx) =
+        tokio::sync::mpsc::channel::<ServerMessage>(256);
+
     // 不再自动创建默认终端，前端重连时通过 TermAttach 附着已有终端
 
     // Send Hello message with v1 capabilities（session_id/shell 发空，前端需兼容）
@@ -250,6 +254,7 @@ async fn handle_socket(
                             &subscribed_terms,
                             &agg_tx,
                             &running_commands,
+                            &cmd_output_tx,
                         ).await {
                             warn!("Error handling client message: {}", e);
                             if let Err(send_err) = send_message(&mut socket, &ServerMessage::Error {
@@ -368,6 +373,13 @@ async fn handle_socket(
                             error!("Failed to send git status changed message: {}", e);
                         }
                     }
+                }
+            }
+
+            // 项目命令后台 task 的输出/完成消息
+            Some(msg) = cmd_output_rx.recv() => {
+                if let Err(e) = send_message(&mut socket, &msg).await {
+                    error!("Failed to send command output message: {}", e);
                 }
             }
 
@@ -513,6 +525,7 @@ async fn handle_client_message(
     subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     running_commands: &SharedRunningCommands,
+    cmd_output_tx: &tokio::sync::mpsc::Sender<ServerMessage>,
 ) -> Result<(), String> {
     trace!(
         "handle_client_message called with data length: {}",
@@ -563,6 +576,7 @@ async fn handle_client_message(
         agg_tx,
         save_tx,
         running_commands,
+        cmd_output_tx,
     )
     .await?
     {

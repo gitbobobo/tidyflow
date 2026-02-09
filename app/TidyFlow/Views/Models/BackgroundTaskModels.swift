@@ -181,10 +181,14 @@ class BackgroundTask: ObservableObject, Identifiable {
 
     @Published var status: BackgroundTaskStatus = .pending
     @Published var result: BackgroundTaskResult?
+    /// 项目命令实时输出的最后一行（运行中展示用）
+    @Published var lastOutputLine: String?
     var startedAt: Date?
     var completedAt: Date?
     /// AI 任务的进程句柄，用于停止任务
     var process: Process?
+    /// Rust Core 分配的 task_id（项目命令用于关联实时输出）
+    var remoteTaskId: String?
 
     init(type: BackgroundTaskType, context: BackgroundTaskContext, workspaceGlobalKey: String) {
         self.type = type
