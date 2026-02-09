@@ -628,6 +628,35 @@ body.renderer-only #tab-content {
   border-right: 1px solid #3c3c3c;
 }
 
+/* Git 变更 gutter 指示器（VS Code 风格） */
+.cm-change-gutter {
+  width: 4px;
+  min-width: 4px;
+}
+.cm-change-gutter .cm-gutterElement {
+  padding: 0 !important;
+}
+.cm-change-added {
+  width: 4px;
+  height: 100%;
+  background-color: #2ea043;
+}
+.cm-change-modified {
+  width: 4px;
+  height: 100%;
+  background-color: #0078d4;
+}
+.cm-change-deleted {
+  width: 4px;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 6px solid #f85149;
+  position: relative;
+  top: -3px;
+  left: -2px;
+}
+
 /* ============================================
      COMMAND PALETTE
      ============================================ */
