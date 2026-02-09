@@ -43,37 +43,32 @@
 
           if (termId) {
             const dataLen = msg.data ? msg.data.length || msg.data.byteLength || 0 : 0;
-            // 总是将数据写入 xterm.js，它会维护自己的屏幕缓冲区
-            // 切换回来时通过 resize 触发 TUI 应用重绘
-            for (const [wsKey, tabSet] of TF.workspaceTabs) {
-              if (tabSet.tabs.has(termId)) {
-                const tab = tabSet.tabs.get(termId);
-                if (tab.term) {
-                  // 使用回调形式：xterm.js 解析完数据后触发，用于流控 ACK
-                  tab.term.write(msg.data, () => {
-                    // 累加已消费字节数
-                    let state = TF.termAckedBytes.get(termId);
-                    if (!state) {
-                      state = { pending: 0 };
-                      TF.termAckedBytes.set(termId, state);
-                    }
-                    state.pending += dataLen;
-                    // 超过阈值时发送 ACK
-                    if (state.pending >= TF.ACK_THRESHOLD) {
-                      const ackBytes = state.pending;
-                      state.pending = 0;
-                      if (TF.transport && TF.transport.isConnected) {
-                        TF.transport.send({
-                          type: "term_output_ack",
-                          term_id: termId,
-                          bytes: ackBytes,
-                        });
-                      }
-                    }
-                  });
+            // 使用 termTabIndex 直接索引 O(1) 查找目标终端
+            const entry = TF.termTabIndex.get(termId);
+            if (entry && entry.tab && entry.tab.term) {
+              const tab = entry.tab;
+              // 使用回调形式：xterm.js 解析完数据后触发，用于流控 ACK
+              tab.term.write(msg.data, () => {
+                // 累加已消费字节数
+                let state = TF.termAckedBytes.get(termId);
+                if (!state) {
+                  state = { pending: 0 };
+                  TF.termAckedBytes.set(termId, state);
                 }
-                break;
-              }
+                state.pending += dataLen;
+                // 超过阈值时发送 ACK
+                if (state.pending >= TF.ACK_THRESHOLD) {
+                  const ackBytes = state.pending;
+                  state.pending = 0;
+                  if (TF.transport && TF.transport.isConnected) {
+                    TF.transport.send({
+                      type: "term_output_ack",
+                      term_id: termId,
+                      bytes: ackBytes,
+                    });
+                  }
+                }
+              });
             }
           }
           break;
@@ -82,15 +77,10 @@
         case "exit": {
           const termId = msg.term_id;
           if (termId) {
-            for (const [, tabSet] of TF.workspaceTabs) {
-              if (tabSet.tabs.has(termId)) {
-                const tab = tabSet.tabs.get(termId);
-                if (tab.term) {
-                  tab.term.writeln("");
-                  tab.term.writeln("\x1b[33m[Shell exited with code " + msg.code + "]\x1b[0m");
-                }
-                break;
-              }
+            const entry = TF.termTabIndex.get(termId);
+            if (entry && entry.tab && entry.tab.term) {
+              entry.tab.term.writeln("");
+              entry.tab.term.writeln("\x1b[33m[Shell exited with code " + msg.code + "]\x1b[0m");
             }
           }
           break;
@@ -265,22 +255,21 @@
           break;
         }
 
-        case "term_closed":
-          for (const [wsKey, tabSet] of TF.workspaceTabs) {
-            if (tabSet.tabs.has(msg.term_id)) {
-              const [proj, ws] = wsKey.split("/");
-              const savedProj = TF.currentProject;
-              const savedWs = TF.currentWorkspace;
-              TF.currentProject = proj;
-              TF.currentWorkspace = ws;
-              TF.removeTabFromUI(msg.term_id);
-              TF.currentProject = savedProj;
-              TF.currentWorkspace = savedWs;
-              break;
-            }
+        case "term_closed": {
+          const entry = TF.termTabIndex.get(msg.term_id);
+          if (entry) {
+            const [proj, ws] = entry.wsKey.split("/");
+            const savedProj = TF.currentProject;
+            const savedWs = TF.currentWorkspace;
+            TF.currentProject = proj;
+            TF.currentWorkspace = ws;
+            TF.removeTabFromUI(msg.term_id);
+            TF.currentProject = savedProj;
+            TF.currentWorkspace = savedWs;
           }
           TF.notifySwift("term_closed", { term_id: msg.term_id });
           break;
+        }
 
         case "file_list_result":
           if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {

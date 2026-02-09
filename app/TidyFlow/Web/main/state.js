@@ -93,6 +93,8 @@
   TF.workspaceTabs = new Map();
   TF.tabCounter = 0;
   TF.activeTabId = null;
+  // 终端 ID → { wsKey, tab } 直接索引，O(1) 查找终端 tab
+  TF.termTabIndex = new Map();
 
   TF.workspaceFileIndex = new Map();
 

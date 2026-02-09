@@ -633,6 +633,8 @@
 
     tabSet.tabs.set(termId, tabInfo);
     tabSet.tabOrder.push(termId);
+    // 维护 termId → tab 直接索引
+    TF.termTabIndex.set(termId, { wsKey, tab: tabInfo });
 
     return tabInfo;
   }
@@ -1099,6 +1101,9 @@
       if (tab.clearResizeTimer) tab.clearResizeTimer();
       if (tab.resizeObserver) tab.resizeObserver.disconnect();
       if (tab.term) tab.term.dispose();
+      // 清理终端相关 Map 条目，防止内存泄漏
+      TF.terminalSessions.delete(tabId);
+      TF.termAckedBytes.delete(tabId);
     } else if (tab.type === "editor") {
       if (tab.editorView) tab.editorView.destroy();
     }
@@ -1108,6 +1113,8 @@
 
     tabSet.tabs.delete(tabId);
     tabSet.tabOrder = tabSet.tabOrder.filter((id) => id !== tabId);
+    // 清理 termId 直接索引
+    TF.termTabIndex.delete(tabId);
 
     if (TF.activeTabId === tabId) {
       TF.activeTabId = null;
