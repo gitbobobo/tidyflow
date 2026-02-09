@@ -160,6 +160,7 @@ pub async fn try_handle_git_message(
                             is_binary: diff_result.is_binary,
                             truncated: diff_result.truncated,
                             mode: diff_result.mode,
+                            base: base.clone(),
                         },
                     )
                     .await?;

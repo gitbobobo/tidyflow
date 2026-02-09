@@ -15,7 +15,7 @@ use super::utils::*;
 pub fn git_diff(
     workspace_root: &Path,
     path: &str,
-    _base: Option<&str>,
+    base: Option<&str>,
     mode: &str, // "working" or "staged"
 ) -> Result<GitDiffResult, GitError> {
     // Validate path
@@ -46,7 +46,14 @@ pub fn git_diff(
     }
 
     // Get diff based on status
-    let (text, truncated) = if code == "??" {
+    let (text, truncated) = if let Some(b) = base {
+        // 指定 base（如 "HEAD"）：对比指定提交与工作区
+        if code == "??" {
+            get_untracked_diff(workspace_root, path)?
+        } else {
+            get_base_diff(workspace_root, path, b)?
+        }
+    } else if code == "??" {
         // Untracked file - diff against /dev/null (no staged changes for untracked)
         if mode == "staged" {
             (String::new(), false)
@@ -83,6 +90,24 @@ fn get_tracked_diff(
 
     let output = Command::new("git")
         .args(&args)
+        .current_dir(workspace_root)
+        .output()
+        .map_err(GitError::IoError)?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (text, truncated) = truncate_if_needed(&text);
+
+    Ok((text, truncated))
+}
+
+/// Get diff between a base commit and working directory for a tracked file
+fn get_base_diff(
+    workspace_root: &Path,
+    path: &str,
+    base: &str,
+) -> Result<(String, bool), GitError> {
+    let output = Command::new("git")
+        .args(["diff", base, "--", path])
         .current_dir(workspace_root)
         .output()
         .map_err(GitError::IoError)?;

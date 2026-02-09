@@ -92,6 +92,7 @@ pub enum GitResponse {
         project: String, workspace: String, path: String,
         code: String, format: String, text: String,
         is_binary: bool, truncated: bool, mode: String,
+        #[serde(skip_serializing_if = "Option::is_none")] base: Option<String>,
     },
     GitOpResult {
         project: String, workspace: String,

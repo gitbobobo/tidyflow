@@ -522,6 +522,8 @@ pub enum ServerMessage {
         is_binary: bool,
         truncated: bool,
         mode: String, // Echo back the mode
+        #[serde(skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
     },
 
     // v1.6: Git operation result
