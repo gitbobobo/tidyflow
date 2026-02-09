@@ -8,10 +8,10 @@ use super::resize::resize_pty;
 
 pub struct PtySession {
     session_id: String,
-    master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
     child: Box<dyn Child + Send + Sync>,
-    reader: Box<dyn Read + Send>,
-    writer: Box<dyn Write + Send>,
+    reader: Option<Box<dyn Read + Send>>,
+    writer: Option<Box<dyn Write + Send>>,
     shell_name: String,
 }
 
@@ -67,6 +67,9 @@ impl PtySession {
         // Spawn child process
         let child = pair.slave.spawn_command(cmd)?;
 
+        // 关闭父进程中的 slave 端 FD，避免 master reader 永远收不到 EOF
+        drop(pair.slave);
+
         info!(
             session_id = %session_id,
             shell = %shell_name,
@@ -79,10 +82,10 @@ impl PtySession {
 
         Ok(PtySession {
             session_id,
-            master,
+            master: Some(master),
             child,
-            reader,
-            writer,
+            reader: Some(reader),
+            writer: Some(writer),
             shell_name,
         })
     }
@@ -99,16 +102,30 @@ impl PtySession {
     pub fn take_reader(
         &mut self,
     ) -> Result<Box<dyn Read + Send>, Box<dyn std::error::Error + Send + Sync>> {
-        // 使用 master 克隆一个新的 reader
-        self.master.try_clone_reader().map_err(|e| {
-            Box::new(std::io::Error::other(e.to_string()))
-                as Box<dyn std::error::Error + Send + Sync>
-        })
+        // 优先取走 self.reader（避免多余的 FD 克隆），不足时再从 master 克隆
+        if let Some(reader) = self.reader.take() {
+            return Ok(reader);
+        }
+        self.master
+            .as_ref()
+            .ok_or_else(|| {
+                Box::new(std::io::Error::other("PTY master already closed"))
+                    as Box<dyn std::error::Error + Send + Sync>
+            })?
+            .try_clone_reader()
+            .map_err(|e| {
+                Box::new(std::io::Error::other(e.to_string()))
+                    as Box<dyn std::error::Error + Send + Sync>
+            })
     }
 
     #[instrument(skip(self, buf), fields(session_id = %self.session_id))]
     pub fn read_output(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let bytes_read = self.reader.read(buf)?;
+        let reader = self
+            .reader
+            .as_mut()
+            .ok_or_else(|| io::Error::other("PTY reader already closed"))?;
+        let bytes_read = reader.read(buf)?;
         debug!(
             session_id = %self.session_id,
             bytes = bytes_read,
@@ -119,8 +136,12 @@ impl PtySession {
 
     #[instrument(skip(self, data), fields(session_id = %self.session_id, bytes = data.len()))]
     pub fn write_input(&mut self, data: &[u8]) -> io::Result<()> {
-        self.writer.write_all(data)?;
-        self.writer.flush()?;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| io::Error::other("PTY writer already closed"))?;
+        writer.write_all(data)?;
+        writer.flush()?;
         debug!(
             session_id = %self.session_id,
             bytes = data.len(),
@@ -135,7 +156,11 @@ impl PtySession {
         cols: u16,
         rows: u16,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        resize_pty(self.master.as_ref(), cols, rows)?;
+        let master = self
+            .master
+            .as_ref()
+            .ok_or_else(|| "PTY master already closed".to_string())?;
+        resize_pty(master.as_ref(), cols, rows)?;
         info!(
             session_id = %self.session_id,
             cols,
@@ -176,6 +201,10 @@ impl PtySession {
     pub fn kill(&mut self) {
         info!(session_id = %self.session_id, "Killing PTY session");
 
+        // 先释放 reader/writer/master FD，确保 PTY 资源不泄漏
+        drop(self.reader.take());
+        drop(self.writer.take());
+
         // Send SIGHUP to the child process
         if let Err(e) = self.child.kill() {
             warn!(
@@ -202,6 +231,9 @@ impl PtySession {
                 );
             }
         }
+
+        // 最后释放 master FD
+        drop(self.master.take());
     }
 }
 
