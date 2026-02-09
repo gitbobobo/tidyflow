@@ -162,9 +162,13 @@ struct TerminalContentView: View {
         }
         .onDisappear {
             // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
-            // Switch back to editor mode when leaving terminal
+            // 如果下一个活跃 tab 仍是终端，跳过模式切换，避免 terminal→editor→terminal 闪烁
             if appState.editorWebReady {
-                webBridge.enterMode("editor")
+                if let nextTab = appState.getActiveTab(), nextTab.kind == .terminal {
+                    // 终端间切换，不切换模式
+                } else {
+                    webBridge.enterMode("editor")
+                }
             }
         }
         .onChange(of: appState.editorWebReady) { _, ready in
