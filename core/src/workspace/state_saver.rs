@@ -76,7 +76,7 @@ async fn do_save(app_state: &Arc<RwLock<AppState>>) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = serde_json::to_string_pretty(&snapshot)
+        let content = serde_json::to_string(&snapshot)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(&path, content)
     })

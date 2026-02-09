@@ -99,13 +99,20 @@ pub fn index_files(workspace_root: &Path) -> Result<FileIndexResult, std::io::Er
                     continue;
                 }
 
-                // Verify path is still under root (symlink safety)
-                if let Ok(canonical) = path.canonicalize() {
-                    if canonical.starts_with(&root_canonical) {
-                        stack.push(path);
-                    } else {
-                        warn!("Skipping symlink escaping root: {:?}", path);
+                // 仅对符号链接调用 canonicalize 做安全检查，普通目录直接入栈
+                // 注意：entry.file_type() 不跟随符号链接（使用 lstat），
+                // 而 entry.metadata() 跟随符号链接（使用 stat），因此用 file_type 检测
+                let is_symlink = entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false);
+                if is_symlink {
+                    if let Ok(canonical) = path.canonicalize() {
+                        if canonical.starts_with(&root_canonical) {
+                            stack.push(canonical);
+                        } else {
+                            warn!("Skipping symlink escaping root: {:?}", path);
+                        }
                     }
+                } else {
+                    stack.push(path);
                 }
             } else if metadata.is_file() {
                 // Get relative path from root
@@ -116,8 +123,10 @@ pub fn index_files(workspace_root: &Path) -> Result<FileIndexResult, std::io::Er
         }
     }
 
-    // Sort for consistent ordering
-    items.sort_by_key(|a| a.to_lowercase());
+    // Sort for consistent ordering（使用 sort_unstable_by 避免额外分配）
+    items.sort_unstable_by(|a, b| {
+        a.to_lowercase().cmp(&b.to_lowercase())
+    });
 
     debug!(
         "Indexed {} files from {:?} (truncated: {})",

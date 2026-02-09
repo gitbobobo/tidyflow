@@ -116,7 +116,8 @@ impl TerminalRegistry {
         // 为读取线程创建 broadcast sender 的克隆
         let reader_output_tx = output_tx.clone();
         let reader_scrollback_tx = scrollback_tx;
-        let reader_term_id = term_id.clone();
+        // 使用 Arc<str> 避免每次循环都 clone String
+        let reader_term_id: Arc<str> = Arc::from(term_id.as_str());
 
         let reader = session
             .take_reader()
@@ -128,14 +129,16 @@ impl TerminalRegistry {
             let mut reader = reader;
             let mut buf = [0u8; 8192];
             let mut pending: Vec<u8> = Vec::new();
+            // 预分配 term_id String，循环内直接 clone（比 Arc<str>.to_string() 略快）
+            let tid_string = reader_term_id.to_string();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         if !pending.is_empty() {
                             let _ = reader_output_tx
-                                .send((reader_term_id.clone(), pending.clone()));
+                                .send((tid_string.clone(), pending.clone()));
                             let _ = reader_scrollback_tx
-                                .blocking_send((reader_term_id.clone(), pending));
+                                .blocking_send((tid_string.clone(), pending));
                         }
                         break;
                     }
@@ -155,12 +158,14 @@ impl TerminalRegistry {
                         }
 
                         if !data.is_empty() {
-                            // 发送到 broadcast（多订阅者）
+                            // 先发送到 scrollback（clone 数据）
+                            let scrollback_data = data.clone();
+                            // 发送到 broadcast（多订阅者），转移 data 所有权避免额外 clone
                             let _ = reader_output_tx
-                                .send((reader_term_id.clone(), data.clone()));
+                                .send((tid_string.clone(), data));
                             // 发送到 scrollback 写入通道
                             if reader_scrollback_tx
-                                .blocking_send((reader_term_id.clone(), data))
+                                .blocking_send((tid_string.clone(), scrollback_data))
                                 .is_err()
                             {
                                 break;
