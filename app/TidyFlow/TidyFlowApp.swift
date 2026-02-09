@@ -49,8 +49,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         // 如果已确认退出，直接退出
         if terminationConfirmed {
             appState?.stopCore()
-            Thread.sleep(forTimeInterval: 0.5)
-            return .terminateNow
+            // 异步等待 Core 进程退出，不阻塞主线程
+            DispatchQueue.global(qos: .userInitiated).async {
+                Thread.sleep(forTimeInterval: 0.5)
+                DispatchQueue.main.async {
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                }
+            }
+            return .terminateLater
         }
         
         // 检查是否有活跃的终端会话
@@ -62,8 +68,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
                 // 用户确认退出
                 terminationConfirmed = true
                 appState?.stopCore()
-                Thread.sleep(forTimeInterval: 0.5)
-                return .terminateNow
+                DispatchQueue.global(qos: .userInitiated).async {
+                    Thread.sleep(forTimeInterval: 0.5)
+                    DispatchQueue.main.async {
+                        NSApp.reply(toApplicationShouldTerminate: true)
+                    }
+                }
+                return .terminateLater
             } else {
                 // 用户取消
                 return .terminateCancel
@@ -72,8 +83,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         
         // 没有活跃终端，直接退出
         appState?.stopCore()
-        Thread.sleep(forTimeInterval: 0.5)
-        return .terminateNow
+        DispatchQueue.global(qos: .userInitiated).async {
+            Thread.sleep(forTimeInterval: 0.5)
+            DispatchQueue.main.async {
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
     }
 
     // MARK: - NSWindowDelegate
