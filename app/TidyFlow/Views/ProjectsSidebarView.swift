@@ -331,6 +331,7 @@ struct WorkspaceRowView: View {
     let isSelected: Bool
     @EnvironmentObject var appState: AppState
     @State private var showDeleteConfirmation = false
+    @State private var showEndWorkConfirmation = false
     @State private var showNoAgentAlert = false
 
     /// 工作空间路径，用于复制与在编辑器中打开
@@ -485,6 +486,14 @@ struct WorkspaceRowView: View {
                     .disabled(appState.clientSettings.mergeAIAgent == nil)
                 }
 
+                Divider()
+
+                Button {
+                    showEndWorkConfirmation = true
+                } label: {
+                    Label("sidebar.endWork".localized, systemImage: "xmark.circle")
+                }
+
                 // ── 危险操作 ──
                 if !workspace.isDefault {
                     Divider()
@@ -504,6 +513,14 @@ struct WorkspaceRowView: View {
             }
         } message: {
             Text(String(format: "sidebar.deleteWorkspace.message".localized, workspace.name))
+        }
+        .alert("sidebar.endWork.confirm.title".localized, isPresented: $showEndWorkConfirmation) {
+            Button("common.cancel".localized, role: .cancel) { }
+            Button("common.confirm".localized) {
+                appState.forceCloseAllTabs(workspaceKey: globalWorkspaceKey)
+            }
+        } message: {
+            Text("sidebar.endWork.confirm.message".localized)
         }
         .alert("settings.aiAgent.notConfigured".localized, isPresented: $showNoAgentAlert) {
             Button("common.confirm".localized, role: .cancel) { }

@@ -125,6 +125,9 @@
 "sidebar.removeProject.message" = "确定要移除项目 \"%@\" 吗？\n此操作仅从列表移除，不会删除磁盘文件。";
 "sidebar.deleteWorkspace" = "删除工作空间";
 "sidebar.deleteWorkspace.message" = "确定要删除工作空间 \"%@\" 吗？\n将移除该 worktree，分支与未提交更改请先自行处理。";
+"sidebar.endWork" = "结束工作";
+"sidebar.endWork.confirm.title" = "结束工作";
+"sidebar.endWork.confirm.message" = "结束工作后将关闭此工作空间的所有标签页。";
 
 /* Git 面板 */
 "git.sourceControl" = "源代码管理";

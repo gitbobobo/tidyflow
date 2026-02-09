@@ -125,6 +125,9 @@
 "sidebar.removeProject.message" = "Are you sure you want to remove project \"%@\"?\nThis only removes it from the list, files on disk will not be deleted.";
 "sidebar.deleteWorkspace" = "Delete Workspace";
 "sidebar.deleteWorkspace.message" = "Are you sure you want to delete workspace \"%@\"?\nThe worktree will be removed. Please handle branches and uncommitted changes beforehand.";
+"sidebar.endWork" = "End Work";
+"sidebar.endWork.confirm.title" = "End Work";
+"sidebar.endWork.confirm.message" = "Ending work will close all tabs in this workspace.";
 
 /* Git Panel */
 "git.sourceControl" = "Source Control";
