@@ -202,6 +202,16 @@ class BackgroundTask: ObservableObject, Identifiable {
         }
     }
 
+    /// 任务行展示用图标名：项目命令用命令定义的 icon，其他类型用类型的默认 icon
+    var taskIconName: String {
+        switch context {
+        case .projectCommand(let ctx):
+            return ctx.commandIcon
+        default:
+            return type.iconName
+        }
+    }
+
     /// 格式化耗时文本
     var durationText: String {
         guard let start = startedAt else { return "" }
