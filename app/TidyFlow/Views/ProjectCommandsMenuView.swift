@@ -13,19 +13,6 @@ struct ProjectCommandsMenuView: View {
         return project.commands
     }
 
-    /// 当前工作空间的全局键
-    private var workspaceGlobalKey: String? {
-        guard let wsKey = appState.selectedWorkspaceKey else { return nil }
-        return "\(appState.selectedProjectName):\(wsKey)"
-    }
-
-    /// 是否有正在运行的项目命令
-    private var hasRunningCommand: Bool {
-        guard let key = workspaceGlobalKey else { return false }
-        let running = appState.taskManager.allRunningTasks(for: key)
-        return running.contains(where: { $0.type == .projectCommand })
-    }
-
     var body: some View {
         Menu {
             ForEach(commands) { cmd in
@@ -41,14 +28,8 @@ struct ProjectCommandsMenuView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                if hasRunningCommand {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.7)
-                } else {
-                    Image(systemName: "play.circle")
-                        .font(.system(size: 14))
-                }
+                Image(systemName: "play.fill")
+                    .font(.system(size: 10))
                 Text("toolbar.run".localized)
             }
         }

@@ -16,16 +16,16 @@ struct CenterContentView: View {
             
             // 内容区域
             ZStack {
+                // WebView layer - 始终保持在视图树中，避免进入项目配置页面时被 SwiftUI 销毁导致终端全部断开
+                WebViewContainer(bridge: webBridge, isVisible: $webViewVisible)
+                    .opacity(shouldShowWebView && appState.selectedProjectForConfig == nil ? 1 : 0)
+                    .allowsHitTesting(shouldShowWebView && appState.selectedProjectForConfig == nil)
+
                 // 项目配置页面（优先级最高）
                 if let projectName = appState.selectedProjectForConfig {
                     ProjectConfigView(projectName: projectName)
                         .transition(.opacity)
                 } else {
-                    // WebView layer - visible when editor or terminal tab is active
-                    WebViewContainer(bridge: webBridge, isVisible: $webViewVisible)
-                        .opacity(shouldShowWebView ? 1 : 0)
-                        .allowsHitTesting(shouldShowWebView)
-
                     // Native UI layer
                     if appState.selectedWorkspaceKey != nil {
                         TabContentHostView(
