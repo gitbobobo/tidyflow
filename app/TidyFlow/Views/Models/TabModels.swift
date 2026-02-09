@@ -58,6 +58,9 @@ struct TabModel: Identifiable, Codable, Equatable {
     // "unified" = single column, "split" = side-by-side
     var diffViewMode: String?
 
+    // 终端快捷命令配置的图标（仅通过快捷命令创建的终端 tab 使用，用于 Tab 栏显示）
+    var commandIcon: String? = nil
+
     // 编辑器 dirty 状态（文件有未保存更改）
     var isDirty: Bool = false
 }

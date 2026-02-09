@@ -56,15 +56,15 @@ struct TabItemView: View {
     
     var body: some View {
         HStack(spacing: 6) {
-            // 文件图标位置：dirty 时显示橙色圆点，否则显示文件类型图标
+            // 文件图标位置：dirty 时显示橙色圆点，否则显示类型图标（终端快捷命令 tab 使用 commandIcon）
             if tab.isDirty {
                 Image(systemName: "circle.fill")
                     .font(.system(size: 7))
                     .foregroundColor(.orange)
                     .frame(width: 11)
             } else {
-                Image(systemName: tab.kind.iconName)
-                    .font(.system(size: 11))
+                let effectiveIconName = (tab.kind == .terminal && tab.commandIcon != nil) ? tab.commandIcon! : tab.kind.iconName
+                CommandIconView(iconName: effectiveIconName, size: 11)
                     .foregroundColor(isActive ? .primary : .secondary)
             }
 

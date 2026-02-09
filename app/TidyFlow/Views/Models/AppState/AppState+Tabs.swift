@@ -166,13 +166,14 @@ extension AppState {
 
     /// 创建终端并执行自定义命令
     func addTerminalWithCustomCommand(workspaceKey: String, command: CustomCommand) {
-        // 创建终端 tab，使用命令名称作为标题，命令内容存入 payload
+        // 创建终端 tab，使用命令名称作为标题，命令内容存入 payload，命令图标用于 Tab 栏显示
         let newTab = TabModel(
             id: UUID(),
             title: command.name,
             kind: .terminal,
             workspaceKey: workspaceKey,
-            payload: command.command  // 存储命令以便终端就绪后执行
+            payload: command.command,  // 存储命令以便终端就绪后执行
+            commandIcon: command.icon
         )
 
         if workspaceTabs[workspaceKey] == nil {
