@@ -162,6 +162,16 @@ enum BackgroundTaskResult {
         case .projectCommand(let r): return r.message
         }
     }
+
+    /// 摘要行：用于状态栏单行展示
+    var summaryLine: String {
+        switch self {
+        case .aiCommit(let r): return r.message
+        case .aiMerge(let r): return r.message
+        case .projectCommand(let r):
+            return r.ok ? "task.command.success".localized : "task.command.failed".localized
+        }
+    }
 }
 
 /// 项目命令执行结果

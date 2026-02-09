@@ -238,6 +238,8 @@
 "task.projectCommand" = "项目命令";
 "task.stop" = "停止任务";
 "task.remove" = "移除任务";
+"task.command.success" = "命令执行成功";
+"task.command.failed" = "命令执行失败";
 "task.cancelled" = "已取消";
 "toolbar.backgroundTasks" = "后台任务";
 "toolbar.projectCommands" = "项目命令";

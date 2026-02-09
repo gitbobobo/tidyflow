@@ -330,10 +330,10 @@ struct TaskResultDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: result.resultStatus.iconName)
                         .foregroundColor(result.resultStatus.iconColor)
-                    Text(result.message)
+                    Text(result.summaryLine)
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
-                        .lineLimit(3)
+                        .lineLimit(1)
                 }
 
                 // 类型特定详情
@@ -342,8 +342,8 @@ struct TaskResultDetailView: View {
                     aiCommitDetail(r)
                 case .aiMerge(let r):
                     aiMergeDetail(r)
-                case .projectCommand:
-                    EmptyView()
+                case .projectCommand(let r):
+                    projectCommandDetail(r)
                 }
             }
             .padding(.horizontal, 12)
@@ -386,6 +386,21 @@ struct TaskResultDetailView: View {
             }
         }
         rawOutputSection(r.rawOutput)
+    }
+
+    @ViewBuilder
+    private func projectCommandDetail(_ r: ProjectCommandResult) -> some View {
+        if !r.message.isEmpty {
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                Text(r.message)
+                    .font(.system(size: 10, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 200)
+            .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+            .cornerRadius(4)
+        }
     }
 
     @ViewBuilder
