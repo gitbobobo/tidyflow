@@ -68,6 +68,14 @@ class AppState: ObservableObject {
     // Git 缓存状态（独立 ObservableObject，避免 Git 高频更新触发全局视图刷新）
     let gitCache = GitCacheState()
 
+    // 终端领域状态（独立 ObservableObject，减少终端状态变化对全局视图的影响）
+    let terminalStore = TerminalStore()
+    private var terminalStoreCancellable: AnyCancellable?
+
+    // 编辑器领域状态（独立 ObservableObject，减少编辑器状态变化对全局视图的影响）
+    let editorStore = EditorStore()
+    private var editorStoreCancellable: AnyCancellable?
+
     // 后台任务管理器
     let taskManager = BackgroundTaskManager()
     private var taskManagerCancellable: AnyCancellable?
@@ -86,52 +94,88 @@ class AppState: ObservableObject {
     // 设置是否已从服务端加载
     @Published var clientSettingsLoaded: Bool = false
 
-    // Editor Bridge State
-    @Published var editorWebReady: Bool = false
-    @Published var lastEditorPath: String?
-    @Published var editorStatus: String = ""
-    @Published var editorStatusIsError: Bool = false
+    // 向后兼容：编辑器状态代理到 editorStore
+    var editorWebReady: Bool {
+        get { editorStore.editorWebReady }
+        set { editorStore.editorWebReady = newValue }
+    }
+    var lastEditorPath: String? {
+        get { editorStore.lastEditorPath }
+        set { editorStore.lastEditorPath = newValue }
+    }
+    var editorStatus: String {
+        get { editorStore.editorStatus }
+        set { editorStore.editorStatus = newValue }
+    }
+    var editorStatusIsError: Bool {
+        get { editorStore.editorStatusIsError }
+        set { editorStore.editorStatusIsError = newValue }
+    }
+    var showUnsavedChangesAlert: Bool {
+        get { editorStore.showUnsavedChangesAlert }
+        set { editorStore.showUnsavedChangesAlert = newValue }
+    }
+    var pendingCloseTabId: UUID? {
+        get { editorStore.pendingCloseTabId }
+        set { editorStore.pendingCloseTabId = newValue }
+    }
+    var pendingCloseWorkspaceKey: String? {
+        get { editorStore.pendingCloseWorkspaceKey }
+        set { editorStore.pendingCloseWorkspaceKey = newValue }
+    }
+    var pendingCloseAfterSave: (workspaceKey: String, tabId: UUID)? {
+        get { editorStore.pendingCloseAfterSave }
+        set { editorStore.pendingCloseAfterSave = newValue }
+    }
+    var pendingEditorReveal: (path: String, line: Int, highlightMs: Int)? {
+        get { editorStore.pendingEditorReveal }
+        set { editorStore.pendingEditorReveal = newValue }
+    }
+    var onEditorTabClose: ((String) -> Void)? {
+        get { editorStore.onEditorTabClose }
+        set { editorStore.onEditorTabClose = newValue }
+    }
+    var onEditorFileChanged: ((String, String, [String], [Bool], String) -> Void)? {
+        get { editorStore.onEditorFileChanged }
+        set { editorStore.onEditorFileChanged = newValue }
+    }
 
-    // 未保存更改确认对话框状态
-    @Published var showUnsavedChangesAlert: Bool = false
-    var pendingCloseTabId: UUID?
-    var pendingCloseWorkspaceKey: String?
-    var pendingCloseAfterSave: (workspaceKey: String, tabId: UUID)?
+    // 向后兼容：终端状态代理到 terminalStore
+    var terminalState: TerminalState {
+        get { terminalStore.terminalState }
+        set { terminalStore.terminalState = newValue }
+    }
+    var terminalSessionByTabId: [UUID: String] {
+        get { terminalStore.terminalSessionByTabId }
+        set { terminalStore.terminalSessionByTabId = newValue }
+    }
+    var staleTerminalTabs: Set<UUID> {
+        get { terminalStore.staleTerminalTabs }
+        set { terminalStore.staleTerminalTabs = newValue }
+    }
+    var workspaceTerminalOpenTime: [String: Date] {
+        get { terminalStore.workspaceTerminalOpenTime }
+        set { terminalStore.workspaceTerminalOpenTime = newValue }
+    }
+    var pendingSpawnTabs: Set<UUID> {
+        get { terminalStore.pendingSpawnTabs }
+        set { terminalStore.pendingSpawnTabs = newValue }
+    }
+    var onTerminalKill: ((String, String) -> Void)? {
+        get { terminalStore.onTerminalKill }
+        set { terminalStore.onTerminalKill = newValue }
+    }
+    var onTerminalSpawn: ((String, String, String) -> Void)? {
+        get { terminalStore.onTerminalSpawn }
+        set { terminalStore.onTerminalSpawn = newValue }
+    }
+    var onTerminalAttach: ((String, String) -> Void)? {
+        get { terminalStore.onTerminalAttach }
+        set { terminalStore.onTerminalAttach = newValue }
+    }
 
-    // Phase C2-1.5: Pending editor line reveal (path, line, highlightMs)
-    // Set when diff click requests line navigation before editor is ready
-    @Published var pendingEditorReveal: (path: String, line: Int, highlightMs: Int)?
-
-    // Phase C1-1: Terminal Bridge State (global, for status display)
-    @Published var terminalState: TerminalState = .idle
-
-    // Phase C1-2: Per-tab terminal session mapping
-    // Maps tabId -> sessionId for terminal tabs
-    @Published var terminalSessionByTabId: [UUID: String] = [:]
-    // Track stale sessions (disconnected but tab still exists)
-    @Published var staleTerminalTabs: Set<UUID> = []
-
-    /// 工作空间首次打开终端的时间记录（内存中，不持久化）
-    /// key: globalWorkspaceKey (如 "projectName:workspaceName")
-    @Published var workspaceTerminalOpenTime: [String: Date] = [:]
-    // Track tabs that are pending spawn (to skip handleTabSwitch)
-    var pendingSpawnTabs: Set<UUID> = []
-    // Callback for terminal kill (set by CenterContentView)
-    var onTerminalKill: ((String, String) -> Void)?
-    // Callback for terminal spawn (set by CenterContentView)
-    // Parameters: tabId, project, workspace
-    var onTerminalSpawn: ((String, String, String) -> Void)?
-    // Callback for terminal attach (set by CenterContentView)
-    // Parameters: tabId, sessionId
-    var onTerminalAttach: ((String, String) -> Void)?
     // Callback for Core ready with port (set by CenterContentView to update WebBridge)
     var onCoreReadyWithPort: ((Int) -> Void)?
-    // Callback for editor tab close (通知 JS 层清理编辑器缓存)
-    // Parameters: path
-    var onEditorTabClose: ((String) -> Void)?
-    // Callback for editor file changed on disk (通知 JS 层文件在磁盘上发生变化)
-    // Parameters: project, workspace, paths, isDirtyFlags, kind
-    var onEditorFileChanged: ((String, String, [String], [Bool], String) -> Void)?
     // Callback for JS WebSocket reconnect (通知 JS 层重连 WebSocket)
     var onReconnectJS: (() -> Void)?
 
@@ -162,6 +206,16 @@ class AppState: ObservableObject {
 
         // 转发 taskManager 变更到 AppState，驱动侧边栏等视图刷新
         taskManagerCancellable = taskManager.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+
+        // 转发 terminalStore 变更到 AppState，保持向后兼容
+        terminalStoreCancellable = terminalStore.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+
+        // 转发 editorStore 变更到 AppState，保持向后兼容
+        editorStoreCancellable = editorStore.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
 

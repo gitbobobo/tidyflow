@@ -33,6 +33,8 @@
 		MDL00030F /* AppState+AIActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010F /* AppState+AIActions.swift */; };
 		MDL000310 /* AppState+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000110 /* AppState+Settings.swift */; };
 		MDL000311 /* AppState+EditorTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000111 /* AppState+EditorTerminal.swift */; };
+		TMS00001 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMS00002 /* TerminalStore.swift */; };
+		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
 		MDL000312 /* BackgroundTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000112 /* BackgroundTaskModels.swift */; };
 		MDL000313 /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000113 /* BackgroundTaskManager.swift */; };
 		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
@@ -53,6 +55,7 @@
 		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		SPL00004 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
+		TPR00001 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
 		SPL00005 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
@@ -120,6 +123,8 @@
 		MDL00010F /* AppState+AIActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+AIActions.swift"; sourceTree = "<group>"; };
 		MDL000110 /* AppState+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Settings.swift"; sourceTree = "<group>"; };
 		MDL000111 /* AppState+EditorTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EditorTerminal.swift"; sourceTree = "<group>"; };
+		TMS00002 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
+		EDS00002 /* EditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStore.swift; sourceTree = "<group>"; };
 		MDL000112 /* BackgroundTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskModels.swift; sourceTree = "<group>"; };
 		MDL000113 /* BackgroundTaskManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskManager.swift; sourceTree = "<group>"; };
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
@@ -147,6 +152,7 @@
 		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		SPL00014 /* WSClient+Send.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
+		TPR00002 /* TypedProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedProtocol.swift; sourceTree = "<group>"; };
 		SPL00015 /* WSClient+Receive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
@@ -260,6 +266,8 @@
 				MDL000114 /* AppState+BackgroundTasks.swift */,
 				MDL00010B /* AppState+CoreWS.swift */,
 				MDL000111 /* AppState+EditorTerminal.swift */,
+				TMS00002 /* TerminalStore.swift */,
+				EDS00002 /* EditorStore.swift */,
 				MDL00010C /* AppState+FileOps.swift */,
 				MDL00010D /* AppState+Projects.swift */,
 				MDL000110 /* AppState+Settings.swift */,
@@ -325,6 +333,7 @@
 				SPL00012 /* GitProtocolModels.swift */,
 				SPL00011 /* ProjectProtocolModels.swift */,
 				B3A00016 /* ProtocolModels.swift */,
+				TPR00002 /* TypedProtocol.swift */,
 				B3A00015 /* WSClient.swift */,
 				SPL00015 /* WSClient+Receive.swift */,
 				SPL00014 /* WSClient+Send.swift */,
@@ -496,6 +505,8 @@
 					MDL00030F /* AppState+AIActions.swift in Sources */,
 					MDL000310 /* AppState+Settings.swift in Sources */,
 					MDL000311 /* AppState+EditorTerminal.swift in Sources */,
+					TMS00001 /* TerminalStore.swift in Sources */,
+					EDS00001 /* EditorStore.swift in Sources */,
 					MDL000312 /* BackgroundTaskModels.swift in Sources */,
 					MDL000313 /* BackgroundTaskManager.swift in Sources */,
 					MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
@@ -522,6 +533,7 @@
 				B3A00005 /* WSClient.swift in Sources */,
 				SPL00004 /* WSClient+Send.swift in Sources */,
 				SPL00005 /* WSClient+Receive.swift in Sources */,
+				TPR00001 /* TypedProtocol.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				SPL00001 /* ProjectProtocolModels.swift in Sources */,
 				SPL00002 /* GitProtocolModels.swift in Sources */,
