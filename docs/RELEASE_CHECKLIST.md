@@ -24,19 +24,19 @@
   - **Removed**（如有）：移除的功能或废弃项
 - [ ] 每条用一句话描述用户可见变更，可合并同主题的多次提交为一条；忽略纯 chore/docs 的琐碎提交时可合并为「文档与构建/脚本小调整」等。
 
-## 3. 发布预演（无副作用）
+## 3. 提交修改
+
+- [ ] 将版本号与 CHANGELOG 的修改提交到当前分支，例如：
+  ```bash
+  git add CHANGELOG.md app/TidyFlow.xcodeproj/project.pbxproj core/Cargo.toml core/Cargo.lock
+  git commit -m "chore: bump version and update changelog for vX.Y.Z"
+  ```
+
+## 4. 发布预演（无副作用）
 
 - [ ] 执行：`./scripts/release_local.sh --dry-run`
 - [ ] 检查输出中的版本号、签名证书、DMG 路径、Tag、仓库名是否正确
 
-## 4. 一键发布
+## 5. 一键发布
 
-- [ ] 仅本地签名+公证：`./scripts/release_local.sh`
-- [ ] 或自动上传 GitHub Release：`./scripts/release_local.sh --upload-release`
-- [ ] 如需自定义：可加 `--repo owner/name`、`--notes-file <file>`、`--latest`
-
-## 5. 发布后确认
-
-- [ ] 产物存在：`dist/TidyFlow-<version>-<build>.dmg` 与 `.sha256`
-- [ ] 本地验签：`xcrun stapler validate dist/<dmg-name>.dmg`
-- [ ] 若上传 Release，确认 GitHub 页面资产与说明正确
+- [ ] 询问用户是否执行脚本上传产物到 GitHub Release；若用户确认，则执行：`./scripts/release_local.sh --upload-release`
