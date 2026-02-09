@@ -1,8 +1,9 @@
 use axum::extract::ws::WebSocket;
 use tracing::info;
 
+use crate::server::context::SharedAppState;
 use crate::server::protocol::{ClientMessage, CustomCommandInfo, ServerMessage};
-use crate::server::ws::{send_message, SharedAppState};
+use crate::server::ws::send_message;
 
 /// 处理设置相关的客户端消息
 pub async fn handle_settings_message(

@@ -1,40 +1,40 @@
 use axum::extract::ws::WebSocket;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::server::context::{resolve_workspace, HandlerContext};
 use crate::server::protocol::{
     ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, WorkspaceInfo,
 };
-use crate::server::terminal_registry::SharedTerminalRegistry;
-use crate::server::ws::{send_message, subscribe_terminal, SharedAppState, TermSubscription};
+use crate::server::ws::{send_message, subscribe_terminal};
 use crate::workspace::project::ProjectManager;
 use crate::workspace::state::WorkspaceStatus;
 use crate::workspace::workspace::WorkspaceManager;
 
-/// 正在运行的项目命令注册表（task_id → Child 进程句柄）
-pub type SharedRunningCommands = Arc<Mutex<HashMap<String, tokio::process::Child>>>;
+/// WorkspaceStatus → 协议字符串（统一映射，消除重复）
+fn ws_status_str(status: &WorkspaceStatus) -> String {
+    match status {
+        WorkspaceStatus::Ready => "ready".to_string(),
+        WorkspaceStatus::SetupFailed => "setup_failed".to_string(),
+        WorkspaceStatus::Creating => "creating".to_string(),
+        WorkspaceStatus::Initializing => "initializing".to_string(),
+        WorkspaceStatus::Destroying => "destroying".to_string(),
+    }
+}
 
 /// 处理项目和工作空间相关的客户端消息
 pub async fn handle_project_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    registry: &SharedTerminalRegistry,
-    app_state: &SharedAppState,
-    scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
-    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    save_tx: &tokio::sync::mpsc::Sender<()>,
-    running_commands: &SharedRunningCommands,
-    cmd_output_tx: &tokio::sync::mpsc::Sender<ServerMessage>,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
         // v1: List projects
         ClientMessage::ListProjects => {
-            let state = app_state.read().await;
+            let state = ctx.app_state.read().await;
             let mut items: Vec<ProjectInfo> = state
                 .projects
                 .values()
@@ -51,7 +51,7 @@ pub async fn handle_project_message(
                     }).collect(),
                 })
                 .collect();
-            // HashMap 迭代顺序不稳定；在服务端固定字母序，避免客户端启动时顺序随机
+            // HashMap 迭代顺序不稳定；在服务端固定字母序
             items.sort_by(|a, b| {
                 a.name.to_lowercase().cmp(&b.name.to_lowercase())
             });
@@ -62,7 +62,7 @@ pub async fn handle_project_message(
 
         // v1: List workspaces for a project
         ClientMessage::ListWorkspaces { project } => {
-            let state = app_state.read().await;
+            let state = ctx.app_state.read().await;
             match state.get_project(project) {
                 Some(p) => {
                     let mut items: Vec<WorkspaceInfo> = p
@@ -70,27 +70,9 @@ pub async fn handle_project_message(
                         .values()
                         .map(|w| WorkspaceInfo {
                             name: w.name.clone(),
-                            root: w.worktree_path
-                                .to_string_lossy()
-                                .to_string(),
+                            root: w.worktree_path.to_string_lossy().to_string(),
                             branch: w.branch.clone(),
-                            status: match w.status {
-                                WorkspaceStatus::Ready => {
-                                    "ready".to_string()
-                                }
-                                WorkspaceStatus::SetupFailed => {
-                                    "setup_failed".to_string()
-                                }
-                                WorkspaceStatus::Creating => {
-                                    "creating".to_string()
-                                }
-                                WorkspaceStatus::Initializing => {
-                                    "initializing".to_string()
-                                }
-                                WorkspaceStatus::Destroying => {
-                                    "destroying".to_string()
-                                }
-                            },
+                            status: ws_status_str(&w.status),
                         })
                         .collect();
 
@@ -116,10 +98,7 @@ pub async fn handle_project_message(
                         socket,
                         &ServerMessage::Error {
                             code: "project_not_found".to_string(),
-                            message: format!(
-                                "Project '{}' not found",
-                                project
-                            ),
+                            message: format!("Project '{}' not found", project),
                         },
                     )
                     .await?;
@@ -130,43 +109,15 @@ pub async fn handle_project_message(
 
         // v1.2: Select workspace and spawn terminal
         ClientMessage::SelectWorkspace { project, workspace } => {
-            let state = app_state.read().await;
-            match state.get_project(project) {
-                Some(p) => {
-                    let (root_path, _branch) = if workspace == "default" {
-                        (p.root_path.clone(), p.default_branch.clone())
-                    } else {
-                        match p.get_workspace(workspace) {
-                            Some(w) => {
-                                (w.worktree_path.clone(), w.branch.clone())
-                            }
-                            None => {
-                                drop(state);
-                                send_message(
-                                    socket,
-                                    &ServerMessage::Error {
-                                        code: "workspace_not_found"
-                                            .to_string(),
-                                        message: format!(
-                                            "Workspace '{}' not found in project '{}'",
-                                            workspace, project
-                                        ),
-                                    },
-                                )
-                                .await?;
-                                return Ok(true);
-                            }
-                        }
-                    };
-                    drop(state);
-
+            match resolve_workspace(&ctx.app_state, project, workspace).await {
+                Ok(ws_ctx) => {
                     let (session_id, shell_name) = {
-                        let mut reg = registry.lock().await;
+                        let mut reg = ctx.terminal_registry.lock().await;
                         reg.spawn(
-                            Some(root_path.clone()),
+                            Some(ws_ctx.root_path.clone()),
                             Some(project.clone()),
                             Some(workspace.clone()),
-                            scrollback_tx.clone(),
+                            ctx.scrollback_tx.clone(),
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };
@@ -174,16 +125,16 @@ pub async fn handle_project_message(
                     // 自动订阅新创建的终端
                     subscribe_terminal(
                         &session_id,
-                        registry,
-                        subscribed_terms,
-                        agg_tx,
+                        &ctx.terminal_registry,
+                        &ctx.subscribed_terms,
+                        &ctx.agg_tx,
                     )
                     .await;
 
                     info!(
                         project = %project,
                         workspace = %workspace,
-                        root = %root_path.display(),
+                        root = %ws_ctx.root_path.display(),
                         term_id = %session_id,
                         "Terminal spawned in workspace"
                     );
@@ -193,25 +144,15 @@ pub async fn handle_project_message(
                         &ServerMessage::SelectedWorkspace {
                             project: project.clone(),
                             workspace: workspace.clone(),
-                            root: root_path.to_string_lossy().to_string(),
+                            root: ws_ctx.root_path.to_string_lossy().to_string(),
                             session_id,
                             shell: shell_name,
                         },
                     )
                     .await?;
                 }
-                None => {
-                    send_message(
-                        socket,
-                        &ServerMessage::Error {
-                            code: "project_not_found".to_string(),
-                            message: format!(
-                                "Project '{}' not found",
-                                project
-                            ),
-                        },
-                    )
-                    .await?;
+                Err(e) => {
+                    send_message(socket, &e.to_server_error()).await?;
                 }
             }
             Ok(true)
@@ -221,23 +162,14 @@ pub async fn handle_project_message(
         ClientMessage::ImportProject { name, path } => {
             info!("ImportProject request: name={}, path={}", name, path);
             let path_buf = PathBuf::from(&path);
-            info!("Acquiring app_state lock...");
-            let mut state = app_state.write().await;
-            info!(
-                "app_state lock acquired, calling ProjectManager::import_local"
-            );
+            let mut state = ctx.app_state.write().await;
 
             match ProjectManager::import_local(&mut state, name, &path_buf) {
                 Ok(project) => {
-                    info!(
-                        "Project imported successfully: {}",
-                        project.name
-                    );
+                    info!("Project imported successfully: {}", project.name);
                     let default_branch = project.default_branch.clone();
-                    let root =
-                        project.root_path.to_string_lossy().to_string();
+                    let root = project.root_path.to_string_lossy().to_string();
 
-                    info!("Sending ProjectImported response...");
                     send_message(
                         socket,
                         &ServerMessage::ProjectImported {
@@ -248,7 +180,6 @@ pub async fn handle_project_message(
                         },
                     )
                     .await?;
-                    info!("ProjectImported response sent successfully");
                 }
                 Err(e) => {
                     let (code, message) = match &e {
@@ -263,11 +194,7 @@ pub async fn handle_project_message(
                         }
                         _ => ("import_error".to_string(), e.to_string()),
                     };
-                    send_message(
-                        socket,
-                        &ServerMessage::Error { code, message },
-                    )
-                    .await?;
+                    send_message(socket, &ServerMessage::Error { code, message }).await?;
                 }
             }
             Ok(true)
@@ -278,7 +205,7 @@ pub async fn handle_project_message(
             project,
             from_branch,
         } => {
-            let mut state = app_state.write().await;
+            let mut state = ctx.app_state.write().await;
 
             match WorkspaceManager::create(
                 &mut state,
@@ -293,28 +220,9 @@ pub async fn handle_project_message(
                             project: project.clone(),
                             workspace: WorkspaceInfo {
                                 name: ws.name,
-                                root: ws
-                                    .worktree_path
-                                    .to_string_lossy()
-                                    .to_string(),
+                                root: ws.worktree_path.to_string_lossy().to_string(),
                                 branch: ws.branch,
-                                status: match ws.status {
-                                    WorkspaceStatus::Ready => {
-                                        "ready".to_string()
-                                    }
-                                    WorkspaceStatus::SetupFailed => {
-                                        "setup_failed".to_string()
-                                    }
-                                    WorkspaceStatus::Creating => {
-                                        "creating".to_string()
-                                    }
-                                    WorkspaceStatus::Initializing => {
-                                        "initializing".to_string()
-                                    }
-                                    WorkspaceStatus::Destroying => {
-                                        "destroying".to_string()
-                                    }
-                                },
+                                status: ws_status_str(&ws.status),
                             },
                         },
                     )
@@ -331,15 +239,9 @@ pub async fn handle_project_message(
                         crate::workspace::workspace::WorkspaceError::NotGitRepo(_) => {
                             ("not_git_repo".to_string(), e.to_string())
                         }
-                        _ => {
-                            ("workspace_error".to_string(), e.to_string())
-                        }
+                        _ => ("workspace_error".to_string(), e.to_string()),
                     };
-                    send_message(
-                        socket,
-                        &ServerMessage::Error { code, message },
-                    )
-                    .await?;
+                    send_message(socket, &ServerMessage::Error { code, message }).await?;
                 }
             }
             Ok(true)
@@ -348,7 +250,7 @@ pub async fn handle_project_message(
         // v1.17: Remove project
         ClientMessage::RemoveProject { name } => {
             info!("RemoveProject request: name={}", name);
-            let mut state = app_state.write().await;
+            let mut state = ctx.app_state.write().await;
 
             match ProjectManager::remove(&mut state, name) {
                 Ok(_) => {
@@ -364,10 +266,7 @@ pub async fn handle_project_message(
                     .await?;
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to remove project: {}, error: {}",
-                        name, e
-                    );
+                    warn!("Failed to remove project: {}, error: {}", name, e);
                     send_message(
                         socket,
                         &ServerMessage::ProjectRemoved {
@@ -391,7 +290,7 @@ pub async fn handle_project_message(
 
             // 关闭该工作空间的所有终端
             {
-                let mut reg = registry.lock().await;
+                let mut reg = ctx.terminal_registry.lock().await;
                 let term_ids: Vec<String> = reg
                     .list()
                     .into_iter()
@@ -404,7 +303,7 @@ pub async fn handle_project_message(
                 }
             }
 
-            let mut state = app_state.write().await;
+            let mut state = ctx.app_state.write().await;
 
             match WorkspaceManager::remove(&mut state, project, workspace) {
                 Ok(_) => {
@@ -447,7 +346,7 @@ pub async fn handle_project_message(
         ClientMessage::SaveProjectCommands { project, commands } => {
             info!("SaveProjectCommands request: project={}", project);
             {
-                let mut state = app_state.write().await;
+                let mut state = ctx.app_state.write().await;
                 match state.get_project_mut(project) {
                     Some(p) => {
                         p.commands = commands.iter().map(|c| {
@@ -475,7 +374,7 @@ pub async fn handle_project_message(
             }
 
             // 触发防抖保存
-            let _ = save_tx.send(()).await;
+            let _ = ctx.save_tx.send(()).await;
 
             send_message(
                 socket,
@@ -488,13 +387,13 @@ pub async fn handle_project_message(
             Ok(true)
         }
 
-        // v1.29: 执行项目命令（非阻塞，后台 task 逐行推送输出）
+        // v1.29: 执行项目命令
         ClientMessage::RunProjectCommand { project, workspace, command_id } => {
             info!("RunProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
 
             // 查找命令和工作目录
             let (command_text, cwd) = {
-                let state = app_state.read().await;
+                let state = ctx.app_state.read().await;
                 match state.get_project(project) {
                     Some(p) => {
                         let ws_root = if workspace == "default" {
@@ -555,8 +454,7 @@ pub async fn handle_project_message(
             {
                 Ok(child) => child,
                 Err(e) => {
-                    // spawn 失败通过 channel 发送 Completed
-                    let _ = cmd_output_tx.send(ServerMessage::ProjectCommandCompleted {
+                    let _ = ctx.cmd_output_tx.send(ServerMessage::ProjectCommandCompleted {
                         project: project.clone(),
                         workspace: workspace.clone(),
                         command_id: command_id.clone(),
@@ -568,26 +466,21 @@ pub async fn handle_project_message(
                 }
             };
 
-            // 先取出管道，再将 child 注册（wait() 不需要所有权转移）
             let stdout_pipe = child.stdout.take();
             let stderr_pipe = child.stderr.take();
 
-            // 注册子进程句柄供取消使用
-            running_commands.lock().await.insert(task_id.clone(), child);
+            ctx.running_commands.lock().await.insert(task_id.clone(), child);
 
-            // Clone 到后台 task 使用的变量
-            let tx = cmd_output_tx.clone();
-            let rc = running_commands.clone();
+            let tx = ctx.cmd_output_tx.clone();
+            let rc = ctx.running_commands.clone();
             let p = project.clone();
             let w = workspace.clone();
             let c = command_id.clone();
             let tid = task_id.clone();
 
-            // spawn 后台 task：逐行读取并流式推送，handler 立即返回不阻塞主循环
             tokio::spawn(async move {
                 let collected = Arc::new(Mutex::new(Vec::<String>::new()));
 
-                // 并发逐行读取 stdout 和 stderr
                 let stdout_collected = collected.clone();
                 let stdout_tx = tx.clone();
                 let stdout_tid = tid.clone();
@@ -622,24 +515,20 @@ pub async fn handle_project_message(
                     }
                 });
 
-                // 等待读取完成
                 let _ = stdout_handle.await;
                 let _ = stderr_handle.await;
 
-                // 等待子进程退出
                 let wait_result = {
                     let mut cmds = rc.lock().await;
                     if let Some(child) = cmds.get_mut(&tid) {
                         Some(child.wait().await)
                     } else {
-                        None // 已被取消移除
+                        None
                     }
                 };
 
-                // 清理注册表
                 rc.lock().await.remove(&tid);
 
-                // 若被取消，不再发送 Completed
                 let exit_status = match wait_result {
                     Some(Ok(status)) => status,
                     Some(Err(e)) => {
@@ -653,7 +542,7 @@ pub async fn handle_project_message(
                         }).await;
                         return;
                     }
-                    None => return, // 已取消
+                    None => return,
                 };
 
                 let all_lines = collected.lock().await;
@@ -687,11 +576,9 @@ pub async fn handle_project_message(
         ClientMessage::CancelProjectCommand { project, workspace, command_id } => {
             info!("CancelProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
 
-            // 遍历找到匹配的 task_id 并 kill 子进程
-            let mut cmds = running_commands.lock().await;
+            let mut cmds = ctx.running_commands.lock().await;
             let mut cancelled_task_id = None;
             for (task_id, child) in cmds.iter_mut() {
-                // kill 所有匹配的子进程（按 task_id 追踪）
                 if let Err(e) = child.kill().await {
                     warn!("Failed to kill command process {}: {}", task_id, e);
                 } else {

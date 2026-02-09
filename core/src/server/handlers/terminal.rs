@@ -1,26 +1,18 @@
 use axum::extract::ws::WebSocket;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 
+use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
-use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::server::ws::{
     ack_terminal_output, send_message, subscribe_terminal, unsubscribe_terminal,
-    SharedAppState, TermSubscription,
 };
 
 /// 处理终端相关的客户端消息
 pub async fn handle_terminal_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    registry: &SharedTerminalRegistry,
-    app_state: &SharedAppState,
-    scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
-    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
@@ -31,7 +23,7 @@ pub async fn handle_terminal_message(
                 data.len()
             );
 
-            let mut reg = registry.lock().await;
+            let mut reg = ctx.terminal_registry.lock().await;
             let resolved_id = reg.resolve_term_id(term_id.as_deref());
             info!(
                 "[DEBUG] Resolved term_id: {:?}, available_terms: {:?}",
@@ -67,7 +59,7 @@ pub async fn handle_terminal_message(
             rows,
             term_id,
         } => {
-            let reg = registry.lock().await;
+            let reg = ctx.terminal_registry.lock().await;
             let resolved_id = reg.resolve_term_id(term_id.as_deref());
 
             if let Some(id) = resolved_id {
@@ -92,12 +84,12 @@ pub async fn handle_terminal_message(
             }
 
             let (session_id, shell_name) = {
-                let mut reg = registry.lock().await;
+                let mut reg = ctx.terminal_registry.lock().await;
                 reg.spawn(
                     Some(cwd_path.clone()),
                     None,
                     None,
-                    scrollback_tx.clone(),
+                    ctx.scrollback_tx.clone(),
                 )
                 .map_err(|e| format!("Spawn error: {}", e))?
             };
@@ -105,9 +97,9 @@ pub async fn handle_terminal_message(
             // 自动订阅新创建的终端
             subscribe_terminal(
                 &session_id,
-                registry,
-                subscribed_terms,
-                agg_tx,
+                &ctx.terminal_registry,
+                &ctx.subscribed_terms,
+                &ctx.agg_tx,
             )
             .await;
 
@@ -132,13 +124,13 @@ pub async fn handle_terminal_message(
         ClientMessage::KillTerminal => {
             // 关闭默认终端
             let term_id = {
-                let reg = registry.lock().await;
+                let reg = ctx.terminal_registry.lock().await;
                 reg.resolve_term_id(None)
             };
 
             if let Some(id) = term_id {
-                unsubscribe_terminal(&id, subscribed_terms).await;
-                let mut reg = registry.lock().await;
+                unsubscribe_terminal(&id, &ctx.subscribed_terms).await;
+                let mut reg = ctx.terminal_registry.lock().await;
                 reg.close(&id);
                 drop(reg);
 
@@ -159,45 +151,22 @@ pub async fn handle_terminal_message(
                 workspace = %workspace,
                 "TermCreate request received"
             );
-            let state = app_state.read().await;
-            match state.get_project(project) {
-                Some(p) => {
-                    let root_path = if workspace == "default" {
-                        info!(
-                            project = %project,
-                            "Using project root for default workspace"
-                        );
-                        p.root_path.clone()
-                    } else {
-                        match p.get_workspace(workspace) {
-                            Some(w) => w.worktree_path.clone(),
-                            None => {
-                                drop(state);
-                                send_message(
-                                    socket,
-                                    &ServerMessage::Error {
-                                        code: "workspace_not_found"
-                                            .to_string(),
-                                        message: format!(
-                                            "Workspace '{}' not found in project '{}'",
-                                            workspace, project
-                                        ),
-                                    },
-                                )
-                                .await?;
-                                return Ok(true);
-                            }
-                        }
-                    };
-                    drop(state);
 
+            match crate::server::context::resolve_workspace(
+                &ctx.app_state,
+                project,
+                workspace,
+            )
+            .await
+            {
+                Ok(ws_ctx) => {
                     let (term_id, shell_name) = {
-                        let mut reg = registry.lock().await;
+                        let mut reg = ctx.terminal_registry.lock().await;
                         reg.spawn(
-                            Some(root_path.clone()),
+                            Some(ws_ctx.root_path.clone()),
                             Some(project.clone()),
                             Some(workspace.clone()),
-                            scrollback_tx.clone(),
+                            ctx.scrollback_tx.clone(),
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };
@@ -205,9 +174,9 @@ pub async fn handle_terminal_message(
                     // 自动订阅新创建的终端
                     subscribe_terminal(
                         &term_id,
-                        registry,
-                        subscribed_terms,
-                        agg_tx,
+                        &ctx.terminal_registry,
+                        &ctx.subscribed_terms,
+                        &ctx.agg_tx,
                     )
                     .await;
 
@@ -224,40 +193,30 @@ pub async fn handle_terminal_message(
                             term_id,
                             project: project.clone(),
                             workspace: workspace.clone(),
-                            cwd: root_path.to_string_lossy().to_string(),
+                            cwd: ws_ctx.root_path.to_string_lossy().to_string(),
                             shell: shell_name,
                         },
                     )
                     .await?;
                 }
-                None => {
-                    send_message(
-                        socket,
-                        &ServerMessage::Error {
-                            code: "project_not_found".to_string(),
-                            message: format!(
-                                "Project '{}' not found",
-                                project
-                            ),
-                        },
-                    )
-                    .await?;
+                Err(e) => {
+                    send_message(socket, &e.to_server_error()).await?;
                 }
             }
             Ok(true)
         }
 
         ClientMessage::TermList => {
-            let reg = registry.lock().await;
+            let reg = ctx.terminal_registry.lock().await;
             let items = reg.list();
             send_message(socket, &ServerMessage::TermList { items }).await?;
             Ok(true)
         }
 
         ClientMessage::TermClose { term_id } => {
-            unsubscribe_terminal(term_id, subscribed_terms).await;
+            unsubscribe_terminal(term_id, &ctx.subscribed_terms).await;
             let closed = {
-                let mut reg = registry.lock().await;
+                let mut reg = ctx.terminal_registry.lock().await;
                 reg.close(term_id)
             };
 
@@ -298,7 +257,7 @@ pub async fn handle_terminal_message(
         ClientMessage::TermAttach { term_id } => {
             info!(term_id = %term_id, "TermAttach request received");
 
-            let reg = registry.lock().await;
+            let reg = ctx.terminal_registry.lock().await;
             if let Some((project, workspace, cwd, shell)) =
                 reg.get_info(term_id)
             {
@@ -309,9 +268,9 @@ pub async fn handle_terminal_message(
                 // 订阅终端输出
                 subscribe_terminal(
                     term_id,
-                    registry,
-                    subscribed_terms,
-                    agg_tx,
+                    &ctx.terminal_registry,
+                    &ctx.subscribed_terms,
+                    &ctx.agg_tx,
                 )
                 .await;
 
@@ -346,7 +305,7 @@ pub async fn handle_terminal_message(
 
         // v1.28: Terminal output flow control ACK
         ClientMessage::TermOutputAck { term_id, bytes } => {
-            ack_terminal_output(term_id, *bytes, subscribed_terms).await;
+            ack_terminal_output(term_id, *bytes, &ctx.subscribed_terms).await;
             Ok(true)
         }
 

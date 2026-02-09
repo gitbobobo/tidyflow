@@ -6,61 +6,31 @@ use axum::{
     Router,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::task::JoinHandle;
+use tokio::sync::{Mutex, Notify};
 use tracing::{debug, error, info, trace, warn};
 
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
 
-use crate::server::handlers::file;
-use crate::server::handlers::git;
-use crate::server::handlers::log;
-use crate::server::handlers::project;
-use crate::server::handlers::project::SharedRunningCommands;
-use crate::server::handlers::settings;
-use crate::server::handlers::terminal;
+use crate::server::context::{
+    FlowControl, HandlerContext, SharedAppState, SharedRunningCommands, TermSubscription,
+};
+use crate::server::handlers;
 use crate::server::protocol::{
-    v1_capabilities, ClientMessage, ServerMessage, PROTOCOL_VERSION,
+    v1_capabilities, ClientMessage, RequestEnvelope, ServerMessage, PROTOCOL_VERSION,
 };
 use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
 use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
 use crate::server::git::status::invalidate_git_status_cache;
-use crate::workspace::state::{AppState, Project};
+use crate::workspace::state::AppState;
 use crate::workspace::state_saver::spawn_state_saver;
-
-/// 获取工作空间的根路径，支持 "default" 虚拟工作空间
-/// 如果 workspace 是 "default"，返回项目根目录
-fn get_workspace_root(project: &Project, workspace: &str) -> Option<PathBuf> {
-    if workspace == "default" {
-        Some(project.root_path.clone())
-    } else {
-        project
-            .get_workspace(workspace)
-            .map(|w| w.worktree_path.clone())
-    }
-}
-
-/// Shared application state for the WebSocket server
-pub type SharedAppState = Arc<RwLock<AppState>>;
-
-/// 终端输出流控：per-terminal per-WS-connection 的背压状态
-/// 当 unacked 超过 HIGH_WATER_MARK 时暂停转发，等待前端 ACK
-pub struct FlowControl {
-    pub unacked: AtomicU64,
-    pub notify: Notify,
-}
 
 /// 流控高水位（100KB）：未确认字节数超过此值时暂停转发
 const FLOW_CONTROL_HIGH_WATER: u64 = 100 * 1024;
-
-/// subscribed_terms 的 value 类型：(转发任务句柄, 流控状态)
-pub type TermSubscription = (JoinHandle<()>, Arc<FlowControl>);
 
 /// WebSocket 服务器上下文，包含共享状态和防抖保存通道
 #[derive(Clone)]
@@ -81,7 +51,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     // Load application state
     let app_state = AppState::load().unwrap_or_default();
-    let shared_state: SharedAppState = Arc::new(RwLock::new(app_state));
+    let shared_state: SharedAppState = Arc::new(tokio::sync::RwLock::new(app_state));
 
     // 启动防抖保存 actor
     let save_tx = spawn_state_saver(shared_state.clone());
@@ -196,9 +166,19 @@ async fn handle_socket(
     let (cmd_output_tx, mut cmd_output_rx) =
         tokio::sync::mpsc::channel::<ServerMessage>(256);
 
-    // 不再自动创建默认终端，前端重连时通过 TermAttach 附着已有终端
+    // 构造 HandlerContext，收拢所有共享依赖
+    let handler_ctx = HandlerContext {
+        app_state: app_state.clone(),
+        terminal_registry: registry.clone(),
+        save_tx: save_tx.clone(),
+        scrollback_tx: scrollback_tx.clone(),
+        subscribed_terms: subscribed_terms.clone(),
+        agg_tx: agg_tx.clone(),
+        running_commands: running_commands.clone(),
+        cmd_output_tx: cmd_output_tx.clone(),
+    };
 
-    // Send Hello message with v1 capabilities（session_id/shell 发空，前端需兼容）
+    // Send Hello message with v1 capabilities
     let hello_msg = ServerMessage::Hello {
         version: PROTOCOL_VERSION,
         session_id: String::new(),
@@ -246,15 +226,8 @@ async fn handle_socket(
                         if let Err(e) = handle_client_message(
                             &data,
                             &mut socket,
-                            &registry,
+                            &handler_ctx,
                             &watcher,
-                            &app_state,
-                            &save_tx,
-                            &scrollback_tx,
-                            &subscribed_terms,
-                            &agg_tx,
-                            &running_commands,
-                            &cmd_output_tx,
                         ).await {
                             warn!("Error handling client message: {}", e);
                             if let Err(send_err) = send_message(&mut socket, &ServerMessage::Error {
@@ -334,11 +307,11 @@ async fn handle_socket(
 
                         // 文件变化可能影响 git status，主动失效缓存
                         {
-                            let state = app_state.read().await;
-                            if let Some(proj) = state.projects.get(&project) {
-                                if let Some(root) = get_workspace_root(proj, &workspace) {
-                                    invalidate_git_status_cache(&root);
-                                }
+                            let ws_ctx = crate::server::context::resolve_workspace(
+                                &app_state, &project, &workspace,
+                            ).await;
+                            if let Ok(ctx) = ws_ctx {
+                                invalidate_git_status_cache(&ctx.root_path);
                             }
                         }
 
@@ -357,11 +330,11 @@ async fn handle_socket(
 
                         // Git 元数据变化（index/HEAD/refs），主动失效缓存
                         {
-                            let state = app_state.read().await;
-                            if let Some(proj) = state.projects.get(&project) {
-                                if let Some(root) = get_workspace_root(proj, &workspace) {
-                                    invalidate_git_status_cache(&root);
-                                }
+                            let ws_ctx = crate::server::context::resolve_workspace(
+                                &app_state, &project, &workspace,
+                            ).await;
+                            if let Ok(ctx) = ws_ctx {
+                                invalidate_git_status_cache(&ctx.root_path);
                             }
                         }
 
@@ -405,7 +378,6 @@ async fn handle_socket(
 /// Send a server message over WebSocket
 pub async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), String> {
     // 使用 to_vec_named 确保输出字典格式（带字段名），而不是数组格式
-    // 这样 Swift 端的 AnyCodable 才能正确解析
     let bytes = rmp_serde::to_vec_named(msg).map_err(|e| e.to_string())?;
     socket
         .send(Message::Binary(bytes))
@@ -513,86 +485,87 @@ pub async fn ack_terminal_output(
     }
 }
 
-/// Handle a client message
+/// Handle a client message — 统一调度层
+///
+/// 支持两种消息格式：
+/// 1. 带 `id` 的 RequestEnvelope（客户端希望关联响应时附带 request_id）
+/// 2. 裸 ClientMessage（向后兼容）
 async fn handle_client_message(
     data: &[u8],
     socket: &mut WebSocket,
-    registry: &SharedTerminalRegistry,
+    ctx: &HandlerContext,
     watcher: &Arc<Mutex<WorkspaceWatcher>>,
-    app_state: &SharedAppState,
-    save_tx: &tokio::sync::mpsc::Sender<()>,
-    scrollback_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
-    agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    running_commands: &SharedRunningCommands,
-    cmd_output_tx: &tokio::sync::mpsc::Sender<ServerMessage>,
 ) -> Result<(), String> {
     trace!(
         "handle_client_message called with data length: {}",
         data.len()
     );
-    let client_msg: ClientMessage = rmp_serde::from_slice(data).map_err(|e| {
+
+    // 尝试先按 RequestEnvelope 解析（带可选 id 字段）
+    // RequestEnvelope 使用 #[serde(flatten)] 所以裸 ClientMessage 也能匹配（id 为 None）
+    let envelope: RequestEnvelope = rmp_serde::from_slice(data).map_err(|e| {
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;
+
+    let _request_id = envelope.id; // 预留：未来可在响应中回显
+    let client_msg = envelope.body;
     trace!(
         "Parsed client message: {:?}",
         std::mem::discriminant(&client_msg)
     );
 
-    // Try terminal handler first
-    if terminal::handle_terminal_message(
+    // 按领域分发，handler 返回 Option<ServerMessage>，由此处统一发送
+    // 终端消息需要特殊处理（可能返回多条消息），沿用旧模式
+    if handlers::terminal::handle_terminal_message(
         &client_msg,
         socket,
-        registry,
-        app_state,
-        scrollback_tx,
-        subscribed_terms,
-        agg_tx,
+        ctx,
     )
     .await?
     {
         return Ok(());
     }
 
-    // Try file handler
-    if file::handle_file_message(&client_msg, socket, app_state).await? {
+    // 文件消息
+    if handlers::file::handle_file_message(&client_msg, socket, &ctx.app_state).await? {
         return Ok(());
     }
 
-    // Try git handler
-    if git::handle_git_message(&client_msg, socket, app_state).await? {
+    // Git 消息
+    if handlers::git::handle_git_message(&client_msg, socket, &ctx.app_state).await? {
         return Ok(());
     }
 
-    // Try project handler
-    if project::handle_project_message(
+    // 项目/工作空间消息
+    if handlers::project::handle_project_message(
         &client_msg,
         socket,
-        registry,
-        app_state,
-        scrollback_tx,
-        subscribed_terms,
-        agg_tx,
-        save_tx,
-        running_commands,
-        cmd_output_tx,
+        ctx,
     )
     .await?
     {
         return Ok(());
     }
 
-    // Try settings handler
-    if settings::handle_settings_message(&client_msg, socket, app_state, save_tx).await? {
+    // 设置消息
+    if handlers::settings::handle_settings_message(
+        &client_msg,
+        socket,
+        &ctx.app_state,
+        &ctx.save_tx,
+    )
+    .await?
+    {
         return Ok(());
     }
 
-    // Try log handler (同步，无需 async)
-    if log::handle_log_message(&client_msg)? {
+    // 日志消息
+    if handlers::log::handle_log_message(&client_msg)? {
         return Ok(());
     }
 
+    // 内置消息处理
     match client_msg {
         ClientMessage::Ping => {
             send_message(socket, &ServerMessage::Pong).await?;
@@ -605,18 +578,16 @@ async fn handle_client_message(
                 project, workspace
             );
 
-            // 获取工作空间路径
-            let state = app_state.read().await;
-            let watch_path = state
-                .projects
-                .get(&project)
-                .and_then(|p| get_workspace_root(p, &workspace));
-            drop(state);
-
-            match watch_path {
-                Some(path) => {
+            match crate::server::context::resolve_workspace(
+                &ctx.app_state,
+                &project,
+                &workspace,
+            )
+            .await
+            {
+                Ok(ws_ctx) => {
                     let mut w = watcher.lock().await;
-                    match w.subscribe(project.clone(), workspace.clone(), path) {
+                    match w.subscribe(project.clone(), workspace.clone(), ws_ctx.root_path) {
                         Ok(_) => {
                             send_message(
                                 socket,
@@ -636,18 +607,8 @@ async fn handle_client_message(
                         }
                     }
                 }
-                None => {
-                    send_message(
-                        socket,
-                        &ServerMessage::Error {
-                            code: "workspace_not_found".to_string(),
-                            message: format!(
-                                "Workspace '{}' not found in project '{}'",
-                                workspace, project
-                            ),
-                        },
-                    )
-                    .await?;
+                Err(e) => {
+                    send_message(socket, &e.to_server_error()).await?;
                 }
             }
         }
@@ -659,80 +620,17 @@ async fn handle_client_message(
             send_message(socket, &ServerMessage::WatchUnsubscribed).await?;
         }
 
-        ClientMessage::Input { .. }
-        | ClientMessage::Resize { .. }
-        | ClientMessage::SpawnTerminal { .. }
-        | ClientMessage::KillTerminal
-        | ClientMessage::TermCreate { .. }
-        | ClientMessage::TermList
-        | ClientMessage::TermClose { .. }
-        | ClientMessage::TermFocus { .. }
-        | ClientMessage::TermAttach { .. }
-        | ClientMessage::TermOutputAck { .. } => {
-            unreachable!("Terminal messages should be handled by terminal handler");
-        }
-
-        ClientMessage::FileList { .. }
-        | ClientMessage::FileRead { .. }
-        | ClientMessage::FileWrite { .. }
-        | ClientMessage::FileIndex { .. }
-        | ClientMessage::FileRename { .. }
-        | ClientMessage::FileDelete { .. }
-        | ClientMessage::FileCopy { .. }
-        | ClientMessage::FileMove { .. } => {
-            unreachable!("File messages should be handled by file handler");
-        }
-
-        ClientMessage::GitStatus { .. }
-        | ClientMessage::GitDiff { .. }
-        | ClientMessage::GitStage { .. }
-        | ClientMessage::GitUnstage { .. }
-        | ClientMessage::GitDiscard { .. }
-        | ClientMessage::GitBranches { .. }
-        | ClientMessage::GitSwitchBranch { .. }
-        | ClientMessage::GitCreateBranch { .. }
-        | ClientMessage::GitCommit { .. }
-        | ClientMessage::GitFetch { .. }
-        | ClientMessage::GitRebase { .. }
-        | ClientMessage::GitRebaseContinue { .. }
-        | ClientMessage::GitRebaseAbort { .. }
-        | ClientMessage::GitOpStatus { .. }
-        | ClientMessage::GitEnsureIntegrationWorktree { .. }
-        | ClientMessage::GitMergeToDefault { .. }
-        | ClientMessage::GitMergeContinue { .. }
-        | ClientMessage::GitMergeAbort { .. }
-        | ClientMessage::GitIntegrationStatus { .. }
-        | ClientMessage::GitRebaseOntoDefault { .. }
-        | ClientMessage::GitRebaseOntoDefaultContinue { .. }
-        | ClientMessage::GitRebaseOntoDefaultAbort { .. }
-        | ClientMessage::GitResetIntegrationWorktree { .. }
-        | ClientMessage::GitCheckBranchUpToDate { .. }
-        | ClientMessage::GitLog { .. }
-        | ClientMessage::GitShow { .. }
-        | ClientMessage::GitAICommit { .. } => {
-            unreachable!("Git messages should be handled by git handler");
-        }
-
-        ClientMessage::ListProjects
-        | ClientMessage::ListWorkspaces { .. }
-        | ClientMessage::SelectWorkspace { .. }
-        | ClientMessage::ImportProject { .. }
-        | ClientMessage::CreateWorkspace { .. }
-        | ClientMessage::RemoveProject { .. }
-        | ClientMessage::RemoveWorkspace { .. }
-        | ClientMessage::SaveProjectCommands { .. }
-        | ClientMessage::RunProjectCommand { .. }
-        | ClientMessage::CancelProjectCommand { .. } => {
-            unreachable!("Project messages should be handled by project handler");
-        }
-
-        ClientMessage::GetClientSettings
-        | ClientMessage::SaveClientSettings { .. } => {
-            unreachable!("Settings messages should be handled by settings handler");
-        }
-
-        ClientMessage::LogEntry { .. } => {
-            unreachable!("Log messages should be handled by log handler");
+        // 所有其他消息类型已在上方 handler 链中处理，此处兜底
+        _ => {
+            warn!("Unhandled message type: {:?}", std::mem::discriminant(&client_msg));
+            send_message(
+                socket,
+                &ServerMessage::Error {
+                    code: "unhandled_message".to_string(),
+                    message: "Message type not recognized".to_string(),
+                },
+            )
+            .await?;
         }
     }
 
