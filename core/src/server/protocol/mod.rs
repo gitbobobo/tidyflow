@@ -1,8 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+// 按领域拆分的协议类型子模块（组织性拆分，保持类型引用路径不变）
+pub mod file;
+pub mod git;
+pub mod project;
+pub mod settings;
+pub mod terminal;
+
 /// Protocol version: 2 (MessagePack binary encoding)
 /// v2: Switch from JSON+base64 to MessagePack binary encoding
 pub const PROTOCOL_VERSION: u32 = 2;
+
+// ============================================================================
+// Request/Response 包络 — 支持 request_id 关联
+// ============================================================================
+
+/// 统一请求包络 — 客户端可选附带 `id` 以关联响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestEnvelope {
+    /// 客户端可选 request ID，服务端在响应中原样回显
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// 实际消息体（保持原有 ClientMessage 结构）
+    #[serde(flatten)]
+    pub body: ClientMessage,
+}
+
+/// 统一响应包络 — 回显 request_id
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseEnvelope {
+    /// 回显客户端的 request ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// 实际消息体（保持原有 ServerMessage 结构）
+    #[serde(flatten)]
+    pub body: ServerMessage,
+}
 
 // ============================================================================
 // v0 Messages (Terminal Data Plane) - Backward Compatible
