@@ -517,4 +517,23 @@ extension WSClient {
             "command_id": commandId
         ])
     }
+
+    // MARK: - 日志上报
+
+    /// 发送日志到 Rust Core 统一写入文件
+    func sendLogEntry(level: String, category: String? = nil, msg: String, detail: String? = nil) {
+        var dict: [String: Any] = [
+            "type": "log_entry",
+            "level": level,
+            "source": "swift",
+            "msg": msg
+        ]
+        if let category = category {
+            dict["category"] = category
+        }
+        if let detail = detail {
+            dict["detail"] = detail
+        }
+        send(dict)
+    }
 }

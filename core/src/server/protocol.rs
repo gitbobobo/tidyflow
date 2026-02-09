@@ -339,6 +339,17 @@ pub enum ClientMessage {
         workspace: String,
         command_id: String,
     },
+
+    // v1.30: 客户端日志上报
+    LogEntry {
+        level: String,
+        source: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        category: Option<String>,
+        msg: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
 }
 
 fn default_diff_mode() -> String {

@@ -3,6 +3,7 @@
 
 pub mod file;
 pub mod git;
+pub mod log;
 pub mod project;
 pub mod settings;
 pub mod terminal;

@@ -18,6 +18,7 @@ use std::os::unix::process::parent_id;
 
 use crate::server::handlers::file;
 use crate::server::handlers::git;
+use crate::server::handlers::log;
 use crate::server::handlers::project;
 use crate::server::handlers::project::SharedRunningCommands;
 use crate::server::handlers::settings;
@@ -573,6 +574,11 @@ async fn handle_client_message(
         return Ok(());
     }
 
+    // Try log handler (同步，无需 async)
+    if log::handle_log_message(&client_msg)? {
+        return Ok(());
+    }
+
     match client_msg {
         ClientMessage::Ping => {
             send_message(socket, &ServerMessage::Pong).await?;
@@ -709,6 +715,10 @@ async fn handle_client_message(
         ClientMessage::GetClientSettings
         | ClientMessage::SaveClientSettings { .. } => {
             unreachable!("Settings messages should be handled by settings handler");
+        }
+
+        ClientMessage::LogEntry { .. } => {
+            unreachable!("Log messages should be handled by log handler");
         }
     }
 

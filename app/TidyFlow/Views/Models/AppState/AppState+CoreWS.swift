@@ -96,6 +96,9 @@ extension AppState {
     // MARK: - WebSocket Setup
 
     private func setupWSClient(port: Int) {
+        // 设置日志转发引用
+        TFLog.wsClient = wsClient
+
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
             if connected {

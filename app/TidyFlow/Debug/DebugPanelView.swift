@@ -9,6 +9,27 @@ struct DebugPanelView: View {
     @State private var isLoadingLog: Bool = false
     @State private var lastRefreshTime: Date?
 
+    /// 日志目录：~/.tidyflow/logs/
+    private static var logDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".tidyflow/logs", isDirectory: true)
+    }
+
+    /// 当天日志文件
+    private static var todayLogFileURL: URL {
+        let dateStr = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: Date())
+        }()
+        return logDirectory.appendingPathComponent("\(dateStr).log")
+    }
+
+    /// 显示用路径
+    private static var logPathDisplay: String {
+        "~/.tidyflow/logs/"
+    }
+
     var body: some View {
         ZStack {
             // Dimmed background
@@ -181,7 +202,7 @@ struct DebugPanelView: View {
             HStack {
                 Text("Log Viewer")
                     .font(.headline)
-                Text("(\(LogWriter.logPathDisplay))")
+                Text("(\(Self.logPathDisplay))")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -248,7 +269,7 @@ struct DebugPanelView: View {
 
         DispatchQueue.global(qos: .userInitiated).async {
             let text = LogTailReader.readTail(
-                url: LogWriter.logFilePath,
+                url: Self.todayLogFileURL,
                 maxBytes: 128 * 1024,
                 maxLines: 300
             )
@@ -268,7 +289,7 @@ struct DebugPanelView: View {
     }
 
     private func revealInFinder() {
-        let logDir = LogWriter.logDirectory
+        let logDir = Self.logDirectory
         NSWorkspace.shared.activateFileViewerSelecting([logDir])
     }
 

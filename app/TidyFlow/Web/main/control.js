@@ -151,4 +151,18 @@
   TF.sendFileWrite = sendFileWrite;
   TF.sendFileIndex = sendFileIndex;
   TF.sendResize = sendResize;
+
+  /**
+   * 发送日志到 Rust Core 统一写入文件
+   * @param {"DEBUG"|"INFO"|"WARN"|"ERROR"} level
+   * @param {string} msg
+   * @param {string} [detail]
+   */
+  function sendLog(level, msg, detail) {
+    var entry = { type: "log_entry", level: level, source: "web", msg: msg };
+    if (detail) entry.detail = detail;
+    sendControlMessage(entry);
+  }
+
+  TF.sendLog = sendLog;
 })();

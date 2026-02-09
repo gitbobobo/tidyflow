@@ -106,9 +106,6 @@ class CoreProcessManager: ObservableObject {
         // Clean up any orphaned processes from previous runs (e.g., Xcode force stop)
         Self.cleanupOrphanedProcesses()
 
-        // Initialize log writer for file logging
-        LogWriter.shared.initialize()
-
         isStarting = true
         currentAttempt = 0
         startWithRetry()
@@ -332,26 +329,20 @@ class CoreProcessManager: ObservableObject {
         self.stdoutPipe = stdout
         self.stderrPipe = stderr
 
-        // Handle stdout - write to both memory buffer and file
+        // Handle stdout - write to memory buffer for UI
         stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if !data.isEmpty {
-                // Write to file log
-                LogWriter.shared.append(data)
-                // Write to memory buffer for UI
                 if let str = String(data: data, encoding: .utf8) {
                     self?.appendLog("[stdout] \(str)")
                 }
             }
         }
 
-        // Handle stderr - write to both memory buffer and file
+        // Handle stderr - write to memory buffer for UI
         stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if !data.isEmpty {
-                // Write to file log
-                LogWriter.shared.append(data)
-                // Write to memory buffer for UI
                 if let str = String(data: data, encoding: .utf8) {
                     self?.appendLog("[stderr] \(str)")
                 }
@@ -507,8 +498,6 @@ class CoreProcessManager: ObservableObject {
         stdoutPipe = nil
         stderrPipe = nil
         process = nil
-        // Close log file when process stops
-        LogWriter.shared.close()
     }
 
     deinit {
