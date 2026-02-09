@@ -324,6 +324,7 @@ struct TaskResultDetailView: View {
     @State private var showRawOutput = false
 
     var body: some View {
+        // 整块详情仅用一层 ScrollView，内部输出区块不再嵌套 ScrollView，避免双层滚动条
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 // 状态
@@ -391,15 +392,12 @@ struct TaskResultDetailView: View {
     @ViewBuilder
     private func projectCommandDetail(_ r: ProjectCommandResult) -> some View {
         if !r.message.isEmpty {
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                Text(r.message)
-                    .font(.system(size: 10, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 200)
-            .background(Color(NSColor.textBackgroundColor).opacity(0.5))
-            .cornerRadius(4)
+            Text(r.message)
+                .font(.system(size: 10, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                .cornerRadius(4)
         }
     }
 
@@ -409,15 +407,12 @@ struct TaskResultDetailView: View {
             DisclosureGroup(
                 isExpanded: $showRawOutput,
                 content: {
-                    ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                        Text(output)
-                            .font(.system(size: 10, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 120)
-                    .background(Color(NSColor.textBackgroundColor).opacity(0.5))
-                    .cornerRadius(4)
+                    Text(output)
+                        .font(.system(size: 10, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                        .cornerRadius(4)
                 },
                 label: {
                     Text("sidebar.aiMerge.rawOutput".localized)
