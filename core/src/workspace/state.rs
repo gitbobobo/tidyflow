@@ -30,6 +30,9 @@ pub struct ProjectCommand {
     pub command: String,
     #[serde(default)]
     pub blocking: bool,
+    /// 交互式命令：在新终端 Tab 中执行（前台任务），而非后台任务
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 /// 自定义终端命令

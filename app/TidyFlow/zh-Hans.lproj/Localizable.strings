@@ -259,5 +259,7 @@
 "projectConfig.addCommand" = "添加命令";
 "projectConfig.blocking" = "阻塞";
 "projectConfig.blocking.hint" = "如果此命令会修改项目中的文件，建议设为阻塞";
+"projectConfig.interactive" = "交互式";
+"projectConfig.interactive.hint" = "在新终端标签页中执行命令（前台任务），而非作为后台任务运行";
 "projectConfig.noCommands" = "暂无命令配置";
 "projectConfig.noCommands.hint" = "添加命令后可在工作空间中作为后台任务运行";

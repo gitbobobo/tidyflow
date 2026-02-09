@@ -48,6 +48,7 @@ pub async fn handle_project_message(
                         icon: c.icon.clone(),
                         command: c.command.clone(),
                         blocking: c.blocking,
+                        interactive: c.interactive,
                     }).collect(),
                 })
                 .collect();
@@ -356,6 +357,7 @@ pub async fn handle_project_message(
                                 icon: c.icon.clone(),
                                 command: c.command.clone(),
                                 blocking: c.blocking,
+                                interactive: c.interactive,
                             }
                         }).collect();
                     }

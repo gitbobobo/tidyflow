@@ -488,7 +488,8 @@ extension WSClient {
                 "name": cmd.name,
                 "icon": cmd.icon,
                 "command": cmd.command,
-                "blocking": cmd.blocking
+                "blocking": cmd.blocking,
+                "interactive": cmd.interactive
             ]
         }
         send([

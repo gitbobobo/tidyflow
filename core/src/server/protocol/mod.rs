@@ -938,6 +938,8 @@ pub struct ProjectCommandInfo {
     pub command: String,
     #[serde(default)]
     pub blocking: bool,
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 // ============================================================================

@@ -49,12 +49,23 @@ struct ProjectCommandEditSheet: View {
 
                 // 阻塞选项
                 Section {
-                    Toggle(isOn: $command.blocking) {
+                    Toggle(isOn: $command.interactive) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("projectConfig.blocking".localized)
-                            Text("projectConfig.blocking.hint".localized)
+                            Text("projectConfig.interactive".localized)
+                            Text("projectConfig.interactive.hint".localized)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if !command.interactive {
+                        Toggle(isOn: $command.blocking) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("projectConfig.blocking".localized)
+                                Text("projectConfig.blocking.hint".localized)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }

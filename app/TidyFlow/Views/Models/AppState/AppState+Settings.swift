@@ -101,8 +101,21 @@ extension AppState {
         }
     }
 
-    /// 提交项目命令为后台任务
+    /// 提交项目命令为后台任务，或以交互式方式在终端中执行
     func runProjectCommand(projectName: String, workspaceName: String, command: ProjectCommand) {
+        // 交互式命令：新建终端 Tab 执行（前台任务）
+        if command.interactive {
+            guard let globalKey = currentGlobalWorkspaceKey else { return }
+            let customCmd = CustomCommand(
+                id: command.id,
+                name: command.name,
+                icon: command.icon,
+                command: command.command
+            )
+            addTerminalWithCustomCommand(workspaceKey: globalKey, command: customCmd)
+            return
+        }
+
         submitBackgroundTask(
             type: .projectCommand,
             context: .projectCommand(ProjectCommandContext(

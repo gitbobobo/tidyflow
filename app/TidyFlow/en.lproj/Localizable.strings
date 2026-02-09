@@ -259,5 +259,7 @@
 "projectConfig.addCommand" = "Add Command";
 "projectConfig.blocking" = "Blocking";
 "projectConfig.blocking.hint" = "If this command modifies project files, it is recommended to enable blocking";
+"projectConfig.interactive" = "Interactive";
+"projectConfig.interactive.hint" = "Opens a new terminal tab to run the command (foreground task), instead of running as a background task";
 "projectConfig.noCommands" = "No Commands Configured";
 "projectConfig.noCommands.hint" = "Add commands to run as background tasks in workspaces";

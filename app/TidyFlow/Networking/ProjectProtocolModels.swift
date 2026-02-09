@@ -84,7 +84,8 @@ struct ProjectInfo {
                     return nil
                 }
                 let blocking = cmdJson["blocking"] as? Bool ?? false
-                return ProjectCommand(id: id, name: cmdName, icon: icon, command: command, blocking: blocking)
+                let interactive = cmdJson["interactive"] as? Bool ?? false
+                return ProjectCommand(id: id, name: cmdName, icon: icon, command: command, blocking: blocking, interactive: interactive)
             }
         }
         return ProjectInfo(name: name, root: root, workspaceCount: workspaceCount, commands: commands)
