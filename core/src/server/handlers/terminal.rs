@@ -1,6 +1,6 @@
 use axum::extract::ws::WebSocket;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -17,25 +17,21 @@ pub async fn handle_terminal_message(
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
         ClientMessage::Input { data, term_id } => {
-            info!(
-                "[DEBUG] Input received: term_id={:?}, data_len={}",
-                term_id,
-                data.len()
-            );
+            debug!("Input received: term_id={:?}, data_len={}", term_id, data.len());
 
             let mut reg = ctx.terminal_registry.lock().await;
             let resolved_id = reg.resolve_term_id(term_id.as_deref());
-            info!(
-                "[DEBUG] Resolved term_id: {:?}, available_terms: {:?}",
+            debug!(
+                "Resolved term_id: {:?}, available_terms: {:?}",
                 resolved_id,
                 reg.term_ids()
             );
 
             if let Some(id) = resolved_id {
-                info!("[DEBUG] Writing input to PTY: term_id={}", id);
+                debug!("Writing input to PTY: term_id={}", id);
                 reg.write_input(&id, data)
                     .map_err(|e| format!("Write error: {}", e))?;
-                info!("[DEBUG] Input written successfully");
+                debug!("Input written successfully");
             } else if term_id.is_some() {
                 send_message(
                     socket,
@@ -49,7 +45,7 @@ pub async fn handle_terminal_message(
                 )
                 .await?;
             } else {
-                info!("[DEBUG] No term_id provided and no default terminal");
+                debug!("No term_id provided and no default terminal");
             }
             Ok(true)
         }
