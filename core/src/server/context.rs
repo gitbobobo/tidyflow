@@ -26,8 +26,17 @@ pub struct FlowControl {
 /// subscribed_terms 的 value 类型：(转发任务句柄, 流控状态)
 pub type TermSubscription = (tokio::task::JoinHandle<()>, Arc<FlowControl>);
 
-/// 正在运行的项目命令注册表（task_id → Child 进程句柄）
-pub type SharedRunningCommands = Arc<Mutex<HashMap<String, tokio::process::Child>>>;
+/// 正在运行的项目命令条目
+pub struct RunningCommandEntry {
+    pub task_id: String,
+    pub project: String,
+    pub workspace: String,
+    pub command_id: String,
+    pub child: tokio::process::Child,
+}
+
+/// 正在运行的项目命令注册表（task_id → 命令条目）
+pub type SharedRunningCommands = Arc<Mutex<HashMap<String, RunningCommandEntry>>>;
 
 /// Handler 上下文 — 收拢所有 handler 共享依赖，替代传递 11 个参数
 #[derive(Clone)]

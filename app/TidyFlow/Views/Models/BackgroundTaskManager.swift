@@ -235,7 +235,8 @@ class BackgroundTaskManager: ObservableObject {
             appState.wsClient.requestCancelProjectCommand(
                 project: ctx.projectName,
                 workspace: ctx.workspaceName,
-                commandId: ctx.commandId
+                commandId: ctx.commandId,
+                taskId: task.remoteTaskId
             )
         }
 

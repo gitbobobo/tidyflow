@@ -22,7 +22,13 @@ pub enum ProjectRequest {
         commands: Vec<super::ProjectCommandInfo>,
     },
     RunProjectCommand { project: String, workspace: String, command_id: String },
-    CancelProjectCommand { project: String, workspace: String, command_id: String },
+    CancelProjectCommand {
+        project: String,
+        workspace: String,
+        command_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+    },
 }
 
 /// 项目/工作空间相关的服务端消息

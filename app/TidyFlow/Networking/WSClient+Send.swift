@@ -510,13 +510,22 @@ extension WSClient {
     }
 
     /// 取消正在运行的项目命令
-    func requestCancelProjectCommand(project: String, workspace: String, commandId: String) {
-        send([
+    func requestCancelProjectCommand(
+        project: String,
+        workspace: String,
+        commandId: String,
+        taskId: String? = nil
+    ) {
+        var payload: [String: Any] = [
             "type": "cancel_project_command",
             "project": project,
             "workspace": workspace,
             "command_id": commandId
-        ])
+        ]
+        if let taskId, !taskId.isEmpty {
+            payload["task_id"] = taskId
+        }
+        send(payload)
     }
 
     // MARK: - v1.31: LSP diagnostics

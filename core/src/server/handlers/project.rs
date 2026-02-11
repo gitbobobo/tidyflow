@@ -5,7 +5,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::server::context::{resolve_workspace, HandlerContext};
+use crate::server::context::{resolve_workspace, HandlerContext, RunningCommandEntry};
 use crate::server::protocol::{
     ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, WorkspaceInfo,
 };
@@ -491,7 +491,16 @@ pub async fn handle_project_message(
             let stdout_pipe = child.stdout.take();
             let stderr_pipe = child.stderr.take();
 
-            ctx.running_commands.lock().await.insert(task_id.clone(), child);
+            ctx.running_commands.lock().await.insert(
+                task_id.clone(),
+                RunningCommandEntry {
+                    task_id: task_id.clone(),
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    command_id: command_id.clone(),
+                    child,
+                },
+            );
 
             let tx = ctx.cmd_output_tx.clone();
             let rc = ctx.running_commands.clone();
@@ -540,16 +549,16 @@ pub async fn handle_project_message(
                 let _ = stdout_handle.await;
                 let _ = stderr_handle.await;
 
-                let wait_result = {
+                // 将进程条目移出共享 map 后再等待，避免持锁 await 阻塞其它命令操作
+                let mut command_entry = {
                     let mut cmds = rc.lock().await;
-                    if let Some(child) = cmds.get_mut(&tid) {
-                        Some(child.wait().await)
-                    } else {
-                        None
-                    }
+                    cmds.remove(&tid)
                 };
-
-                rc.lock().await.remove(&tid);
+                let wait_result = if let Some(entry) = command_entry.as_mut() {
+                    Some(entry.child.wait().await)
+                } else {
+                    None
+                };
 
                 let exit_status = match wait_result {
                     Some(Ok(status)) => status,
@@ -595,36 +604,92 @@ pub async fn handle_project_message(
         }
 
         // 取消正在运行的项目命令
-        ClientMessage::CancelProjectCommand { project, workspace, command_id } => {
-            info!("CancelProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
+        ClientMessage::CancelProjectCommand { project, workspace, command_id, task_id } => {
+            info!(
+                "CancelProjectCommand request: project={}, workspace={}, command_id={}, task_id={}",
+                project,
+                workspace,
+                command_id,
+                task_id.as_deref().unwrap_or("<none>")
+            );
 
-            let mut cmds = ctx.running_commands.lock().await;
-            let mut cancelled_task_id = None;
-            for (task_id, child) in cmds.iter_mut() {
-                if let Err(e) = child.kill().await {
-                    warn!("Failed to kill command process {}: {}", task_id, e);
+            let mut command_entry = {
+                let mut cmds = ctx.running_commands.lock().await;
+                if let Some(request_task_id) = task_id {
+                    let matched = cmds
+                        .get(request_task_id)
+                        .map(|entry| {
+                            entry.project == *project
+                                && entry.workspace == *workspace
+                                && entry.command_id == *command_id
+                        })
+                        .unwrap_or(false);
+                    if matched {
+                        cmds.remove(request_task_id)
+                    } else {
+                        None
+                    }
                 } else {
-                    cancelled_task_id = Some(task_id.clone());
-                    break;
+                    let matched_task_id = cmds
+                        .iter()
+                        .find(|(_, entry)| {
+                            entry.project == *project
+                                && entry.workspace == *workspace
+                                && entry.command_id == *command_id
+                        })
+                        .map(|(id, _)| id.clone());
+                    matched_task_id.and_then(|id| cmds.remove(&id))
                 }
-            }
+            };
 
-            if let Some(task_id) = cancelled_task_id {
-                cmds.remove(&task_id);
-                drop(cmds);
-
-                info!("ProjectCommand cancelled: project={}, command_id={}, task_id={}", project, command_id, task_id);
-
+            let Some(mut entry) = command_entry.take() else {
                 send_message(
                     socket,
-                    &ServerMessage::ProjectCommandCancelled {
-                        project: project.clone(),
-                        workspace: workspace.clone(),
-                        command_id: command_id.clone(),
-                        task_id,
+                    &ServerMessage::Error {
+                        code: "command_not_running".to_string(),
+                        message: "No matching running command".to_string(),
                     },
-                ).await?;
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            let cancelled_task_id = entry.task_id.clone();
+            if let Err(e) = entry.child.kill().await {
+                // kill 失败时放回注册表，避免丢失运行中进程句柄
+                ctx.running_commands
+                    .lock()
+                    .await
+                    .insert(cancelled_task_id.clone(), entry);
+                warn!(
+                    "Failed to kill command process {} (project={}, workspace={}, command_id={}): {}",
+                    cancelled_task_id, project, workspace, command_id, e
+                );
+                send_message(
+                    socket,
+                    &ServerMessage::Error {
+                        code: "cancel_failed".to_string(),
+                        message: format!("Failed to cancel running command: {}", e),
+                    },
+                )
+                .await?;
+                return Ok(true);
             }
+
+            info!(
+                "ProjectCommand cancelled: project={}, command_id={}, task_id={}",
+                project, command_id, cancelled_task_id
+            );
+            send_message(
+                socket,
+                &ServerMessage::ProjectCommandCancelled {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    command_id: command_id.clone(),
+                    task_id: cancelled_task_id,
+                },
+            )
+            .await?;
 
             Ok(true)
         }

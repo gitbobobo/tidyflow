@@ -371,6 +371,8 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
         command_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
     },
 
     // v1.31: LSP diagnostics
@@ -1035,6 +1037,27 @@ mod tests {
             Ok(ClientMessage::ImportProject { name, path }) => {
                 assert_eq!(name, "ly_tech");
                 assert_eq!(path, "/Users/godbobo/work/projects/ly_tech");
+            }
+            Ok(other) => panic!("Unexpected message type: {:?}", other),
+            Err(e) => panic!("Parse error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_cancel_project_command_with_task_id() {
+        let json = r#"{"type":"cancel_project_command","project":"demo","workspace":"default","command_id":"build","task_id":"task-1"}"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        match result {
+            Ok(ClientMessage::CancelProjectCommand {
+                project,
+                workspace,
+                command_id,
+                task_id,
+            }) => {
+                assert_eq!(project, "demo");
+                assert_eq!(workspace, "default");
+                assert_eq!(command_id, "build");
+                assert_eq!(task_id.as_deref(), Some("task-1"));
             }
             Ok(other) => panic!("Unexpected message type: {:?}", other),
             Err(e) => panic!("Parse error: {}", e),
