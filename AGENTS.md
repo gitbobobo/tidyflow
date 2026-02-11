@@ -34,6 +34,15 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 引入移动端远程访问时，Core 应默认仅监听 loopback，并通过显式开关切换到 `0.0.0.0`；远程连接统一走“本机生成配对码 -> 移动端换取短期 token”链路，且 `pair/start`/`pair/revoke` 保持仅本机可调用。
 - 编辑 `app/TidyFlow.xcodeproj/project.pbxproj` 时，带条件的 build setting 键（如 `[sdk=iphone*]`）必须写成带引号的完整键名（如 `"INFOPLIST_FILE[sdk=iphone*]"`），否则工程会因 plist 解析失败而无法打开。
 - 移动端连接入口展示的地址/端口必须来自运行时状态（局域网 IP + Core 当前监听端口），不要假设固定端口（如 47999），避免重启后动态端口变化导致连接失败。
+- 移动端展示/配对使用的端口必须取 Core `running` 态端口；不要使用 `starting` 态端口（尚未监听），并确保 `AppState` 转发 `CoreProcessManager` 变更以避免 UI 端口文案滞后。
+- 涉及 Core 重启（如切换远程访问开关）时，不要用固定延时后直接 `start()`；应等待 `stop` 确认完成后再启动，否则会被运行态守卫拦截并出现“端口不可用”卡死。
+- `CoreProcessManager` 的异步回调（`stop` 完成、`terminationHandler`、延迟置 `running`）必须校验“是否仍是当前 process 实例”；否则旧进程回调会覆盖新状态，导致 UI 误判为“端口不可用”。
+- 对“监听地址/网络暴露”这类 socket 绑定配置，若产品要求不中断进行中任务，应采用“仅落盘配置、下次启动生效”策略，不在设置页切换时重启 Core。
+- 使用 MessagePack + AnyCodable 解析协议时，动态值模型必须显式支持 `Data`（bin）；否则终端输出/scrollback 等二进制字段会解码失败并表现为黑屏或无输出。
+- 排查启动卡顿/卡死时先确认日志归属：Debug 构建主要看 `~/.tidyflow/logs/*-dev.log` / `*.dev.log`，应用包运行主要看 `~/.tidyflow/logs/YYYY-MM-DD.log`，避免错看时间段。
+- 应用启动链路（首屏前）禁止在主线程同步执行外部命令并 `waitUntilExit`；此类探测应放后台并加超时兜底，否则会出现 Dock 图标持续跳动但窗口不出现。
+- 排查开发环境问题时应优先查看 `~/.tidyflow/logs/*-dev.log`（或 `*.dev.log`）；仅排查打包产物/生产行为时再看纯日期日志。
+- 启动期若要延迟展示主窗口，隐藏动作应放在 `AppDelegate.applicationDidFinishLaunching`（窗口首帧前）而非 `ContentView.onAppear`，否则会出现窗口闪一下。
 
 ## Build Commands
 
