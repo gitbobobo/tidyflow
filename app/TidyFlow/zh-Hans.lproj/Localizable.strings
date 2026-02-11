@@ -54,6 +54,9 @@
 "settings.mobile.remoteAccess" = "允许局域网移动端连接";
 "settings.mobile.remoteAccess.onHint" = "Core 将监听 0.0.0.0，请仅在可信网络开启。";
 "settings.mobile.remoteAccess.offHint" = "Core 仅接受本机 localhost 连接。";
+"settings.mobile.lanAddress" = "局域网地址";
+"settings.mobile.port" = "端口";
+"settings.mobile.unavailable" = "不可用";
 "settings.mobile.generateCode" = "生成配对码";
 "settings.mobile.codeExpires" = "配对码过期时间：%@";
 "settings.mobile.footer" = "开启后，在 iOS 客户端输入 电脑IP:端口 + 配对码 即可连接。";

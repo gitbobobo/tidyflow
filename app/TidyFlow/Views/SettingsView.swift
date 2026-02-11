@@ -69,6 +69,26 @@ struct CustomCommandsSection: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
+                if appState.remoteAccessEnabled {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("settings.mobile.lanAddress".localized)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(appState.mobileLanAddressDisplayText)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("settings.mobile.port".localized)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(appState.mobileAccessPortDisplayText)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+
                 HStack(spacing: 12) {
                     Button(action: { appState.requestMobilePairCode() }) {
                         if appState.mobilePairCodeLoading {

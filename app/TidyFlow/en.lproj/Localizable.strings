@@ -54,6 +54,9 @@
 "settings.mobile.remoteAccess" = "Enable mobile clients over LAN";
 "settings.mobile.remoteAccess.onHint" = "Core will listen on 0.0.0.0. Keep this enabled only in trusted networks.";
 "settings.mobile.remoteAccess.offHint" = "Core only accepts localhost connections.";
+"settings.mobile.lanAddress" = "LAN Address";
+"settings.mobile.port" = "Port";
+"settings.mobile.unavailable" = "Unavailable";
 "settings.mobile.generateCode" = "Generate Pair Code";
 "settings.mobile.codeExpires" = "Code expires at %@";
 "settings.mobile.footer" = "After enabling, use host:port + pair code in iOS app to connect.";

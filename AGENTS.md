@@ -32,6 +32,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 多项目共存时，工作空间名（如 `"default"`）不具备全局唯一性；需要关联项目的场景必须显式传递 `projectName`，禁止通过遍历 `projects` 按工作空间名反查项目（会命中第一个匹配项而非实际所属项目）。
 - 跨分支入口触发但实际写入默认分支的操作（如 AI 合并到默认分支），其后台阻塞任务归属应绑定默认工作空间，避免错误地落在来源分支队列。
 - 引入移动端远程访问时，Core 应默认仅监听 loopback，并通过显式开关切换到 `0.0.0.0`；远程连接统一走“本机生成配对码 -> 移动端换取短期 token”链路，且 `pair/start`/`pair/revoke` 保持仅本机可调用。
+- 编辑 `app/TidyFlow.xcodeproj/project.pbxproj` 时，带条件的 build setting 键（如 `[sdk=iphone*]`）必须写成带引号的完整键名（如 `"INFOPLIST_FILE[sdk=iphone*]"`），否则工程会因 plist 解析失败而无法打开。
+- 移动端连接入口展示的地址/端口必须来自运行时状态（局域网 IP + Core 当前监听端口），不要假设固定端口（如 47999），避免重启后动态端口变化导致连接失败。
 
 ## Build Commands
 

@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Darwin
 
 private struct PairStartHTTPResponse: Decodable {
     let pairCode: String
@@ -17,6 +18,77 @@ private struct PairErrorHTTPResponse: Decodable {
 }
 
 extension AppState {
+    /// 当前可用于移动端连接的局域网 IPv4 地址列表（优先 en* 接口）
+    var mobileLanIPv4Addresses: [String] {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else {
+            return []
+        }
+        defer { freeifaddrs(ifaddr) }
+
+        var preferred: [String] = []
+        var others: [String] = []
+        var cursor: UnsafeMutablePointer<ifaddrs>? = firstAddr
+
+        while let current = cursor {
+            let iface = current.pointee
+            let flags = Int32(iface.ifa_flags)
+            let isUp = (flags & IFF_UP) != 0
+            let isRunning = (flags & IFF_RUNNING) != 0
+            let isLoopback = (flags & IFF_LOOPBACK) != 0
+
+            if isUp,
+               isRunning,
+               !isLoopback,
+               let sa = iface.ifa_addr,
+               sa.pointee.sa_family == UInt8(AF_INET),
+               let cName = iface.ifa_name {
+                var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                let result = getnameinfo(
+                    sa,
+                    socklen_t(sa.pointee.sa_len),
+                    &hostBuffer,
+                    socklen_t(hostBuffer.count),
+                    nil,
+                    0,
+                    NI_NUMERICHOST
+                )
+                if result == 0 {
+                    let ip = String(cString: hostBuffer)
+                    let name = String(cString: cName)
+                    if name.hasPrefix("en") {
+                        preferred.append(ip)
+                    } else {
+                        others.append(ip)
+                    }
+                }
+            }
+
+            cursor = iface.ifa_next
+        }
+
+        // 去重并保持顺序
+        var seen = Set<String>()
+        return (preferred + others).filter { seen.insert($0).inserted }
+    }
+
+    /// 移动端连接展示用的局域网地址文案
+    var mobileLanAddressDisplayText: String {
+        let addresses = mobileLanIPv4Addresses
+        if addresses.isEmpty {
+            return "settings.mobile.unavailable".localized
+        }
+        return addresses.joined(separator: ", ")
+    }
+
+    /// 移动端连接展示用的端口文案
+    var mobileAccessPortDisplayText: String {
+        guard let port = coreProcessManager.currentPort else {
+            return "settings.mobile.unavailable".localized
+        }
+        return "\(port)"
+    }
+
     // MARK: - GitCacheState 接线
 
     func setupGitCache() {
