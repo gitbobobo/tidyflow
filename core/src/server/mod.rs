@@ -3,6 +3,7 @@ pub mod file_api;
 pub mod file_index;
 pub mod git;
 pub mod handlers;
+pub mod lsp;
 pub mod protocol;
 pub mod terminal_registry;
 pub mod watcher;

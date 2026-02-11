@@ -1658,7 +1658,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trash",
+ "url",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]
