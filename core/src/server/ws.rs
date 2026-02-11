@@ -18,6 +18,7 @@ use crate::server::context::{
     FlowControl, HandlerContext, SharedAppState, SharedRunningCommands, TermSubscription,
 };
 use crate::server::handlers;
+use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::{
     v1_capabilities, ClientMessage, RequestEnvelope, ServerMessage, PROTOCOL_VERSION,
 };
@@ -165,6 +166,7 @@ async fn handle_socket(
     // 项目命令输出通道：后台 task 逐行推送 → 主循环转发到 WebSocket
     let (cmd_output_tx, mut cmd_output_rx) =
         tokio::sync::mpsc::channel::<ServerMessage>(256);
+    let lsp_supervisor = LspSupervisor::new(cmd_output_tx.clone());
 
     // 构造 HandlerContext，收拢所有共享依赖
     let handler_ctx = HandlerContext {
@@ -176,6 +178,7 @@ async fn handle_socket(
         agg_tx: agg_tx.clone(),
         running_commands: running_commands.clone(),
         cmd_output_tx: cmd_output_tx.clone(),
+        lsp_supervisor: lsp_supervisor.clone(),
     };
 
     // Send Hello message with v1 capabilities
@@ -305,6 +308,11 @@ async fn handle_socket(
                     WatchEvent::FileChanged { project, workspace, paths, kind } => {
                         debug!("File changed: project={}, workspace={}, paths={:?}", project, workspace, paths);
 
+                        handler_ctx
+                            .lsp_supervisor
+                            .handle_paths_changed(&project, &workspace, &paths)
+                            .await;
+
                         // 文件变化可能影响 git status，主动失效缓存
                         {
                             let ws_ctx = crate::server::context::resolve_workspace(
@@ -371,6 +379,9 @@ async fn handle_socket(
             handle.abort();
         }
     }
+
+    // WS 断开：关闭该连接托管的 LSP 会话
+    handler_ctx.lsp_supervisor.shutdown_all().await;
 
     info!("WebSocket connection handler finished");
 }
@@ -545,6 +556,11 @@ async fn handle_client_message(
     )
     .await?
     {
+        return Ok(());
+    }
+
+    // LSP 诊断消息
+    if handlers::lsp::handle_lsp_message(&client_msg, socket, ctx).await? {
         return Ok(());
     }
 

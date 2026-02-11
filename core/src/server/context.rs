@@ -9,6 +9,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
+use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
 use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::workspace::state::AppState;
@@ -39,6 +40,7 @@ pub struct HandlerContext {
     pub agg_tx: mpsc::Sender<(String, Vec<u8>)>,
     pub running_commands: SharedRunningCommands,
     pub cmd_output_tx: mpsc::Sender<ServerMessage>,
+    pub lsp_supervisor: LspSupervisor,
 }
 
 /// 统一应用错误类型 — 由调度层自动转换为 `ServerMessage::Error`

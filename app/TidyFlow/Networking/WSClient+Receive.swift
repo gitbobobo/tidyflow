@@ -261,6 +261,16 @@ extension WSClient {
             let taskId = json["task_id"] as? String ?? ""
             NSLog("[WSClient] ProjectCommand cancelled: task_id=%@", taskId)
 
+        case "lsp_diagnostics":
+            if let result = LspDiagnosticsResult.from(json: json) {
+                onLspDiagnostics?(result)
+            }
+
+        case "lsp_status":
+            if let result = LspStatusResult.from(json: json) {
+                onLspStatus?(result)
+            }
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)

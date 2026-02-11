@@ -75,6 +75,9 @@ class WSClient: NSObject, ObservableObject {
     var onProjectCommandCompleted: ((String, String, String, String, Bool, String?) -> Void)?
     // v1.30: 项目命令实时输出回调 (taskId, line)
     var onProjectCommandOutput: ((String, String) -> Void)?
+    // v1.31: LSP 诊断与状态
+    var onLspDiagnostics: ((LspDiagnosticsResult) -> Void)?
+    var onLspStatus: ((LspStatusResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

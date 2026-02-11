@@ -519,6 +519,35 @@ extension WSClient {
         ])
     }
 
+    // MARK: - v1.31: LSP diagnostics
+
+    /// 启动工作区 LSP 诊断
+    func requestLspStartWorkspace(project: String, workspace: String) {
+        send([
+            "type": "lsp_start_workspace",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    /// 停止工作区 LSP 诊断
+    func requestLspStopWorkspace(project: String, workspace: String) {
+        send([
+            "type": "lsp_stop_workspace",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    /// 拉取一次当前工作区 LSP 诊断快照
+    func requestLspGetDiagnostics(project: String, workspace: String) {
+        send([
+            "type": "lsp_get_diagnostics",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
     // MARK: - 日志上报
 
     /// 发送日志到 Rust Core 统一写入文件

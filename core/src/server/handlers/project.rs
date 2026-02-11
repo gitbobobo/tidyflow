@@ -151,6 +151,18 @@ pub async fn handle_project_message(
                         },
                     )
                     .await?;
+
+                    // 选中工作空间后自动启动 LSP 诊断（后台持续）
+                    if let Err(err) = ctx
+                        .lsp_supervisor
+                        .start_workspace(project, workspace, ws_ctx.root_path.clone())
+                        .await
+                    {
+                        warn!(
+                            "Failed to start LSP for workspace {}/{}: {}",
+                            project, workspace, err
+                        );
+                    }
                 }
                 Err(e) => {
                     send_message(socket, &e.to_server_error()).await?;
@@ -288,6 +300,8 @@ pub async fn handle_project_message(
                 "RemoveWorkspace request: project={}, workspace={}",
                 project, workspace
             );
+
+            let _ = ctx.lsp_supervisor.stop_workspace(project, workspace).await;
 
             // 关闭该工作空间的所有终端
             {

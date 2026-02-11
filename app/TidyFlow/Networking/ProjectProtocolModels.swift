@@ -222,3 +222,91 @@ struct FileIndexCache {
     }
 }
 
+// MARK: - v1.31: LSP diagnostics
+
+struct LspDiagnosticItem {
+    let path: String
+    let line: Int
+    let column: Int
+    let endLine: Int
+    let endColumn: Int
+    let severity: String
+    let message: String
+    let source: String?
+    let code: String?
+    let language: String
+
+    static func from(json: [String: Any]) -> LspDiagnosticItem? {
+        guard let path = json["path"] as? String,
+              let line = json["line"] as? Int,
+              let column = json["column"] as? Int,
+              let endLine = json["end_line"] as? Int,
+              let endColumn = json["end_column"] as? Int,
+              let severity = json["severity"] as? String,
+              let message = json["message"] as? String,
+              let language = json["language"] as? String else {
+            return nil
+        }
+        return LspDiagnosticItem(
+            path: path,
+            line: line,
+            column: column,
+            endLine: endLine,
+            endColumn: endColumn,
+            severity: severity,
+            message: message,
+            source: json["source"] as? String,
+            code: json["code"] as? String,
+            language: language
+        )
+    }
+}
+
+struct LspDiagnosticsResult {
+    let project: String
+    let workspace: String
+    let highestSeverity: String
+    let updatedAt: String
+    let items: [LspDiagnosticItem]
+
+    static func from(json: [String: Any]) -> LspDiagnosticsResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let highestSeverity = json["highest_severity"] as? String,
+              let updatedAt = json["updated_at"] as? String else {
+            return nil
+        }
+        let arr = json["items"] as? [[String: Any]] ?? []
+        let items = arr.compactMap { LspDiagnosticItem.from(json: $0) }
+        return LspDiagnosticsResult(
+            project: project,
+            workspace: workspace,
+            highestSeverity: highestSeverity,
+            updatedAt: updatedAt,
+            items: items
+        )
+    }
+}
+
+struct LspStatusResult {
+    let project: String
+    let workspace: String
+    let runningLanguages: [String]
+    let missingLanguages: [String]
+    let message: String?
+
+    static func from(json: [String: Any]) -> LspStatusResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else {
+            return nil
+        }
+        return LspStatusResult(
+            project: project,
+            workspace: workspace,
+            runningLanguages: json["running_languages"] as? [String] ?? [],
+            missingLanguages: json["missing_languages"] as? [String] ?? [],
+            message: json["message"] as? String
+        )
+    }
+}
+
