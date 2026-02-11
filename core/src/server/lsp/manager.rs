@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,6 +16,12 @@ use super::session::LspSession;
 use super::types::{LspLanguage, RawLspDiagnostic, SupervisorEvent, WorkspaceDiagnostic};
 
 const MAX_INITIAL_FILES_PER_LANGUAGE: usize = 1200;
+
+struct ChangedFilePayload {
+    abs_path: PathBuf,
+    content: Option<String>,
+    exists: bool,
+}
 
 struct WorkspaceRuntime {
     project: String,
@@ -207,15 +213,9 @@ impl LspSupervisor {
                         Ok(mut session) => {
                             runtime.running_languages.push(language);
                             let files = collect_workspace_files(&root_path, language);
-                            for file in files {
-                                match std::fs::read_to_string(&file) {
-                                    Ok(content) => {
-                                        let _ = session.sync_file(&file, &content).await;
-                                    }
-                                    Err(e) => {
-                                        warn!("read file for LSP failed: {} ({})", file.display(), e);
-                                    }
-                                }
+                            let preloaded = read_workspace_files_blocking(files).await;
+                            for (file, content) in preloaded {
+                                let _ = session.sync_file(&file, &content).await;
                             }
                             runtime.sessions.insert(language, session);
                         }
@@ -325,23 +325,37 @@ impl LspSupervisor {
         relative_paths: &[String],
     ) {
         let key = workspace_key(project, workspace);
+        let coalesced = coalesce_relative_paths(relative_paths);
+        if coalesced.is_empty() {
+            return;
+        }
+
+        let root_path = {
+            let guard = self.inner.lock().await;
+            let Some(runtime) = guard.workspaces.get(&key) else {
+                return;
+            };
+            runtime.root_path.clone()
+        };
+
+        // 先在阻塞线程池读取文件内容，避免在 async 线程里做磁盘 I/O
+        let changed_payloads = read_changed_files_blocking(root_path, &coalesced).await;
+
         let mut guard = self.inner.lock().await;
         let Some(runtime) = guard.workspaces.get_mut(&key) else {
             return;
         };
-
-        for rel_path in relative_paths {
-            let abs_path = runtime.root_path.join(rel_path);
+        for payload in changed_payloads {
             for session in runtime.sessions.values_mut() {
-                if !session.supports_path(&abs_path) {
+                if !session.supports_path(&payload.abs_path) {
                     continue;
                 }
-                if abs_path.exists() && abs_path.is_file() {
-                    if let Ok(content) = std::fs::read_to_string(&abs_path) {
-                        let _ = session.sync_file(&abs_path, &content).await;
+                if payload.exists {
+                    if let Some(content) = payload.content.as_deref() {
+                        let _ = session.sync_file(&payload.abs_path, content).await;
                     }
                 } else {
-                    let _ = session.remove_file(&abs_path).await;
+                    let _ = session.remove_file(&payload.abs_path).await;
                 }
             }
         }
@@ -437,4 +451,81 @@ fn uri_to_relative_path(root_path: &Path, uri: &str) -> Option<String> {
     let full = url.to_file_path().ok()?;
     let rel = full.strip_prefix(root_path).ok()?;
     Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
+fn coalesce_relative_paths(relative_paths: &[String]) -> Vec<String> {
+    // watcher 已做防抖，这里再做一次去重合并，降低 burst 事件放大
+    let mut set = BTreeSet::new();
+    for rel_path in relative_paths {
+        let trimmed = rel_path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        set.insert(trimmed.to_string());
+    }
+    set.into_iter().collect()
+}
+
+async fn read_workspace_files_blocking(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
+    tokio::task::spawn_blocking(move || {
+        let mut loaded = Vec::new();
+        for path in paths {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => loaded.push((path, content)),
+                Err(e) => {
+                    warn!("read file for LSP failed: {} ({})", path.display(), e);
+                }
+            }
+        }
+        loaded
+    })
+    .await
+    .unwrap_or_default()
+}
+
+async fn read_changed_files_blocking(
+    root_path: PathBuf,
+    relative_paths: &[String],
+) -> Vec<ChangedFilePayload> {
+    let rel_paths = relative_paths.to_vec();
+    tokio::task::spawn_blocking(move || {
+        let mut payloads = Vec::with_capacity(rel_paths.len());
+        for rel_path in rel_paths {
+            let abs_path = root_path.join(rel_path);
+            if abs_path.exists() && abs_path.is_file() {
+                let content = std::fs::read_to_string(&abs_path).ok();
+                payloads.push(ChangedFilePayload {
+                    abs_path,
+                    content,
+                    exists: true,
+                });
+            } else {
+                payloads.push(ChangedFilePayload {
+                    abs_path,
+                    content: None,
+                    exists: false,
+                });
+            }
+        }
+        payloads
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coalesce_relative_paths;
+
+    #[test]
+    fn coalesce_relative_paths_dedups_and_sorts() {
+        let input = vec![
+            "src/main.rs".to_string(),
+            " src/main.rs ".to_string(),
+            "".to_string(),
+            "src/lib.rs".to_string(),
+        ];
+        let merged = coalesce_relative_paths(&input);
+        assert_eq!(merged, vec!["src/lib.rs".to_string(), "src/main.rs".to_string()]);
+    }
 }
