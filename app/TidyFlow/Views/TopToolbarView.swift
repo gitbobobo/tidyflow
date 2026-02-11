@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Shows Core process status (Starting/Running/Restarting/Failed) with port info
 struct CoreStatusView: View {
@@ -86,10 +87,47 @@ struct ConnectionStatusView: View {
 struct ProjectBranchView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
+    @State private var showingIssuesPopover = false
 
-    /// 连接状态颜色
-    private var statusColor: Color {
-        appState.connectionState == .connected ? .green : .red
+    private var currentWorkspaceGlobalKey: String? {
+        appState.currentGlobalWorkspaceKey
+    }
+
+    /// 当前工作空间诊断快照
+    private var diagnosticsSnapshot: WorkspaceDiagnosticsSnapshot {
+        appState.diagnosticsSnapshot(for: currentWorkspaceGlobalKey)
+    }
+
+    /// 当前工作空间 LSP 是否正在加载
+    private var isLspLoading: Bool {
+        appState.isLspLoading(for: currentWorkspaceGlobalKey)
+    }
+
+    /// 顶部圆点颜色：诊断语义（Error/Warning/Info/None）
+    private var diagnosticsColor: Color {
+        if isLspLoading && appState.connectionState == .connected {
+            return .gray
+        }
+        return diagnosticsSnapshot.highestSeverity.dotColor
+    }
+
+    private var diagnosticsHelpText: String {
+        let connectionText = appState.connectionState == .connected
+            ? "connection.connected".localized
+            : "connection.disconnected".localized
+        let base = String(
+            format: "toolbar.diagnostics.help".localized,
+            diagnosticsSnapshot.highestSeverity.localizedName,
+            diagnosticsSnapshot.items.count,
+            connectionText
+        )
+        if isLspLoading && appState.connectionState == .connected {
+            return "\(base)\n\("toolbar.diagnostics.loading".localized)"
+        }
+        if appState.connectionState == .connected {
+            return base
+        }
+        return "\(base)\n\("toolbar.diagnostics.disconnectedHint".localized)"
     }
 
     /// 当前分支名称
@@ -103,28 +141,263 @@ struct ProjectBranchView: View {
     }
 
     var body: some View {
-        if appState.selectedWorkspaceKey != nil {
+        if let globalKey = currentWorkspaceGlobalKey {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                    .help(appState.connectionState == .connected ? "connection.connected".localized : "connection.disconnected".localized)
+                ZStack {
+                    Circle()
+                        .fill(diagnosticsColor)
+                        .frame(width: 8, height: 8)
+                    if appState.connectionState != .connected {
+                        Circle()
+                            .stroke(Color.red, lineWidth: 1)
+                            .frame(width: 10, height: 10)
+                    }
+                }
+                .help(diagnosticsHelpText)
 
-                Text(appState.selectedProjectName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primary)
+                Button {
+                    showingIssuesPopover.toggle()
+                } label: {
+                    HStack(spacing: 0) {
+                        Text(appState.selectedProjectName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.primary)
 
-                if let branch = currentBranch {
-                    Text(":")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Text(branch)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
+                        if let branch = currentBranch {
+                            Text(":")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text(branch)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("toolbar.diagnostics.openIssues".localized)
+                .popover(isPresented: $showingIssuesPopover) {
+                    WorkspaceIssuePopoverView(workspaceGlobalKey: globalKey) {
+                        showingIssuesPopover = false
+                    }
+                    .environmentObject(appState)
                 }
             }
             .padding(.leading, 8)
             .padding(.trailing, 2)
+        }
+    }
+}
+
+// MARK: - 工作空间问题列表弹框
+
+private struct WorkspaceIssuePopoverView: View {
+    @EnvironmentObject var appState: AppState
+    let workspaceGlobalKey: String
+    let onSelectIssue: () -> Void
+
+    private var snapshot: WorkspaceDiagnosticsSnapshot {
+        appState.diagnosticsSnapshot(for: workspaceGlobalKey)
+    }
+
+    private var lspStatus: WorkspaceLspStatusSnapshot? {
+        appState.lspStatusSnapshot(for: workspaceGlobalKey)
+    }
+
+    private var groupedPaths: [String] {
+        let keys = Set(snapshot.items.map { $0.displayPath })
+        return keys.sorted()
+    }
+
+    private var errorCount: Int {
+        snapshot.items.filter { $0.severity == .error }.count
+    }
+
+    private var warningCount: Int {
+        snapshot.items.filter { $0.severity == .warning }.count
+    }
+
+    private var infoCount: Int {
+        snapshot.items.filter { $0.severity == .info }.count
+    }
+
+    private func issues(for path: String) -> [ProjectDiagnosticItem] {
+        snapshot.items.filter { $0.displayPath == path }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("toolbar.diagnostics.issueListTitle".localized)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                HStack(spacing: 8) {
+                    statBadge(title: String(format: "toolbar.diagnostics.countErrors".localized, errorCount), color: .red)
+                    statBadge(title: String(format: "toolbar.diagnostics.countWarnings".localized, warningCount), color: .orange)
+                    statBadge(title: String(format: "toolbar.diagnostics.countInfo".localized, infoCount), color: .blue)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            if let status = lspStatus, !status.missingLanguages.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("toolbar.diagnostics.missingServers".localized)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Text(
+                            String(
+                                format: "toolbar.diagnostics.missingServersDetail".localized,
+                                status.missingLanguages.joined(separator: ", ")
+                            )
+                        )
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider()
+            }
+
+            if snapshot.items.isEmpty {
+                VStack(spacing: 10) {
+                    Spacer()
+                    Image(systemName: appState.isLspLoading(for: workspaceGlobalKey) ? "hourglass" : "checkmark.circle")
+                        .font(.system(size: 26))
+                        .foregroundColor(.secondary.opacity(0.6))
+                    Text(appState.isLspLoading(for: workspaceGlobalKey) ? "toolbar.diagnostics.loading".localized : "toolbar.diagnostics.noIssues".localized)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(groupedPaths, id: \.self) { path in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(path)
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+
+                                ForEach(issues(for: path)) { item in
+                                    issueRow(item)
+                                }
+                            }
+                        }
+                    }
+                    .padding(12)
+                }
+            }
+        }
+        .frame(width: 560, height: 420)
+    }
+
+    @ViewBuilder
+    private func issueRow(_ item: ProjectDiagnosticItem) -> some View {
+        let canJump = item.editorPath != nil
+        Button {
+            guard let editorPath = item.editorPath else { return }
+            appState.addEditorTab(workspaceKey: workspaceGlobalKey, path: editorPath, line: item.line)
+            onSelectIssue()
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: item.severity.iconName)
+                    .font(.system(size: 11))
+                    .foregroundColor(item.severity.dotColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.summary)
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.leading)
+
+                    Text(issueLocationText(item))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+        .help(canJump ? "toolbar.diagnostics.jumpToIssue".localized : "toolbar.diagnostics.cannotJump".localized)
+        .contextMenu {
+            Button("toolbar.diagnostics.copyIssue".localized) {
+                copyIssueDetail(item)
+            }
+            Button("toolbar.diagnostics.copyIssuePath".localized) {
+                copyText(item.displayPath)
+            }
+            Button("toolbar.diagnostics.copyIssueSummary".localized) {
+                copyText(item.summary)
+            }
+        }
+    }
+
+    private func issueLocationText(_ item: ProjectDiagnosticItem) -> String {
+        if let col = item.column {
+            return "L\(item.line):\(col)"
+        }
+        return "L\(item.line)"
+    }
+
+    @ViewBuilder
+    private func statBadge(title: String, color: Color) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.14))
+            .foregroundColor(color)
+            .clipShape(Capsule())
+    }
+
+    private func copyIssueDetail(_ item: ProjectDiagnosticItem) {
+        let loc = issueLocationText(item)
+        let text = "\(item.severity.localizedName): \(item.summary)\n\(item.displayPath) \(loc)"
+        copyText(text)
+    }
+
+    private func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+private extension DiagnosticSeverity {
+    var dotColor: Color {
+        switch self {
+        case .error: return .red
+        case .warning: return .orange
+        case .info: return .blue
+        case .none: return .green
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .error: return "xmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .info: return "info.circle.fill"
+        case .none: return "checkmark.circle.fill"
+        }
+    }
+
+    var localizedName: String {
+        switch self {
+        case .error: return "toolbar.diagnostics.severity.error".localized
+        case .warning: return "toolbar.diagnostics.severity.warning".localized
+        case .info: return "toolbar.diagnostics.severity.info".localized
+        case .none: return "toolbar.diagnostics.severity.none".localized
         }
     }
 }

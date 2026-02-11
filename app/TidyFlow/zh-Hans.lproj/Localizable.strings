@@ -100,6 +100,27 @@
 "toolbar.openInEditor" = "在外部编辑器中打开";
 "toolbar.openFailed" = "打开失败";
 "toolbar.openEditorFailed" = "打开编辑器失败";
+"toolbar.diagnostics.help" = "诊断状态：%@ · %d 条问题 · %@";
+"toolbar.diagnostics.disconnectedHint" = "Core 连接已断开，问题列表可能不是最新";
+"toolbar.diagnostics.openIssues" = "查看问题列表";
+"toolbar.diagnostics.issueListTitle" = "问题";
+"toolbar.diagnostics.summary" = "%@ · %d 条问题";
+"toolbar.diagnostics.noIssues" = "最近一次命令输出未发现问题";
+"toolbar.diagnostics.jumpToIssue" = "打开问题位置";
+"toolbar.diagnostics.cannotJump" = "当前工作空间无法定位该问题";
+"toolbar.diagnostics.severity.error" = "错误";
+"toolbar.diagnostics.severity.warning" = "警告";
+"toolbar.diagnostics.severity.info" = "信息";
+"toolbar.diagnostics.severity.none" = "无问题";
+"toolbar.diagnostics.missingServers" = "部分语言服务不可用";
+"toolbar.diagnostics.missingServersDetail" = "已跳过语言：%@。安装对应语言服务后重新打开工作空间。";
+"toolbar.diagnostics.loading" = "诊断加载中...";
+"toolbar.diagnostics.countErrors" = "错误 %d";
+"toolbar.diagnostics.countWarnings" = "警告 %d";
+"toolbar.diagnostics.countInfo" = "信息 %d";
+"toolbar.diagnostics.copyIssue" = "复制问题详情";
+"toolbar.diagnostics.copyIssuePath" = "复制文件路径";
+"toolbar.diagnostics.copyIssueSummary" = "复制问题摘要";
 
 /* 添加项目 */
 "addProject.title" = "添加项目";

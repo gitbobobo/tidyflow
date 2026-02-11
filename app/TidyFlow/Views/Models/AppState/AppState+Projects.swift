@@ -107,6 +107,9 @@ extension AppState {
             activeTabIdByWorkspace.removeValue(forKey: globalKey)
             fileIndexCache.removeValue(forKey: globalKey)
             workspaceTerminalOpenTime.removeValue(forKey: globalKey)
+            workspaceDiagnostics.removeValue(forKey: globalKey)
+            workspaceLspStatus.removeValue(forKey: globalKey)
+            workspaceLspLoading.removeValue(forKey: globalKey)
         }
     }
 
@@ -167,6 +170,8 @@ extension AppState {
         taskManager.cancelAllTasks(for: globalKey)
 
         // 发送删除请求
+        markLspLoading(project: projectName, workspace: workspaceName, loading: false)
+        wsClient.requestLspStopWorkspace(project: projectName, workspace: workspaceName)
         wsClient.requestRemoveWorkspace(project: projectName, workspace: workspaceName)
     }
 

@@ -100,6 +100,27 @@
 "toolbar.openInEditor" = "Open in External Editor";
 "toolbar.openFailed" = "Open Failed";
 "toolbar.openEditorFailed" = "Failed to Open Editor";
+"toolbar.diagnostics.help" = "Diagnostics: %@ · %d issue(s) · %@";
+"toolbar.diagnostics.disconnectedHint" = "Core connection is disconnected; issue list may be stale";
+"toolbar.diagnostics.openIssues" = "Show issue list";
+"toolbar.diagnostics.issueListTitle" = "Problems";
+"toolbar.diagnostics.summary" = "%@ · %d issue(s)";
+"toolbar.diagnostics.noIssues" = "No issues found in latest command output";
+"toolbar.diagnostics.jumpToIssue" = "Open issue location";
+"toolbar.diagnostics.cannotJump" = "Cannot locate this issue in current workspace";
+"toolbar.diagnostics.severity.error" = "Error";
+"toolbar.diagnostics.severity.warning" = "Warning";
+"toolbar.diagnostics.severity.info" = "Info";
+"toolbar.diagnostics.severity.none" = "No issues";
+"toolbar.diagnostics.missingServers" = "Some language servers are unavailable";
+"toolbar.diagnostics.missingServersDetail" = "Skipped languages: %@. Install corresponding language servers and reopen workspace.";
+"toolbar.diagnostics.loading" = "Diagnostics loading...";
+"toolbar.diagnostics.countErrors" = "Errors %d";
+"toolbar.diagnostics.countWarnings" = "Warnings %d";
+"toolbar.diagnostics.countInfo" = "Info %d";
+"toolbar.diagnostics.copyIssue" = "Copy Issue Detail";
+"toolbar.diagnostics.copyIssuePath" = "Copy File Path";
+"toolbar.diagnostics.copyIssueSummary" = "Copy Issue Summary";
 
 /* Add Project */
 "addProject.title" = "Add Project";

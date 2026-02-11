@@ -5,6 +5,18 @@ extension AppState {
 
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
+        let previousProjectName = selectedProjectName
+        let previousWorkspaceName = selectedWorkspaceKey
+
+        // 切换工作空间时主动停止旧工作空间的 LSP，避免后台继续推送旧数据
+        if connectionState == .connected,
+           let oldWs = previousWorkspaceName,
+           !oldWs.isEmpty,
+           (oldWs != workspaceName || projects.first(where: { $0.id == projectId })?.name != previousProjectName) {
+            markLspLoading(project: previousProjectName, workspace: oldWs, loading: false)
+            wsClient.requestLspStopWorkspace(project: previousProjectName, workspace: oldWs)
+        }
+
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
         // 选中工作空间时关闭项目配置页面
@@ -37,6 +49,11 @@ extension AppState {
             gitCache.fetchGitStatus(workspaceKey: workspaceName)
             gitCache.fetchGitBranches(workspaceKey: workspaceName)
             gitCache.fetchGitLog(workspaceKey: workspaceName)
+
+            // 切换工作空间时显式启动 LSP，并拉取一次最新快照
+            markLspLoading(project: selectedProjectName, workspace: workspaceName, loading: true)
+            wsClient.requestLspStartWorkspace(project: selectedProjectName, workspace: workspaceName)
+            wsClient.requestLspGetDiagnostics(project: selectedProjectName, workspace: workspaceName)
         }
 
         // 切换到此工作空间后清除侧边栏“任务完成”铃铛提示
