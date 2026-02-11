@@ -1,17 +1,22 @@
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::StatusCode,
-    response::IntoResponse,
-    routing::get,
+    Json,
+    response::{IntoResponse, Response},
+    routing::{get, post},
     Router,
 };
-use serde::Deserialize;
+use chrono::{SecondsFormat, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, Notify};
 use tracing::{debug, error, info, trace, warn};
+use uuid::Uuid;
 
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
@@ -38,20 +43,97 @@ const FLOW_CONTROL_HIGH_WATER: u64 = 100 * 1024;
 const MAX_WS_FRAME_SIZE: usize = 2 * 1024 * 1024;
 /// 入站 WS 消息大小上限（2MB）
 const MAX_WS_MESSAGE_SIZE: usize = 2 * 1024 * 1024;
+/// 配对码有效期（秒）
+const PAIR_CODE_TTL_SECS: u64 = 120;
+/// 移动端 WS token 有效期（秒）
+const PAIR_TOKEN_TTL_SECS: u64 = 24 * 60 * 60;
+/// 待兑换配对码最大数量
+const MAX_PENDING_PAIR_CODES: usize = 64;
+/// 已签发移动端 token 最大数量
+const MAX_ISSUED_PAIR_TOKENS: usize = 256;
 
 #[derive(Debug, Deserialize)]
 struct WsAuthQuery {
     token: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct PairingRegistry {
+    /// key: 6 位配对码
+    pending_codes: HashMap<String, PairCodeEntry>,
+    /// key: ws_token
+    issued_tokens: HashMap<String, PairTokenEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct PairCodeEntry {
+    expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PairTokenEntry {
+    token_id: String,
+    device_name: String,
+    issued_at_unix: u64,
+    expires_at_unix: u64,
+}
+
+type SharedPairingRegistry = Arc<Mutex<PairingRegistry>>;
+
+#[derive(Debug, Serialize)]
+struct PairStartResponse {
+    pair_code: String,
+    expires_at: String,
+    expires_at_unix: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairExchangeRequest {
+    pair_code: String,
+    #[serde(default)]
+    device_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PairExchangeResponse {
+    token_id: String,
+    ws_token: String,
+    device_name: String,
+    issued_at: String,
+    issued_at_unix: u64,
+    expires_at: String,
+    expires_at_unix: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairRevokeRequest {
+    #[serde(default)]
+    token_id: Option<String>,
+    #[serde(default)]
+    ws_token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PairRevokeResponse {
+    ok: bool,
+    revoked: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct PairErrorResponse {
+    error: String,
+    message: String,
+}
+
 /// WebSocket 服务器上下文，包含共享状态和防抖保存通道
 #[derive(Clone)]
-pub struct AppContext {
-    pub app_state: SharedAppState,
-    pub save_tx: tokio::sync::mpsc::Sender<()>,
-    pub terminal_registry: SharedTerminalRegistry,
-    pub scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    pub expected_ws_token: Option<String>,
+struct AppContext {
+    app_state: SharedAppState,
+    save_tx: tokio::sync::mpsc::Sender<()>,
+    terminal_registry: SharedTerminalRegistry,
+    scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    expected_ws_token: Option<String>,
+    pairing_registry: SharedPairingRegistry,
 }
 
 /// Run the WebSocket server on the specified port
@@ -78,11 +160,22 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let expected_ws_token = std::env::var("TIDYFLOW_WS_TOKEN")
         .ok()
         .filter(|token| !token.trim().is_empty());
+    let bind_addr = std::env::var("TIDYFLOW_BIND_ADDR")
+        .ok()
+        .map(|addr| addr.trim().to_string())
+        .filter(|addr| !addr.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
     if expected_ws_token.is_some() {
         info!("WebSocket token auth enabled");
     } else {
         warn!("WebSocket token auth disabled (TIDYFLOW_WS_TOKEN not set)");
+    }
+    if bind_addr != "127.0.0.1" {
+        warn!("Remote bind enabled on {} (LAN clients can connect)", bind_addr);
+        if expected_ws_token.is_none() {
+            warn!("Remote bind without token is unsafe; set TIDYFLOW_WS_TOKEN");
+        }
     }
 
     let ctx = AppContext {
@@ -91,13 +184,17 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         terminal_registry,
         scrollback_tx,
         expected_ws_token,
+        pairing_registry: Arc::new(Mutex::new(PairingRegistry::default())),
     };
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        .route("/pair/start", post(pair_start_handler))
+        .route("/pair/exchange", post(pair_exchange_handler))
+        .route("/pair/revoke", post(pair_revoke_handler))
         .with_state(ctx);
 
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("{}:{}", bind_addr, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     info!(
@@ -105,7 +202,11 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         addr, PROTOCOL_VERSION
     );
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -148,7 +249,13 @@ async fn ws_handler(
     query: Option<Query<WsAuthQuery>>,
 ) -> impl IntoResponse {
     let provided_token = query.and_then(|q| q.0.token);
-    if !is_ws_token_authorized(ctx.expected_ws_token.as_deref(), provided_token.as_deref()) {
+    if !is_ws_token_authorized(
+        ctx.expected_ws_token.as_deref(),
+        provided_token.as_deref(),
+        &ctx.pairing_registry,
+    )
+    .await
+    {
         warn!("Rejected unauthorized WebSocket upgrade request");
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
@@ -167,30 +274,394 @@ async fn ws_handler(
         .into_response()
 }
 
-fn is_ws_token_authorized(expected: Option<&str>, provided: Option<&str>) -> bool {
+fn is_request_from_loopback(addr: SocketAddr) -> bool {
+    addr.ip().is_loopback()
+}
+
+fn now_unix_ts() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs()
+}
+
+fn unix_ts_to_rfc3339(ts: u64) -> String {
+    Utc.timestamp_opt(ts as i64, 0)
+        .single()
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn cleanup_expired_pairing_entries(reg: &mut PairingRegistry, now_ts: u64) {
+    reg.pending_codes
+        .retain(|_, entry| entry.expires_at_unix > now_ts);
+    reg.issued_tokens
+        .retain(|_, entry| entry.expires_at_unix > now_ts);
+}
+
+fn generate_pair_code() -> String {
+    let raw = Uuid::new_v4().as_u128() % 1_000_000;
+    format!("{raw:06}")
+}
+
+async fn is_ws_token_authorized(
+    expected: Option<&str>,
+    provided: Option<&str>,
+    pairing_registry: &SharedPairingRegistry,
+) -> bool {
     match expected {
-        // 当 Core 配置了 token 时，客户端必须携带并匹配
-        Some(expected_token) => provided.is_some_and(|token| token == expected_token),
-        // 兼容手工启动场景：未配置 token 时放行本地连接
+        // 未配置 token 时保持兼容：放行连接（通常只用于本机调试）
         None => true,
+        // 当 Core 配置了 token 时，客户端必须携带并匹配
+        Some(expected_token) => {
+            let Some(token) = provided else {
+                return false;
+            };
+            if token == expected_token {
+                return true;
+            }
+
+            let mut reg = pairing_registry.lock().await;
+            let now_ts = now_unix_ts();
+            cleanup_expired_pairing_entries(&mut reg, now_ts);
+            if let Some(entry) = reg.issued_tokens.get(token) {
+                trace!(
+                    token_id = %entry.token_id,
+                    device = %entry.device_name,
+                    issued_at = entry.issued_at_unix,
+                    "Authorized by paired token"
+                );
+                true
+            } else {
+                false
+            }
+        }
     }
+}
+
+async fn pair_start_handler(
+    State(ctx): State<AppContext>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !is_request_from_loopback(addr) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(PairErrorResponse {
+                error: "forbidden".to_string(),
+                message: "pair/start only accepts loopback requests".to_string(),
+            }),
+        )
+        .into_response();
+    }
+
+    let now_ts = now_unix_ts();
+    let expires_at_unix = now_ts + PAIR_CODE_TTL_SECS;
+    let expires_at = unix_ts_to_rfc3339(expires_at_unix);
+
+    let mut reg = ctx.pairing_registry.lock().await;
+    cleanup_expired_pairing_entries(&mut reg, now_ts);
+    while reg.pending_codes.len() >= MAX_PENDING_PAIR_CODES {
+        let oldest = reg
+            .pending_codes
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at_unix)
+            .map(|(code, _)| code.clone());
+        if let Some(code) = oldest {
+            reg.pending_codes.remove(&code);
+        } else {
+            break;
+        }
+    }
+
+    let pair_code = loop {
+        let code = generate_pair_code();
+        if !reg.pending_codes.contains_key(&code) {
+            break code;
+        }
+    };
+    reg.pending_codes
+        .insert(pair_code.clone(), PairCodeEntry { expires_at_unix });
+
+    (
+        StatusCode::OK,
+        Json(PairStartResponse {
+            pair_code,
+            expires_at,
+            expires_at_unix,
+        }),
+    )
+    .into_response()
+}
+
+async fn pair_exchange_handler(
+    State(ctx): State<AppContext>,
+    Json(payload): Json<PairExchangeRequest>,
+) -> Response {
+    let pair_code = payload.pair_code.trim().to_string();
+    if pair_code.len() != 6 || !pair_code.chars().all(|c| c.is_ascii_digit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(PairErrorResponse {
+                error: "invalid_pair_code".to_string(),
+                message: "pair_code must be 6 digits".to_string(),
+            }),
+        )
+        .into_response();
+    }
+
+    let device_name = payload
+        .device_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "iOS Device".to_string());
+
+    let mut reg = ctx.pairing_registry.lock().await;
+    let now_ts = now_unix_ts();
+    cleanup_expired_pairing_entries(&mut reg, now_ts);
+
+    let Some(code_entry) = reg.pending_codes.remove(&pair_code) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(PairErrorResponse {
+                error: "pair_code_not_found".to_string(),
+                message: "pair_code is invalid or expired".to_string(),
+            }),
+        )
+        .into_response();
+    };
+    if code_entry.expires_at_unix <= now_ts {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(PairErrorResponse {
+                error: "pair_code_expired".to_string(),
+                message: "pair_code is expired".to_string(),
+            }),
+        )
+        .into_response();
+    }
+
+    while reg.issued_tokens.len() >= MAX_ISSUED_PAIR_TOKENS {
+        let oldest = reg
+            .issued_tokens
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at_unix)
+            .map(|(token, _)| token.clone());
+        if let Some(token) = oldest {
+            reg.issued_tokens.remove(&token);
+        } else {
+            break;
+        }
+    }
+
+    let ws_token = Uuid::new_v4().to_string();
+    let token_id = Uuid::new_v4().to_string();
+    let issued_at_unix = now_ts;
+    let expires_at_unix = now_ts + PAIR_TOKEN_TTL_SECS;
+    reg.issued_tokens.insert(
+        ws_token.clone(),
+        PairTokenEntry {
+            token_id: token_id.clone(),
+            device_name: device_name.clone(),
+            issued_at_unix,
+            expires_at_unix,
+        },
+    );
+
+    (
+        StatusCode::OK,
+        Json(PairExchangeResponse {
+            token_id,
+            ws_token,
+            device_name,
+            issued_at: unix_ts_to_rfc3339(issued_at_unix),
+            issued_at_unix,
+            expires_at: unix_ts_to_rfc3339(expires_at_unix),
+            expires_at_unix,
+        }),
+    )
+    .into_response()
+}
+
+async fn pair_revoke_handler(
+    State(ctx): State<AppContext>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(payload): Json<PairRevokeRequest>,
+) -> Response {
+    if !is_request_from_loopback(addr) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(PairErrorResponse {
+                error: "forbidden".to_string(),
+                message: "pair/revoke only accepts loopback requests".to_string(),
+            }),
+        )
+        .into_response();
+    }
+
+    if payload.token_id.is_none() && payload.ws_token.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(PairErrorResponse {
+                error: "invalid_request".to_string(),
+                message: "token_id or ws_token is required".to_string(),
+            }),
+        )
+        .into_response();
+    }
+
+    let mut reg = ctx.pairing_registry.lock().await;
+    let now_ts = now_unix_ts();
+    cleanup_expired_pairing_entries(&mut reg, now_ts);
+
+    let mut revoked = 0usize;
+    if let Some(ws_token) = payload.ws_token {
+        if reg.issued_tokens.remove(ws_token.trim()).is_some() {
+            revoked += 1;
+        }
+    }
+    if let Some(token_id) = payload.token_id {
+        let token_id = token_id.trim();
+        let matches: Vec<String> = reg
+            .issued_tokens
+            .iter()
+            .filter_map(|(token, entry)| {
+                if entry.token_id == token_id {
+                    Some(token.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for token in matches {
+            if reg.issued_tokens.remove(&token).is_some() {
+                revoked += 1;
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(PairRevokeResponse {
+            ok: true,
+            revoked,
+        }),
+    )
+    .into_response()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_ws_token_authorized;
+    use super::{
+        cleanup_expired_pairing_entries, is_request_from_loopback,
+        is_ws_token_authorized, now_unix_ts, PairCodeEntry, PairTokenEntry,
+        PairingRegistry, SharedPairingRegistry,
+    };
+    use std::collections::HashMap;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
-    #[test]
-    fn token_auth_allows_when_token_not_configured() {
-        assert!(is_ws_token_authorized(None, None));
-        assert!(is_ws_token_authorized(None, Some("anything")));
+    fn test_registry() -> SharedPairingRegistry {
+        Arc::new(Mutex::new(PairingRegistry {
+            pending_codes: HashMap::new(),
+            issued_tokens: HashMap::new(),
+        }))
+    }
+
+    #[tokio::test]
+    async fn token_auth_allows_when_token_not_configured() {
+        let reg = test_registry();
+        assert!(is_ws_token_authorized(None, None, &reg).await);
+        assert!(is_ws_token_authorized(None, Some("anything"), &reg).await);
+    }
+
+    #[tokio::test]
+    async fn token_auth_requires_exact_or_paired_token_when_configured() {
+        let now_ts = now_unix_ts();
+        let reg = test_registry();
+        {
+            let mut guard = reg.lock().await;
+            guard.issued_tokens.insert(
+                "paired-token".to_string(),
+                PairTokenEntry {
+                    token_id: "id-1".to_string(),
+                    device_name: "iPhone".to_string(),
+                    issued_at_unix: now_ts,
+                    expires_at_unix: now_ts + 60,
+                },
+            );
+        }
+        assert!(is_ws_token_authorized(Some("bootstrap"), Some("bootstrap"), &reg).await);
+        assert!(is_ws_token_authorized(Some("bootstrap"), Some("paired-token"), &reg).await);
+        assert!(!is_ws_token_authorized(Some("bootstrap"), None, &reg).await);
+        assert!(!is_ws_token_authorized(Some("bootstrap"), Some("bad"), &reg).await);
+    }
+
+    #[tokio::test]
+    async fn token_auth_rejects_expired_paired_token() {
+        let now_ts = now_unix_ts();
+        let reg = test_registry();
+        {
+            let mut guard = reg.lock().await;
+            guard.issued_tokens.insert(
+                "expired-token".to_string(),
+                PairTokenEntry {
+                    token_id: "id-1".to_string(),
+                    device_name: "iPhone".to_string(),
+                    issued_at_unix: now_ts.saturating_sub(100),
+                    expires_at_unix: now_ts.saturating_sub(1),
+                },
+            );
+        }
+
+        assert!(!is_ws_token_authorized(Some("bootstrap"), Some("expired-token"), &reg).await);
+        let guard = reg.lock().await;
+        assert!(guard.issued_tokens.is_empty());
     }
 
     #[test]
-    fn token_auth_requires_exact_match_when_configured() {
-        assert!(is_ws_token_authorized(Some("abc"), Some("abc")));
-        assert!(!is_ws_token_authorized(Some("abc"), None));
-        assert!(!is_ws_token_authorized(Some("abc"), Some("abcd")));
+    fn cleanup_drops_expired_items() {
+        let now_ts = now_unix_ts();
+        let mut reg = PairingRegistry {
+            pending_codes: HashMap::from([
+                ("111111".to_string(), PairCodeEntry { expires_at_unix: now_ts + 10 }),
+                ("222222".to_string(), PairCodeEntry { expires_at_unix: now_ts.saturating_sub(1) }),
+            ]),
+            issued_tokens: HashMap::from([
+                (
+                    "token-a".to_string(),
+                    PairTokenEntry {
+                        token_id: "id-a".to_string(),
+                        device_name: "A".to_string(),
+                        issued_at_unix: now_ts,
+                        expires_at_unix: now_ts + 10,
+                    },
+                ),
+                (
+                    "token-b".to_string(),
+                    PairTokenEntry {
+                        token_id: "id-b".to_string(),
+                        device_name: "B".to_string(),
+                        issued_at_unix: now_ts,
+                        expires_at_unix: now_ts.saturating_sub(1),
+                    },
+                ),
+            ]),
+        };
+
+        cleanup_expired_pairing_entries(&mut reg, now_ts);
+        assert_eq!(reg.pending_codes.len(), 1);
+        assert!(reg.pending_codes.contains_key("111111"));
+        assert_eq!(reg.issued_tokens.len(), 1);
+        assert!(reg.issued_tokens.contains_key("token-a"));
+    }
+
+    #[test]
+    fn loopback_check_matches_only_loopback_ip() {
+        let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234);
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 1234);
+        assert!(is_request_from_loopback(local));
+        assert!(!is_request_from_loopback(remote));
     }
 }
 

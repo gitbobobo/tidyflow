@@ -18,6 +18,9 @@ enum Commands {
     Serve {
         #[arg(short, long, default_value = "47999")]
         port: u16,
+        /// Bind address for WebSocket/HTTP server (default: 127.0.0.1)
+        #[arg(long)]
+        bind_addr: Option<String>,
     },
     /// Import a project
     Import {
@@ -110,13 +113,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         None | Some(Commands::Serve { .. }) => {
             // Default: start server
-            let port = match &cli.command {
-                Some(Commands::Serve { port }) => *port,
+            let (port, bind_addr_arg) = match &cli.command {
+                Some(Commands::Serve { port, bind_addr }) => {
+                    (*port, bind_addr.clone())
+                }
                 _ => env::var("TIDYFLOW_PORT")
                     .ok()
                     .and_then(|p| p.parse::<u16>().ok())
-                    .unwrap_or(47999),
+                    .map(|port| (port, None))
+                    .unwrap_or((47999, None)),
             };
+            if let Some(bind_addr) = bind_addr_arg
+                .map(|addr| addr.trim().to_string())
+                .filter(|addr| !addr.is_empty())
+            {
+                // `run_server` 统一从环境变量读取绑定地址，CLI 参数优先覆盖
+                env::set_var("TIDYFLOW_BIND_ADDR", bind_addr);
+            }
             info!("Starting TidyFlow Core server on port {}", port);
             tidyflow_core::server::run_server(port).await?;
         }
