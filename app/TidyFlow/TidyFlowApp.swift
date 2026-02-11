@@ -7,11 +7,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     var appState: AppState?
     /// 用于跟踪是否已确认退出（避免重复弹框）
     private var terminationConfirmed = false
+    /// 启动期是否延迟展示主窗口（等待 Core ready）
+    private var shouldDeferMainWindow = true
+    /// 主窗口是否已完成首次展示
+    private var hasPresentedMainWindow = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 设置主窗口的 delegate 以拦截关闭事件
+        // 设置主窗口 delegate，并在启动期先隐藏窗口，待 Core ready 再显示。
         if let window = NSApplication.shared.windows.first {
-            window.delegate = self
+            prepareMainWindow(window)
         }
 
         // 请求系统通知权限（横幅 + 声音）
@@ -27,6 +31,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     func applicationDidBecomeActive(_ notification: Notification) {
         // 用户回到应用时，清除通知中心中的已投递通知（临时通知）
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    /// 配置主窗口并按启动策略决定是否暂时隐藏
+    func prepareMainWindow(_ window: NSWindow) {
+        window.delegate = self
+        if shouldDeferMainWindow && !hasPresentedMainWindow {
+            window.alphaValue = 0
+            window.orderOut(nil)
+        }
+    }
+
+    /// Core ready 后展示主窗口（幂等）
+    func showMainWindowIfNeeded(reason: String) {
+        guard !hasPresentedMainWindow else { return }
+        shouldDeferMainWindow = false
+        guard let window = NSApplication.shared.windows.first else { return }
+
+        hasPresentedMainWindow = true
+        window.alphaValue = 1
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        TFLog.app.info("Startup window presented (\(reason, privacy: .public))")
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -137,6 +163,7 @@ struct TidyFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
     @StateObject private var localizationManager = LocalizationManager.shared
+    @State private var startupWindowConfigured: Bool = false
 
     init() {
         // Register for termination notification as backup
@@ -161,10 +188,25 @@ struct TidyFlowApp: App {
                 .onAppear {
                     // Give delegate access to appState for cleanup
                     appDelegate.appState = appState
-                    // 确保窗口 delegate 已设置（SwiftUI 可能延迟创建窗口）
+                    // 确保窗口已按启动策略配置（SwiftUI 可能延迟创建窗口）
                     DispatchQueue.main.async {
+                        guard !startupWindowConfigured else { return }
+                        startupWindowConfigured = true
                         if let window = NSApplication.shared.windows.first {
-                            window.delegate = appDelegate
+                            appDelegate.prepareMainWindow(window)
+                        }
+                        appState.onCoreReadyForWindow = { [weak appDelegate] in
+                            DispatchQueue.main.async {
+                                appDelegate?.showMainWindowIfNeeded(reason: "core_ready")
+                            }
+                        }
+                        // 兜底：如果 onCoreReady 回调注册时 Core 已经启动完成，立即展示主窗口。
+                        if appState.coreProcessManager.status.isRunning {
+                            appDelegate.showMainWindowIfNeeded(reason: "core_already_running")
+                        }
+                        // 兜底：Core 启动异常时也要给出窗口，避免 Dock 持续跳动且无可见 UI。
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+                            appDelegate.showMainWindowIfNeeded(reason: "core_start_timeout")
                         }
                     }
                 }
