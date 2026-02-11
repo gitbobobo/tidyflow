@@ -39,10 +39,12 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - `CoreProcessManager` 的异步回调（`stop` 完成、`terminationHandler`、延迟置 `running`）必须校验“是否仍是当前 process 实例”；否则旧进程回调会覆盖新状态，导致 UI 误判为“端口不可用”。
 - 对“监听地址/网络暴露”这类 socket 绑定配置，若产品要求不中断进行中任务，应采用“仅落盘配置、下次启动生效”策略，不在设置页切换时重启 Core。
 - 使用 MessagePack + AnyCodable 解析协议时，动态值模型必须显式支持 `Data`（bin）；否则终端输出/scrollback 等二进制字段会解码失败并表现为黑屏或无输出。
+- 使用 AnyCodable 编码请求体时，`[UInt8]` 必须优先转为 `Data`（MessagePack bin）或显式映射为整数；否则会被默认分支转成字符串数组，导致 `input`/`file_write` 等二进制字段在 Core 端解析失败。
 - 排查启动卡顿/卡死时先确认日志归属：Debug 构建主要看 `~/.tidyflow/logs/*-dev.log` / `*.dev.log`，应用包运行主要看 `~/.tidyflow/logs/YYYY-MM-DD.log`，避免错看时间段。
 - 应用启动链路（首屏前）禁止在主线程同步执行外部命令并 `waitUntilExit`；此类探测应放后台并加超时兜底，否则会出现 Dock 图标持续跳动但窗口不出现。
 - 排查开发环境问题时应优先查看 `~/.tidyflow/logs/*-dev.log`（或 `*.dev.log`）；仅排查打包产物/生产行为时再看纯日期日志。
 - 启动期若要延迟展示主窗口，隐藏动作应放在 `AppDelegate.applicationDidFinishLaunching`（窗口首帧前）而非 `ContentView.onAppear`，否则会出现窗口闪一下。
+- iOS 终端若改为原生输入代理，不能同时关闭 xterm stdin 作为唯一输入路径；至少保留 xterm `onData` 兜底，并确保触摸手势可触发 `term.focus()`，否则会出现“无法输入/键盘不弹出”。
 
 ## Build Commands
 
