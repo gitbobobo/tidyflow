@@ -174,12 +174,12 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
 
     /// Set the WebSocket URL for the JavaScript side
     /// This must be called before the JavaScript connects to the WebSocket
-    func setWsURL(port: Int) {
+    func setWsURL(port: Int, token: String? = nil) {
         guard let webView = webView else {
             TFLog.bridge.warning("setWsURL: No webView available")
             return
         }
-        let wsURL = AppConfig.makeWsURLString(port: port)
+        let wsURL = AppConfig.makeWsURLString(port: port, token: token)
         let js = "window.TIDYFLOW_WS_URL = '\(wsURL)'; console.log('[NativeBridge] WebSocket URL set to:', window.TIDYFLOW_WS_URL);"
         webView.evaluateJavaScript(js) { _, error in
             if let error = error {

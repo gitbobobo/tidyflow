@@ -85,7 +85,7 @@ struct CenterContentView: View {
 
                 // 在 WebView 准备好后设置 WebSocket URL
                 if let port = appState?.coreProcessManager.currentPort {
-                    webBridge?.setWsURL(port: port)
+                    webBridge?.setWsURL(port: port, token: appState?.coreProcessManager.wsAuthToken)
                 }
             }
         }
@@ -152,13 +152,13 @@ struct CenterContentView: View {
         }
 
         // Set Core ready callback to update WebBridge with the port
-        appState.onCoreReadyWithPort = { [weak webBridge] port in
-            webBridge?.setWsURL(port: port)
+        appState.onCoreReadyWithPort = { [weak webBridge, weak appState] port in
+            webBridge?.setWsURL(port: port, token: appState?.coreProcessManager.wsAuthToken)
         }
 
         // If Core is already running, set the WebSocket URL now
         if let port = appState.coreProcessManager.currentPort {
-            webBridge.setWsURL(port: port)
+            webBridge.setWsURL(port: port, token: appState.coreProcessManager.wsAuthToken)
         }
 
         // Phase C2-1: Diff callbacks (extended C2-1.5 for line navigation)
