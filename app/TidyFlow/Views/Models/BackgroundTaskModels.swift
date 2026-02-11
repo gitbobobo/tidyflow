@@ -180,6 +180,147 @@ struct ProjectCommandResult {
     let message: String
 }
 
+// MARK: - 项目诊断模型
+
+/// 诊断严重级（用于顶部圆点和问题列表排序）
+enum DiagnosticSeverity: String, Codable, CaseIterable {
+    case error
+    case warning
+    case info
+    case none
+
+    /// 严重级排序权重（越大越严重）
+    var rank: Int {
+        switch self {
+        case .error: return 3
+        case .warning: return 2
+        case .info: return 1
+        case .none: return 0
+        }
+    }
+
+    static func from(token: String) -> DiagnosticSeverity {
+        let normalized = token.lowercased()
+        if normalized.contains("none")
+            || normalized.contains("no_issue")
+            || normalized.contains("clean")
+            || normalized == "ok" {
+            return .none
+        }
+        if normalized.contains("fatal") || normalized.contains("error") {
+            return .error
+        }
+        if normalized.contains("warn") {
+            return .warning
+        }
+        return .info
+    }
+}
+
+/// 一条结构化问题
+struct ProjectDiagnosticItem: Identifiable, Equatable {
+    let id: String
+    let severity: DiagnosticSeverity
+    let displayPath: String
+    /// 编辑器可跳转路径（工作空间相对路径）；nil 代表当前无法跳转
+    let editorPath: String?
+    let line: Int
+    let column: Int?
+    let summary: String
+    let rawLine: String
+
+    init(
+        severity: DiagnosticSeverity,
+        displayPath: String,
+        editorPath: String?,
+        line: Int,
+        column: Int?,
+        summary: String,
+        rawLine: String
+    ) {
+        self.severity = severity
+        self.displayPath = displayPath
+        self.editorPath = editorPath
+        self.line = line
+        self.column = column
+        self.summary = summary
+        self.rawLine = rawLine
+        self.id = "\(severity.rawValue)|\(displayPath)|\(line)|\(column ?? 0)|\(summary)"
+    }
+}
+
+/// 工作空间级诊断快照（来自最近一次项目命令）
+struct WorkspaceDiagnosticsSnapshot {
+    let items: [ProjectDiagnosticItem]
+    let highestSeverity: DiagnosticSeverity
+    let updatedAt: Date
+    let sourceCommandId: String?
+}
+
+extension WorkspaceDiagnosticsSnapshot {
+    static let empty = WorkspaceDiagnosticsSnapshot(
+        items: [],
+        highestSeverity: .none,
+        updatedAt: .distantPast,
+        sourceCommandId: nil
+    )
+}
+
+/// 工作区 LSP 运行状态快照
+struct WorkspaceLspStatusSnapshot {
+    let runningLanguages: [String]
+    let missingLanguages: [String]
+    let message: String?
+    let updatedAt: Date
+}
+
+/// 项目命令一次执行对应的本地跟踪状态（用于 task_id 路由）
+final class ProjectCommandExecutionState {
+    let localExecutionId: UUID
+    let projectName: String
+    let workspaceName: String
+    let commandId: String
+    let workspaceGlobalKey: String
+    weak var task: BackgroundTask?
+    var remoteTaskId: String?
+    var diagnostics: [ProjectDiagnosticItem] = []
+    private var diagnosticIds: Set<String> = []
+    private(set) var didResume = false
+    private let onComplete: (ProjectCommandResult) -> Void
+
+    init(
+        localExecutionId: UUID,
+        projectName: String,
+        workspaceName: String,
+        commandId: String,
+        workspaceGlobalKey: String,
+        task: BackgroundTask,
+        onComplete: @escaping (ProjectCommandResult) -> Void
+    ) {
+        self.localExecutionId = localExecutionId
+        self.projectName = projectName
+        self.workspaceName = workspaceName
+        self.commandId = commandId
+        self.workspaceGlobalKey = workspaceGlobalKey
+        self.task = task
+        self.onComplete = onComplete
+    }
+
+    func appendDiagnostic(_ item: ProjectDiagnosticItem) {
+        if diagnosticIds.contains(item.id) {
+            return
+        }
+        diagnosticIds.insert(item.id)
+        diagnostics.append(item)
+    }
+
+    func complete(_ result: ProjectCommandResult) {
+        guard !didResume else { return }
+        didResume = true
+        onComplete(result)
+    }
+}
+
 // MARK: - 后台任务
 
 class BackgroundTask: ObservableObject, Identifiable {

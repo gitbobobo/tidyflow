@@ -80,6 +80,18 @@ class AppState: ObservableObject {
     let taskManager = BackgroundTaskManager()
     private var taskManagerCancellable: AnyCancellable?
 
+    // 项目命令诊断快照（key: projectName:workspaceName）
+    @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]
+    // LSP 运行状态快照（key: projectName:workspaceName）
+    @Published var workspaceLspStatus: [String: WorkspaceLspStatusSnapshot] = [:]
+    // LSP 诊断加载状态（key: projectName:workspaceName）
+    @Published var workspaceLspLoading: [String: Bool] = [:]
+
+    // 项目命令执行跟踪（用于基于 task_id 路由 started/output/completed）
+    var projectCommandExecutions: [UUID: ProjectCommandExecutionState] = [:]
+    var pendingProjectCommandExecutionIdsByKey: [String: [UUID]] = [:]
+    var projectCommandExecutionIdByRemoteTaskId: [String: UUID] = [:]
+
     // Toast 通知管理器
     let toastManager = ToastManager()
 

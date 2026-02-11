@@ -67,32 +67,19 @@ extension AppState {
     }
 
     /// 执行项目命令（通过 WebSocket 发送到 Core）
+    /// 说明：started/output/completed 的回调统一在 setupWSClient 中接线，并在这里通过 task_id 路由执行结果
     func executeProjectCommand(projectName: String, workspaceName: String, commandId: String, task: BackgroundTask) async -> ProjectCommandResult {
         return await withCheckedContinuation { continuation in
-            // 注册实时输出回调：根据 taskId 更新对应 BackgroundTask 的 lastOutputLine
-            wsClient.onProjectCommandOutput = { [weak task] taskId, line in
-                guard let task = task else { return }
-                if task.remoteTaskId == taskId {
-                    DispatchQueue.main.async {
-                        task.lastOutputLine = line
-                    }
-                }
+            let executionId = registerProjectCommandExecution(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                commandId: commandId,
+                task: task
+            ) { result in
+                continuation.resume(returning: result)
             }
-            // 注册开始回调：记录 Rust 分配的 remoteTaskId
-            // 注意：必须同步设置 remoteTaskId（不走 DispatchQueue.main.async），
-            // 否则后续 output 回调在同一线程上检查 remoteTaskId 时会因主线程延迟而匹配失败
-            wsClient.onProjectCommandStarted = { [weak task] project, workspace, cmdId, taskId in
-                guard let task = task else { return }
-                if project == projectName && cmdId == commandId {
-                    task.remoteTaskId = taskId
-                }
-            }
-            // 注册完成回调
-            wsClient.onProjectCommandCompleted = { project, workspace, cmdId, taskId, ok, message in
-                if project == projectName && cmdId == commandId {
-                    continuation.resume(returning: ProjectCommandResult(ok: ok, message: message ?? ""))
-                }
-            }
+
+            TFLog.app.info("项目命令已注册执行跟踪: local=\(executionId.uuidString, privacy: .public), command=\(commandId, privacy: .public)")
             wsClient.requestRunProjectCommand(
                 project: projectName,
                 workspace: workspaceName,
@@ -127,6 +114,139 @@ extension AppState {
                 blocking: command.blocking
             ))
         )
+    }
+
+    // MARK: - 项目命令事件路由（task_id）
+
+    /// 当前工作空间诊断快照（若无则返回 empty）
+    func diagnosticsSnapshot(for workspaceGlobalKey: String?) -> WorkspaceDiagnosticsSnapshot {
+        guard let key = workspaceGlobalKey else { return .empty }
+        return workspaceDiagnostics[key] ?? .empty
+    }
+
+    /// 处理命令 started 事件：绑定远端 task_id
+    func handleProjectCommandStarted(project: String, workspace: String, commandId: String, taskId: String) {
+        guard let executionId = resolveExecutionId(
+            project: project,
+            workspace: workspace,
+            commandId: commandId,
+            taskId: taskId
+        ) else {
+            TFLog.app.warning("项目命令 started 未匹配到执行上下文: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
+            return
+        }
+
+        if let execution = projectCommandExecutions[executionId] {
+            execution.remoteTaskId = taskId
+            execution.task?.remoteTaskId = taskId
+        }
+    }
+
+    /// 处理命令输出事件：仅刷新最后一行（诊断来源已切换为 LSP）
+    func handleProjectCommandOutput(taskId: String, line: String) {
+        guard let executionId = projectCommandExecutionIdByRemoteTaskId[taskId],
+              let execution = projectCommandExecutions[executionId] else {
+            return
+        }
+
+        execution.task?.lastOutputLine = line
+    }
+
+    /// 处理命令完成事件：回传结果并清理路由映射
+    func handleProjectCommandCompleted(
+        project: String,
+        workspace: String,
+        commandId: String,
+        taskId: String,
+        ok: Bool,
+        message: String?
+    ) {
+        guard let executionId = resolveExecutionId(
+            project: project,
+            workspace: workspace,
+            commandId: commandId,
+            taskId: taskId
+        ), let execution = projectCommandExecutions[executionId] else {
+            TFLog.app.warning("项目命令 completed 未匹配到执行上下文: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
+            return
+        }
+
+        execution.complete(ProjectCommandResult(ok: ok, message: message ?? ""))
+        cleanupProjectCommandExecution(executionId)
+    }
+
+    private func registerProjectCommandExecution(
+        projectName: String,
+        workspaceName: String,
+        commandId: String,
+        task: BackgroundTask,
+        onComplete: @escaping (ProjectCommandResult) -> Void
+    ) -> UUID {
+        let executionId = UUID()
+        let globalKey = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
+        let key = projectCommandRoutingKey(project: projectName, workspace: workspaceName, commandId: commandId)
+        let state = ProjectCommandExecutionState(
+            localExecutionId: executionId,
+            projectName: projectName,
+            workspaceName: workspaceName,
+            commandId: commandId,
+            workspaceGlobalKey: globalKey,
+            task: task,
+            onComplete: onComplete
+        )
+
+        projectCommandExecutions[executionId] = state
+        if pendingProjectCommandExecutionIdsByKey[key] == nil {
+            pendingProjectCommandExecutionIdsByKey[key] = []
+        }
+        pendingProjectCommandExecutionIdsByKey[key]?.append(executionId)
+        return executionId
+    }
+
+    private func resolveExecutionId(
+        project: String,
+        workspace: String,
+        commandId: String,
+        taskId: String
+    ) -> UUID? {
+        if let mapped = projectCommandExecutionIdByRemoteTaskId[taskId] {
+            return mapped
+        }
+
+        let key = projectCommandRoutingKey(project: project, workspace: workspace, commandId: commandId)
+        guard var queue = pendingProjectCommandExecutionIdsByKey[key], !queue.isEmpty else {
+            return nil
+        }
+        let executionId = queue.removeFirst()
+        pendingProjectCommandExecutionIdsByKey[key] = queue.isEmpty ? nil : queue
+        projectCommandExecutionIdByRemoteTaskId[taskId] = executionId
+        projectCommandExecutions[executionId]?.remoteTaskId = taskId
+        projectCommandExecutions[executionId]?.task?.remoteTaskId = taskId
+        return executionId
+    }
+
+    private func cleanupProjectCommandExecution(_ executionId: UUID) {
+        guard let execution = projectCommandExecutions[executionId] else { return }
+        let key = projectCommandRoutingKey(
+            project: execution.projectName,
+            workspace: execution.workspaceName,
+            commandId: execution.commandId
+        )
+
+        if var queue = pendingProjectCommandExecutionIdsByKey[key] {
+            queue.removeAll { $0 == executionId }
+            pendingProjectCommandExecutionIdsByKey[key] = queue.isEmpty ? nil : queue
+        }
+
+        if let taskId = execution.remoteTaskId {
+            projectCommandExecutionIdByRemoteTaskId.removeValue(forKey: taskId)
+        }
+
+        projectCommandExecutions.removeValue(forKey: executionId)
+    }
+
+    private func projectCommandRoutingKey(project: String, workspace: String, commandId: String) -> String {
+        "\(project)|\(workspace)|\(commandId)"
     }
     
     // MARK: - 自动工作空间快捷键
