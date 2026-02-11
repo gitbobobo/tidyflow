@@ -55,6 +55,56 @@ struct CustomCommandsSection: View {
             }
 
             Section {
+                Toggle(
+                    "settings.mobile.remoteAccess".localized,
+                    isOn: Binding(
+                        get: { appState.remoteAccessEnabled },
+                        set: { appState.setRemoteAccessEnabled($0) }
+                    )
+                )
+
+                Text(appState.remoteAccessEnabled
+                     ? "settings.mobile.remoteAccess.onHint".localized
+                     : "settings.mobile.remoteAccess.offHint".localized)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 12) {
+                    Button(action: { appState.requestMobilePairCode() }) {
+                        if appState.mobilePairCodeLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("settings.mobile.generateCode".localized, systemImage: "iphone.and.arrow.forward")
+                        }
+                    }
+                    .disabled(!appState.remoteAccessEnabled || appState.mobilePairCodeLoading)
+
+                    if let code = appState.mobilePairCode {
+                        Text(code)
+                            .font(.system(.body, design: .monospaced))
+                            .fontWeight(.semibold)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if let expiresAt = appState.mobilePairCodeExpiresAt, !expiresAt.isEmpty {
+                    Text(String(format: "settings.mobile.codeExpires".localized, expiresAt))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if let error = appState.mobilePairCodeError, !error.isEmpty {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            } header: {
+                Text("settings.mobile.section".localized)
+            } footer: {
+                Text("settings.mobile.footer".localized)
+            }
+
+            Section {
                 if appState.clientSettings.customCommands.isEmpty {
                     Text("settings.noCommands".localized)
                         .foregroundColor(.secondary)

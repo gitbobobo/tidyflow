@@ -50,6 +50,19 @@
 "settings.iconPicker.brand" = "Brand Icons";
 "settings.about.version" = "Version %@ (%@)";
 "settings.about.description" = "Native macOS multi-project development tool";
+"settings.mobile.section" = "Mobile Access";
+"settings.mobile.remoteAccess" = "Enable mobile clients over LAN";
+"settings.mobile.remoteAccess.onHint" = "Core will listen on 0.0.0.0. Keep this enabled only in trusted networks.";
+"settings.mobile.remoteAccess.offHint" = "Core only accepts localhost connections.";
+"settings.mobile.generateCode" = "Generate Pair Code";
+"settings.mobile.codeExpires" = "Code expires at %@";
+"settings.mobile.footer" = "After enabling, use host:port + pair code in iOS app to connect.";
+"settings.mobile.error.enableFirst" = "Enable mobile access first";
+"settings.mobile.error.coreNotReady" = "Core is not ready yet";
+"settings.mobile.error.invalidPairURL" = "Invalid pairing endpoint";
+"settings.mobile.error.invalidResponse" = "Invalid pairing response";
+"settings.mobile.error.httpStatus" = "Failed to generate pair code (HTTP %d)";
+"settings.mobile.error.general" = "Failed to generate pair code: %@";
 
 /* AI Agent Settings */
 "settings.aiAgent" = "AI Agent";

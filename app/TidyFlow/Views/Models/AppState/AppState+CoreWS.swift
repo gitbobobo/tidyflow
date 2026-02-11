@@ -1,6 +1,21 @@
 import Foundation
 import AppKit
 
+private struct PairStartHTTPResponse: Decodable {
+    let pairCode: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case pairCode = "pair_code"
+        case expiresAt = "expires_at"
+    }
+}
+
+private struct PairErrorHTTPResponse: Decodable {
+    let error: String
+    let message: String
+}
+
 extension AppState {
     // MARK: - GitCacheState 接线
 
@@ -82,6 +97,87 @@ extension AppState {
     func restartCore() {
         wsClient.disconnect()
         coreProcessManager.restart(resetCounter: true)
+    }
+
+    /// 更新局域网访问开关，并重启 Core 以应用新的绑定地址
+    func setRemoteAccessEnabled(_ enabled: Bool) {
+        guard remoteAccessEnabled != enabled else { return }
+        remoteAccessEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: AppConfig.remoteAccessEnabledKey)
+
+        // 切换网络暴露状态后，旧配对码不可继续展示
+        mobilePairCode = nil
+        mobilePairCodeExpiresAt = nil
+        mobilePairCodeError = nil
+        restartCore()
+    }
+
+    /// 生成移动端配对码（仅本机调用 /pair/start）
+    func requestMobilePairCode() {
+        guard remoteAccessEnabled else {
+            mobilePairCodeError = "settings.mobile.error.enableFirst".localized
+            return
+        }
+        guard let port = coreProcessManager.currentPort else {
+            mobilePairCodeError = "settings.mobile.error.coreNotReady".localized
+            return
+        }
+        guard let url = URL(string: "http://127.0.0.1:\(port)/pair/start") else {
+            mobilePairCodeError = "settings.mobile.error.invalidPairURL".localized
+            return
+        }
+
+        mobilePairCodeLoading = true
+        mobilePairCodeError = nil
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+
+        Task { [weak self] in
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    await MainActor.run {
+                        self?.mobilePairCodeLoading = false
+                        self?.mobilePairCodeError = "settings.mobile.error.invalidResponse".localized
+                    }
+                    return
+                }
+
+                if (200..<300).contains(httpResponse.statusCode) {
+                    let decoded = try JSONDecoder().decode(PairStartHTTPResponse.self, from: data)
+                    await MainActor.run {
+                        self?.mobilePairCodeLoading = false
+                        self?.mobilePairCode = decoded.pairCode
+                        self?.mobilePairCodeExpiresAt = decoded.expiresAt
+                        self?.mobilePairCodeError = nil
+                    }
+                    return
+                }
+
+                let serverError = try? JSONDecoder().decode(PairErrorHTTPResponse.self, from: data)
+                await MainActor.run {
+                    self?.mobilePairCodeLoading = false
+                    if let serverError {
+                        self?.mobilePairCodeError = "\(serverError.error): \(serverError.message)"
+                    } else {
+                        self?.mobilePairCodeError = String(
+                            format: "settings.mobile.error.httpStatus".localized,
+                            httpResponse.statusCode
+                        )
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.mobilePairCodeLoading = false
+                    self?.mobilePairCodeError = String(
+                        format: "settings.mobile.error.general".localized,
+                        error.localizedDescription
+                    )
+                }
+            }
+        }
     }
 
     /// Stop Core process (called on app termination)
