@@ -338,13 +338,16 @@ extension WSClient {
 
     // MARK: - 终端会话（供 iOS / 远程客户端复用）
 
-    /// 创建终端（基于项目与工作空间）
-    func requestTermCreate(project: String, workspace: String) {
-        send([
+    /// 创建终端（基于项目与工作空间），可附带初始尺寸
+    func requestTermCreate(project: String, workspace: String, cols: Int? = nil, rows: Int? = nil) {
+        var msg: [String: Any] = [
             "type": "term_create",
             "project": project,
             "workspace": workspace
-        ])
+        ]
+        if let cols { msg["cols"] = cols }
+        if let rows { msg["rows"] = rows }
+        send(msg)
     }
 
     /// 获取终端会话列表

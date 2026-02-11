@@ -71,10 +71,37 @@ enum AnyCodable: Codable {
             return .null
         case let bool as Bool:
             return .bool(bool)
+        // 优先识别 [UInt8]，按 MessagePack bin 编码，避免被当作字符串数组
+        case let bytes as [UInt8]:
+            return .data(Data(bytes))
         case let int as Int:
             return .int(int)
+        case let int as Int8:
+            return .int(Int(int))
+        case let int as Int16:
+            return .int(Int(int))
+        case let int as Int32:
+            return .int(Int(int))
+        case let int as Int64:
+            return .int(Int(int))
+        case let uint as UInt:
+            return .int(Int(uint))
+        case let uint as UInt8:
+            return .int(Int(uint))
+        case let uint as UInt16:
+            return .int(Int(uint))
+        case let uint as UInt32:
+            return .int(Int(uint))
+        case let uint as UInt64:
+            // UInt64 可能超 Int 上限，超限时退化为 string，避免溢出崩溃
+            if uint > UInt64(Int.max) {
+                return .string(String(uint))
+            }
+            return .int(Int(uint))
         case let double as Double:
             return .double(double)
+        case let float as Float:
+            return .double(Double(float))
         case let string as String:
             return .string(string)
         case let data as Data:
