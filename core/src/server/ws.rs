@@ -1,10 +1,12 @@
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::State,
+    extract::{Query, State},
+    http::StatusCode,
     response::IntoResponse,
     routing::get,
     Router,
 };
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -32,6 +34,15 @@ use crate::workspace::state_saver::spawn_state_saver;
 
 /// 流控高水位（100KB）：未确认字节数超过此值时暂停转发
 const FLOW_CONTROL_HIGH_WATER: u64 = 100 * 1024;
+/// 入站 WS 帧大小上限（2MB）
+const MAX_WS_FRAME_SIZE: usize = 2 * 1024 * 1024;
+/// 入站 WS 消息大小上限（2MB）
+const MAX_WS_MESSAGE_SIZE: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct WsAuthQuery {
+    token: Option<String>,
+}
 
 /// WebSocket 服务器上下文，包含共享状态和防抖保存通道
 #[derive(Clone)]
@@ -40,6 +51,7 @@ pub struct AppContext {
     pub save_tx: tokio::sync::mpsc::Sender<()>,
     pub terminal_registry: SharedTerminalRegistry,
     pub scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    pub expected_ws_token: Option<String>,
 }
 
 /// Run the WebSocket server on the specified port
@@ -63,12 +75,22 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     // 启动 scrollback 写入 task
     let scrollback_tx = spawn_scrollback_writer(terminal_registry.clone());
+    let expected_ws_token = std::env::var("TIDYFLOW_WS_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty());
+
+    if expected_ws_token.is_some() {
+        info!("WebSocket token auth enabled");
+    } else {
+        warn!("WebSocket token auth disabled (TIDYFLOW_WS_TOKEN not set)");
+    }
 
     let ctx = AppContext {
         app_state: shared_state,
         save_tx,
         terminal_registry,
         scrollback_tx,
+        expected_ws_token,
     };
 
     let app = Router::new()
@@ -123,16 +145,53 @@ fn spawn_parent_monitor() {
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(ctx): State<AppContext>,
+    query: Option<Query<WsAuthQuery>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| {
-        handle_socket(
-            socket,
-            ctx.app_state,
-            ctx.save_tx,
-            ctx.terminal_registry,
-            ctx.scrollback_tx,
-        )
-    })
+    let provided_token = query.and_then(|q| q.0.token);
+    if !is_ws_token_authorized(ctx.expected_ws_token.as_deref(), provided_token.as_deref()) {
+        warn!("Rejected unauthorized WebSocket upgrade request");
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+
+    ws.max_frame_size(MAX_WS_FRAME_SIZE)
+        .max_message_size(MAX_WS_MESSAGE_SIZE)
+        .on_upgrade(move |socket| {
+            handle_socket(
+                socket,
+                ctx.app_state,
+                ctx.save_tx,
+                ctx.terminal_registry,
+                ctx.scrollback_tx,
+            )
+        })
+        .into_response()
+}
+
+fn is_ws_token_authorized(expected: Option<&str>, provided: Option<&str>) -> bool {
+    match expected {
+        // 当 Core 配置了 token 时，客户端必须携带并匹配
+        Some(expected_token) => provided.is_some_and(|token| token == expected_token),
+        // 兼容手工启动场景：未配置 token 时放行本地连接
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_ws_token_authorized;
+
+    #[test]
+    fn token_auth_allows_when_token_not_configured() {
+        assert!(is_ws_token_authorized(None, None));
+        assert!(is_ws_token_authorized(None, Some("anything")));
+    }
+
+    #[test]
+    fn token_auth_requires_exact_match_when_configured() {
+        assert!(is_ws_token_authorized(Some("abc"), Some("abc")));
+        assert!(!is_ws_token_authorized(Some("abc"), None));
+        assert!(!is_ws_token_authorized(Some("abc"), Some("abcd")));
+    }
 }
 
 /// Handle a WebSocket connection

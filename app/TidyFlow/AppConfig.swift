@@ -28,12 +28,20 @@ enum AppConfig {
     static let autoRestartBackoffs: [TimeInterval] = [0.2, 0.5, 1.2]
 
     /// Generate WebSocket URL for a given port
-    static func makeWsURL(port: Int) -> URL {
-        URL(string: "ws://\(coreHost):\(port)/ws")!
+    static func makeWsURL(port: Int, token: String? = nil) -> URL {
+        var components = URLComponents()
+        components.scheme = "ws"
+        components.host = coreHost
+        components.port = port
+        components.path = "/ws"
+        if let token, !token.isEmpty {
+            components.queryItems = [URLQueryItem(name: "token", value: token)]
+        }
+        return components.url!
     }
 
     /// Generate WebSocket URL string for a given port
-    static func makeWsURLString(port: Int) -> String {
-        "ws://\(coreHost):\(port)/ws"
+    static func makeWsURLString(port: Int, token: String? = nil) -> String {
+        makeWsURL(port: port, token: token).absoluteString
     }
 }

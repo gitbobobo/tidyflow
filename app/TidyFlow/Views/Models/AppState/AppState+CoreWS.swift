@@ -98,6 +98,8 @@ extension AppState {
     private func setupWSClient(port: Int) {
         // 设置日志转发引用
         TFLog.wsClient = wsClient
+        // 切换到当前 Core 会话 token，确保仅本次进程可连接
+        wsClient.updateAuthToken(coreProcessManager.wsAuthToken)
 
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected

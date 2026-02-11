@@ -21,6 +21,8 @@ class WSClient: NSObject, ObservableObject {
 
     /// Current WebSocket URL (can be updated at runtime)
     var currentURL: URL?
+    /// WebSocket 鉴权 token（由 Core 进程启动时注入）
+    private(set) var wsAuthToken: String?
 
     /// Get current URL string for debug display
     var currentURLString: String? {
@@ -123,8 +125,13 @@ class WSClient: NSObject, ObservableObject {
 
     /// Update the base URL using port number
     func updatePort(_ port: Int, reconnect: Bool = true) {
-        let url = AppConfig.makeWsURL(port: port)
+        let url = AppConfig.makeWsURL(port: port, token: wsAuthToken)
         updateBaseURL(url, reconnect: reconnect)
+    }
+
+    /// 更新 WebSocket 鉴权 token（用于后续 connect/reconnect）
+    func updateAuthToken(_ token: String?) {
+        wsAuthToken = token
     }
 
     // MARK: - Connection
@@ -146,7 +153,7 @@ class WSClient: NSObject, ObservableObject {
 
     /// Connect to a specific port (convenience method)
     func connect(port: Int) {
-        currentURL = AppConfig.makeWsURL(port: port)
+        currentURL = AppConfig.makeWsURL(port: port, token: wsAuthToken)
         connect()
     }
 

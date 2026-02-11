@@ -81,6 +81,8 @@ class CoreProcessManager: ObservableObject {
     private var isStopping = false
     private var lastTerminationReason: String?
     private var lastTerminationCode: Int32?
+    /// 当前 Core 进程对应的 WebSocket 鉴权 token
+    private var currentWSToken: String?
 
     /// Callback when Core is ready (WS connection succeeded)
     var onCoreReady: ((Int) -> Void)?
@@ -94,6 +96,11 @@ class CoreProcessManager: ObservableObject {
     /// Callback when Core crashes and auto-restart limit reached
     var onCoreRestartLimitReached: ((String) -> Void)?
 
+    /// 当前 WebSocket 鉴权 token（供 WSClient 连接时携带）
+    var wsAuthToken: String? {
+        currentWSToken
+    }
+
     // MARK: - Public API
 
     /// Start the Core process with dynamic port allocation
@@ -106,6 +113,8 @@ class CoreProcessManager: ObservableObject {
         // Clean up any orphaned processes from previous runs (e.g., Xcode force stop)
         Self.cleanupOrphanedProcesses()
 
+        // 每次启动 Core 生成新的会话 token，避免跨会话复用
+        currentWSToken = UUID().uuidString
         isStarting = true
         currentAttempt = 0
         startWithRetry()
@@ -178,6 +187,7 @@ class CoreProcessManager: ObservableObject {
             DispatchQueue.main.async {
                 self.status = .stopped
                 self.isStopping = false
+                self.currentWSToken = nil
             }
             return
         }
@@ -205,6 +215,7 @@ class CoreProcessManager: ObservableObject {
                 self?.cleanup()
                 self?.status = .stopped
                 self?.isStopping = false
+                self?.currentWSToken = nil
             }
         }
     }
@@ -275,6 +286,7 @@ class CoreProcessManager: ObservableObject {
             DispatchQueue.main.async {
                 self.status = .failed(message: msg)
                 self.isStarting = false
+                self.currentWSToken = nil
                 self.onCoreFailed?(msg)
             }
             return
@@ -319,6 +331,9 @@ class CoreProcessManager: ObservableObject {
         // Set environment variable
         var env = ProcessInfo.processInfo.environment
         env["TIDYFLOW_PORT"] = "\(port)"
+        if let token = currentWSToken, !token.isEmpty {
+            env["TIDYFLOW_WS_TOKEN"] = token
+        }
         if Self.isRunAppDebugBundle {
             env["TIDYFLOW_LOG_SUFFIX"] = "dev"
         }
