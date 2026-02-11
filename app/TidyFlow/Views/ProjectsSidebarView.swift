@@ -365,6 +365,11 @@ struct WorkspaceRowView: View {
         appState.workspaceTabs[globalWorkspaceKey]?.filter { $0.kind == .terminal }.count ?? 0
     }
 
+    /// 当前工作空间是否有打开的标签页（任意类型）
+    private var hasOpenTabs: Bool {
+        !(appState.workspaceTabs[globalWorkspaceKey] ?? []).isEmpty
+    }
+
     /// 终端数量徽章视图
     @ViewBuilder
     private var terminalCountBadge: some View {
@@ -493,6 +498,7 @@ struct WorkspaceRowView: View {
                 } label: {
                     Label("sidebar.endWork".localized, systemImage: "xmark.circle")
                 }
+                .disabled(!hasOpenTabs)
 
                 // ── 危险操作 ──
                 if !workspace.isDefault {
