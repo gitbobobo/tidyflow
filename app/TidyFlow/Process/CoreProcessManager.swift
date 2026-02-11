@@ -81,6 +81,8 @@ class CoreProcessManager: ObservableObject {
     private var isStopping = false
     private var lastTerminationReason: String?
     private var lastTerminationCode: Int32?
+    /// 当前正在运行（或最近一次启动）的 Core 绑定地址
+    private var launchedBindAddress: String?
     /// 当前 Core 进程对应的 WebSocket 鉴权 token
     private var currentWSToken: String?
 
@@ -101,6 +103,21 @@ class CoreProcessManager: ObservableObject {
         currentWSToken
     }
 
+    /// 当前 Core 进程实际绑定地址（仅运行/启动态有效）
+    var activeBindAddress: String? {
+        switch status {
+        case .running, .starting:
+            return launchedBindAddress
+        default:
+            return nil
+        }
+    }
+
+    /// 当前 Core 是否以远程模式（0.0.0.0）监听
+    var isRemoteBindActive: Bool {
+        activeBindAddress == AppConfig.coreBindRemote
+    }
+
     // MARK: - Public API
 
     /// Start the Core process with dynamic port allocation
@@ -110,14 +127,21 @@ class CoreProcessManager: ObservableObject {
             return
         }
 
-        // Clean up any orphaned processes from previous runs (e.g., Xcode force stop)
-        Self.cleanupOrphanedProcesses()
-
         // 每次启动 Core 生成新的会话 token，避免跨会话复用
         currentWSToken = UUID().uuidString
+        isStopping = false
         isStarting = true
         currentAttempt = 0
-        startWithRetry()
+        // 清理孤儿进程可能阻塞，放到后台执行，避免启动阶段卡住主线程。
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            Self.cleanupOrphanedProcesses()
+            DispatchQueue.main.async {
+                guard let self = self, self.isStarting else {
+                    return
+                }
+                self.startWithRetry()
+            }
+        }
     }
 
     /// Kill any orphaned tidyflow-core processes from previous runs
@@ -136,7 +160,16 @@ class CoreProcessManager: ObservableObject {
 
         do {
             try task.run()
-            task.waitUntilExit()
+            // 保护：避免 ps 异常阻塞导致启动路径被卡住。
+            let deadline = Date().addingTimeInterval(2.0)
+            while task.isRunning && Date() < deadline {
+                usleep(50_000)
+            }
+            if task.isRunning {
+                TFLog.core.warning("Timed out while checking orphaned tidyflow-core processes")
+                task.terminate()
+                return
+            }
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             guard let output = String(data: data, encoding: .utf8), !output.isEmpty else {
@@ -182,12 +215,15 @@ class CoreProcessManager: ObservableObject {
     func stop() {
         // Mark as stopping to prevent auto-restart
         isStopping = true
+        // 可能还在启动前清理阶段，先标记取消启动。
+        isStarting = false
 
         guard let proc = process, proc.isRunning else {
             DispatchQueue.main.async {
                 self.status = .stopped
                 self.isStopping = false
                 self.currentWSToken = nil
+                self.launchedBindAddress = nil
             }
             return
         }
@@ -212,10 +248,15 @@ class CoreProcessManager: ObservableObject {
             }
 
             DispatchQueue.main.async {
-                self?.cleanup()
-                self?.status = .stopped
-                self?.isStopping = false
-                self?.currentWSToken = nil
+                guard let self else { return }
+                // 仅当仍是同一个被 stop 的进程时，才允许把状态写回 stopped。
+                if self.process === proc {
+                    self.cleanup()
+                    self.status = .stopped
+                    self.currentWSToken = nil
+                    self.launchedBindAddress = nil
+                }
+                self.isStopping = false
             }
         }
     }
@@ -227,10 +268,8 @@ class CoreProcessManager: ObservableObject {
             autoRestartCount = 0
         }
         stop()
-        // Wait a bit for cleanup, then start
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.start()
-        }
+        // 等待 stop 完成后再启动，避免被 status.isRunning 守卫拦截导致重启丢失。
+        waitForStopAndStart(maxChecks: 12, interval: 0.2)
     }
 
     /// Check if process is currently running
@@ -241,6 +280,14 @@ class CoreProcessManager: ObservableObject {
     /// Get the current port (if running or starting)
     var currentPort: Int? {
         status.port
+    }
+
+    /// 仅在 Core 已运行时返回端口（避免把启动中的端口暴露给业务 UI）
+    var runningPort: Int? {
+        if case .running(let port, _) = status {
+            return port
+        }
+        return nil
     }
 
     /// Get auto-restart count (for UI display)
@@ -330,8 +377,9 @@ class CoreProcessManager: ObservableObject {
 
         // Set environment variable
         var env = ProcessInfo.processInfo.environment
+        let bindAddress = AppConfig.currentCoreBindAddress
         env["TIDYFLOW_PORT"] = "\(port)"
-        env["TIDYFLOW_BIND_ADDR"] = AppConfig.currentCoreBindAddress
+        env["TIDYFLOW_BIND_ADDR"] = bindAddress
         if let token = currentWSToken, !token.isEmpty {
             env["TIDYFLOW_WS_TOKEN"] = token
         }
@@ -372,6 +420,10 @@ class CoreProcessManager: ObservableObject {
         proc.terminationHandler = { [weak self] proc in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 忽略旧进程（已被新进程替代）的终止回调，避免覆盖当前状态。
+                if self.process !== proc {
+                    return
+                }
 
                 let code = proc.terminationStatus
                 let reason = proc.terminationReason
@@ -412,13 +464,15 @@ class CoreProcessManager: ObservableObject {
         do {
             try proc.run()
             self.process = proc
+            self.launchedBindAddress = bindAddress
             let pid = proc.processIdentifier
             TFLog.core.info("Process started with PID: \(pid, privacy: .public) on port \(port, privacy: .public)")
 
             // Mark as running after a short delay to let it initialize
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self = self else { return }
-                if self.process?.isRunning == true {
+                // 仅当该 proc 仍是当前进程时，才更新 running 状态与回调。
+                if self.process === proc, proc.isRunning {
                     self.status = .running(port: port, pid: pid)
                     self.isStarting = false
                     self.onCoreReady?(port)
@@ -522,6 +576,26 @@ class CoreProcessManager: ObservableObject {
         stdoutPipe = nil
         stderrPipe = nil
         process = nil
+        launchedBindAddress = nil
+    }
+
+    /// 轮询等待 stop 完成，再触发 start。
+    private func waitForStopAndStart(maxChecks: Int, interval: TimeInterval) {
+        let shouldWait = isStopping || status.isRunning || status.isStarting
+        if !shouldWait {
+            start()
+            return
+        }
+
+        guard maxChecks > 0 else {
+            TFLog.core.warning("Restart wait timed out; forcing start attempt")
+            start()
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
+            self?.waitForStopAndStart(maxChecks: maxChecks - 1, interval: interval)
+        }
     }
 
     deinit {
