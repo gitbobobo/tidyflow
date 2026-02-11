@@ -89,8 +89,11 @@ struct TermListResult {
 
 /// 二进制字段解码辅助
 enum WSBinary {
-    /// MessagePack bin 在 AnyCodable 下可能表现为 `[Int]` 或 `[UInt8]`
+    /// MessagePack bin 在 AnyCodable 下可能表现为 `Data` / `[Int]` / `[UInt8]`
     static func decodeBytes(_ value: Any?) -> [UInt8] {
+        if let data = value as? Data {
+            return [UInt8](data)
+        }
         if let bytes = value as? [UInt8] {
             return bytes
         }

@@ -8,6 +8,7 @@ enum AnyCodable: Codable {
     case int(Int)
     case double(Double)
     case string(String)
+    case data(Data)
     case array([AnyCodable])
     case dictionary([String: AnyCodable])
 
@@ -22,6 +23,9 @@ enum AnyCodable: Codable {
             self = .int(int)
         } else if let string = try? container.decode(String.self) {
             self = .string(string)
+        } else if let data = try? container.decode(Data.self) {
+            // MessagePack bin 类型（用于终端 output / scrollback 等二进制字段）
+            self = .data(data)
         } else if let dictionary = try? container.decode([String: AnyCodable].self) {
             // 字典和数组必须在 double 之前检测，否则 MessagePack 的 fixmap/fixarray 字节会被误解为 double
             self = .dictionary(dictionary)
@@ -51,6 +55,8 @@ enum AnyCodable: Codable {
             try container.encode(value)
         case .string(let value):
             try container.encode(value)
+        case .data(let value):
+            try container.encode(value)
         case .array(let value):
             try container.encode(value)
         case .dictionary(let value):
@@ -71,6 +77,8 @@ enum AnyCodable: Codable {
             return .double(double)
         case let string as String:
             return .string(string)
+        case let data as Data:
+            return .data(data)
         case let array as [Any]:
             return .array(array.map { from($0) })
         case let dict as [String: Any]:
@@ -93,6 +101,8 @@ enum AnyCodable: Codable {
         case .double(let value):
             return value
         case .string(let value):
+            return value
+        case .data(let value):
             return value
         case .array(let value):
             return value.map { $0.toAny }
