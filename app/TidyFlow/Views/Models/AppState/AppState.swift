@@ -89,6 +89,7 @@ class AppState: ObservableObject {
     // 后台任务管理器
     let taskManager = BackgroundTaskManager()
     private var taskManagerCancellable: AnyCancellable?
+    private var coreProcessManagerCancellable: AnyCancellable?
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]
@@ -214,7 +215,8 @@ class AppState: ObservableObject {
 
     // Project name (for WS protocol)
     var selectedProjectName: String = "default"
-
+    /// Core 启动就绪后的窗口展示回调（由 App 注入）
+    var onCoreReadyForWindow: (() -> Void)?
 
     var commands: [Command] = []
 
@@ -246,6 +248,11 @@ class AppState: ObservableObject {
 
         // Setup Core process callbacks
         setupCoreCallbacks()
+
+        // 转发 coreProcessManager 变更到 AppState，驱动依赖计算属性（如移动端端口文案）实时刷新
+        coreProcessManagerCancellable = coreProcessManager.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
 
         // Start Core process first (WS will connect when Core is ready)
         startCoreIfNeeded()

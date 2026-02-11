@@ -18,6 +18,31 @@ private struct PairErrorHTTPResponse: Decodable {
 }
 
 extension AppState {
+    /// 用户配置是否已在当前 Core 会话生效
+    var remoteAccessPendingApply: Bool {
+        remoteAccessEnabled != coreProcessManager.isRemoteBindActive
+    }
+
+    /// 当前 Core 会话是否已开启局域网访问（0.0.0.0）
+    var remoteAccessActive: Bool {
+        coreProcessManager.isRemoteBindActive
+    }
+
+    /// 当前会话是否允许生成并使用移动端连接信息
+    var remoteAccessReady: Bool {
+        remoteAccessEnabled && remoteAccessActive
+    }
+
+    /// 移动端访问提示文案（区分“已配置未生效”）
+    var mobileRemoteAccessHintText: String {
+        if remoteAccessPendingApply {
+            return "settings.mobile.remoteAccess.pendingHint".localized
+        }
+        return remoteAccessEnabled
+            ? "settings.mobile.remoteAccess.onHint".localized
+            : "settings.mobile.remoteAccess.offHint".localized
+    }
+
     /// 当前可用于移动端连接的局域网 IPv4 地址列表（优先 en* 接口）
     var mobileLanIPv4Addresses: [String] {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
@@ -83,7 +108,10 @@ extension AppState {
 
     /// 移动端连接展示用的端口文案
     var mobileAccessPortDisplayText: String {
-        guard let port = coreProcessManager.currentPort else {
+        if let wsPort = wsClient.currentURL?.port {
+            return "\(wsPort)"
+        }
+        guard let port = coreProcessManager.runningPort else {
             return "settings.mobile.unavailable".localized
         }
         return "\(port)"
@@ -127,6 +155,8 @@ extension AppState {
             self?.setupWSClient(port: port)
             // Notify CenterContentView to update WebBridge with the port
             self?.onCoreReadyWithPort?(port)
+            // 启动阶段：Core ready 后再展示主窗口
+            self?.onCoreReadyForWindow?()
         }
 
         coreProcessManager.onCoreFailed = { [weak self] message in
@@ -171,7 +201,7 @@ extension AppState {
         coreProcessManager.restart(resetCounter: true)
     }
 
-    /// 更新局域网访问开关，并重启 Core 以应用新的绑定地址
+    /// 更新局域网访问开关（仅写入配置，下次启动应用生效）
     func setRemoteAccessEnabled(_ enabled: Bool) {
         guard remoteAccessEnabled != enabled else { return }
         remoteAccessEnabled = enabled
@@ -181,7 +211,6 @@ extension AppState {
         mobilePairCode = nil
         mobilePairCodeExpiresAt = nil
         mobilePairCodeError = nil
-        restartCore()
     }
 
     /// 生成移动端配对码（仅本机调用 /pair/start）
@@ -190,7 +219,12 @@ extension AppState {
             mobilePairCodeError = "settings.mobile.error.enableFirst".localized
             return
         }
-        guard let port = coreProcessManager.currentPort else {
+        guard remoteAccessReady else {
+            mobilePairCodeError = "settings.mobile.error.restartRequired".localized
+            return
+        }
+        let readyPort = wsClient.currentURL?.port ?? coreProcessManager.runningPort
+        guard let port = readyPort else {
             mobilePairCodeError = "settings.mobile.error.coreNotReady".localized
             return
         }
