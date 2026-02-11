@@ -86,6 +86,8 @@ pub async fn handle_terminal_message(
                     None,
                     None,
                     ctx.scrollback_tx.clone(),
+                    None,
+                    None,
                 )
                 .map_err(|e| format!("Spawn error: {}", e))?
             };
@@ -141,7 +143,7 @@ pub async fn handle_terminal_message(
         }
 
         // v1.2: Multi-workspace extension
-        ClientMessage::TermCreate { project, workspace } => {
+        ClientMessage::TermCreate { project, workspace, cols, rows } => {
             info!(
                 project = %project,
                 workspace = %workspace,
@@ -163,6 +165,8 @@ pub async fn handle_terminal_message(
                             Some(project.clone()),
                             Some(workspace.clone()),
                             ctx.scrollback_tx.clone(),
+                            *cols,
+                            *rows,
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };

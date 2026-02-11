@@ -17,7 +17,7 @@ pub struct PtySession {
 
 impl PtySession {
     #[instrument]
-    pub fn new(cwd: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(cwd: Option<PathBuf>, initial_cols: Option<u16>, initial_rows: Option<u16>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let session_id = Uuid::new_v4().to_string();
         info!(session_id = %session_id, "Creating new PTY session");
 
@@ -38,10 +38,10 @@ impl PtySession {
         // Create PTY system
         let pty_system = portable_pty::native_pty_system();
 
-        // Create PTY with default size
+        // 使用客户端传入的尺寸，或回退到默认值
         let size = PtySize {
-            rows: 24,
-            cols: 80,
+            rows: initial_rows.unwrap_or(24),
+            cols: initial_cols.unwrap_or(80),
             pixel_width: 0,
             pixel_height: 0,
         };

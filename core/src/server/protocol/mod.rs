@@ -79,6 +79,11 @@ pub enum ClientMessage {
     TermCreate {
         project: String,
         workspace: String,
+        /// 可选初始尺寸，避免创建后再 resize 导致提示符重绘
+        #[serde(default)]
+        cols: Option<u16>,
+        #[serde(default)]
+        rows: Option<u16>,
     },
     TermList,
     TermClose {

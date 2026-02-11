@@ -99,13 +99,15 @@ impl TerminalRegistry {
         project: Option<String>,
         workspace: Option<String>,
         scrollback_tx: mpsc::Sender<(String, Vec<u8>)>,
+        initial_cols: Option<u16>,
+        initial_rows: Option<u16>,
     ) -> Result<(String, String), String> {
         let term_id = Uuid::new_v4().to_string();
         let cwd_path = cwd.unwrap_or_else(|| {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string()))
         });
 
-        let mut session = PtySession::new(Some(cwd_path.clone()))
+        let mut session = PtySession::new(Some(cwd_path.clone()), initial_cols, initial_rows)
             .map_err(|e| format!("Failed to create PTY: {}", e))?;
 
         let shell_name = session.shell_name().to_string();
