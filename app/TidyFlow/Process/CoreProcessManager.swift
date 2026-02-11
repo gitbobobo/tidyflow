@@ -331,6 +331,7 @@ class CoreProcessManager: ObservableObject {
         // Set environment variable
         var env = ProcessInfo.processInfo.environment
         env["TIDYFLOW_PORT"] = "\(port)"
+        env["TIDYFLOW_BIND_ADDR"] = AppConfig.currentCoreBindAddress
         if let token = currentWSToken, !token.isEmpty {
             env["TIDYFLOW_WS_TOKEN"] = token
         }

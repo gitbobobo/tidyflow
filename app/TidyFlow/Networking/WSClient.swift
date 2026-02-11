@@ -52,6 +52,13 @@ class WSClient: NSObject, ObservableObject {
     var onWorkspaceCreated: ((WorkspaceCreatedResult) -> Void)?
     var onProjectsList: ((ProjectsListResult) -> Void)?
     var onWorkspacesList: ((WorkspacesListResult) -> Void)?
+    // 终端会话
+    var onTermCreated: ((TermCreatedResult) -> Void)?
+    var onTermAttached: ((TermAttachedResult) -> Void)?
+    var onTermList: ((TermListResult) -> Void)?
+    var onTermClosed: ((String) -> Void)?
+    var onTerminalOutput: ((String?, [UInt8]) -> Void)?
+    var onTerminalExit: ((String?, Int) -> Void)?
     var onProjectRemoved: ((ProjectRemovedResult) -> Void)?
     var onWorkspaceRemoved: ((WorkspaceRemovedResult) -> Void)?
     // 客户端设置

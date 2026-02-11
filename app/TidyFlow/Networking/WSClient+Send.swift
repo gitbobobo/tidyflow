@@ -336,6 +336,60 @@ extension WSClient {
         ])
     }
 
+    // MARK: - 终端会话（供 iOS / 远程客户端复用）
+
+    /// 创建终端（基于项目与工作空间）
+    func requestTermCreate(project: String, workspace: String) {
+        send([
+            "type": "term_create",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    /// 获取终端会话列表
+    func requestTermList() {
+        send([
+            "type": "term_list"
+        ])
+    }
+
+    /// 关闭终端
+    func requestTermClose(termId: String) {
+        send([
+            "type": "term_close",
+            "term_id": termId
+        ])
+    }
+
+    /// 附着已存在终端（重连场景）
+    func requestTermAttach(termId: String) {
+        send([
+            "type": "term_attach",
+            "term_id": termId
+        ])
+    }
+
+    /// 发送终端输入（UTF-8 文本）
+    func sendTerminalInput(_ text: String, termId: String) {
+        let bytes = Array(text.utf8)
+        send([
+            "type": "input",
+            "term_id": termId,
+            "data": bytes
+        ])
+    }
+
+    /// 发送终端 resize
+    func requestTermResize(termId: String, cols: Int, rows: Int) {
+        send([
+            "type": "resize",
+            "term_id": termId,
+            "cols": cols,
+            "rows": rows
+        ])
+    }
+
     // UX-2: Request create workspace（名称由 Core 用 petname 生成）
     func requestCreateWorkspace(project: String, fromBranch: String? = nil) {
         var msg: [String: Any] = [

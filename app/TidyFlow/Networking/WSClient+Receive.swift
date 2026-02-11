@@ -70,6 +70,16 @@ extension WSClient {
             // Connection established, ignore or log
             break
 
+        case "output":
+            let termId = json["term_id"] as? String
+            let bytes = WSBinary.decodeBytes(json["data"])
+            onTerminalOutput?(termId, bytes)
+
+        case "exit":
+            let termId = json["term_id"] as? String
+            let code = json["code"] as? Int ?? -1
+            onTerminalExit?(termId, code)
+
         case "git_diff_result":
             if let result = GitDiffResult.from(json: json) {
                 onGitDiffResult?(result)
@@ -156,6 +166,26 @@ extension WSClient {
         case "workspaces":
             if let result = WorkspacesListResult.from(json: json) {
                 onWorkspacesList?(result)
+            }
+
+        case "term_created":
+            if let result = TermCreatedResult.from(json: json) {
+                onTermCreated?(result)
+            }
+
+        case "term_attached":
+            if let result = TermAttachedResult.from(json: json) {
+                onTermAttached?(result)
+            }
+
+        case "term_list":
+            if let result = TermListResult.from(json: json) {
+                onTermList?(result)
+            }
+
+        case "term_closed":
+            if let termId = json["term_id"] as? String {
+                onTermClosed?(termId)
             }
 
         case "project_removed":
