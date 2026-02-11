@@ -7,15 +7,61 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		28C59DA5E6FE98CF4D53E0B4 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
+		29487A27F065FE0B9D8A8266 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
 		2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */; };
 		2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */; };
 		2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */; };
 		2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */; };
 		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
-		GCS000012 /* GitCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = GCS000011 /* GitCacheState.swift */; };
+		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
+		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
+		2CE8E4846E61AEF7F4977EEC /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */; };
+		3DFCBC76B433FB811DF17512 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
+		4CF1B8472DFEE28D7A8B1058 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
+		5B5240BAA41C840D0593927E /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
+		5C4A680741E10100F1A1A150 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
+		6737475ACFA51F4EFC6E1D20 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
+		6DC2CD6DD0EA09E6120CCC90 /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */; };
+		733BBDF339DADDE6BD492ECA /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* AnyCodable.swift */; };
+		821C66245F142DF0B78EBF45 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
+		8686DEB656CDB748854F7725 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0C7853A8D54BE247818D1333 /* Foundation.framework */; };
+		930A28E05020B9AD2A364722 /* FileBrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000108 /* FileBrowserModels.swift */; };
+		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
+		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
+		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
+		A1000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000016 /* Assets.xcassets */; };
+		A63C63F68A938CE6F19B1257 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
+		A866AA59997825F9AB6ECE6D /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
+		AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */; };
+		B3A00001 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00011 /* CommandPaletteView.swift */; };
+		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
+		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
+		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
+		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
+		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
+		B3A00007 /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* AnyCodable.swift */; };
+		B3A00008 /* NativeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00018 /* NativeGitPanelView.swift */; };
+		B3A00009 /* BranchPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00019 /* BranchPickerView.swift */; };
+		BD77E0F7459611D0A5EB331C /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
+		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
+		C595D88A861FB6AAAFD09E1D /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
+		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
+		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
+		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
+		D79D7F7652CD8A0ABD9B7573 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
+		E3E4B6E2850AFF7F84278D20 /* ClientSettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000104 /* ClientSettingsModels.swift */; };
+		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
+		E4200002 /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
+		E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677A21DC64E8B5102B08960B /* MobileAppState.swift */; };
+		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
+		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
+		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
+		FAQ00001 /* FAQView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAQ00011 /* FAQView.swift */; };
 		FCS000012 /* FileCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCS000011 /* FileCacheState.swift */; };
-		SPL00041 /* GitCacheState+DiffStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00031 /* GitCacheState+DiffStatus.swift */; };
-		SPL00042 /* GitCacheState+Operations.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00032 /* GitCacheState+Operations.swift */; };
+		GCS000012 /* GitCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = GCS000011 /* GitCacheState.swift */; };
+		L10N0001 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
+		L10N0002 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = L10N0020 /* Localizable.strings */; };
 		MDL000301 /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000101 /* Notifications.swift */; };
 		MDL000302 /* EditorTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000102 /* EditorTools.swift */; };
 		MDL000303 /* TabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000103 /* TabModels.swift */; };
@@ -33,61 +79,36 @@
 		MDL00030F /* AppState+AIActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00010F /* AppState+AIActions.swift */; };
 		MDL000310 /* AppState+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000110 /* AppState+Settings.swift */; };
 		MDL000311 /* AppState+EditorTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000111 /* AppState+EditorTerminal.swift */; };
-		TMS00001 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMS00002 /* TerminalStore.swift */; };
-		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
 		MDL000312 /* BackgroundTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000112 /* BackgroundTaskModels.swift */; };
 		MDL000313 /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000113 /* BackgroundTaskManager.swift */; };
 		MDL000314 /* AppState+BackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000114 /* AppState+BackgroundTasks.swift */; };
-		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
-		FAQ00001 /* FAQView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAQ00011 /* FAQView.swift */; };
-		TST00001 /* ToastManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00011 /* ToastManager.swift */; };
-		TST00002 /* ToastOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00012 /* ToastOverlayView.swift */; };
-		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
-		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
-		SPL00009 /* ExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00024 /* ExplorerView.swift */; };
-		SPL0000A /* FileDialogViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00025 /* FileDialogViews.swift */; };
-		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
-		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
-		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
-		A1000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000016 /* Assets.xcassets */; };
-		B3A00001 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00011 /* CommandPaletteView.swift */; };
-		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
-		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
-		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
-		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
-		SPL00004 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
-		TPR00001 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
-		SPL00005 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
-		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
+		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
+		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
+		QAV00001 /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = QAV00011 /* QuickActionsView.swift */; };
+		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		SPL00002 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
 		SPL00003 /* FileProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00013 /* FileProtocolModels.swift */; };
-		B3A00007 /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00017 /* AnyCodable.swift */; };
-		B3A00008 /* NativeGitPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00018 /* NativeGitPanelView.swift */; };
+		SPL00004 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
+		SPL00005 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
 		SPL00006 /* FloatingPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00021 /* FloatingPanelController.swift */; };
 		SPL00007 /* GitPanelSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00022 /* GitPanelSections.swift */; };
 		SPL00008 /* GitGraphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00023 /* GitGraphViews.swift */; };
-		B3A00009 /* BranchPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00019 /* BranchPickerView.swift */; };
-		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
-		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
-		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
-		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
-		E4200002 /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
-		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
-		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
-		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
+		SPL00009 /* ExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00024 /* ExplorerView.swift */; };
+		SPL0000A /* FileDialogViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00025 /* FileDialogViews.swift */; };
+		SPL00041 /* GitCacheState+DiffStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00031 /* GitCacheState+DiffStatus.swift */; };
+		SPL00042 /* GitCacheState+Operations.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00032 /* GitCacheState+Operations.swift */; };
 		SPL00043 /* CommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00033 /* CommandEditSheet.swift */; };
 		SPL00044 /* AIAgentAboutViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00034 /* AIAgentAboutViews.swift */; };
-		QAV00001 /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = QAV00011 /* QuickActionsView.swift */; };
+		TMS00001 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMS00002 /* TerminalStore.swift */; };
+		TPR00001 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
+		TST00001 /* ToastManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00011 /* ToastManager.swift */; };
+		TST00002 /* ToastOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00012 /* ToastOverlayView.swift */; };
 		UX100001 /* ProjectsSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100011 /* ProjectsSidebarView.swift */; };
 		UX100002 /* AddProjectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100012 /* AddProjectSheet.swift */; };
-		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
-		L10N0001 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = L10N0011 /* LocalizationManager.swift */; };
-		L10N0002 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = L10N0020 /* Localizable.strings */; };
 		UX100003 /* ProjectConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100013 /* ProjectConfigView.swift */; };
 		UX100004 /* ProjectCommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100014 /* ProjectCommandEditSheet.swift */; };
 		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
-		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -104,9 +125,50 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0C7853A8D54BE247818D1333 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalProtocolModels.swift; sourceTree = "<group>"; };
 		2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CenterContentView.swift; sourceTree = "<group>"; };
 		2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeftSidebarView.swift; sourceTree = "<group>"; };
 		2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
+		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
+		2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebBridge.swift; sourceTree = "<group>"; };
+		2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
+		2E667DE0A535A7448B3C8A7B /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TidyFlowiOSApp.swift; sourceTree = "<group>"; };
+		677A21DC64E8B5102B08960B /* MobileAppState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAppState.swift; sourceTree = "<group>"; };
+		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
+		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A1000013 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Web; sourceTree = "<group>"; };
+		A1000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000015 /* TidyFlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TidyFlow.entitlements; sourceTree = "<group>"; };
+		A1000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B3A00011 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
+		B3A00012 /* KeybindingHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeybindingHandler.swift; sourceTree = "<group>"; };
+		B3A00013 /* TabStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripView.swift; sourceTree = "<group>"; };
+		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
+		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
+		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
+		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
+		B3A00018 /* NativeGitPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGitPanelView.swift; sourceTree = "<group>"; };
+		B3A00019 /* BranchPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BranchPickerView.swift; sourceTree = "<group>"; };
+		BGT00011 /* BackgroundTaskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskViews.swift; sourceTree = "<group>"; };
+		D0A37555B73456C48475C6AD /* TidyFlow-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		D3900011 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		D3900012 /* CoreProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProcessManager.swift; sourceTree = "<group>"; };
+		D3900013 /* PortAllocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortAllocator.swift; sourceTree = "<group>"; };
+		E4200011 /* LogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogWriter.swift; sourceTree = "<group>"; };
+		E4200012 /* TFLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFLogger.swift; sourceTree = "<group>"; };
+		EDS00002 /* EditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStore.swift; sourceTree = "<group>"; };
+		F5D00011 /* DebugPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPanelView.swift; sourceTree = "<group>"; };
+		F5D00012 /* LogTailReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTailReader.swift; sourceTree = "<group>"; };
+		FAQ00011 /* FAQView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FAQView.swift; sourceTree = "<group>"; };
+		FCS000011 /* FileCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCacheState.swift; sourceTree = "<group>"; };
+		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
+		L10N0011 /* LocalizationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationManager.swift; sourceTree = "<group>"; };
+		L10N0021 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		L10N0022 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		MDL000101 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
 		MDL000102 /* EditorTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTools.swift; sourceTree = "<group>"; };
 		MDL000103 /* TabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabModels.swift; sourceTree = "<group>"; };
@@ -124,73 +186,47 @@
 		MDL00010F /* AppState+AIActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+AIActions.swift"; sourceTree = "<group>"; };
 		MDL000110 /* AppState+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Settings.swift"; sourceTree = "<group>"; };
 		MDL000111 /* AppState+EditorTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+EditorTerminal.swift"; sourceTree = "<group>"; };
-		TMS00002 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
-		EDS00002 /* EditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStore.swift; sourceTree = "<group>"; };
 		MDL000112 /* BackgroundTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskModels.swift; sourceTree = "<group>"; };
 		MDL000113 /* BackgroundTaskManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskManager.swift; sourceTree = "<group>"; };
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
-		BGT00011 /* BackgroundTaskViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskViews.swift; sourceTree = "<group>"; };
-		FAQ00011 /* FAQView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FAQView.swift; sourceTree = "<group>"; };
-		TST00011 /* ToastManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastManager.swift; sourceTree = "<group>"; };
-		TST00012 /* ToastOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastOverlayView.swift; sourceTree = "<group>"; };
-		GCS000011 /* GitCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitCacheState.swift; sourceTree = "<group>"; };
-		FCS000011 /* FileCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCacheState.swift; sourceTree = "<group>"; };
-		SPL00031 /* GitCacheState+DiffStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+DiffStatus.swift"; sourceTree = "<group>"; };
-		SPL00032 /* GitCacheState+Operations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+Operations.swift"; sourceTree = "<group>"; };
-		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
-		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
-		2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebBridge.swift; sourceTree = "<group>"; };
-		2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
-		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
-		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		A1000013 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Web; sourceTree = "<group>"; };
-		A1000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A1000015 /* TidyFlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TidyFlow.entitlements; sourceTree = "<group>"; };
-		A1000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		B3A00011 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
-		B3A00012 /* KeybindingHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeybindingHandler.swift; sourceTree = "<group>"; };
-		B3A00013 /* TabStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripView.swift; sourceTree = "<group>"; };
-		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
-		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
-		SPL00014 /* WSClient+Send.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
-		TPR00002 /* TypedProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedProtocol.swift; sourceTree = "<group>"; };
-		SPL00015 /* WSClient+Receive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
-		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
+		MDL000115 /* ProjectCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandModels.swift; sourceTree = "<group>"; };
+		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
+		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00012 /* GitProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00013 /* FileProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProtocolModels.swift; sourceTree = "<group>"; };
-		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
-		B3A00018 /* NativeGitPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGitPanelView.swift; sourceTree = "<group>"; };
+		SPL00014 /* WSClient+Send.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
+		SPL00015 /* WSClient+Receive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
 		SPL00021 /* FloatingPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanelController.swift; sourceTree = "<group>"; };
 		SPL00022 /* GitPanelSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSections.swift; sourceTree = "<group>"; };
 		SPL00023 /* GitGraphViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitGraphViews.swift; sourceTree = "<group>"; };
 		SPL00024 /* ExplorerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExplorerView.swift; sourceTree = "<group>"; };
 		SPL00025 /* FileDialogViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDialogViews.swift; sourceTree = "<group>"; };
-		B3A00019 /* BranchPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BranchPickerView.swift; sourceTree = "<group>"; };
-		D3900011 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
-		D3900012 /* CoreProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProcessManager.swift; sourceTree = "<group>"; };
-		D3900013 /* PortAllocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortAllocator.swift; sourceTree = "<group>"; };
-		E4200011 /* LogWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogWriter.swift; sourceTree = "<group>"; };
-		E4200012 /* TFLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFLogger.swift; sourceTree = "<group>"; };
-		F5D00011 /* DebugPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPanelView.swift; sourceTree = "<group>"; };
-		F5D00012 /* LogTailReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTailReader.swift; sourceTree = "<group>"; };
-		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		SPL00031 /* GitCacheState+DiffStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+DiffStatus.swift"; sourceTree = "<group>"; };
+		SPL00032 /* GitCacheState+Operations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+Operations.swift"; sourceTree = "<group>"; };
 		SPL00033 /* CommandEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandEditSheet.swift; sourceTree = "<group>"; };
 		SPL00034 /* AIAgentAboutViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAgentAboutViews.swift; sourceTree = "<group>"; };
-		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
+		TMS00002 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
+		TPR00002 /* TypedProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedProtocol.swift; sourceTree = "<group>"; };
+		TST00011 /* ToastManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastManager.swift; sourceTree = "<group>"; };
+		TST00012 /* ToastOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastOverlayView.swift; sourceTree = "<group>"; };
 		UX100011 /* ProjectsSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsSidebarView.swift; sourceTree = "<group>"; };
 		UX100012 /* AddProjectSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddProjectSheet.swift; sourceTree = "<group>"; };
-		L10N0011 /* LocalizationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationManager.swift; sourceTree = "<group>"; };
-		L10N0021 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
-		L10N0022 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		UX100013 /* ProjectConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectConfigView.swift; sourceTree = "<group>"; };
 		UX100014 /* ProjectCommandEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandEditSheet.swift; sourceTree = "<group>"; };
 		UX100015 /* ProjectCommandsMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandsMenuView.swift; sourceTree = "<group>"; };
-		MDL000115 /* ProjectCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		37B629EFA250EDA89BDC5B14 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8686DEB656CDB748854F7725 /* Foundation.framework in Frameworks */,
+				C595D88A861FB6AAAFD09E1D /* MessagePacker in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A100000D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -242,6 +278,127 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		2AEE0BB12F2F0BAA009B67A9 /* WebView */ = {
+			isa = PBXGroup;
+			children = (
+				2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */,
+				2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */,
+			);
+			path = WebView;
+			sourceTree = "<group>";
+		};
+		3F9CC65A7A1E66F0E34B1056 /* TidyFlow-iOS */ = {
+			isa = PBXGroup;
+			children = (
+				33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */,
+				677A21DC64E8B5102B08960B /* MobileAppState.swift */,
+				2E667DE0A535A7448B3C8A7B /* Info.plist */,
+			);
+			name = "TidyFlow-iOS";
+			path = "TidyFlow-iOS";
+			sourceTree = "<group>";
+		};
+		685A7F64D2A887B47F17D6B8 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				0C7853A8D54BE247818D1333 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		9EA3BB2541DC7D7F23729AD7 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				685A7F64D2A887B47F17D6B8 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A1000007 = {
+			isa = PBXGroup;
+			children = (
+				A1000020 /* TidyFlow */,
+				A100000F /* Products */,
+				3F9CC65A7A1E66F0E34B1056 /* TidyFlow-iOS */,
+				9EA3BB2541DC7D7F23729AD7 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		A100000F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1000010 /* TidyFlow-Debug.app */,
+				D0A37555B73456C48475C6AD /* TidyFlow-iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A1000020 /* TidyFlow */ = {
+			isa = PBXGroup;
+			children = (
+				A1000016 /* Assets.xcassets */,
+				F5D00020 /* Debug */,
+				E4200020 /* Logging */,
+				B3A00020 /* Networking */,
+				D3900020 /* Process */,
+				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
+				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
+				D3900011 /* AppConfig.swift */,
+				L10N0011 /* LocalizationManager.swift */,
+				A1000011 /* TidyFlowApp.swift */,
+				A1000012 /* ContentView.swift */,
+				A1000013 /* Web */,
+				A1000014 /* Info.plist */,
+				A1000015 /* TidyFlow.entitlements */,
+				L10N0020 /* Localizable.strings */,
+			);
+			path = TidyFlow;
+			sourceTree = "<group>";
+		};
+		B3A00020 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				B3A00017 /* AnyCodable.swift */,
+				SPL00013 /* FileProtocolModels.swift */,
+				SPL00012 /* GitProtocolModels.swift */,
+				SPL00011 /* ProjectProtocolModels.swift */,
+				B3A00016 /* ProtocolModels.swift */,
+				TPR00002 /* TypedProtocol.swift */,
+				B3A00015 /* WSClient.swift */,
+				SPL00015 /* WSClient+Receive.swift */,
+				SPL00014 /* WSClient+Send.swift */,
+				1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		D3900020 /* Process */ = {
+			isa = PBXGroup;
+			children = (
+				D3900012 /* CoreProcessManager.swift */,
+				D3900013 /* PortAllocator.swift */,
+			);
+			path = Process;
+			sourceTree = "<group>";
+		};
+		E4200020 /* Logging */ = {
+			isa = PBXGroup;
+			children = (
+				E4200011 /* LogWriter.swift */,
+				E4200012 /* TFLogger.swift */,
+			);
+			path = Logging;
+			sourceTree = "<group>";
+		};
+		F5D00020 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				F5D00011 /* DebugPanelView.swift */,
+				F5D00012 /* LogTailReader.swift */,
+			);
+			path = Debug;
+			sourceTree = "<group>";
+		};
 		MDL000201 /* Models */ = {
 			isa = PBXGroup;
 			children = (
@@ -281,99 +438,29 @@
 			path = AppState;
 			sourceTree = "<group>";
 		};
-		2AEE0BB12F2F0BAA009B67A9 /* WebView */ = {
-			isa = PBXGroup;
-			children = (
-				2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */,
-				2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */,
-			);
-			path = WebView;
-			sourceTree = "<group>";
-		};
-		A1000007 = {
-			isa = PBXGroup;
-			children = (
-				A1000020 /* TidyFlow */,
-				A100000F /* Products */,
-			);
-			sourceTree = "<group>";
-		};
-		A100000F /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				A1000010 /* TidyFlow-Debug.app */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		A1000020 /* TidyFlow */ = {
-			isa = PBXGroup;
-			children = (
-				A1000016 /* Assets.xcassets */,
-				F5D00020 /* Debug */,
-				E4200020 /* Logging */,
-				B3A00020 /* Networking */,
-				D3900020 /* Process */,
-				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
-				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
-				D3900011 /* AppConfig.swift */,
-				L10N0011 /* LocalizationManager.swift */,
-				A1000011 /* TidyFlowApp.swift */,
-				A1000012 /* ContentView.swift */,
-				A1000013 /* Web */,
-				A1000014 /* Info.plist */,
-				A1000015 /* TidyFlow.entitlements */,
-				L10N0020 /* Localizable.strings */,
-			);
-			path = TidyFlow;
-			sourceTree = "<group>";
-		};
-		B3A00020 /* Networking */ = {
-			isa = PBXGroup;
-			children = (
-				B3A00017 /* AnyCodable.swift */,
-				SPL00013 /* FileProtocolModels.swift */,
-				SPL00012 /* GitProtocolModels.swift */,
-				SPL00011 /* ProjectProtocolModels.swift */,
-				B3A00016 /* ProtocolModels.swift */,
-				TPR00002 /* TypedProtocol.swift */,
-				B3A00015 /* WSClient.swift */,
-				SPL00015 /* WSClient+Receive.swift */,
-				SPL00014 /* WSClient+Send.swift */,
-			);
-			path = Networking;
-			sourceTree = "<group>";
-		};
-		D3900020 /* Process */ = {
-			isa = PBXGroup;
-			children = (
-				D3900012 /* CoreProcessManager.swift */,
-				D3900013 /* PortAllocator.swift */,
-			);
-			path = Process;
-			sourceTree = "<group>";
-		};
-		E4200020 /* Logging */ = {
-			isa = PBXGroup;
-			children = (
-				E4200011 /* LogWriter.swift */,
-				E4200012 /* TFLogger.swift */,
-			);
-			path = Logging;
-			sourceTree = "<group>";
-		};
-		F5D00020 /* Debug */ = {
-			isa = PBXGroup;
-			children = (
-				F5D00011 /* DebugPanelView.swift */,
-				F5D00012 /* LogTailReader.swift */,
-			);
-			path = Debug;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		8D716B182C7D66C48DFDED94 /* TidyFlow-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B40CC5FF3B158546E1258A15 /* Build configuration list for PBXNativeTarget "TidyFlow-iOS" */;
+			buildPhases = (
+				432FB9EA45213BC90AB81A69 /* Sources */,
+				37B629EFA250EDA89BDC5B14 /* Frameworks */,
+				7AE740EFC9D4F4D0C69B80B7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "TidyFlow-iOS";
+			packageProductDependencies = (
+				MSGPK002 /* MessagePacker */,
+			);
+			productName = "TidyFlow-iOS";
+			productReference = D0A37555B73456C48475C6AD /* TidyFlow-iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
 		A100000A /* TidyFlow */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000019 /* Build configuration list for PBXNativeTarget "TidyFlow" */;
@@ -429,11 +516,19 @@
 			projectRoot = "";
 			targets = (
 				A100000A /* TidyFlow */,
+				8D716B182C7D66C48DFDED94 /* TidyFlow-iOS */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		7AE740EFC9D4F4D0C69B80B7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A100000E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -472,6 +567,31 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		432FB9EA45213BC90AB81A69 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6737475ACFA51F4EFC6E1D20 /* AppConfig.swift in Sources */,
+				733BBDF339DADDE6BD492ECA /* AnyCodable.swift in Sources */,
+				29487A27F065FE0B9D8A8266 /* ProtocolModels.swift in Sources */,
+				BD77E0F7459611D0A5EB331C /* ProjectProtocolModels.swift in Sources */,
+				5C4A680741E10100F1A1A150 /* GitProtocolModels.swift in Sources */,
+				5B5240BAA41C840D0593927E /* FileProtocolModels.swift in Sources */,
+				2CE8E4846E61AEF7F4977EEC /* TerminalProtocolModels.swift in Sources */,
+				28C59DA5E6FE98CF4D53E0B4 /* TypedProtocol.swift in Sources */,
+				D79D7F7652CD8A0ABD9B7573 /* WSClient.swift in Sources */,
+				4CF1B8472DFEE28D7A8B1058 /* WSClient+Send.swift in Sources */,
+				A63C63F68A938CE6F19B1257 /* WSClient+Receive.swift in Sources */,
+				A866AA59997825F9AB6ECE6D /* TFLogger.swift in Sources */,
+				E3E4B6E2850AFF7F84278D20 /* ClientSettingsModels.swift in Sources */,
+				AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */,
+				E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */,
+				3DFCBC76B433FB811DF17512 /* ProjectCommandModels.swift in Sources */,
+				930A28E05020B9AD2A364722 /* FileBrowserModels.swift in Sources */,
+				821C66245F142DF0B78EBF45 /* LocalizationManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A100000B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -485,40 +605,40 @@
 				2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */,
 				2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */,
 				2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */,
-					2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
-					2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
-					GCS000012 /* GitCacheState.swift in Sources */,
-					FCS000012 /* FileCacheState.swift in Sources */,
+				2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
+				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
+				GCS000012 /* GitCacheState.swift in Sources */,
+				FCS000012 /* FileCacheState.swift in Sources */,
 				SPL00041 /* GitCacheState+DiffStatus.swift in Sources */,
 				SPL00042 /* GitCacheState+Operations.swift in Sources */,
-					MDL000301 /* Notifications.swift in Sources */,
-					MDL000302 /* EditorTools.swift in Sources */,
-					MDL000303 /* TabModels.swift in Sources */,
-					MDL000304 /* ClientSettingsModels.swift in Sources */,
-					MDL000305 /* AIModels.swift in Sources */,
-					MDL000306 /* CommandPaletteModels.swift in Sources */,
-					MDL000307 /* ProjectWorkspaceModels.swift in Sources */,
-					MDL000308 /* FileBrowserModels.swift in Sources */,
-					MDL000309 /* AppState.swift in Sources */,
-					MDL00030A /* AppState+Workspace.swift in Sources */,
-					MDL00030B /* AppState+CoreWS.swift in Sources */,
-					MDL00030C /* AppState+FileOps.swift in Sources */,
-					MDL00030D /* AppState+Projects.swift in Sources */,
-					MDL00030E /* AppState+Tabs.swift in Sources */,
-					MDL00030F /* AppState+AIActions.swift in Sources */,
-					MDL000310 /* AppState+Settings.swift in Sources */,
-					MDL000311 /* AppState+EditorTerminal.swift in Sources */,
-					TMS00001 /* TerminalStore.swift in Sources */,
-					EDS00001 /* EditorStore.swift in Sources */,
-					MDL000312 /* BackgroundTaskModels.swift in Sources */,
-					MDL000313 /* BackgroundTaskManager.swift in Sources */,
-					MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
-					BGT00001 /* BackgroundTaskViews.swift in Sources */,
+				MDL000301 /* Notifications.swift in Sources */,
+				MDL000302 /* EditorTools.swift in Sources */,
+				MDL000303 /* TabModels.swift in Sources */,
+				MDL000304 /* ClientSettingsModels.swift in Sources */,
+				MDL000305 /* AIModels.swift in Sources */,
+				MDL000306 /* CommandPaletteModels.swift in Sources */,
+				MDL000307 /* ProjectWorkspaceModels.swift in Sources */,
+				MDL000308 /* FileBrowserModels.swift in Sources */,
+				MDL000309 /* AppState.swift in Sources */,
+				MDL00030A /* AppState+Workspace.swift in Sources */,
+				MDL00030B /* AppState+CoreWS.swift in Sources */,
+				MDL00030C /* AppState+FileOps.swift in Sources */,
+				MDL00030D /* AppState+Projects.swift in Sources */,
+				MDL00030E /* AppState+Tabs.swift in Sources */,
+				MDL00030F /* AppState+AIActions.swift in Sources */,
+				MDL000310 /* AppState+Settings.swift in Sources */,
+				MDL000311 /* AppState+EditorTerminal.swift in Sources */,
+				TMS00001 /* TerminalStore.swift in Sources */,
+				EDS00001 /* EditorStore.swift in Sources */,
+				MDL000312 /* BackgroundTaskModels.swift in Sources */,
+				MDL000313 /* BackgroundTaskManager.swift in Sources */,
+				MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
+				BGT00001 /* BackgroundTaskViews.swift in Sources */,
 				FAQ00001 /* FAQView.swift in Sources */,
-					TST00001 /* ToastManager.swift in Sources */,
-					TST00002 /* ToastOverlayView.swift in Sources */,
-					2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
-					2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
+				TST00001 /* ToastManager.swift in Sources */,
+				TST00002 /* ToastOverlayView.swift in Sources */,
+				2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
+				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				SPL00009 /* ExplorerView.swift in Sources */,
 				SPL0000A /* FileDialogViews.swift in Sources */,
 				B3A00001 /* CommandPaletteView.swift in Sources */,
@@ -553,10 +673,23 @@
 				UX100004 /* ProjectCommandEditSheet.swift in Sources */,
 				UX100005 /* ProjectCommandsMenuView.swift in Sources */,
 				MDL000315 /* ProjectCommandModels.swift in Sources */,
+				6DC2CD6DD0EA09E6120CCC90 /* TerminalProtocolModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		L10N0020 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				L10N0021 /* en */,
+				L10N0022 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
 		A1000017 /* Debug */ = {
@@ -745,6 +878,59 @@
 			};
 			name = Release;
 		};
+		BD1725F0187EA456EFE6BBA2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 4D9YQTRMD7;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "TidyFlow-iOS/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.ios.debug;
+				PRODUCT_NAME = "TidyFlow-iOS";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EC105BFD57EBB18BDA16A2F8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 4D9YQTRMD7;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "TidyFlow-iOS/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.ios;
+				PRODUCT_NAME = "TidyFlow-iOS";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -766,20 +952,17 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		B40CC5FF3B158546E1258A15 /* Build configuration list for PBXNativeTarget "TidyFlow-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EC105BFD57EBB18BDA16A2F8 /* Release */,
+				BD1725F0187EA456EFE6BBA2 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
-
-/* Begin PBXVariantGroup section */
-		L10N0020 /* Localizable.strings */ = {
-			isa = PBXVariantGroup;
-			children = (
-				L10N0021 /* en */,
-				L10N0022 /* zh-Hans */,
-			);
-			name = Localizable.strings;
-			sourceTree = "<group>";
-		};
-/* End PBXVariantGroup section */
 /* Begin XCRemoteSwiftPackageReference section */
 		MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */ = {
 			isa = XCRemoteSwiftPackageReference;
