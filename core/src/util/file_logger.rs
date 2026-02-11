@@ -34,7 +34,7 @@ struct LogFileState {
 
 /// 线程安全的日志文件写入器
 ///
-/// 按日期创建 `~/.tidyflow/logs/YYYY-MM-DD.log`，
+/// 按日期创建 `~/.tidyflow/logs/YYYY-MM-DD[-suffix].log`，
 /// 每行写入一条 JSON 结构化日志。
 pub struct FileLogger {
     log_dir: PathBuf,
@@ -118,9 +118,9 @@ impl FileLogger {
             if path.extension().and_then(|e| e.to_str()) != Some("log") {
                 continue;
             }
-            // 从文件名解析日期：YYYY-MM-DD.log
+            // 从文件名解析日期：YYYY-MM-DD.log 或 YYYY-MM-DD-*.log
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                if let Ok(date) = NaiveDate::parse_from_str(stem, "%Y-%m-%d") {
+                if let Some(date) = Self::parse_log_date(stem) {
                     if date < cutoff {
                         let _ = fs::remove_file(&path);
                     }
@@ -157,7 +157,7 @@ impl FileLogger {
     }
 
     fn open_log_file(&self, date: NaiveDate) -> Option<BufWriter<File>> {
-        let filename = format!("{}.log", date.format("%Y-%m-%d"));
+        let filename = Self::build_log_filename(date);
         let path = self.log_dir.join(filename);
         OpenOptions::new()
             .create(true)
@@ -165,5 +165,51 @@ impl FileLogger {
             .open(path)
             .ok()
             .map(BufWriter::new)
+    }
+
+    fn build_log_filename(date: NaiveDate) -> String {
+        let date_prefix = date.format("%Y-%m-%d").to_string();
+        let suffix = std::env::var("TIDYFLOW_LOG_SUFFIX")
+            .ok()
+            .and_then(|raw| Self::sanitize_log_suffix(&raw));
+        match suffix {
+            Some(suffix) => format!("{date_prefix}-{suffix}.log"),
+            None => format!("{date_prefix}.log"),
+        }
+    }
+
+    fn sanitize_log_suffix(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let normalized: String = trimmed
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let is_empty_after_normalize = normalized
+            .chars()
+            .all(|ch| ch == '-');
+        if is_empty_after_normalize {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
+    fn parse_log_date(stem: &str) -> Option<NaiveDate> {
+        let date_part = stem.get(0..10)?;
+        let rest = stem.get(10..)?;
+        if !rest.is_empty() && !rest.starts_with('-') {
+            return None;
+        }
+        NaiveDate::parse_from_str(date_part, "%Y-%m-%d").ok()
     }
 }

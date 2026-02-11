@@ -319,6 +319,9 @@ class CoreProcessManager: ObservableObject {
         // Set environment variable
         var env = ProcessInfo.processInfo.environment
         env["TIDYFLOW_PORT"] = "\(port)"
+        if Self.isRunAppDebugBundle {
+            env["TIDYFLOW_LOG_SUFFIX"] = "dev"
+        }
         proc.environment = env
 
         // Setup pipes for stdout/stderr
@@ -417,6 +420,11 @@ class CoreProcessManager: ObservableObject {
     }
 
     // MARK: - Private: Helpers
+
+    /// run-app.sh 当前启动的是 `TidyFlow-Debug.app`
+    private static var isRunAppDebugBundle: Bool {
+        Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app"
+    }
 
     /// Handle unexpected process termination with auto-restart
     private func handleUnexpectedTermination(code: Int32, reason: Process.TerminationReason) {

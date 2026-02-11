@@ -22,6 +22,10 @@ struct DebugPanelView: View {
             f.dateFormat = "yyyy-MM-dd"
             return f.string(from: Date())
         }()
+        let devLogURL = logDirectory.appendingPathComponent("\(dateStr)-dev.log")
+        if FileManager.default.fileExists(atPath: devLogURL.path) {
+            return devLogURL
+        }
         return logDirectory.appendingPathComponent("\(dateStr).log")
     }
 
