@@ -63,13 +63,11 @@ struct CustomCommandsSection: View {
                     )
                 )
 
-                Text(appState.remoteAccessEnabled
-                     ? "settings.mobile.remoteAccess.onHint".localized
-                     : "settings.mobile.remoteAccess.offHint".localized)
+                Text(appState.mobileRemoteAccessHintText)
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                if appState.remoteAccessEnabled {
+                if appState.remoteAccessReady {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("settings.mobile.lanAddress".localized)
                             .foregroundColor(.secondary)
@@ -98,7 +96,7 @@ struct CustomCommandsSection: View {
                             Label("settings.mobile.generateCode".localized, systemImage: "iphone.and.arrow.forward")
                         }
                     }
-                    .disabled(!appState.remoteAccessEnabled || appState.mobilePairCodeLoading)
+                    .disabled(!appState.remoteAccessReady || appState.mobilePairCodeLoading)
 
                     if let code = appState.mobilePairCode {
                         Text(code)
