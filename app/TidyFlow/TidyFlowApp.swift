@@ -176,8 +176,19 @@ struct TidyFlowApp: App {
         // 添加 InspectorCommands 支持标准快捷键 ⌘⌃I 切换检查器
         .commands {
             InspectorCommands()
+            HelpCommands()
         }
         
+        // FAQ 窗口
+        Window("help.faq.windowTitle".localized, id: "faq") {
+            FAQView()
+                .environmentObject(localizationManager)
+                .environment(\.locale, localizationManager.locale)
+                .preferredColorScheme(.dark)
+        }
+        .defaultSize(width: 520, height: 400)
+        .windowResizability(.contentSize)
+
         // 设置窗口（独立窗口，通过 ⌘, 或点击设置按钮打开）
         Settings {
             SettingsContentView()
