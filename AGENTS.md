@@ -15,7 +15,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - **Frontend**: SwiftUI + AppKit (macOS app in `/app/`)
 - **Backend**: Rust core engine (in `/core/`)
 - **Terminal**: xterm.js in WKWebView
-- **Communication**: WebSocket with MessagePack binary encoding (protocol v2, default port 47999)
+- **Communication**: WebSocket(MessagePack) + HTTP(JSON, pairing endpoints) (protocol v2, default port 47999)
 
 ## 经验总结
 - 用户要发布新版本时，严格按 `docs/RELEASE_CHECKLIST.md` 执行；版本号递增（如 `MARKETING_VERSION`、`CURRENT_PROJECT_VERSION`、`core/Cargo.toml`）由代理自动处理并同步。
@@ -31,6 +31,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - Git 面板展示分支领先/落后时，应复用 `git_status` 返回并基于项目 `default_branch` 做本地分支比较，避免硬编码 `main` 或依赖远端 `fetch` 导致慢/不稳定。
 - 多项目共存时，工作空间名（如 `"default"`）不具备全局唯一性；需要关联项目的场景必须显式传递 `projectName`，禁止通过遍历 `projects` 按工作空间名反查项目（会命中第一个匹配项而非实际所属项目）。
 - 跨分支入口触发但实际写入默认分支的操作（如 AI 合并到默认分支），其后台阻塞任务归属应绑定默认工作空间，避免错误地落在来源分支队列。
+- 引入移动端远程访问时，Core 应默认仅监听 loopback，并通过显式开关切换到 `0.0.0.0`；远程连接统一走“本机生成配对码 -> 移动端换取短期 token”链路，且 `pair/start`/`pair/revoke` 保持仅本机可调用。
 
 ## Build Commands
 
@@ -45,6 +46,7 @@ cd core
 cargo build --release
 cargo run                          # Start WebSocket server
 TIDYFLOW_PORT=8080 cargo run       # Custom port
+TIDYFLOW_BIND_ADDR=0.0.0.0 cargo run # Expose WS/Pairing service to LAN
 cargo test                         # Run all tests
 cargo test test_name               # Run specific test by name
 cargo test git::status::           # Run tests in a module
@@ -106,7 +108,7 @@ cargo test --manifest-path core/Cargo.toml    # Core 自动化测试
 - `pty/` - PTY session management
 - `server/` - WebSocket server and协议处理
   - `ws.rs` - WebSocket handler，tokio select! 循环处理消息/PTY输出/文件监控事件
-  - `protocol.rs` - Protocol v2 (MessagePack) 消息定义
+  - `protocol/mod.rs` - Protocol v2 (MessagePack) 消息定义
   - `handlers/` - 模块化消息处理器（terminal, file, git, project, settings），每个返回 `Result<bool, String>`
   - `git/` - Git 操作模块（status, operations, branches, commit, integration, utils）
   - `file_api.rs` - 文件操作，`file_index.rs` - Quick Open 索引，`watcher.rs` - 文件监控
