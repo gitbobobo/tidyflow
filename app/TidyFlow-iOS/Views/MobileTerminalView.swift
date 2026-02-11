@@ -8,7 +8,7 @@ struct MobileTerminalView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // xterm.js WebView
+            // 仅使用 xterm.js 输入链路，避免覆盖层拦截焦点/触摸
             MobileTerminalWebView(bridge: appState.bridge)
                 .ignoresSafeArea(.keyboard)
 
@@ -23,7 +23,6 @@ struct MobileTerminalView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
-            appState.setupBridgeCallbacks()
             appState.createTerminalForWorkspace(project: project, workspace: workspace)
         }
         .onDisappear {

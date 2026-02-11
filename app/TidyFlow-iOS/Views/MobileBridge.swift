@@ -45,17 +45,22 @@ final class MobileBridge: NSObject, ObservableObject, WKScriptMessageHandler {
     }
 
     private func handleMessage(type: String, body: [String: Any]) {
+        os_log(.info, "[MobileBridge] handleMessage type=%{public}@", type)
         switch type {
         case "ready":
             isWebReady = true
             let cols = body["cols"] as? Int ?? 80
             let rows = body["rows"] as? Int ?? 24
+            os_log(.info, "[MobileBridge] ready cols=%d rows=%d", cols, rows)
             onReady?(cols, rows)
             flushPendingEvents()
 
         case "terminal_data":
             if let data = body["data"] as? String {
+                os_log(.info, "[MobileBridge] terminal_data len=%d hasCallback=%{public}@", data.count, String(describing: onTerminalData != nil))
                 onTerminalData?(data)
+            } else {
+                os_log(.error, "[MobileBridge] terminal_data: 'data' field missing or not String, body keys=%{public}@", body.keys.joined(separator: ","))
             }
 
         case "terminal_resized":
@@ -84,6 +89,11 @@ final class MobileBridge: NSObject, ObservableObject, WKScriptMessageHandler {
     /// 通知 JS 执行 resize
     func triggerResize() {
         send(type: "resize", payload: [:])
+    }
+
+    /// 让 WebView 成为第一响应者（触发 iOS 键盘弹出）
+    func focusWebView() {
+        webView?.becomeFirstResponder()
     }
 
     /// 直接写入输入数据到终端显示（特殊键等）

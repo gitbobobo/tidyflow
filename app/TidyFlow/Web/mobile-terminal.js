@@ -1,6 +1,8 @@
 /**
  * TidyFlow Mobile Terminal - xterm.js 初始化与 Native 桥接
- * 数据流: Rust Core PTY ↔ WSClient ↔ MobileAppState ↔ MobileBridge ↔ xterm.js
+ * 数据流:
+ *   输出: Rust Core PTY → WSClient → MobileAppState → MobileBridge → xterm.js
+ *   输入: xterm.js(onData) → MobileBridge → MobileAppState → WSClient → Rust Core PTY
  */
 (function() {
     'use strict';
@@ -8,6 +10,7 @@
     let term = null;
     let fitAddon = null;
     let isReady = false;
+    let focusTimer = null;
 
     // xterm.js 暗色主题（同 macOS 端）
     const THEME = {
@@ -64,13 +67,7 @@
                 if (fitAddon) {
                     fitAddon.fit();
                 }
-                break;
-
-            case 'write_input':
-                // Native 直接写入输入（特殊键等）
-                if (term && payload.data) {
-                    term.write(payload.data);
-                }
+                scheduleFocus(80);
                 break;
 
             default:
@@ -86,6 +83,20 @@
                 ...payload
             });
         }
+    }
+
+    function focusTerminal() {
+        if (!term) return;
+        term.focus();
+    }
+
+    function scheduleFocus(delayMs) {
+        if (focusTimer) {
+            clearTimeout(focusTimer);
+        }
+        focusTimer = setTimeout(function() {
+            focusTerminal();
+        }, delayMs || 0);
     }
 
     // 初始化终端
@@ -137,9 +148,31 @@
             if (fitAddon) {
                 fitAddon.fit();
             }
+            scheduleFocus(60);
+        });
+
+        // iOS 需要用户手势触发聚焦才能稳定弹出键盘
+        const focusFromGesture = function() {
+            focusTerminal();
+        };
+        container.addEventListener('touchstart', focusFromGesture, { passive: true });
+        container.addEventListener('touchend', focusFromGesture, { passive: true });
+        container.addEventListener('click', focusFromGesture);
+
+        window.addEventListener('focus', function() {
+            scheduleFocus(60);
+        });
+
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden) {
+                scheduleFocus(60);
+            }
         });
 
         isReady = true;
+
+        // 尝试初次聚焦；若被系统拦截，用户触摸后会再次聚焦
+        scheduleFocus(120);
 
         // 通知 Native 终端已就绪
         const dims = { cols: term.cols, rows: term.rows };

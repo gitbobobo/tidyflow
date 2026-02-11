@@ -41,6 +41,7 @@
 		MOB00025 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00015 /* ConnectionView.swift */; };
 		MOB00026 /* ProjectListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00016 /* ProjectListView.swift */; };
 		MOB00027 /* WorkspaceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00017 /* WorkspaceListView.swift */; };
+		MOB00028 /* TerminalInputProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00018 /* TerminalInputProxy.swift */; };
 		B3A00001 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00011 /* CommandPaletteView.swift */; };
 		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
 		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
@@ -150,6 +151,7 @@
 		MOB00015 /* ConnectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
 		MOB00016 /* ProjectListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProjectListView.swift; sourceTree = "<group>"; };
 		MOB00017 /* WorkspaceListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
+		MOB00018 /* TerminalInputProxy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalInputProxy.swift; sourceTree = "<group>"; };
 		677A21DC64E8B5102B08960B /* MobileAppState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAppState.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
@@ -313,6 +315,7 @@
 				MOB00012 /* MobileTerminalWebView.swift */,
 				MOB00011 /* MobileBridge.swift */,
 				MOB00013 /* TerminalAccessoryView.swift */,
+				MOB00018 /* TerminalInputProxy.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -570,6 +573,7 @@
 				MOB00025 /* ConnectionView.swift in Sources */,
 				MOB00026 /* ProjectListView.swift in Sources */,
 				MOB00027 /* WorkspaceListView.swift in Sources */,
+				MOB00028 /* TerminalInputProxy.swift in Sources */,
 				UX100001 /* ProjectsSidebarView.swift in Sources */,
 				UX100002 /* AddProjectSheet.swift in Sources */,
 				A1000001 /* TidyFlowApp.swift in Sources */,
@@ -876,6 +880,7 @@
 					"MobileBridge.swift",
 					"MobileTerminalWebView.swift",
 					"TerminalAccessoryView.swift",
+					"TerminalInputProxy.swift",
 					"MobileTerminalView.swift",
 					"ConnectionView.swift",
 					"ProjectListView.swift",
@@ -994,6 +999,7 @@
 					"MobileBridge.swift",
 					"MobileTerminalWebView.swift",
 					"TerminalAccessoryView.swift",
+					"TerminalInputProxy.swift",
 					"MobileTerminalView.swift",
 					"ConnectionView.swift",
 					"ProjectListView.swift",

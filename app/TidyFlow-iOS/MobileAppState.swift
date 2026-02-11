@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import os
 
 private struct PairExchangeHTTPBody: Encodable {
     let pairCode: String
@@ -56,6 +57,9 @@ final class MobileAppState: ObservableObject {
     @Published var currentTermId: String = ""
     @Published var terminalCols: Int = 80
     @Published var terminalRows: Int = 24
+    /// 待创建终端的项目/工作空间（等 xterm.js ready 后再真正创建）
+    private var pendingTermProject: String = ""
+    private var pendingTermWorkspace: String = ""
 
     // 桥接
     let bridge = MobileBridge()
@@ -63,6 +67,7 @@ final class MobileAppState: ObservableObject {
 
     init() {
         setupWSCallbacks()
+        setupBridgeCallbacks()
     }
 
     // MARK: - 连接
@@ -127,14 +132,40 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 终端
 
+    /// 记录待创建的终端信息，实际创建延迟到 xterm.js ready 后
     func createTerminalForWorkspace(project: String, workspace: String) {
-        wsClient.requestTermCreate(project: project, workspace: workspace)
+        pendingTermProject = project
+        pendingTermWorkspace = workspace
+        // 如果 WebView 已经 ready（如从后台恢复），立即创建
+        if bridge.isWebReady {
+            fireTermCreate()
+        }
+    }
+
+    private func fireTermCreate() {
+        guard !pendingTermProject.isEmpty else { return }
+        let project = pendingTermProject
+        let workspace = pendingTermWorkspace
+        pendingTermProject = ""
+        pendingTermWorkspace = ""
+        wsClient.requestTermCreate(
+            project: project,
+            workspace: workspace,
+            cols: terminalCols,
+            rows: terminalRows
+        )
     }
 
     /// 发送特殊键序列到终端
     func sendSpecialKey(_ sequence: String) {
         guard !currentTermId.isEmpty else { return }
         wsClient.sendTerminalInput(sequence, termId: currentTermId)
+    }
+
+    /// 发送键盘输入到终端（原生 UIKeyInput 代理调用）
+    func sendTerminalInput(_ data: String) {
+        guard !currentTermId.isEmpty else { return }
+        wsClient.sendTerminalInput(data, termId: currentTermId)
     }
 
     /// 离开终端视图时清理
@@ -153,10 +184,20 @@ final class MobileAppState: ObservableObject {
             if !self.currentTermId.isEmpty {
                 self.wsClient.requestTermResize(termId: self.currentTermId, cols: cols, rows: rows)
             }
+            // xterm.js 已就绪，触发待创建的终端
+            self.fireTermCreate()
         }
 
         bridge.onTerminalData = { [weak self] data in
-            guard let self, !self.currentTermId.isEmpty else { return }
+            guard let self else {
+                os_log(.error, "[MobileAppState] onTerminalData: self is nil")
+                return
+            }
+            os_log(.info, "[MobileAppState] onTerminalData len=%d termId='%{public}@'", data.count, self.currentTermId)
+            guard !self.currentTermId.isEmpty else {
+                os_log(.error, "[MobileAppState] onTerminalData: currentTermId is empty, dropping input")
+                return
+            }
             self.wsClient.sendTerminalInput(data, termId: self.currentTermId)
         }
 
@@ -204,6 +245,7 @@ final class MobileAppState: ObservableObject {
         wsClient.onTermCreated = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
+            // 确保 PTY 尺寸与 xterm.js 一致（兜底 resize）
             self.wsClient.requestTermResize(
                 termId: result.termId,
                 cols: self.terminalCols,
