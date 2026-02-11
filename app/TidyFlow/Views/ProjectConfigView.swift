@@ -34,23 +34,53 @@ struct ProjectConfigView: View {
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
+            .background(.regularMaterial)
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // 项目信息
-                    if let project = project {
-                        projectInfoSection(project)
+            Form {
+                if let project = project {
+                    Section("projectConfig.info".localized) {
+                        HStack {
+                            Text("projectConfig.path".localized)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(project.path ?? "—")
+                                .font(.system(size: 13, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
                     }
-
-                    // 命令配置
-                    commandsSection
                 }
-                .padding(24)
+
+                Section {
+                    if let project = project, !project.commands.isEmpty {
+                        ForEach(project.commands) { cmd in
+                            commandRow(cmd)
+                        }
+                    } else {
+                        Text("projectConfig.noCommands.hint".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .listRowBackground(Color.clear)
+                    }
+                } header: {
+                    HStack {
+                        Text("projectConfig.commands".localized)
+                        Spacer()
+                        Button {
+                            editingCommand = nil
+                            showEditSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("projectConfig.addCommand".localized)
+                    }
+                }
             }
+            .formStyle(.grouped)
         }
-        .background(Color(NSColor.windowBackgroundColor))
         .sheet(isPresented: $showEditSheet) {
             if let cmd = editingCommand {
                 ProjectCommandEditSheet(
@@ -77,51 +107,6 @@ struct ProjectConfigView: View {
         }
     }
 
-    // MARK: - 项目信息
-
-    private func projectInfoSection(_ project: ProjectModel) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("projectConfig.info".localized)
-                .font(.headline)
-
-            HStack {
-                Text("projectConfig.path".localized)
-                    .foregroundColor(.secondary)
-                Text(project.path ?? "—")
-                    .font(.system(size: 13, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-            .font(.system(size: 13))
-        }
-    }
-
-    // MARK: - 命令配置
-
-    private var commandsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("projectConfig.commands".localized)
-                    .font(.headline)
-                Spacer()
-                Button {
-                    editingCommand = nil
-                    showEditSheet = true
-                } label: {
-                    Label("projectConfig.addCommand".localized, systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-            }
-
-            if let project = project, !project.commands.isEmpty {
-                ForEach(project.commands) { cmd in
-                    commandRow(cmd)
-                }
-            } else {
-                emptyCommandsView
-            }
-        }
-    }
-
     private func commandRow(_ cmd: ProjectCommand) -> some View {
         HStack(spacing: 12) {
             CommandIconView(iconName: cmd.icon, size: 20)
@@ -130,19 +115,19 @@ struct ProjectConfigView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(cmd.name)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.body)
                     if cmd.blocking {
                         Text("projectConfig.blocking".localized)
-                            .font(.system(size: 10))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .font(.caption2)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
                             .background(Color.orange.opacity(0.15))
                             .foregroundColor(.orange)
                             .cornerRadius(4)
                     }
                 }
                 Text(cmd.command)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -155,9 +140,8 @@ struct ProjectConfigView: View {
                 showEditSheet = true
             } label: {
                 Image(systemName: "pencil")
-                    .font(.system(size: 13))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .foregroundColor(.secondary)
             .help("common.edit".localized)
 
@@ -166,33 +150,11 @@ struct ProjectConfigView: View {
                 appState.deleteProjectCommand(projectName: projectName, commandId: cmd.id)
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 13))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .foregroundColor(.secondary)
             .help("common.delete".localized)
         }
-        .padding(12)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    private var emptyCommandsView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "terminal")
-                .font(.system(size: 32))
-                .foregroundColor(.secondary.opacity(0.5))
-            Text("projectConfig.noCommands".localized)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Text("projectConfig.noCommands.hint".localized)
-                .font(.caption)
-                .foregroundColor(.secondary.opacity(0.8))
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-        .cornerRadius(8)
+        .padding(.vertical, 4)
     }
 }
