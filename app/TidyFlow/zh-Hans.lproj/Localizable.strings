@@ -54,6 +54,7 @@
 "settings.mobile.remoteAccess" = "允许局域网移动端连接";
 "settings.mobile.remoteAccess.onHint" = "Core 将监听 0.0.0.0，请仅在可信网络开启。";
 "settings.mobile.remoteAccess.offHint" = "Core 仅接受本机 localhost 连接。";
+"settings.mobile.remoteAccess.pendingHint" = "配置已保存，将在下次启动应用后生效。";
 "settings.mobile.lanAddress" = "局域网地址";
 "settings.mobile.port" = "端口";
 "settings.mobile.unavailable" = "不可用";
@@ -61,6 +62,7 @@
 "settings.mobile.codeExpires" = "配对码过期时间：%@";
 "settings.mobile.footer" = "开启后，在 iOS 客户端输入 电脑IP:端口 + 配对码 即可连接。";
 "settings.mobile.error.enableFirst" = "请先开启移动端访问";
+"settings.mobile.error.restartRequired" = "该配置将在下次启动应用后生效，请重启后再生成配对码";
 "settings.mobile.error.coreNotReady" = "Core 未就绪，请稍后重试";
 "settings.mobile.error.invalidPairURL" = "配对服务地址无效";
 "settings.mobile.error.invalidResponse" = "配对服务响应异常";

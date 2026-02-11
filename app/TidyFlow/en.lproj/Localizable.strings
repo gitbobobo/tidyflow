@@ -54,6 +54,7 @@
 "settings.mobile.remoteAccess" = "Enable mobile clients over LAN";
 "settings.mobile.remoteAccess.onHint" = "Core will listen on 0.0.0.0. Keep this enabled only in trusted networks.";
 "settings.mobile.remoteAccess.offHint" = "Core only accepts localhost connections.";
+"settings.mobile.remoteAccess.pendingHint" = "Saved. This change will take effect the next time the app starts.";
 "settings.mobile.lanAddress" = "LAN Address";
 "settings.mobile.port" = "Port";
 "settings.mobile.unavailable" = "Unavailable";
@@ -61,6 +62,7 @@
 "settings.mobile.codeExpires" = "Code expires at %@";
 "settings.mobile.footer" = "After enabling, use host:port + pair code in iOS app to connect.";
 "settings.mobile.error.enableFirst" = "Enable mobile access first";
+"settings.mobile.error.restartRequired" = "This setting takes effect on next app launch. Restart and try again.";
 "settings.mobile.error.coreNotReady" = "Core is not ready yet";
 "settings.mobile.error.invalidPairURL" = "Invalid pairing endpoint";
 "settings.mobile.error.invalidResponse" = "Invalid pairing response";
