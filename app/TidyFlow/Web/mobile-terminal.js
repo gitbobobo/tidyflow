@@ -96,7 +96,7 @@
         term = new Terminal({
             cursorBlink: true,
             fontSize: 14,
-            fontFamily: '"SF Mono", Menlo, Monaco, "Courier New", monospace',
+            fontFamily: '"MesloLGS NF", "SF Mono", Menlo, Monaco, "Courier New", monospace',
             scrollback: 5000,
             theme: THEME,
             allowProposedApi: true,
