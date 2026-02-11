@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import UIKit
 
 private struct PairExchangeHTTPBody: Encodable {
@@ -32,30 +33,39 @@ private struct PairErrorHTTPResponse: Decodable {
 
 @MainActor
 final class MobileAppState: ObservableObject {
+    // 连接表单
     @Published var host: String = ""
     @Published var port: String = "47999"
     @Published var pairCode: String = ""
     @Published var deviceName: String = UIDevice.current.name
 
+    // 连接状态
     @Published var connecting: Bool = false
     @Published var isConnected: Bool = false
     @Published var connectionMessage: String = ""
     @Published var errorMessage: String = ""
 
+    // 数据
     @Published var projects: [ProjectInfo] = []
     @Published var workspaces: [WorkspaceInfo] = []
-    @Published var selectedProject: String = ""
-    @Published var selectedWorkspace: String = ""
 
+    // 导航
+    @Published var navigationPath = NavigationPath()
+
+    // 终端
     @Published var currentTermId: String = ""
-    @Published var terminalInput: String = ""
-    @Published var terminalOutput: String = ""
+    @Published var terminalCols: Int = 80
+    @Published var terminalRows: Int = 24
 
+    // 桥接
+    let bridge = MobileBridge()
     private let wsClient = WSClient()
 
     init() {
         setupWSCallbacks()
     }
+
+    // MARK: - 连接
 
     func pairAndConnect() async {
         errorMessage = ""
@@ -104,34 +114,69 @@ final class MobileAppState: ObservableObject {
     func disconnect() {
         wsClient.disconnect()
         isConnected = false
+        currentTermId = ""
         connectionMessage = "已断开"
     }
 
+    // MARK: - 项目/工作空间
+
     func selectProject(_ projectName: String) {
-        selectedProject = projectName
-        selectedWorkspace = ""
         workspaces = []
         wsClient.requestListWorkspaces(project: projectName)
     }
 
-    func selectWorkspace(_ workspaceName: String) {
-        selectedWorkspace = workspaceName
+    // MARK: - 终端
+
+    func createTerminalForWorkspace(project: String, workspace: String) {
+        wsClient.requestTermCreate(project: project, workspace: workspace)
     }
 
-    func createTerminalForSelectedWorkspace() {
-        guard !selectedProject.isEmpty, !selectedWorkspace.isEmpty else {
-            return
-        }
-        wsClient.requestTermCreate(project: selectedProject, workspace: selectedWorkspace)
-    }
-
-    func sendTerminalLine() {
+    /// 发送特殊键序列到终端
+    func sendSpecialKey(_ sequence: String) {
         guard !currentTermId.isEmpty else { return }
-        let line = terminalInput.trimmingCharacters(in: .newlines)
-        guard !line.isEmpty else { return }
-        wsClient.sendTerminalInput(line + "\n", termId: currentTermId)
-        terminalInput = ""
+        wsClient.sendTerminalInput(sequence, termId: currentTermId)
     }
+
+    /// 离开终端视图时清理
+    func detachTerminal() {
+        currentTermId = ""
+    }
+
+    // MARK: - Bridge 回调
+
+    func setupBridgeCallbacks() {
+        bridge.onReady = { [weak self] cols, rows in
+            guard let self else { return }
+            self.terminalCols = cols
+            self.terminalRows = rows
+            // 终端就绪后，如果已有 termId，发送 resize
+            if !self.currentTermId.isEmpty {
+                self.wsClient.requestTermResize(termId: self.currentTermId, cols: cols, rows: rows)
+            }
+        }
+
+        bridge.onTerminalData = { [weak self] data in
+            guard let self, !self.currentTermId.isEmpty else { return }
+            self.wsClient.sendTerminalInput(data, termId: self.currentTermId)
+        }
+
+        bridge.onTerminalResized = { [weak self] cols, rows in
+            guard let self else { return }
+            self.terminalCols = cols
+            self.terminalRows = rows
+            if !self.currentTermId.isEmpty {
+                self.wsClient.requestTermResize(termId: self.currentTermId, cols: cols, rows: rows)
+            }
+        }
+
+        bridge.onOpenURL = { urlString in
+            if let url = URL(string: urlString) {
+                UIApplication.shared.open(url)
+            }
+        }
+    }
+
+    // MARK: - WS 回调
 
     private func setupWSCallbacks() {
         wsClient.onConnectionStateChanged = { [weak self] connected in
@@ -149,33 +194,35 @@ final class MobileAppState: ObservableObject {
         wsClient.onProjectsList = { [weak self] result in
             guard let self else { return }
             self.projects = result.items
-            if self.selectedProject.isEmpty, let first = result.items.first {
-                self.selectProject(first.name)
-            }
         }
 
         wsClient.onWorkspacesList = { [weak self] result in
             guard let self else { return }
-            if result.project != self.selectedProject { return }
             self.workspaces = result.items
-            if self.selectedWorkspace.isEmpty, let first = result.items.first {
-                self.selectedWorkspace = first.name
-            }
         }
 
         wsClient.onTermCreated = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
-            self.appendTerminalText("[term] created \(result.termId) @ \(result.workspace)")
-            self.wsClient.requestTermResize(termId: result.termId, cols: 100, rows: 30)
+            self.wsClient.requestTermResize(
+                termId: result.termId,
+                cols: self.terminalCols,
+                rows: self.terminalRows
+            )
         }
 
         wsClient.onTermAttached = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
-            self.appendTerminalText("[term] attached \(result.termId)")
-            self.appendTerminalBytes(result.scrollback)
-            self.wsClient.requestTermResize(termId: result.termId, cols: 100, rows: 30)
+            // 写入 scrollback 到 xterm.js
+            if !result.scrollback.isEmpty {
+                self.bridge.writeOutput(result.scrollback)
+            }
+            self.wsClient.requestTermResize(
+                termId: result.termId,
+                cols: self.terminalCols,
+                rows: self.terminalRows
+            )
         }
 
         wsClient.onTerminalOutput = { [weak self] termId, bytes in
@@ -183,16 +230,16 @@ final class MobileAppState: ObservableObject {
             if let termId, self.currentTermId.isEmpty {
                 self.currentTermId = termId
             }
-            self.appendTerminalBytes(bytes)
+            self.bridge.writeOutput(bytes)
         }
 
-        wsClient.onTerminalExit = { [weak self] _, code in
-            self?.appendTerminalText("\n[term] exited with code \(code)\n")
+        wsClient.onTerminalExit = { [weak self] _, _ in
+            // 终端退出，可选择通知用户
+            _ = self
         }
 
         wsClient.onTermClosed = { [weak self] termId in
             guard let self else { return }
-            self.appendTerminalText("\n[term] closed \(termId)\n")
             if self.currentTermId == termId {
                 self.currentTermId = ""
             }
@@ -203,18 +250,7 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    private func appendTerminalBytes(_ bytes: [UInt8]) {
-        guard !bytes.isEmpty else { return }
-        let text = String(data: Data(bytes), encoding: .utf8) ?? String(decoding: bytes, as: UTF8.self)
-        appendTerminalText(text)
-    }
-
-    private func appendTerminalText(_ text: String) {
-        terminalOutput += text
-        if terminalOutput.count > 400_000 {
-            terminalOutput.removeFirst(terminalOutput.count - 300_000)
-        }
-    }
+    // MARK: - HTTP 配对
 
     private func exchangePairCode(
         host: String,

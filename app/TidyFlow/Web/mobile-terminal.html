@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TidyFlow Terminal</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
+#terminal-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+}
+/* 隐藏 xterm.js 滚动条在移动端的视觉干扰 */
+.xterm-viewport::-webkit-scrollbar { width: 4px; }
+.xterm-viewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="terminal-container"></div>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addons/xterm-addon-fit.js"></script>
+<script src="vendor/addons/xterm-addon-web-links.js"></script>
+<script src="vendor/addons/xterm-addon-unicode11.js"></script>
+<script src="mobile-terminal.js"></script>
+</body>
+</html>
