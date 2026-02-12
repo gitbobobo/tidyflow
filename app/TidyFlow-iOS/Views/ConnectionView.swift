@@ -6,6 +6,29 @@ struct ConnectionView: View {
 
     var body: some View {
         Form {
+            // 快速连接（有保存的连接时显示）
+            if appState.hasSavedConnection {
+                Section("快速连接") {
+                    Button {
+                        Task { await appState.autoReconnect() }
+                    } label: {
+                        HStack {
+                            Text("自动连接")
+                            Spacer()
+                            if appState.autoConnecting {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(appState.autoConnecting || appState.connecting)
+
+                    Button("清除保存的连接", role: .destructive) {
+                        appState.clearSavedConnection()
+                    }
+                    .disabled(appState.autoConnecting || appState.connecting)
+                }
+            }
+
             Section("连接信息") {
                 HStack {
                     Text("地址")
@@ -68,6 +91,12 @@ struct ConnectionView: View {
             }
         }
         .navigationTitle("TidyFlow")
+        .task {
+            // 启动时自动重连
+            if appState.hasSavedConnection && !appState.isConnected {
+                await appState.autoReconnect()
+            }
+        }
         .onChange(of: appState.isConnected) { _, connected in
             if connected {
                 appState.navigationPath.append(MobileRoute.projects)

@@ -62,6 +62,7 @@
 		E4200001 /* LogWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200011 /* LogWriter.swift */; };
 		E4200002 /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
 		E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677A21DC64E8B5102B08960B /* MobileAppState.swift */; };
+		MOB00032 /* SavedConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00031 /* SavedConnection.swift */; };
 		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
 		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
 		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
@@ -153,6 +154,7 @@
 		MOB00017 /* WorkspaceListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
 		MOB00018 /* TerminalInputProxy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalInputProxy.swift; sourceTree = "<group>"; };
 		677A21DC64E8B5102B08960B /* MobileAppState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAppState.swift; sourceTree = "<group>"; };
+		MOB00031 /* SavedConnection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SavedConnection.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -298,6 +300,7 @@
 			children = (
 				33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */,
 				677A21DC64E8B5102B08960B /* MobileAppState.swift */,
+				MOB00031 /* SavedConnection.swift */,
 				MOB00030 /* Views */,
 				2E667DE0A535A7448B3C8A7B /* Info.plist */,
 			);
@@ -566,6 +569,7 @@
 			files = (
 				AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */,
 				E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */,
+				MOB00032 /* SavedConnection.swift in Sources */,
 				MOB00021 /* MobileBridge.swift in Sources */,
 				MOB00022 /* MobileTerminalWebView.swift in Sources */,
 				MOB00023 /* TerminalAccessoryView.swift in Sources */,
@@ -885,6 +889,7 @@
 					"ConnectionView.swift",
 					"ProjectListView.swift",
 					"WorkspaceListView.swift",
+					"SavedConnection.swift",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TidyFlow/Info.plist;
@@ -1004,6 +1009,7 @@
 					"ConnectionView.swift",
 					"ProjectListView.swift",
 					"WorkspaceListView.swift",
+					"SavedConnection.swift",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TidyFlow/Info.plist;

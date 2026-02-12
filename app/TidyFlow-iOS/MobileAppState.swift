@@ -42,6 +42,8 @@ final class MobileAppState: ObservableObject {
 
     // 连接状态
     @Published var connecting: Bool = false
+    @Published var autoConnecting: Bool = false
+    @Published var hasSavedConnection: Bool = false
     @Published var isConnected: Bool = false
     @Published var connectionMessage: String = ""
     @Published var errorMessage: String = ""
@@ -68,6 +70,13 @@ final class MobileAppState: ObservableObject {
     init() {
         setupWSCallbacks()
         setupBridgeCallbacks()
+        // 恢复已保存的连接信息
+        if let saved = ConnectionStorage.load() {
+            host = saved.host
+            port = "\(saved.port)"
+            deviceName = saved.deviceName
+            hasSavedConnection = true
+        }
     }
 
     // MARK: - 连接
@@ -111,6 +120,16 @@ final class MobileAppState: ObservableObject {
             )
             wsClient.connect()
             connectionMessage = "已配对，正在连接..."
+
+            // 保存连接信息
+            ConnectionStorage.save(SavedConnection(
+                host: trimmedHost,
+                port: portValue,
+                wsToken: token.wsToken,
+                deviceName: trimmedDeviceName.isEmpty ? "iOS Device" : trimmedDeviceName,
+                savedAt: Date()
+            ))
+            hasSavedConnection = true
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -121,6 +140,38 @@ final class MobileAppState: ObservableObject {
         isConnected = false
         currentTermId = ""
         connectionMessage = "已断开"
+    }
+
+    /// 使用保存的 token 自动重连
+    func autoReconnect() async {
+        guard let saved = ConnectionStorage.load() else { return }
+        errorMessage = ""
+        connectionMessage = "正在自动连接..."
+        autoConnecting = true
+        defer { autoConnecting = false }
+
+        wsClient.disconnect()
+        wsClient.updateAuthToken(saved.wsToken)
+        wsClient.updateBaseURL(
+            AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken),
+            reconnect: false
+        )
+        wsClient.connect()
+
+        // 等待连接结果，超时 5 秒
+        let deadline = Date().addingTimeInterval(5)
+        while !isConnected && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        if !isConnected {
+            connectionMessage = "自动连接超时，请手动配对"
+        }
+    }
+
+    /// 清除保存的连接信息
+    func clearSavedConnection() {
+        ConnectionStorage.clear()
+        hasSavedConnection = false
     }
 
     // MARK: - 项目/工作空间
