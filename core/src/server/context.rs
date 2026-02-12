@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
+use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::SharedTerminalRegistry;
 use crate::workspace::state::AppState;
 
@@ -38,6 +39,17 @@ pub struct RunningCommandEntry {
 /// 正在运行的项目命令注册表（task_id → 命令条目）
 pub type SharedRunningCommands = Arc<Mutex<HashMap<String, RunningCommandEntry>>>;
 
+/// WebSocket 连接元数据 — 在握手时构建
+#[derive(Debug, Clone)]
+pub struct ConnectionMeta {
+    /// 连接唯一标识
+    pub conn_id: String,
+    /// 是否为远程连接（非 loopback）
+    pub is_remote: bool,
+    /// 设备名称（从 pairing token 解析）
+    pub device_name: Option<String>,
+}
+
 /// Handler 上下文 — 收拢所有 handler 共享依赖，替代传递 11 个参数
 #[derive(Clone)]
 pub struct HandlerContext {
@@ -50,6 +62,8 @@ pub struct HandlerContext {
     pub running_commands: SharedRunningCommands,
     pub cmd_output_tx: mpsc::Sender<ServerMessage>,
     pub lsp_supervisor: LspSupervisor,
+    pub conn_meta: ConnectionMeta,
+    pub remote_sub_registry: SharedRemoteSubRegistry,
 }
 
 /// 统一应用错误类型 — 由调度层自动转换为 `ServerMessage::Error`

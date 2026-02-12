@@ -293,6 +293,7 @@ impl TerminalRegistry {
                     }
                 },
                 shell: e.shell.clone(),
+                remote_subscribers: Vec::new(),
             })
             .collect()
     }

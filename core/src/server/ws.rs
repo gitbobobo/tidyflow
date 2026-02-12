@@ -22,13 +22,15 @@ use uuid::Uuid;
 use std::os::unix::process::parent_id;
 
 use crate::server::context::{
-    FlowControl, HandlerContext, SharedAppState, SharedRunningCommands, TermSubscription,
+    ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningCommands,
+    TermSubscription,
 };
 use crate::server::handlers;
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::{
     v1_capabilities, ClientMessage, RequestEnvelope, ServerMessage, PROTOCOL_VERSION,
 };
+use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
@@ -135,6 +137,7 @@ struct AppContext {
     scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     expected_ws_token: Option<String>,
     pairing_registry: SharedPairingRegistry,
+    remote_sub_registry: SharedRemoteSubRegistry,
 }
 
 /// Run the WebSocket server on the specified port
@@ -184,6 +187,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             pending_codes: HashMap::new(),
             issued_tokens: load_tokens_from_state(&shared_state.read().await.paired_tokens),
         })),
+        remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
     };
 
     let app = Router::new()
@@ -245,6 +249,7 @@ fn spawn_parent_monitor() {
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(ctx): State<AppContext>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     query: Option<Query<WsAuthQuery>>,
 ) -> impl IntoResponse {
     let provided_token = query.and_then(|q| q.0.token);
@@ -259,6 +264,25 @@ async fn ws_handler(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
+    // 构建连接元数据
+    let is_remote = !addr.ip().is_loopback();
+    let device_name = if is_remote {
+        // 从 pairing token 解析设备名
+        if let Some(token) = provided_token.as_deref() {
+            let reg = ctx.pairing_registry.lock().await;
+            reg.issued_tokens.get(token).map(|e| e.device_name.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let conn_meta = ConnectionMeta {
+        conn_id: Uuid::new_v4().to_string(),
+        is_remote,
+        device_name,
+    };
+
     ws.max_frame_size(MAX_WS_FRAME_SIZE)
         .max_message_size(MAX_WS_MESSAGE_SIZE)
         .on_upgrade(move |socket| {
@@ -268,6 +292,8 @@ async fn ws_handler(
                 ctx.save_tx,
                 ctx.terminal_registry,
                 ctx.scrollback_tx,
+                conn_meta,
+                ctx.remote_sub_registry,
             )
         })
         .into_response()
@@ -734,8 +760,13 @@ async fn handle_socket(
     save_tx: tokio::sync::mpsc::Sender<()>,
     registry: SharedTerminalRegistry,
     scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    conn_meta: ConnectionMeta,
+    remote_sub_registry: SharedRemoteSubRegistry,
 ) {
-    info!("New WebSocket connection established");
+    info!(
+        "New WebSocket connection established (conn_id={}, remote={})",
+        conn_meta.conn_id, conn_meta.is_remote
+    );
 
     // 聚合输出通道：所有订阅终端的输出汇聚到这里
     let (agg_tx, mut agg_rx) =
@@ -771,6 +802,8 @@ async fn handle_socket(
         running_commands: running_commands.clone(),
         cmd_output_tx: cmd_output_tx.clone(),
         lsp_supervisor: lsp_supervisor.clone(),
+        conn_meta: conn_meta.clone(),
+        remote_sub_registry: remote_sub_registry.clone(),
     };
 
     // Send Hello message with v1 capabilities
@@ -785,6 +818,13 @@ async fn handle_socket(
         error!("Failed to send Hello message: {}", e);
         return;
     }
+
+    // 远程终端变更事件接收器（仅本地连接使用）
+    let mut remote_term_rx = if !conn_meta.is_remote {
+        Some(remote_sub_registry.lock().await.subscribe_events())
+    } else {
+        None
+    };
 
     // Main loop: handle WebSocket messages and PTY output
     info!("Entering main WebSocket loop");
@@ -956,6 +996,18 @@ async fn handle_socket(
                 }
             }
 
+            // 远程终端订阅变更通知（仅本地连接接收）
+            Ok(_event) = async {
+                match remote_term_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Err(e) = send_message(&mut socket, &ServerMessage::RemoteTermChanged).await {
+                    error!("Failed to send remote_term_changed: {}", e);
+                }
+            }
+
             else => {
                 debug!("All channels closed, exiting");
                 break;
@@ -970,6 +1022,12 @@ async fn handle_socket(
             info!("Unsubscribing from terminal {} on WS disconnect", term_id);
             handle.abort();
         }
+    }
+
+    // WS 断开：清理远程订阅注册表
+    if conn_meta.is_remote {
+        let mut reg = remote_sub_registry.lock().await;
+        reg.unsubscribe_all(&conn_meta.conn_id);
     }
 
     // WS 断开：关闭该连接托管的 LSP 会话

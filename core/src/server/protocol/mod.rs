@@ -819,6 +819,9 @@ pub enum ServerMessage {
         scrollback: Vec<u8>,
     },
 
+    // v1.32: 远程终端订阅变更通知（推送给本地连接）
+    RemoteTermChanged,
+
     // v1.29: 项目命令结果
     ProjectCommandsSaved {
         project: String,
@@ -909,6 +912,15 @@ pub struct TerminalInfo {
     pub status: String, // "running" or "exited"
     #[serde(default)]
     pub shell: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remote_subscribers: Vec<RemoteSubscriberDetail>,
+}
+
+/// 远程订阅者详情（用于协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteSubscriberDetail {
+    pub device_name: String,
+    pub conn_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1035,6 +1047,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "pairing_v1".to_string(),
         "project_commands".to_string(),
         "lsp_diagnostics".to_string(),
+        "remote_term_tracking".to_string(),
     ]
 }
 

@@ -5,6 +5,7 @@ pub mod git;
 pub mod handlers;
 pub mod lsp;
 pub mod protocol;
+pub mod remote_sub_registry;
 pub mod terminal_registry;
 pub mod watcher;
 pub mod ws;

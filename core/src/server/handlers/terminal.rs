@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 use crate::server::context::HandlerContext;
-use crate::server::protocol::{ClientMessage, ServerMessage};
+use crate::server::protocol::{ClientMessage, RemoteSubscriberDetail, ServerMessage};
 use crate::server::ws::{
     ack_terminal_output, send_message, subscribe_terminal, unsubscribe_terminal,
 };
@@ -101,6 +101,16 @@ pub async fn handle_terminal_message(
             )
             .await;
 
+            // 远程连接：注册远程订阅
+            if ctx.conn_meta.is_remote {
+                let mut rsub = ctx.remote_sub_registry.lock().await;
+                rsub.subscribe(
+                    &session_id,
+                    &ctx.conn_meta.conn_id,
+                    ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
+                );
+            }
+
             info!(
                 cwd = %cwd,
                 term_id = %session_id,
@@ -128,6 +138,11 @@ pub async fn handle_terminal_message(
 
             if let Some(id) = term_id {
                 unsubscribe_terminal(&id, &ctx.subscribed_terms).await;
+                // 清理远程订阅
+                {
+                    let mut rsub = ctx.remote_sub_registry.lock().await;
+                    rsub.unsubscribe_term(&id);
+                }
                 let mut reg = ctx.terminal_registry.lock().await;
                 reg.close(&id);
                 drop(reg);
@@ -180,6 +195,16 @@ pub async fn handle_terminal_message(
                     )
                     .await;
 
+                    // 远程连接：注册远程订阅
+                    if ctx.conn_meta.is_remote {
+                        let mut rsub = ctx.remote_sub_registry.lock().await;
+                        rsub.subscribe(
+                            &term_id,
+                            &ctx.conn_meta.conn_id,
+                            ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
+                        );
+                    }
+
                     info!(
                         project = %project,
                         workspace = %workspace,
@@ -208,13 +233,34 @@ pub async fn handle_terminal_message(
 
         ClientMessage::TermList => {
             let reg = ctx.terminal_registry.lock().await;
-            let items = reg.list();
+            let mut items = reg.list();
+            drop(reg);
+
+            // 填充远程订阅者信息
+            let rsub = ctx.remote_sub_registry.lock().await;
+            for item in &mut items {
+                let subs = rsub.get_subscribers(&item.term_id);
+                item.remote_subscribers = subs
+                    .into_iter()
+                    .map(|s| RemoteSubscriberDetail {
+                        device_name: s.device_name,
+                        conn_id: s.conn_id,
+                    })
+                    .collect();
+            }
+            drop(rsub);
+
             send_message(socket, &ServerMessage::TermList { items }).await?;
             Ok(true)
         }
 
         ClientMessage::TermClose { term_id } => {
             unsubscribe_terminal(term_id, &ctx.subscribed_terms).await;
+            // 清理该终端的所有远程订阅
+            {
+                let mut rsub = ctx.remote_sub_registry.lock().await;
+                rsub.unsubscribe_term(term_id);
+            }
             let closed = {
                 let mut reg = ctx.terminal_registry.lock().await;
                 reg.close(term_id)
@@ -273,6 +319,16 @@ pub async fn handle_terminal_message(
                     &ctx.agg_tx,
                 )
                 .await;
+
+                // 远程连接：注册远程订阅
+                if ctx.conn_meta.is_remote {
+                    let mut rsub = ctx.remote_sub_registry.lock().await;
+                    rsub.subscribe(
+                        term_id,
+                        &ctx.conn_meta.conn_id,
+                        ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
+                    );
+                }
 
                 send_message(
                     socket,
