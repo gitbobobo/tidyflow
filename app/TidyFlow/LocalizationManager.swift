@@ -4,7 +4,7 @@ import SwiftUI
 final class LocalizationManager: ObservableObject {
     static let shared = LocalizationManager()
 
-    @AppStorage("appLanguage") var appLanguage: String = "system" {
+    @Published var appLanguage: String {
         didSet {
             applyLanguage(appLanguage)
         }
@@ -14,8 +14,9 @@ final class LocalizationManager: ObservableObject {
     @Published var bundle: Bundle
 
     private init() {
-        let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "system"
+        let lang = AppConfig.readClientSettingsFromDisk().appLanguage
         let resolved = LocalizationManager.resolveLanguage(lang)
+        self.appLanguage = lang
         self.locale = Locale(identifier: resolved)
         self.bundle = LocalizationManager.bundle(for: resolved)
     }

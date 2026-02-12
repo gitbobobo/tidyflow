@@ -399,6 +399,7 @@ extension AppState {
         wsClient.onClientSettingsResult = { [weak self] settings in
             self?.clientSettings = settings
             self?.clientSettingsLoaded = true
+            LocalizationManager.shared.appLanguage = settings.appLanguage
         }
 
         wsClient.onClientSettingsSaved = { ok, message in

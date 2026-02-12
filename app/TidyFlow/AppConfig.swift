@@ -23,11 +23,23 @@ enum AppConfig {
         Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app"
     }
 
-    /// 固定端口（UserDefaults 键），0 表示动态分配
-    static let fixedPortKey: String = "core.fixedPort"
-    /// 当前配置的固定端口，0 表示动态分配
+    /// 固定端口：从 tidyflow.json 读取，0 表示动态分配
     static var configuredFixedPort: Int {
-        UserDefaults.standard.integer(forKey: fixedPortKey)
+        readClientSettingsFromDisk().fixedPort
+    }
+
+    /// 从磁盘直接读取 client_settings（Core 启动前使用）
+    static func readClientSettingsFromDisk() -> (fixedPort: Int, appLanguage: String) {
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        let path = home.appendingPathComponent(".tidyflow/tidyflow.json")
+        guard let data = try? Data(contentsOf: path),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cs = root["client_settings"] as? [String: Any] else {
+            return (fixedPort: 0, appLanguage: "system")
+        }
+        let fixedPort = cs["fixed_port"] as? Int ?? 0
+        let appLanguage = cs["app_language"] as? String ?? "system"
+        return (fixedPort: fixedPort, appLanguage: appLanguage)
     }
 
     // MARK: - Logging Configuration
