@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import AppKit
 
@@ -303,3 +304,4 @@ struct DebugPanelView: View {
         return f
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import AppKit
 
@@ -293,3 +294,4 @@ struct CommitDetailPanelContent: View {
         }
     }
 }
+#endif
