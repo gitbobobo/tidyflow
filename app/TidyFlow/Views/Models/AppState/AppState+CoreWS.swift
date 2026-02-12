@@ -18,29 +18,9 @@ private struct PairErrorHTTPResponse: Decodable {
 }
 
 extension AppState {
-    /// 用户配置是否已在当前 Core 会话生效
-    var remoteAccessPendingApply: Bool {
-        remoteAccessEnabled != coreProcessManager.isRemoteBindActive
-    }
-
-    /// 当前 Core 会话是否已开启局域网访问（0.0.0.0）
-    var remoteAccessActive: Bool {
-        coreProcessManager.isRemoteBindActive
-    }
-
-    /// 当前会话是否允许生成并使用移动端连接信息
+    /// 当前会话是否允许生成并使用移动端连接信息（Core 运行即可）
     var remoteAccessReady: Bool {
-        remoteAccessEnabled && remoteAccessActive
-    }
-
-    /// 移动端访问提示文案（区分“已配置未生效”）
-    var mobileRemoteAccessHintText: String {
-        if remoteAccessPendingApply {
-            return "settings.mobile.remoteAccess.pendingHint".localized
-        }
-        return remoteAccessEnabled
-            ? "settings.mobile.remoteAccess.onHint".localized
-            : "settings.mobile.remoteAccess.offHint".localized
+        coreProcessManager.status.isRunning
     }
 
     /// 当前可用于移动端连接的局域网 IPv4 地址列表（优先 en* 接口）
@@ -201,26 +181,10 @@ extension AppState {
         coreProcessManager.restart(resetCounter: true)
     }
 
-    /// 更新局域网访问开关（仅写入配置，下次启动应用生效）
-    func setRemoteAccessEnabled(_ enabled: Bool) {
-        guard remoteAccessEnabled != enabled else { return }
-        remoteAccessEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: AppConfig.remoteAccessEnabledKey)
-
-        // 切换网络暴露状态后，旧配对码不可继续展示
-        mobilePairCode = nil
-        mobilePairCodeExpiresAt = nil
-        mobilePairCodeError = nil
-    }
-
     /// 生成移动端配对码（仅本机调用 /pair/start）
     func requestMobilePairCode() {
-        guard remoteAccessEnabled else {
-            mobilePairCodeError = "settings.mobile.error.enableFirst".localized
-            return
-        }
-        guard remoteAccessReady else {
-            mobilePairCodeError = "settings.mobile.error.restartRequired".localized
+        guard coreProcessManager.status.isRunning else {
+            mobilePairCodeError = "settings.mobile.error.coreNotReady".localized
             return
         }
         let readyPort = wsClient.currentURL?.port ?? coreProcessManager.runningPort

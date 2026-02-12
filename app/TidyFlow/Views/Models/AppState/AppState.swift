@@ -7,8 +7,6 @@ class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
     @Published var connectionState: ConnectionState = .disconnected
-    /// 是否允许局域网移动端连接（切换后需重启 Core）
-    @Published var remoteAccessEnabled: Bool = UserDefaults.standard.bool(forKey: AppConfig.remoteAccessEnabledKey)
     /// 最近一次生成的移动端配对码（6 位）
     @Published var mobilePairCode: String?
     /// 配对码过期时间文案（ISO8601 原文）

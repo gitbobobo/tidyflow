@@ -113,11 +113,6 @@ class CoreProcessManager: ObservableObject {
         }
     }
 
-    /// 当前 Core 是否以远程模式（0.0.0.0）监听
-    var isRemoteBindActive: Bool {
-        activeBindAddress == AppConfig.coreBindRemote
-    }
-
     // MARK: - Public API
 
     /// Start the Core process with dynamic port allocation
@@ -357,16 +352,21 @@ class CoreProcessManager: ObservableObject {
                 return
             }
         } else {
-            // 动态分配
-            guard let dynamicPort = PortAllocator.findAvailablePort() else {
-                let msg = "Failed to allocate port"
-                TFLog.core.error("\(msg, privacy: .public)")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                    self?.startWithRetry()
+            // 优先尝试默认端口，不可用时动态分配
+            let preferred = AppConfig.defaultPort
+            if PortAllocator.isPortAvailable(preferred) {
+                port = preferred
+            } else {
+                guard let dynamicPort = PortAllocator.findAvailablePort() else {
+                    let msg = "Failed to allocate port"
+                    TFLog.core.error("\(msg, privacy: .public)")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                        self?.startWithRetry()
+                    }
+                    return
                 }
-                return
+                port = dynamicPort
             }
-            port = dynamicPort
         }
 
         DispatchQueue.main.async {
@@ -396,7 +396,7 @@ class CoreProcessManager: ObservableObject {
 
         // Set environment variable
         var env = ProcessInfo.processInfo.environment
-        let bindAddress = AppConfig.currentCoreBindAddress
+        let bindAddress = AppConfig.coreBindAddress
         env["TIDYFLOW_PORT"] = "\(port)"
         env["TIDYFLOW_BIND_ADDR"] = bindAddress
         if let token = currentWSToken, !token.isEmpty {
@@ -404,6 +404,7 @@ class CoreProcessManager: ObservableObject {
         }
         if Self.isRunAppDebugBundle {
             env["TIDYFLOW_LOG_SUFFIX"] = "dev"
+            env["TIDYFLOW_DEV"] = "1"
         }
         proc.environment = env
 

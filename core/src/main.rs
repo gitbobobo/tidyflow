@@ -4,6 +4,15 @@ use std::path::PathBuf;
 use tidyflow_core::workspace::{AppState, ProjectManager, WorkspaceManager};
 use tracing::info;
 
+/// 默认端口：开发环境 3439，生产环境 8439
+fn default_port() -> u16 {
+    if env::var("TIDYFLOW_DEV").is_ok() {
+        3439
+    } else {
+        8439
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "tidyflow-core")]
 #[command(about = "TidyFlow Core - Terminal and Workspace Engine")]
@@ -16,9 +25,9 @@ struct Cli {
 enum Commands {
     /// Start the WebSocket server (default)
     Serve {
-        #[arg(short, long, default_value = "47999")]
-        port: u16,
-        /// Bind address for WebSocket/HTTP server (default: 127.0.0.1)
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// Bind address for WebSocket/HTTP server (default: 0.0.0.0)
         #[arg(long)]
         bind_addr: Option<String>,
     },
@@ -115,13 +124,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Default: start server
             let (port, bind_addr_arg) = match &cli.command {
                 Some(Commands::Serve { port, bind_addr }) => {
-                    (*port, bind_addr.clone())
+                    let resolved_port = port.unwrap_or_else(|| {
+                        env::var("TIDYFLOW_PORT")
+                            .ok()
+                            .and_then(|p| p.parse::<u16>().ok())
+                            .unwrap_or_else(default_port)
+                    });
+                    (resolved_port, bind_addr.clone())
                 }
-                _ => env::var("TIDYFLOW_PORT")
-                    .ok()
-                    .and_then(|p| p.parse::<u16>().ok())
-                    .map(|port| (port, None))
-                    .unwrap_or((47999, None)),
+                _ => {
+                    let resolved_port = env::var("TIDYFLOW_PORT")
+                        .ok()
+                        .and_then(|p| p.parse::<u16>().ok())
+                        .unwrap_or_else(default_port);
+                    (resolved_port, None)
+                }
             };
             if let Some(bind_addr) = bind_addr_arg
                 .map(|addr| addr.trim().to_string())

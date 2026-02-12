@@ -5,12 +5,24 @@ import Foundation
 enum AppConfig {
     /// Host for Core server (localhost only)
     static let coreHost: String = "127.0.0.1"
-    /// Core 监听地址（本机）
-    static let coreBindLocal: String = "127.0.0.1"
-    /// Core 监听地址（局域网）
-    static let coreBindRemote: String = "0.0.0.0"
-    /// 远程访问开关（UserDefaults 键）
-    static let remoteAccessEnabledKey: String = "core.remoteAccessEnabled"
+    /// Core 监听地址（始终允许局域网访问）
+    static let coreBindAddress: String = "0.0.0.0"
+
+    // MARK: - Port Configuration
+
+    /// 生产环境默认端口
+    static let defaultPortProduction: Int = 8439
+    /// 开发环境默认端口
+    static let defaultPortDevelopment: Int = 3439
+    /// 当前环境默认端口
+    static var defaultPort: Int {
+        isDevelopmentBuild ? defaultPortDevelopment : defaultPortProduction
+    }
+    /// 是否为开发构建（run-app.sh 产出 TidyFlow-Debug.app）
+    static var isDevelopmentBuild: Bool {
+        Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app"
+    }
+
     /// 固定端口（UserDefaults 键），0 表示动态分配
     static let fixedPortKey: String = "core.fixedPort"
     /// 当前配置的固定端口，0 表示动态分配
@@ -38,12 +50,6 @@ enum AppConfig {
     /// Auto-restart configuration
     static let autoRestartLimit: Int = 3
     static let autoRestartBackoffs: [TimeInterval] = [0.2, 0.5, 1.2]
-
-    /// 当前 Core 绑定地址（由本地设置决定）
-    static var currentCoreBindAddress: String {
-        let enabled = UserDefaults.standard.bool(forKey: remoteAccessEnabledKey)
-        return enabled ? coreBindRemote : coreBindLocal
-    }
 
     /// Generate WebSocket URL for a given port
     static func makeWsURL(host: String = coreHost, port: Int, token: String? = nil) -> URL {

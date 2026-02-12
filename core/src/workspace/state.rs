@@ -78,6 +78,16 @@ impl ClientSettings {
     }
 }
 
+/// 移动端配对 token 持久化条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedTokenEntry {
+    pub token_id: String,
+    pub ws_token: String,
+    pub device_name: String,
+    pub issued_at_unix: u64,
+    pub expires_at_unix: u64,
+}
+
 /// Application state - persisted to JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
@@ -87,6 +97,8 @@ pub struct AppState {
     pub last_updated: Option<DateTime<Utc>>,
     #[serde(default)]
     pub client_settings: ClientSettings,
+    #[serde(default)]
+    pub paired_tokens: Vec<PersistedTokenEntry>,
 }
 
 impl Default for AppState {
@@ -96,6 +108,7 @@ impl Default for AppState {
             projects: HashMap::new(),
             last_updated: Some(Utc::now()),
             client_settings: ClientSettings::default(),
+            paired_tokens: Vec::new(),
         }
     }
 }

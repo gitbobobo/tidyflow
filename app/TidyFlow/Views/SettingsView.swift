@@ -59,18 +59,6 @@ struct CustomCommandsSection: View {
             }
 
             Section {
-                Toggle(
-                    "settings.mobile.remoteAccess".localized,
-                    isOn: Binding(
-                        get: { appState.remoteAccessEnabled },
-                        set: { appState.setRemoteAccessEnabled($0) }
-                    )
-                )
-
-                Text(appState.mobileRemoteAccessHintText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                 if appState.remoteAccessReady {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("settings.mobile.lanAddress".localized)
