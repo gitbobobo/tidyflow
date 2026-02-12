@@ -5,6 +5,8 @@ struct MobileTerminalView: View {
     @EnvironmentObject var appState: MobileAppState
     let project: String
     let workspace: String
+    /// 附着已有终端的 ID（nil 表示新建终端）
+    var termId: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,7 +25,11 @@ struct MobileTerminalView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
-            appState.createTerminalForWorkspace(project: project, workspace: workspace)
+            if let termId {
+                appState.attachTerminal(project: project, workspace: workspace, termId: termId)
+            } else {
+                appState.createTerminalForWorkspace(project: project, workspace: workspace)
+            }
         }
         .onDisappear {
             appState.detachTerminal()

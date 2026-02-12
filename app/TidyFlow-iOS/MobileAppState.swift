@@ -51,6 +51,7 @@ final class MobileAppState: ObservableObject {
     // 数据
     @Published var projects: [ProjectInfo] = []
     @Published var workspaces: [WorkspaceInfo] = []
+    @Published var activeTerminals: [TerminalSessionInfo] = []
 
     // 导航
     @Published var navigationPath = NavigationPath()
@@ -62,6 +63,8 @@ final class MobileAppState: ObservableObject {
     /// 待创建终端的项目/工作空间（等 xterm.js ready 后再真正创建）
     private var pendingTermProject: String = ""
     private var pendingTermWorkspace: String = ""
+    /// 待附着的终端 ID（重连场景）
+    private var pendingAttachTermId: String = ""
 
     // 桥接
     let bridge = MobileBridge()
@@ -179,6 +182,12 @@ final class MobileAppState: ObservableObject {
     func selectProject(_ projectName: String) {
         workspaces = []
         wsClient.requestListWorkspaces(project: projectName)
+        wsClient.requestTermList()
+    }
+
+    /// 获取指定项目+工作空间的活跃终端
+    func terminalsForWorkspace(project: String, workspace: String) -> [TerminalSessionInfo] {
+        activeTerminals.filter { $0.project == project && $0.workspace == workspace && $0.isRunning }
     }
 
     // MARK: - 终端
@@ -187,7 +196,18 @@ final class MobileAppState: ObservableObject {
     func createTerminalForWorkspace(project: String, workspace: String) {
         pendingTermProject = project
         pendingTermWorkspace = workspace
+        pendingAttachTermId = ""
         // 如果 WebView 已经 ready（如从后台恢复），立即创建
+        if bridge.isWebReady {
+            fireTermCreate()
+        }
+    }
+
+    /// 附着已有终端（重连场景）
+    func attachTerminal(project: String, workspace: String, termId: String) {
+        pendingTermProject = project
+        pendingTermWorkspace = workspace
+        pendingAttachTermId = termId
         if bridge.isWebReady {
             fireTermCreate()
         }
@@ -197,14 +217,23 @@ final class MobileAppState: ObservableObject {
         guard !pendingTermProject.isEmpty else { return }
         let project = pendingTermProject
         let workspace = pendingTermWorkspace
+        let attachId = pendingAttachTermId
         pendingTermProject = ""
         pendingTermWorkspace = ""
-        wsClient.requestTermCreate(
-            project: project,
-            workspace: workspace,
-            cols: terminalCols,
-            rows: terminalRows
-        )
+        pendingAttachTermId = ""
+
+        if !attachId.isEmpty {
+            // 附着已有终端
+            wsClient.requestTermAttach(termId: attachId)
+        } else {
+            // 创建新终端
+            wsClient.requestTermCreate(
+                project: project,
+                workspace: workspace,
+                cols: terminalCols,
+                rows: terminalRows
+            )
+        }
     }
 
     /// 发送特殊键序列到终端
@@ -278,6 +307,7 @@ final class MobileAppState: ObservableObject {
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.wsClient.requestListProjects()
+                self.wsClient.requestTermList()
             } else {
                 self.connectionMessage = "连接断开"
             }
@@ -293,6 +323,11 @@ final class MobileAppState: ObservableObject {
             self.workspaces = result.items
         }
 
+        wsClient.onTermList = { [weak self] result in
+            guard let self else { return }
+            self.activeTerminals = result.items
+        }
+
         wsClient.onTermCreated = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
@@ -302,6 +337,8 @@ final class MobileAppState: ObservableObject {
                 cols: self.terminalCols,
                 rows: self.terminalRows
             )
+            // 刷新终端列表
+            self.wsClient.requestTermList()
         }
 
         wsClient.onTermAttached = { [weak self] result in
@@ -336,6 +373,8 @@ final class MobileAppState: ObservableObject {
             if self.currentTermId == termId {
                 self.currentTermId = ""
             }
+            // 刷新终端列表
+            self.wsClient.requestTermList()
         }
 
         wsClient.onError = { [weak self] message in

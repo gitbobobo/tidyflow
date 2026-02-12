@@ -5,6 +5,7 @@ enum MobileRoute: Hashable {
     case projects
     case workspaces(project: String)
     case terminal(project: String, workspace: String)
+    case terminalAttach(project: String, workspace: String, termId: String)
 }
 
 @main
@@ -23,6 +24,8 @@ struct TidyFlowiOSApp: App {
                             WorkspaceListView(project: project)
                         case .terminal(let project, let workspace):
                             MobileTerminalView(project: project, workspace: workspace)
+                        case .terminalAttach(let project, let workspace, let termId):
+                            MobileTerminalView(project: project, workspace: workspace, termId: termId)
                         }
                     }
             }
