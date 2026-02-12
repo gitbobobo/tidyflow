@@ -1,7 +1,6 @@
 import Foundation
 import SwiftUI
 import UIKit
-import os
 
 private struct PairExchangeHTTPBody: Encodable {
     let pairCode: String
@@ -30,6 +29,12 @@ private struct PairExchangeHTTPResponse: Decodable {
 private struct PairErrorHTTPResponse: Decodable {
     let error: String
     let message: String
+}
+
+@MainActor
+protocol MobileTerminalOutputSink: AnyObject {
+    func writeOutput(_ bytes: [UInt8])
+    func focusTerminal()
 }
 
 @MainActor
@@ -62,21 +67,26 @@ final class MobileAppState: ObservableObject {
     @Published var currentTermId: String = ""
     @Published var terminalCols: Int = 80
     @Published var terminalRows: Int = 24
-    /// 待创建终端的项目/工作空间（等 xterm.js ready 后再真正创建）
+    /// 待创建终端的项目/工作空间（等终端视图 ready 后再真正创建）
     private var pendingTermProject: String = ""
     private var pendingTermWorkspace: String = ""
     /// 待附着的终端 ID（重连场景）
     private var pendingAttachTermId: String = ""
     /// Ctrl 一次性修饰状态（用于虚拟键盘输入）
     private var ctrlArmedForNextInput: Bool = false
+    /// 终端视图是否已经拿到有效 cols/rows
+    private var isTerminalViewReady: Bool = false
 
-    // 桥接
-    let bridge = MobileBridge()
+    /// 原生终端输出目标（SwiftTerm）
+    private weak var terminalSink: MobileTerminalOutputSink?
+    /// 终端未 ready 或尚未绑定 sink 时暂存输出，避免首屏丢数据
+    private var pendingOutputChunks: [[UInt8]] = []
+    private let pendingOutputChunkLimit = 128
+
     private let wsClient = WSClient()
 
     init() {
         setupWSCallbacks()
-        setupBridgeCallbacks()
         // 恢复已保存的连接信息
         if let saved = ConnectionStorage.load() {
             host = saved.host
@@ -198,15 +208,51 @@ final class MobileAppState: ObservableObject {
         activeTerminals.filter { $0.project == project && $0.workspace == workspace && $0.isRunning }
     }
 
+    // MARK: - 终端视图绑定
+
+    /// 绑定 SwiftTerm 输出目标
+    func attachTerminalSink(_ sink: MobileTerminalOutputSink) {
+        terminalSink = sink
+        flushPendingOutput()
+    }
+
+    /// 解绑 SwiftTerm 输出目标
+    func detachTerminalSink(_ sink: MobileTerminalOutputSink? = nil) {
+        if let sink, let current = terminalSink, current !== sink {
+            return
+        }
+        terminalSink = nil
+        isTerminalViewReady = false
+        pendingOutputChunks.removeAll()
+    }
+
+    /// SwiftTerm 视图尺寸变化（首次拿到有效尺寸也会走这里）
+    func terminalViewDidResize(cols: Int, rows: Int) {
+        guard cols > 0, rows > 0 else { return }
+
+        let becameReady = !isTerminalViewReady
+        isTerminalViewReady = true
+        terminalCols = cols
+        terminalRows = rows
+
+        if !currentTermId.isEmpty {
+            wsClient.requestTermResize(termId: currentTermId, cols: cols, rows: rows)
+        }
+
+        if becameReady {
+            fireTermCreate()
+            flushPendingOutput()
+        }
+    }
+
     // MARK: - 终端
 
-    /// 记录待创建的终端信息，实际创建延迟到 xterm.js ready 后
+    /// 记录待创建的终端信息，实际创建延迟到终端视图 ready 后
     func createTerminalForWorkspace(project: String, workspace: String) {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
-        // 如果 WebView 已经 ready（如从后台恢复），立即创建
-        if bridge.isWebReady {
+        if isTerminalViewReady {
             fireTermCreate()
         }
     }
@@ -216,13 +262,15 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = termId
-        if bridge.isWebReady {
+        if isTerminalViewReady {
             fireTermCreate()
         }
     }
 
     private func fireTermCreate() {
+        guard isTerminalViewReady else { return }
         guard !pendingTermProject.isEmpty else { return }
+
         let project = pendingTermProject
         let workspace = pendingTermWorkspace
         let attachId = pendingAttachTermId
@@ -250,8 +298,15 @@ final class MobileAppState: ObservableObject {
         wsClient.sendTerminalInput(sequence, termId: currentTermId)
     }
 
-    /// 发送键盘输入到终端（原生 UIKeyInput 代理调用）
+    /// 发送键盘输入到终端（字符串）
     func sendTerminalInput(_ data: String) {
+        guard !currentTermId.isEmpty else { return }
+        let transformed = consumeCtrlIfNeeded(for: data)
+        wsClient.sendTerminalInput(transformed, termId: currentTermId)
+    }
+
+    /// 发送键盘输入到终端（原始字节）
+    func sendTerminalInputBytes(_ data: [UInt8]) {
         guard !currentTermId.isEmpty else { return }
         let transformed = consumeCtrlIfNeeded(for: data)
         wsClient.sendTerminalInput(transformed, termId: currentTermId)
@@ -270,52 +325,13 @@ final class MobileAppState: ObservableObject {
     /// 离开终端视图时清理
     func detachTerminal() {
         currentTermId = ""
+        pendingTermProject = ""
+        pendingTermWorkspace = ""
+        pendingAttachTermId = ""
+        isTerminalViewReady = false
+        pendingOutputChunks.removeAll()
+        terminalSink = nil
         setCtrlArmed(false)
-    }
-
-    // MARK: - Bridge 回调
-
-    func setupBridgeCallbacks() {
-        bridge.onReady = { [weak self] cols, rows in
-            guard let self else { return }
-            self.terminalCols = cols
-            self.terminalRows = rows
-            // 终端就绪后，如果已有 termId，发送 resize
-            if !self.currentTermId.isEmpty {
-                self.wsClient.requestTermResize(termId: self.currentTermId, cols: cols, rows: rows)
-            }
-            // xterm.js 已就绪，触发待创建的终端
-            self.fireTermCreate()
-        }
-
-        bridge.onTerminalData = { [weak self] data in
-            guard let self else {
-                os_log(.error, "[MobileAppState] onTerminalData: self is nil")
-                return
-            }
-            os_log(.info, "[MobileAppState] onTerminalData len=%d termId='%{public}@'", data.count, self.currentTermId)
-            guard !self.currentTermId.isEmpty else {
-                os_log(.error, "[MobileAppState] onTerminalData: currentTermId is empty, dropping input")
-                return
-            }
-            let transformed = self.consumeCtrlIfNeeded(for: data)
-            self.wsClient.sendTerminalInput(transformed, termId: self.currentTermId)
-        }
-
-        bridge.onTerminalResized = { [weak self] cols, rows in
-            guard let self else { return }
-            self.terminalCols = cols
-            self.terminalRows = rows
-            if !self.currentTermId.isEmpty {
-                self.wsClient.requestTermResize(termId: self.currentTermId, cols: cols, rows: rows)
-            }
-        }
-
-        bridge.onOpenURL = { urlString in
-            if let url = URL(string: urlString) {
-                UIApplication.shared.open(url)
-            }
-        }
     }
 
     // MARK: - WS 回调
@@ -352,12 +368,13 @@ final class MobileAppState: ObservableObject {
         wsClient.onTermCreated = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
-            // 确保 PTY 尺寸与 xterm.js 一致（兜底 resize）
+            // 确保 PTY 尺寸与终端视图一致（兜底 resize）
             self.wsClient.requestTermResize(
                 termId: result.termId,
                 cols: self.terminalCols,
                 rows: self.terminalRows
             )
+            self.terminalSink?.focusTerminal()
             // 刷新终端列表
             self.wsClient.requestTermList()
         }
@@ -365,15 +382,16 @@ final class MobileAppState: ObservableObject {
         wsClient.onTermAttached = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
-            // 写入 scrollback 到 xterm.js
+            // 写入 scrollback 到 SwiftTerm
             if !result.scrollback.isEmpty {
-                self.bridge.writeOutput(result.scrollback)
+                self.emitTerminalOutput(result.scrollback)
             }
             self.wsClient.requestTermResize(
                 termId: result.termId,
                 cols: self.terminalCols,
                 rows: self.terminalRows
             )
+            self.terminalSink?.focusTerminal()
         }
 
         wsClient.onTerminalOutput = { [weak self] termId, bytes in
@@ -381,7 +399,7 @@ final class MobileAppState: ObservableObject {
             if let termId, self.currentTermId.isEmpty {
                 self.currentTermId = termId
             }
-            self.bridge.writeOutput(bytes)
+            self.emitTerminalOutput(bytes)
         }
 
         wsClient.onTerminalExit = { [weak self] _, _ in
@@ -400,6 +418,33 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onError = { [weak self] message in
             self?.errorMessage = message
+        }
+    }
+
+    // MARK: - 输出缓冲
+
+    private func emitTerminalOutput(_ bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+
+        if let sink = terminalSink {
+            sink.writeOutput(bytes)
+            return
+        }
+
+        pendingOutputChunks.append(bytes)
+        if pendingOutputChunks.count > pendingOutputChunkLimit {
+            pendingOutputChunks.removeFirst(pendingOutputChunks.count - pendingOutputChunkLimit)
+        }
+    }
+
+    private func flushPendingOutput() {
+        guard let sink = terminalSink else { return }
+        guard !pendingOutputChunks.isEmpty else { return }
+
+        let chunks = pendingOutputChunks
+        pendingOutputChunks.removeAll()
+        for chunk in chunks {
+            sink.writeOutput(chunk)
         }
     }
 
@@ -451,17 +496,34 @@ final class MobileAppState: ObservableObject {
 
     private func consumeCtrlIfNeeded(for data: String) -> String {
         guard ctrlArmedForNextInput else { return data }
+        disarmCtrlIfNeeded()
+
+        if let mapped = mapCtrlSequence(from: data) {
+            return mapped
+        }
+        return data
+    }
+
+    private func consumeCtrlIfNeeded(for data: [UInt8]) -> [UInt8] {
+        guard ctrlArmedForNextInput else { return data }
+        disarmCtrlIfNeeded()
+
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            return data
+        }
+        guard let mapped = mapCtrlSequence(from: text) else {
+            return data
+        }
+        return Array(mapped.utf8)
+    }
+
+    private func disarmCtrlIfNeeded() {
         ctrlArmedForNextInput = false
         NotificationCenter.default.post(
             name: .mobileTerminalCtrlStateDidChange,
             object: nil,
             userInfo: ["armed": false]
         )
-
-        if let mapped = mapCtrlSequence(from: data) {
-            return mapped
-        }
-        return data
     }
 
     private func mapCtrlSequence(from data: String) -> String? {
@@ -483,7 +545,7 @@ final class MobileAppState: ObservableObject {
             return "\u{00}"
         case 0x33, 0x5B: // 3, [
             return "\u{1b}"
-        case 0x34, 0x5C: // 4, \
+        case 0x34, 0x5C: // 4, \\
             return "\u{1c}"
         case 0x35, 0x5D: // 5, ]
             return "\u{1d}"

@@ -373,14 +373,18 @@ extension WSClient {
         ])
     }
 
-    /// 发送终端输入（UTF-8 文本）
-    func sendTerminalInput(_ text: String, termId: String) {
-        let bytes = Array(text.utf8)
+    /// 发送终端输入（二进制字节）
+    func sendTerminalInput(_ bytes: [UInt8], termId: String) {
         send([
             "type": "input",
             "term_id": termId,
             "data": bytes
         ])
+    }
+
+    /// 发送终端输入（UTF-8 文本）
+    func sendTerminalInput(_ text: String, termId: String) {
+        sendTerminalInput(Array(text.utf8), termId: termId)
     }
 
     /// 发送终端 resize

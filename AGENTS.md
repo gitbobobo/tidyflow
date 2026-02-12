@@ -48,6 +48,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 远程终端订阅归属必须使用稳定设备标识（如配对 `token_id`），不要绑定瞬时 `conn_id`；移动端进程被系统回收后重连应可继续看到并附着原会话。
 - iOS 虚拟键盘输入链路应采用 `onData` 主路径 + `textarea input/composition` 兜底；仅依赖 `onData` 会在部分键盘布局下丢失空格或特殊符号。
 - iOS 终端工具栏提供 `Ctrl` 时，不能只在工具栏按键内做组合映射；必须把 `Ctrl` 锁定态接入 `onData` 主输入链路，并在消费后同步回写工具栏状态，确保 `Ctrl+C` 等“Ctrl + 虚拟键盘字符”可用。
+- iOS 终端从 `WKWebView + xterm.js` 迁移到 `SwiftTerm` 时，应以 `TerminalViewDelegate.send` 作为统一输入路径，并通过 `TerminalView.inputAccessoryView` 挂接原生工具栏，避免继续依赖 `WKContentView` 的 runtime 替换。
+- iOS 使用终端仿真器（如 SwiftTerm）时，需要兼容 DSR/CPR（如 `ESC[6n`/`ESC[row;colR`）这类"终端自动应答"协议；在远程终端场景下，CPR 应答经网络往返后到达 shell 时已超时，zle 会把 `ESC[` 当作不完整按键序列消费，剩余部分（如 `3R`）被当命令执行。正确做法是在 `TerminalViewDelegate.send` 中直接丢弃匹配 `CSI digits(;digits)* R` 格式的 CPR 应答，而非尝试规范化后转发。
 
 ## Build Commands
 
