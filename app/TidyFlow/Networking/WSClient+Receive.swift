@@ -180,7 +180,11 @@ extension WSClient {
 
         case "term_list":
             if let result = TermListResult.from(json: json) {
+                let remoteSubs = result.items.flatMap(\.remoteSubscribers)
+                TFLog.ws.info("Received term_list: \(result.items.count) terminals, \(remoteSubs.count) remote subscribers")
                 onTermList?(result)
+            } else {
+                TFLog.ws.warning("Failed to parse term_list response")
             }
 
         case "term_closed":
@@ -304,6 +308,7 @@ extension WSClient {
             }
 
         case "remote_term_changed":
+            TFLog.ws.info("Received remote_term_changed notification")
             onRemoteTermChanged?()
 
         case "error":

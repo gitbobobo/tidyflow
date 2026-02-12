@@ -20,6 +20,7 @@ extension AppState {
 
     /// 刷新远程终端状态（收到 RemoteTermChanged 时调用）
     func refreshRemoteTerminals() {
+        TFLog.app.info("refreshRemoteTerminals: requesting term_list")
         wsClient.requestTermList()
     }
 
@@ -38,6 +39,7 @@ extension AppState {
                 ))
             }
         }
+        TFLog.app.info("updateRemoteTerminals: \(items.count) terminals, \(result.count) remote entries, filter: project=\(self.selectedProjectName), workspace=\(self.selectedWorkspaceKey ?? "nil")")
         remoteTerminals = result
     }
 
