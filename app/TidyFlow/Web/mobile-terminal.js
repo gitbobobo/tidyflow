@@ -99,6 +99,12 @@
         }, delayMs || 0);
     }
 
+    // 统一发送输入到 Native，避免多入口分叉
+    function sendTerminalData(data) {
+        if (typeof data !== 'string' || data.length === 0) return;
+        postToNative('terminal_data', { data: data });
+    }
+
     // 初始化终端
     function initTerminal() {
         const container = document.getElementById('terminal-container');
@@ -133,9 +139,83 @@
         term.open(container);
         fitAddon.fit();
 
-        // 终端输入 → Native
+        // iOS 输入兼容：
+        // 1) 主路径：xterm onData
+        // 2) 兜底：监听 helper textarea 的 input/composition，
+        //    解决某些键盘布局下空格/符号 onData 不触发的问题
+        let isComposing = false;
+        let compositionJustEnded = false;
+        let compositionEndData = '';
+        let compositionDataSent = false;
+        let pendingInputTimer = null;
+        let lastOnDataTime = 0;
+        let lastOnDataChar = '';
+        const textarea = container.querySelector('textarea');
+
+        if (textarea) {
+            textarea.addEventListener('input', function(e) {
+                const isInsertText = e.inputType === 'insertText' || e.inputType === 'insertCompositionText';
+                if (!isInsertText || typeof e.data !== 'string' || e.data.length === 0) {
+                    return;
+                }
+                if (isComposing || e.isComposing) {
+                    return;
+                }
+
+                const inputData = e.data;
+                const inputTime = Date.now();
+                if (inputData === lastOnDataChar && (inputTime - lastOnDataTime) < 50) {
+                    return;
+                }
+
+                if (pendingInputTimer) {
+                    clearTimeout(pendingInputTimer);
+                }
+                pendingInputTimer = setTimeout(function() {
+                    const checkTime = Date.now();
+                    if (inputData === lastOnDataChar && (checkTime - lastOnDataTime) < 50) {
+                        pendingInputTimer = null;
+                        return;
+                    }
+                    sendTerminalData(inputData);
+                    pendingInputTimer = null;
+                }, 20);
+            });
+
+            textarea.addEventListener('compositionstart', function() {
+                isComposing = true;
+                compositionJustEnded = false;
+                compositionEndData = '';
+                compositionDataSent = false;
+            });
+
+            textarea.addEventListener('compositionend', function(e) {
+                isComposing = false;
+                compositionJustEnded = true;
+                compositionEndData = e.data || '';
+                compositionDataSent = false;
+
+                setTimeout(function() {
+                    if (!compositionDataSent && compositionEndData.length > 0) {
+                        sendTerminalData(compositionEndData);
+                    }
+                    compositionJustEnded = false;
+                    compositionEndData = '';
+                }, 50);
+            });
+        }
+
+        // 终端输入 → Native（主路径）
         term.onData(function(data) {
-            postToNative('terminal_data', { data: data });
+            lastOnDataTime = Date.now();
+            lastOnDataChar = data;
+            if (isComposing) {
+                return;
+            }
+            if (compositionJustEnded) {
+                compositionDataSent = true;
+            }
+            sendTerminalData(data);
         });
 
         // 终端 resize → Native
