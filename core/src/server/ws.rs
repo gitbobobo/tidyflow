@@ -265,17 +265,22 @@ async fn ws_handler(
     }
 
     // 构建连接元数据
-    let is_remote = !addr.ip().is_loopback();
-    let device_name = if is_remote {
-        // 从 pairing token 解析设备名
-        if let Some(token) = provided_token.as_deref() {
+    // 判断是否为远程连接：使用配对 token 的连接始终视为远程（覆盖 iOS 模拟器等 loopback 场景）
+    let (is_remote, device_name) = {
+        let paired_info = if let Some(token) = provided_token.as_deref() {
             let reg = ctx.pairing_registry.lock().await;
-            reg.issued_tokens.get(token).map(|e| e.device_name.clone())
+            reg.issued_tokens
+                .get(token)
+                .map(|e| e.device_name.clone())
         } else {
             None
+        };
+        if paired_info.is_some() {
+            // 配对 token 认证 → 一定是远程设备
+            (true, paired_info)
+        } else {
+            (!addr.ip().is_loopback(), None)
         }
-    } else {
-        None
     };
     let conn_meta = ConnectionMeta {
         conn_id: Uuid::new_v4().to_string(),
