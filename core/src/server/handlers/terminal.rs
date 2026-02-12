@@ -262,11 +262,22 @@ pub async fn handle_terminal_message(
             }
             drop(rsub);
 
+            // 远程连接只返回自己订阅的终端，避免影响其他设备
+            if ctx.conn_meta.is_remote {
+                let my_conn_id = &ctx.conn_meta.conn_id;
+                items.retain(|item| {
+                    item.remote_subscribers
+                        .iter()
+                        .any(|s| s.conn_id == *my_conn_id)
+                });
+            }
+
             let remote_count: usize = items.iter().map(|i| i.remote_subscribers.len()).sum();
             info!(
                 total_terminals = items.len(),
                 remote_subscriber_count = remote_count,
                 conn_id = %ctx.conn_meta.conn_id,
+                is_remote = ctx.conn_meta.is_remote,
                 "TermList response: {} terminals, {} remote subscribers",
                 items.len(),
                 remote_count
