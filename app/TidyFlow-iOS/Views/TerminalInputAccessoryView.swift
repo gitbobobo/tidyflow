@@ -12,6 +12,9 @@ final class TerminalInputAccessoryView: UIView {
         case ctrl
         case esc
         case tab
+        case shiftTab
+        case ctrlC
+        case ctrlX
         case up
         case down
         case left
@@ -38,6 +41,9 @@ final class TerminalInputAccessoryView: UIView {
         ToolbarKey(label: "/", kind: .slash),
         ToolbarKey(label: "@", kind: .at),
         ToolbarKey(label: "#", kind: .hash),
+        ToolbarKey(label: "Shift+Tab", kind: .shiftTab),
+        ToolbarKey(label: "Ctrl+C", kind: .ctrlC),
+        ToolbarKey(label: "Ctrl+X", kind: .ctrlX),
     ]
 
     /// Ctrl 一次性锁定：点击 Ctrl 后，下一个非 Ctrl 键按组合发送
@@ -197,6 +203,12 @@ final class TerminalInputAccessoryView: UIView {
     private func sequenceForKey(_ key: KeyKind, ctrl: Bool) -> String {
         if ctrl {
             switch key {
+            case .shiftTab:
+                return "\u{1b}[Z"
+            case .ctrlC:
+                return "\u{03}"
+            case .ctrlX:
+                return "\u{18}"
             case .up:
                 return "\u{1b}[1;5A"
             case .down:
@@ -225,6 +237,12 @@ final class TerminalInputAccessoryView: UIView {
             return "\u{1b}"
         case .tab:
             return "\t"
+        case .shiftTab:
+            return "\u{1b}[Z"
+        case .ctrlC:
+            return "\u{03}"
+        case .ctrlX:
+            return "\u{18}"
         case .up:
             return "\u{1b}[A"
         case .down:
