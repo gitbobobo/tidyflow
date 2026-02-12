@@ -136,8 +136,41 @@
         term.loadAddon(unicode11Addon);
         term.unicode.activeVersion = '11';
 
+        // Clipboard addon - OSC 52 剪贴板支持（tmux、neovim 等 TUI 应用）
+        if (typeof ClipboardAddon !== 'undefined' && ClipboardAddon.ClipboardAddon) {
+            try {
+                const clipboardProvider = {
+                    readText: function() { return Promise.resolve(''); },
+                    writeText: function(_selection, text) {
+                        if (text && text.length > 0) {
+                            postToNative('clipboard_copy', { text: text });
+                        }
+                        return Promise.resolve();
+                    }
+                };
+                const clipboardAddon = new ClipboardAddon.ClipboardAddon(undefined, clipboardProvider);
+                term.loadAddon(clipboardAddon);
+            } catch (e) {
+                console.warn('[Clipboard] addon failed:', e.message);
+            }
+        }
+
         term.open(container);
         fitAddon.fit();
+
+        // WebGL addon - GPU 加速渲染，失败时回退到 DOM 渲染器
+        try {
+            if (typeof WebglAddon !== 'undefined' && WebglAddon.WebglAddon) {
+                var webglAddon = new WebglAddon.WebglAddon();
+                webglAddon.onContextLoss(function() {
+                    console.warn('[WebGL] Context lost, falling back to DOM renderer');
+                    try { webglAddon.dispose(); } catch (_) {}
+                });
+                term.loadAddon(webglAddon);
+            }
+        } catch (e) {
+            console.warn('[WebGL] addon failed, using DOM renderer:', e.message);
+        }
 
         // iOS 输入兼容：
         // 1) 主路径：xterm onData

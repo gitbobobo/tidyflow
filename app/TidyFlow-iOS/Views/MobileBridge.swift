@@ -1,9 +1,10 @@
 import Foundation
+import UIKit
 import WebKit
 import os
 
 /// iOS 版 Native ↔ JS 桥接，仅处理终端相关事件
-/// JS → Native: ready, terminal_data, terminal_resized, open_url
+/// JS → Native: ready, terminal_data, terminal_resized, open_url, clipboard_copy
 /// Native → JS: write_output, resize, write_input
 @MainActor
 final class MobileBridge: NSObject, ObservableObject, WKScriptMessageHandler {
@@ -71,6 +72,11 @@ final class MobileBridge: NSObject, ObservableObject, WKScriptMessageHandler {
         case "open_url":
             if let url = body["url"] as? String {
                 onOpenURL?(url)
+            }
+
+        case "clipboard_copy":
+            if let text = body["text"] as? String, !text.isEmpty {
+                UIPasteboard.general.string = text
             }
 
         default:
