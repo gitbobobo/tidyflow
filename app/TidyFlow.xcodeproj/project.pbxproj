@@ -54,6 +54,7 @@
 		BD77E0F7459611D0A5EB331C /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
 		C595D88A861FB6AAAFD09E1D /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
+		SWTERM01 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = SWTERM02 /* SwiftTerm */; };
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
 		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
@@ -63,6 +64,7 @@
 		E4200002 /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
 		E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677A21DC64E8B5102B08960B /* MobileAppState.swift */; };
 		MOB00032 /* SavedConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00031 /* SavedConnection.swift */; };
+		MOB00034 /* SwiftTermTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00033 /* SwiftTermTerminalView.swift */; };
 		EDS00001 /* EditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDS00002 /* EditorStore.swift */; };
 		F5D00001 /* DebugPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00011 /* DebugPanelView.swift */; };
 		F5D00002 /* LogTailReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D00012 /* LogTailReader.swift */; };
@@ -157,6 +159,7 @@
 		MOB00018 /* TerminalInputProxy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalInputProxy.swift; sourceTree = "<group>"; };
 		677A21DC64E8B5102B08960B /* MobileAppState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAppState.swift; sourceTree = "<group>"; };
 		MOB00031 /* SavedConnection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SavedConnection.swift; sourceTree = "<group>"; };
+		MOB00033 /* SwiftTermTerminalView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwiftTermTerminalView.swift; sourceTree = "<group>"; };
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -244,6 +247,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				MSGPK001 /* MessagePacker in Frameworks */,
+				SWTERM01 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -320,6 +324,7 @@
 				MOB00016 /* ProjectListView.swift */,
 				MOB00017 /* WorkspaceListView.swift */,
 				MOB00014 /* MobileTerminalView.swift */,
+				MOB00033 /* SwiftTermTerminalView.swift */,
 				MOB00012 /* MobileTerminalWebView.swift */,
 				MOB00011 /* MobileBridge.swift */,
 				MOB00013 /* TerminalInputAccessoryView.swift */,
@@ -488,6 +493,7 @@
 			name = TidyFlow;
 			packageProductDependencies = (
 				MSGPK002 /* MessagePacker */,
+				SWTERM02 /* SwiftTerm */,
 			);
 			productName = TidyFlow;
 			productReference = A1000010 /* TidyFlow-Debug.app */;
@@ -520,6 +526,7 @@
 			mainGroup = A1000007;
 			packageReferences = (
 				MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */,
+				SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 			);
 			productRefGroup = A100000F /* Products */;
 			projectDirPath = "";
@@ -578,6 +585,7 @@
 				MOB00032 /* SavedConnection.swift in Sources */,
 				MOB00021 /* MobileBridge.swift in Sources */,
 				MOB00022 /* MobileTerminalWebView.swift in Sources */,
+				MOB00034 /* SwiftTermTerminalView.swift in Sources */,
 				MOB00023 /* TerminalInputAccessoryView.swift in Sources */,
 				MOB00024 /* MobileTerminalView.swift in Sources */,
 				MOB00025 /* ConnectionView.swift in Sources */,
@@ -893,6 +901,7 @@
 					"TidyFlowiOSApp.swift",
 					"MobileBridge.swift",
 					"MobileTerminalWebView.swift",
+					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
 					"TerminalInputProxy.swift",
 					"MobileTerminalView.swift",
@@ -1015,6 +1024,7 @@
 					"TidyFlowiOSApp.swift",
 					"MobileBridge.swift",
 					"MobileTerminalWebView.swift",
+					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
 					"TerminalInputProxy.swift",
 					"MobileTerminalView.swift",
@@ -1082,6 +1092,14 @@
 				minimumVersion = 0.4.7;
 			};
 		};
+		SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.6;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1089,6 +1107,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */;
 			productName = MessagePacker;
+		};
+		SWTERM02 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
