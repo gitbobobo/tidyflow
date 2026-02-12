@@ -10,9 +10,15 @@ struct MobileTerminalView: View {
 
     var body: some View {
         // 仅使用 xterm.js 输入链路，避免覆盖层拦截焦点/触摸
-        MobileTerminalWebView(bridge: appState.bridge) { sequence in
-            appState.sendSpecialKey(sequence)
-        }
+        MobileTerminalWebView(
+            bridge: appState.bridge,
+            onKey: { sequence in
+                appState.sendSpecialKey(sequence)
+            },
+            onCtrlArmedChanged: { armed in
+                appState.setCtrlArmed(armed)
+            }
+        )
         .background(Color(red: 30/255, green: 30/255, blue: 30/255))
         .navigationTitle(workspace)
         .navigationBarTitleDisplayMode(.inline)

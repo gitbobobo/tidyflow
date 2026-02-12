@@ -6,6 +6,7 @@ import ObjectiveC
 struct MobileTerminalWebView: UIViewRepresentable {
     let bridge: MobileBridge
     let onKey: (String) -> Void
+    let onCtrlArmedChanged: (Bool) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -29,7 +30,11 @@ struct MobileTerminalWebView: UIViewRepresentable {
         bridge.setWebView(webView)
 
         // 替换 WKContentView 的 inputAccessoryView
-        replaceInputAccessoryView(in: webView, onKey: onKey)
+        replaceInputAccessoryView(
+            in: webView,
+            onKey: onKey,
+            onCtrlArmedChanged: onCtrlArmedChanged
+        )
 
         // 加载 mobile-terminal.html
         if let htmlURL = Bundle.main.url(forResource: "mobile-terminal", withExtension: "html", subdirectory: "Web") {
@@ -56,13 +61,18 @@ struct MobileTerminalWebView: UIViewRepresentable {
     // MARK: - 替换 inputAccessoryView
 
     /// 查找 WKContentView 并通过 ObjC runtime 替换其 inputAccessoryView
-    private func replaceInputAccessoryView(in webView: WKWebView, onKey: @escaping (String) -> Void) {
+    private func replaceInputAccessoryView(
+        in webView: WKWebView,
+        onKey: @escaping (String) -> Void,
+        onCtrlArmedChanged: @escaping (Bool) -> Void
+    ) {
         guard let contentView = findWKContentView(in: webView) else { return }
 
         let accessory = TerminalInputAccessoryView(
             frame: CGRect(x: 0, y: 0, width: webView.bounds.width, height: 44)
         )
         accessory.onKey = onKey
+        accessory.onCtrlArmedChanged = onCtrlArmedChanged
 
         // 用关联对象持有 accessory，防止被释放
         objc_setAssociatedObject(

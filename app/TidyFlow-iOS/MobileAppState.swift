@@ -67,6 +67,8 @@ final class MobileAppState: ObservableObject {
     private var pendingTermWorkspace: String = ""
     /// 待附着的终端 ID（重连场景）
     private var pendingAttachTermId: String = ""
+    /// Ctrl 一次性修饰状态（用于虚拟键盘输入）
+    private var ctrlArmedForNextInput: Bool = false
 
     // 桥接
     let bridge = MobileBridge()
@@ -147,6 +149,7 @@ final class MobileAppState: ObservableObject {
         wsClient.disconnect()
         isConnected = false
         currentTermId = ""
+        setCtrlArmed(false)
         connectionMessage = "已断开"
     }
 
@@ -250,12 +253,24 @@ final class MobileAppState: ObservableObject {
     /// 发送键盘输入到终端（原生 UIKeyInput 代理调用）
     func sendTerminalInput(_ data: String) {
         guard !currentTermId.isEmpty else { return }
-        wsClient.sendTerminalInput(data, termId: currentTermId)
+        let transformed = consumeCtrlIfNeeded(for: data)
+        wsClient.sendTerminalInput(transformed, termId: currentTermId)
+    }
+
+    /// 设置 Ctrl 锁定状态（由输入工具栏回调）
+    func setCtrlArmed(_ armed: Bool) {
+        ctrlArmedForNextInput = armed
+        NotificationCenter.default.post(
+            name: .mobileTerminalCtrlStateDidChange,
+            object: nil,
+            userInfo: ["armed": armed]
+        )
     }
 
     /// 离开终端视图时清理
     func detachTerminal() {
         currentTermId = ""
+        setCtrlArmed(false)
     }
 
     // MARK: - Bridge 回调
@@ -283,7 +298,8 @@ final class MobileAppState: ObservableObject {
                 os_log(.error, "[MobileAppState] onTerminalData: currentTermId is empty, dropping input")
                 return
             }
-            self.wsClient.sendTerminalInput(data, termId: self.currentTermId)
+            let transformed = self.consumeCtrlIfNeeded(for: data)
+            self.wsClient.sendTerminalInput(transformed, termId: self.currentTermId)
         }
 
         bridge.onTerminalResized = { [weak self] cols, rows in
@@ -431,5 +447,52 @@ final class MobileAppState: ObservableObject {
         throw NSError(domain: "TidyFlowiOS", code: httpResponse.statusCode, userInfo: [
             NSLocalizedDescriptionKey: "配对失败 (HTTP \(httpResponse.statusCode))"
         ])
+    }
+
+    private func consumeCtrlIfNeeded(for data: String) -> String {
+        guard ctrlArmedForNextInput else { return data }
+        ctrlArmedForNextInput = false
+        NotificationCenter.default.post(
+            name: .mobileTerminalCtrlStateDidChange,
+            object: nil,
+            userInfo: ["armed": false]
+        )
+
+        if let mapped = mapCtrlSequence(from: data) {
+            return mapped
+        }
+        return data
+    }
+
+    private func mapCtrlSequence(from data: String) -> String? {
+        guard data.unicodeScalars.count == 1, let scalar = data.unicodeScalars.first else {
+            return nil
+        }
+
+        let value = scalar.value
+
+        // Ctrl + A-Z / a-z
+        if (0x41...0x5A).contains(value) || (0x61...0x7A).contains(value) {
+            guard let ctrlScalar = UnicodeScalar(value & 0x1F) else { return nil }
+            return String(ctrlScalar)
+        }
+
+        // 常见 Ctrl + 符号/数字映射
+        switch value {
+        case 0x20, 0x32, 0x40: // Space, 2, @
+            return "\u{00}"
+        case 0x33, 0x5B: // 3, [
+            return "\u{1b}"
+        case 0x34, 0x5C: // 4, \
+            return "\u{1c}"
+        case 0x35, 0x5D: // 5, ]
+            return "\u{1d}"
+        case 0x36, 0x5E: // 6, ^
+            return "\u{1e}"
+        case 0x37, 0x2F, 0x3F, 0x5F: // 7, /, ?, _
+            return "\u{1f}"
+        default:
+            return nil
+        }
     }
 }
