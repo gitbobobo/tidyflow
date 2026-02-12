@@ -39,6 +39,8 @@ final class MobileAppState: ObservableObject {
     @Published var port: String = "47999"
     @Published var pairCode: String = ""
     @Published var deviceName: String = UIDevice.current.name
+    /// 是否通过 HTTPS/WSS 连接（反向代理场景）
+    @Published var useHTTPS: Bool = false
 
     // 连接状态
     @Published var connecting: Bool = false
@@ -78,6 +80,7 @@ final class MobileAppState: ObservableObject {
             host = saved.host
             port = "\(saved.port)"
             deviceName = saved.deviceName
+            useHTTPS = saved.useHTTPS
             hasSavedConnection = true
         }
     }
@@ -112,13 +115,14 @@ final class MobileAppState: ObservableObject {
                 host: trimmedHost,
                 port: portValue,
                 pairCode: trimmedCode,
-                deviceName: trimmedDeviceName.isEmpty ? "iOS Device" : trimmedDeviceName
+                deviceName: trimmedDeviceName.isEmpty ? "iOS Device" : trimmedDeviceName,
+                secure: useHTTPS
             )
 
             wsClient.disconnect()
             wsClient.updateAuthToken(token.wsToken)
             wsClient.updateBaseURL(
-                AppConfig.makeWsURL(host: trimmedHost, port: portValue, token: token.wsToken),
+                AppConfig.makeWsURL(host: trimmedHost, port: portValue, token: token.wsToken, secure: useHTTPS),
                 reconnect: false
             )
             wsClient.connect()
@@ -130,7 +134,8 @@ final class MobileAppState: ObservableObject {
                 port: portValue,
                 wsToken: token.wsToken,
                 deviceName: trimmedDeviceName.isEmpty ? "iOS Device" : trimmedDeviceName,
-                savedAt: Date()
+                savedAt: Date(),
+                useHTTPS: useHTTPS
             ))
             hasSavedConnection = true
         } catch {
@@ -156,7 +161,7 @@ final class MobileAppState: ObservableObject {
         wsClient.disconnect()
         wsClient.updateAuthToken(saved.wsToken)
         wsClient.updateBaseURL(
-            AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken),
+            AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken, secure: saved.useHTTPS),
             reconnect: false
         )
         wsClient.connect()
@@ -388,9 +393,11 @@ final class MobileAppState: ObservableObject {
         host: String,
         port: Int,
         pairCode: String,
-        deviceName: String
+        deviceName: String,
+        secure: Bool = false
     ) async throws -> PairExchangeHTTPResponse {
-        guard let url = URL(string: "http://\(host):\(port)/pair/exchange") else {
+        let scheme = secure ? "https" : "http"
+        guard let url = URL(string: "\(scheme)://\(host):\(port)/pair/exchange") else {
             throw NSError(domain: "TidyFlowiOS", code: -1, userInfo: [
                 NSLocalizedDescriptionKey: "配对服务地址无效"
             ])

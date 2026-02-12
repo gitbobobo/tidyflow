@@ -44,6 +44,7 @@ struct ConnectionView: View {
                     TextField("47999", text: $appState.port)
                         .keyboardType(.numberPad)
                 }
+                Toggle("HTTPS", isOn: $appState.useHTTPS)
                 HStack {
                     Text("配对码")
                         .frame(width: 50, alignment: .leading)

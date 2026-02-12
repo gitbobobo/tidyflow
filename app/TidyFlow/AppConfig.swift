@@ -64,9 +64,9 @@ enum AppConfig {
     static let autoRestartBackoffs: [TimeInterval] = [0.2, 0.5, 1.2]
 
     /// Generate WebSocket URL for a given port
-    static func makeWsURL(host: String = coreHost, port: Int, token: String? = nil) -> URL {
+    static func makeWsURL(host: String = coreHost, port: Int, token: String? = nil, secure: Bool = false) -> URL {
         var components = URLComponents()
-        components.scheme = "ws"
+        components.scheme = secure ? "wss" : "ws"
         components.host = host
         components.port = port
         components.path = "/ws"
@@ -77,7 +77,7 @@ enum AppConfig {
     }
 
     /// Generate WebSocket URL string for a given port
-    static func makeWsURLString(host: String = coreHost, port: Int, token: String? = nil) -> String {
-        makeWsURL(host: host, port: port, token: token).absoluteString
+    static func makeWsURLString(host: String = coreHost, port: Int, token: String? = nil, secure: Bool = false) -> String {
+        makeWsURL(host: host, port: port, token: token, secure: secure).absoluteString
     }
 }
