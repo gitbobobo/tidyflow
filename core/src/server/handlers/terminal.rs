@@ -106,7 +106,7 @@ pub async fn handle_terminal_message(
                 let mut rsub = ctx.remote_sub_registry.lock().await;
                 rsub.subscribe(
                     &session_id,
-                    &ctx.conn_meta.conn_id,
+                    ctx.conn_meta.remote_subscriber_id(),
                     ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
                 );
             }
@@ -197,16 +197,17 @@ pub async fn handle_terminal_message(
 
                     // 远程连接：注册远程订阅
                     if ctx.conn_meta.is_remote {
+                        let subscriber_id = ctx.conn_meta.remote_subscriber_id();
                         info!(
                             term_id = %term_id,
-                            conn_id = %ctx.conn_meta.conn_id,
+                            subscriber_id = %subscriber_id,
                             device_name = ?ctx.conn_meta.device_name,
                             "Registering remote subscription for new terminal"
                         );
                         let mut rsub = ctx.remote_sub_registry.lock().await;
                         rsub.subscribe(
                             &term_id,
-                            &ctx.conn_meta.conn_id,
+                            subscriber_id,
                             ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
                         );
                     } else {
@@ -264,11 +265,11 @@ pub async fn handle_terminal_message(
 
             // 远程连接只返回自己订阅的终端，避免影响其他设备
             if ctx.conn_meta.is_remote {
-                let my_conn_id = &ctx.conn_meta.conn_id;
+                let my_subscriber_id = ctx.conn_meta.remote_subscriber_id();
                 items.retain(|item| {
                     item.remote_subscribers
                         .iter()
-                        .any(|s| s.conn_id == *my_conn_id)
+                        .any(|s| s.conn_id == my_subscriber_id)
                 });
             }
 
@@ -358,7 +359,7 @@ pub async fn handle_terminal_message(
                     let mut rsub = ctx.remote_sub_registry.lock().await;
                     rsub.subscribe(
                         term_id,
-                        &ctx.conn_meta.conn_id,
+                        ctx.conn_meta.remote_subscriber_id(),
                         ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
                     );
                 }

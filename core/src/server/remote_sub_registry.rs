@@ -10,6 +10,7 @@ use tokio::sync::{broadcast, Mutex};
 /// 远程订阅者信息
 #[derive(Debug, Clone)]
 pub struct RemoteSubscriberInfo {
+    /// 订阅者稳定标识：优先为 token_id，未配对时退回 conn_id
     pub conn_id: String,
     pub device_name: String,
 }
@@ -39,12 +40,12 @@ impl RemoteSubRegistry {
     }
 
     /// 远程连接订阅终端
-    pub fn subscribe(&mut self, term_id: &str, conn_id: &str, device_name: &str) {
+    pub fn subscribe(&mut self, term_id: &str, subscriber_id: &str, device_name: &str) {
         let subs = self.subscribers.entry(term_id.to_string()).or_default();
         // 避免重复订阅
-        if !subs.iter().any(|s| s.conn_id == conn_id) {
+        if !subs.iter().any(|s| s.conn_id == subscriber_id) {
             subs.push(RemoteSubscriberInfo {
-                conn_id: conn_id.to_string(),
+                conn_id: subscriber_id.to_string(),
                 device_name: device_name.to_string(),
             });
             let _ = self.notify_tx.send(RemoteTermEvent::Changed);
@@ -52,11 +53,11 @@ impl RemoteSubRegistry {
     }
 
     /// 取消远程连接对某终端的订阅
-    pub fn unsubscribe(&mut self, term_id: &str, conn_id: &str) {
+    pub fn unsubscribe(&mut self, term_id: &str, subscriber_id: &str) {
         let mut changed = false;
         if let Some(subs) = self.subscribers.get_mut(term_id) {
             let before = subs.len();
-            subs.retain(|s| s.conn_id != conn_id);
+            subs.retain(|s| s.conn_id != subscriber_id);
             changed = subs.len() != before;
         }
         // 清理空条目
@@ -68,12 +69,12 @@ impl RemoteSubRegistry {
         }
     }
 
-    /// 连接断开时清理该连接的所有订阅
-    pub fn unsubscribe_all(&mut self, conn_id: &str) {
+    /// 清理该订阅者（token_id/conn_id）的所有订阅
+    pub fn unsubscribe_all(&mut self, subscriber_id: &str) {
         let mut changed = false;
         self.subscribers.retain(|_, subs| {
             let before = subs.len();
-            subs.retain(|s| s.conn_id != conn_id);
+            subs.retain(|s| s.conn_id != subscriber_id);
             if subs.len() != before {
                 changed = true;
             }

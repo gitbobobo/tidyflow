@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -266,24 +266,25 @@ async fn ws_handler(
 
     // 构建连接元数据
     // 判断是否为远程连接：使用配对 token 的连接始终视为远程（覆盖 iOS 模拟器等 loopback 场景）
-    let (is_remote, device_name) = {
+    let (is_remote, token_id, device_name) = {
         let paired_info = if let Some(token) = provided_token.as_deref() {
             let reg = ctx.pairing_registry.lock().await;
             reg.issued_tokens
                 .get(token)
-                .map(|e| e.device_name.clone())
+                .map(|e| (e.token_id.clone(), e.device_name.clone()))
         } else {
             None
         };
-        if paired_info.is_some() {
+        if let Some((token_id, device_name)) = paired_info {
             // 配对 token 认证 → 一定是远程设备
-            (true, paired_info)
+            (true, Some(token_id), Some(device_name))
         } else {
-            (!addr.ip().is_loopback(), None)
+            (!addr.ip().is_loopback(), None, None)
         }
     };
     let conn_meta = ConnectionMeta {
         conn_id: Uuid::new_v4().to_string(),
+        token_id,
         is_remote,
         device_name,
     };
@@ -597,9 +598,11 @@ async fn pair_revoke_handler(
     cleanup_expired_pairing_entries(&mut reg, now_ts);
 
     let mut revoked = 0usize;
+    let mut revoked_subscriber_ids = HashSet::new();
     if let Some(ws_token) = payload.ws_token {
-        if reg.issued_tokens.remove(ws_token.trim()).is_some() {
+        if let Some(entry) = reg.issued_tokens.remove(ws_token.trim()) {
             revoked += 1;
+            revoked_subscriber_ids.insert(entry.token_id);
         }
     }
     if let Some(token_id) = payload.token_id {
@@ -616,8 +619,9 @@ async fn pair_revoke_handler(
             })
             .collect();
         for token in matches {
-            if reg.issued_tokens.remove(&token).is_some() {
+            if let Some(entry) = reg.issued_tokens.remove(&token) {
                 revoked += 1;
+                revoked_subscriber_ids.insert(entry.token_id);
             }
         }
     }
@@ -630,6 +634,15 @@ async fn pair_revoke_handler(
         tokio::spawn(async move {
             persist_tokens_to_state(&tokens_ref, &app_state, &save_tx).await;
         });
+    }
+    drop(reg);
+
+    // 撤销配对后，清理该设备对应的远程终端订阅
+    if !revoked_subscriber_ids.is_empty() {
+        let mut rsub = ctx.remote_sub_registry.lock().await;
+        for subscriber_id in revoked_subscriber_ids {
+            rsub.unsubscribe_all(&subscriber_id);
+        }
     }
 
     (
@@ -1037,10 +1050,18 @@ async fn handle_socket(
         }
     }
 
-    // WS 断开：清理远程订阅注册表
+    // WS 断开：配对设备订阅长期保留，未配对远程连接仍按 conn_id 清理
     if conn_meta.is_remote {
-        let mut reg = remote_sub_registry.lock().await;
-        reg.unsubscribe_all(&conn_meta.conn_id);
+        if conn_meta.token_id.is_some() {
+            info!(
+                conn_id = %conn_meta.conn_id,
+                subscriber_id = %conn_meta.remote_subscriber_id(),
+                "Remote WebSocket disconnected; keeping remote terminal subscriptions"
+            );
+        } else {
+            let mut reg = remote_sub_registry.lock().await;
+            reg.unsubscribe_all(&conn_meta.conn_id);
+        }
     }
 
     // WS 断开：关闭该连接托管的 LSP 会话
