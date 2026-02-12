@@ -4,7 +4,7 @@ import SwiftUI
 enum MobileRoute: Hashable {
     case projects
     case workspaces(project: String)
-    case terminal(project: String, workspace: String)
+    case terminal(project: String, workspace: String, command: String? = nil)
     case terminalAttach(project: String, workspace: String, termId: String)
 }
 
@@ -22,8 +22,8 @@ struct TidyFlowiOSApp: App {
                             ProjectListView()
                         case .workspaces(let project):
                             WorkspaceListView(project: project)
-                        case .terminal(let project, let workspace):
-                            MobileTerminalView(project: project, workspace: workspace)
+                        case .terminal(let project, let workspace, let command):
+                            MobileTerminalView(project: project, workspace: workspace, command: command)
                         case .terminalAttach(let project, let workspace, let termId):
                             MobileTerminalView(project: project, workspace: workspace, termId: termId)
                         }

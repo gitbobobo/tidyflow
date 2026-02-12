@@ -12,56 +12,38 @@ struct WorkspaceListView: View {
             } else {
                 ForEach(appState.workspaces, id: \.name) { workspace in
                     Section {
-                        // 该工作空间的活跃终端
-                        let terminals = appState.terminalsForWorkspace(project: project, workspace: workspace.name)
-                        ForEach(terminals, id: \.termId) { term in
-                            Button {
-                                appState.navigationPath.append(
-                                    MobileRoute.terminalAttach(
-                                        project: project,
-                                        workspace: workspace.name,
-                                        termId: term.termId
-                                    )
-                                )
-                            } label: {
+                        let terminals = appState.terminalsForWorkspace(
+                            project: project, workspace: workspace.name
+                        )
+                        ForEach(Array(terminals.enumerated()), id: \.element.termId) { index, term in
+                            NavigationLink(value: MobileRoute.terminalAttach(
+                                project: project,
+                                workspace: workspace.name,
+                                termId: term.termId
+                            )) {
                                 HStack {
                                     Image(systemName: "terminal")
                                         .foregroundColor(.green)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(term.shell.isEmpty ? "Terminal" : term.shell)
+                                        Text("终端 \(index + 1)")
                                             .font(.body)
-                                        Text(term.termId.prefix(8))
+                                        Text(String(term.termId.prefix(8)))
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
-                                    Spacer()
-                                    Image(systemName: "arrow.right.circle")
-                                        .foregroundColor(.secondary)
                                 }
                                 .padding(.vertical, 2)
                             }
-                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    appState.closeTerminal(termId: term.termId)
+                                } label: {
+                                    Label("终止", systemImage: "xmark.circle")
+                                }
+                            }
                         }
 
-                        // 新建终端按钮
-                        Button {
-                            appState.navigationPath.append(
-                                MobileRoute.terminal(
-                                    project: project,
-                                    workspace: workspace.name
-                                )
-                            )
-                        } label: {
-                            HStack {
-                                Image(systemName: "plus.circle")
-                                    .foregroundColor(.accentColor)
-                                Text("新建终端")
-                                    .foregroundColor(.accentColor)
-                                Spacer()
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        .buttonStyle(.plain)
+                        newTerminalButton(workspace: workspace.name)
                     } header: {
                         HStack {
                             Text(workspace.name)
@@ -83,5 +65,69 @@ struct WorkspaceListView: View {
             appState.selectProject(project)
         }
     }
-}
 
+    // MARK: - 新建终端按钮
+
+    @ViewBuilder
+    private func newTerminalButton(workspace: String) -> some View {
+        let commands = appState.customCommands
+        if commands.isEmpty {
+            Button {
+                appState.navigationPath.append(
+                    MobileRoute.terminal(project: project, workspace: workspace)
+                )
+            } label: {
+                HStack {
+                    Image(systemName: "plus.circle")
+                        .foregroundColor(.accentColor)
+                    Text("新建")
+                        .foregroundColor(.accentColor)
+                    Spacer()
+                }
+                .padding(.vertical, 2)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Menu {
+                Button {
+                    appState.navigationPath.append(
+                        MobileRoute.terminal(project: project, workspace: workspace)
+                    )
+                } label: {
+                    Label("新建终端", systemImage: "terminal")
+                }
+                Divider()
+                ForEach(commands) { cmd in
+                    Button {
+                        appState.navigationPath.append(
+                            MobileRoute.terminal(
+                                project: project,
+                                workspace: workspace,
+                                command: cmd.command
+                            )
+                        )
+                    } label: {
+                        Label(cmd.name, systemImage: iconName(for: cmd.icon))
+                    }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "plus.circle")
+                        .foregroundColor(.accentColor)
+                    Text("新建")
+                        .foregroundColor(.accentColor)
+                    Spacer()
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    /// 品牌/自定义图标降级为 terminal
+    private func iconName(for icon: String) -> String {
+        if icon.hasPrefix("brand:") || icon.hasPrefix("custom:") {
+            return "terminal"
+        }
+        return icon
+    }
+}

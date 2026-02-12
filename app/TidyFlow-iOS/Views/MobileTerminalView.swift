@@ -7,6 +7,8 @@ struct MobileTerminalView: View {
     let workspace: String
     /// 附着已有终端的 ID（nil 表示新建终端）
     var termId: String? = nil
+    /// 创建后自动执行的命令
+    var command: String? = nil
 
     var body: some View {
         SwiftTermTerminalView(
@@ -26,6 +28,8 @@ struct MobileTerminalView: View {
         .onAppear {
             if let termId {
                 appState.attachTerminal(project: project, workspace: workspace, termId: termId)
+            } else if let command {
+                appState.createTerminalWithCommand(project: project, workspace: workspace, command: command)
             } else {
                 appState.createTerminalForWorkspace(project: project, workspace: workspace)
             }

@@ -59,6 +59,7 @@ final class MobileAppState: ObservableObject {
     @Published var projects: [ProjectInfo] = []
     @Published var workspaces: [WorkspaceInfo] = []
     @Published var activeTerminals: [TerminalSessionInfo] = []
+    @Published var customCommands: [CustomCommand] = []
 
     // 导航
     @Published var navigationPath = NavigationPath()
@@ -72,6 +73,8 @@ final class MobileAppState: ObservableObject {
     private var pendingTermWorkspace: String = ""
     /// 待附着的终端 ID（重连场景）
     private var pendingAttachTermId: String = ""
+    /// 待执行的自定义命令（终端创建后自动发送）
+    private var pendingCustomCommand: String = ""
     /// Ctrl 一次性修饰状态（用于虚拟键盘输入）
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
@@ -252,9 +255,26 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
+        pendingCustomCommand = ""
         if isTerminalViewReady {
             fireTermCreate()
         }
+    }
+
+    /// 创建终端并在就绪后自动执行命令
+    func createTerminalWithCommand(project: String, workspace: String, command: String) {
+        pendingCustomCommand = command
+        pendingTermProject = project
+        pendingTermWorkspace = workspace
+        pendingAttachTermId = ""
+        if isTerminalViewReady {
+            fireTermCreate()
+        }
+    }
+
+    /// 关闭（终止）指定终端
+    func closeTerminal(termId: String) {
+        wsClient.requestTermClose(termId: termId)
     }
 
     /// 附着已有终端（重连场景）
@@ -328,6 +348,7 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = ""
         pendingTermWorkspace = ""
         pendingAttachTermId = ""
+        pendingCustomCommand = ""
         isTerminalViewReady = false
         pendingOutputChunks.removeAll()
         terminalSink = nil
@@ -345,6 +366,7 @@ final class MobileAppState: ObservableObject {
                 self.errorMessage = ""
                 self.wsClient.requestListProjects()
                 self.wsClient.requestTermList()
+                self.wsClient.requestGetClientSettings()
             } else {
                 self.connectionMessage = "连接断开"
             }
@@ -377,6 +399,15 @@ final class MobileAppState: ObservableObject {
             self.terminalSink?.focusTerminal()
             // 刷新终端列表
             self.wsClient.requestTermList()
+            // 自定义命令：延迟发送，等 shell 初始化完成
+            let cmd = self.pendingCustomCommand
+            if !cmd.isEmpty {
+                self.pendingCustomCommand = ""
+                let termId = result.termId
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.wsClient.sendTerminalInput(cmd + "\n", termId: termId)
+                }
+            }
         }
 
         wsClient.onTermAttached = { [weak self] result in
@@ -418,6 +449,11 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onError = { [weak self] message in
             self?.errorMessage = message
+        }
+
+        wsClient.onClientSettingsResult = { [weak self] settings in
+            guard let self else { return }
+            self.customCommands = settings.customCommands
         }
     }
 
