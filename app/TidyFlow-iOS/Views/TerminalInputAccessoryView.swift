@@ -7,13 +7,32 @@ private let terminalBgColor = UIColor(red: 30/255, green: 30/255, blue: 30/255, 
 final class TerminalInputAccessoryView: UIView {
     var onKey: ((String) -> Void)?
 
-    private let keys: [(label: String, sequence: String)] = [
+    /// 控制键（Esc/Tab/方向键）
+    private let controlKeys: [(label: String, sequence: String)] = [
         ("Esc", "\u{1b}"),
         ("Tab", "\t"),
         ("↑", "\u{1b}[A"),
         ("↓", "\u{1b}[B"),
         ("→", "\u{1b}[C"),
         ("←", "\u{1b}[D"),
+    ]
+
+    /// 终端常用特殊符号（iOS 键盘不易输入）
+    private let specialChars: [(label: String, sequence: String)] = [
+        ("/", "/"),
+        ("-", "-"),
+        ("|", "|"),
+        ("~", "~"),
+        ("_", "_"),
+        ("\\", "\\"),
+        ("$", "$"),
+        ("*", "*"),
+        (">", ">"),
+        ("'", "'"),
+        ("\"", "\""),
+        (":", ":"),
+        ("#", "#"),
+        ("&", "&"),
     ]
 
     override init(frame: CGRect) {
@@ -68,24 +87,29 @@ final class TerminalInputAccessoryView: UIView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(stack)
 
-        for (index, key) in keys.enumerated() {
-            let btn = UIButton(type: .system)
-            btn.setTitle(key.label, for: .normal)
-            btn.titleLabel?.font = .monospacedSystemFont(
-                ofSize: 14, weight: .medium
+        // 控制键
+        for (index, key) in controlKeys.enumerated() {
+            stack.addArrangedSubview(
+                makeKeyButton(label: key.label, tag: index)
             )
-            btn.tintColor = .white
-            btn.backgroundColor = UIColor.white.withAlphaComponent(0.12)
-            btn.layer.cornerRadius = 6
-            btn.contentEdgeInsets = UIEdgeInsets(
-                top: 6, left: 12, bottom: 6, right: 12
+        }
+
+        // 分隔线
+        let separator = UIView()
+        separator.backgroundColor = UIColor.white.withAlphaComponent(0.2)
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        separator.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        stack.addArrangedSubview(separator)
+
+        // 特殊符号
+        for (index, key) in specialChars.enumerated() {
+            stack.addArrangedSubview(
+                makeKeyButton(
+                    label: key.label,
+                    tag: controlKeys.count + index
+                )
             )
-            btn.tag = index
-            btn.addTarget(
-                self, action: #selector(keyTapped(_:)),
-                for: .touchUpInside
-            )
-            stack.addArrangedSubview(btn)
         }
 
         NSLayoutConstraint.activate([
@@ -121,10 +145,31 @@ final class TerminalInputAccessoryView: UIView {
         ])
     }
 
+    private func makeKeyButton(label: String, tag: Int) -> UIButton {
+        let btn = UIButton(type: .system)
+        btn.setTitle(label, for: .normal)
+        btn.titleLabel?.font = .monospacedSystemFont(
+            ofSize: 14, weight: .medium
+        )
+        btn.tintColor = .white
+        btn.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        btn.layer.cornerRadius = 6
+        btn.contentEdgeInsets = UIEdgeInsets(
+            top: 6, left: 12, bottom: 6, right: 12
+        )
+        btn.tag = tag
+        btn.addTarget(
+            self, action: #selector(keyTapped(_:)),
+            for: .touchUpInside
+        )
+        return btn
+    }
+
     @objc private func keyTapped(_ sender: UIButton) {
         let index = sender.tag
-        guard index < keys.count else { return }
-        onKey?(keys[index].sequence)
+        let allKeys = controlKeys + specialChars
+        guard index < allKeys.count else { return }
+        onKey?(allKeys[index].sequence)
     }
 
     @objc private func dismissKeyboard() {
