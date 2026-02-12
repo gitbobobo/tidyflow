@@ -444,7 +444,9 @@ extension WSClient {
         var payload: [String: Any] = [
             "type": "save_client_settings",
             "custom_commands": commandsData,
-            "workspace_shortcuts": settings.workspaceShortcuts
+            "workspace_shortcuts": settings.workspaceShortcuts,
+            "fixed_port": settings.fixedPort,
+            "app_language": settings.appLanguage
         ]
         if let agent = settings.commitAIAgent {
             payload["commit_ai_agent"] = agent

@@ -217,7 +217,9 @@ extension WSClient {
             // 解析选择的 AI Agent
             let commitAIAgent = json["commit_ai_agent"] as? String
             let mergeAIAgent = json["merge_ai_agent"] as? String
-            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts, commitAIAgent: commitAIAgent, mergeAIAgent: mergeAIAgent)
+            let fixedPort = json["fixed_port"] as? Int ?? 0
+            let appLanguage = json["app_language"] as? String ?? "system"
+            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts, commitAIAgent: commitAIAgent, mergeAIAgent: mergeAIAgent, fixedPort: fixedPort, appLanguage: appLanguage)
             onClientSettingsResult?(settings)
 
         case "client_settings_saved":

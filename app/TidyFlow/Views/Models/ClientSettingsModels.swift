@@ -27,21 +27,29 @@ struct ClientSettings: Codable {
     var commitAIAgent: String?
     /// 用于合并操作的 AI Agent
     var mergeAIAgent: String?
+    /// 固定端口，0 表示动态分配
+    var fixedPort: Int
+    /// 应用语言：system / en / zh-Hans
+    var appLanguage: String
 
     enum CodingKeys: String, CodingKey {
         case customCommands
         case workspaceShortcuts
         case commitAIAgent = "commit_ai_agent"
         case mergeAIAgent = "merge_ai_agent"
+        case fixedPort = "fixed_port"
+        case appLanguage = "app_language"
         // 旧字段，仅用于解码迁移
         case selectedAIAgent = "selected_ai_agent"
     }
 
-    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:], commitAIAgent: String? = nil, mergeAIAgent: String? = nil) {
+    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:], commitAIAgent: String? = nil, mergeAIAgent: String? = nil, fixedPort: Int = 0, appLanguage: String = "system") {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
         self.commitAIAgent = commitAIAgent
         self.mergeAIAgent = mergeAIAgent
+        self.fixedPort = fixedPort
+        self.appLanguage = appLanguage
     }
 
     init(from decoder: Decoder) throws {
@@ -50,6 +58,8 @@ struct ClientSettings: Codable {
         workspaceShortcuts = try container.decodeIfPresent([String: String].self, forKey: .workspaceShortcuts) ?? [:]
         commitAIAgent = try container.decodeIfPresent(String.self, forKey: .commitAIAgent)
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
+        fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
+        appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? "system"
         // 兼容旧字段迁移
         let oldAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
         if let old = oldAgent {
@@ -64,6 +74,8 @@ struct ClientSettings: Codable {
         try container.encode(workspaceShortcuts, forKey: .workspaceShortcuts)
         try container.encodeIfPresent(commitAIAgent, forKey: .commitAIAgent)
         try container.encodeIfPresent(mergeAIAgent, forKey: .mergeAIAgent)
+        try container.encode(fixedPort, forKey: .fixedPort)
+        try container.encode(appLanguage, forKey: .appLanguage)
         // 不编码旧字段 selectedAIAgent
     }
 }
