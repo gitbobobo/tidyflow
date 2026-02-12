@@ -152,12 +152,25 @@
         });
 
         // iOS 需要用户手势触发聚焦才能稳定弹出键盘
-        const focusFromGesture = function() {
+        // 区分点击与滑动：仅点击（移动距离 < 10px）时聚焦弹出键盘
+        let touchStartX = 0;
+        let touchStartY = 0;
+        container.addEventListener('touchstart', function(e) {
+            const t = e.touches[0];
+            touchStartX = t.clientX;
+            touchStartY = t.clientY;
+        }, { passive: true });
+        container.addEventListener('touchend', function(e) {
+            const t = e.changedTouches[0];
+            const dx = t.clientX - touchStartX;
+            const dy = t.clientY - touchStartY;
+            if (dx * dx + dy * dy < 100) {
+                focusTerminal();
+            }
+        }, { passive: true });
+        container.addEventListener('click', function() {
             focusTerminal();
-        };
-        container.addEventListener('touchstart', focusFromGesture, { passive: true });
-        container.addEventListener('touchend', focusFromGesture, { passive: true });
-        container.addEventListener('click', focusFromGesture);
+        });
 
         window.addEventListener('focus', function() {
             scheduleFocus(60);
