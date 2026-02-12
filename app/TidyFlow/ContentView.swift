@@ -45,13 +45,16 @@ struct ContentView: View {
             .toolbar {
                 // 根据是否选中工作空间显示不同内容
                 if appState.selectedWorkspaceKey != nil {
+                    // 远程终端指示器（独立分组，位于项目名左侧）
+                    ToolbarItem(placement: .principal) {
+                        RemoteTerminalIndicatorView()
+                            .environmentObject(appState)
+                    }
                     ToolbarItem(placement: .principal) {
                         HStack(spacing: 0) {
                             ProjectBranchView()
                                 .environmentObject(appState)
                             BackgroundTaskToolbarButton(taskManager: appState.taskManager)
-                                .environmentObject(appState)
-                            RemoteTerminalIndicatorView()
                                 .environmentObject(appState)
                         }
                     }

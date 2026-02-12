@@ -25,7 +25,7 @@ struct RemoteTerminalIndicatorView: View {
                     Text("\(uniqueTermCount)")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(.orange)
+                .padding(.horizontal, 8)
             }
             .buttonStyle(.plain)
             .help("toolbar.remoteTerminals".localized)
