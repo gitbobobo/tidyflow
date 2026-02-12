@@ -9,15 +9,9 @@ struct MobileTerminalView: View {
     var termId: String? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 仅使用 xterm.js 输入链路，避免覆盖层拦截焦点/触摸
-            MobileTerminalWebView(bridge: appState.bridge)
-                .ignoresSafeArea(.keyboard)
-
-            // 特殊键工具栏
-            TerminalAccessoryView { sequence in
-                appState.sendSpecialKey(sequence)
-            }
+        // 仅使用 xterm.js 输入链路，避免覆盖层拦截焦点/触摸
+        MobileTerminalWebView(bridge: appState.bridge) { sequence in
+            appState.sendSpecialKey(sequence)
         }
         .background(Color(red: 30/255, green: 30/255, blue: 30/255))
         .navigationTitle(workspace)

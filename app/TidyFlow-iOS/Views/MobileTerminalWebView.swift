@@ -1,9 +1,11 @@
 import SwiftUI
 import WebKit
+import ObjectiveC
 
 /// WKWebView 包装，加载 mobile-terminal.html
 struct MobileTerminalWebView: UIViewRepresentable {
     let bridge: MobileBridge
+    let onKey: (String) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -26,6 +28,9 @@ struct MobileTerminalWebView: UIViewRepresentable {
 
         bridge.setWebView(webView)
 
+        // 替换 WKContentView 的 inputAccessoryView
+        replaceInputAccessoryView(in: webView, onKey: onKey)
+
         // 加载 mobile-terminal.html
         if let htmlURL = Bundle.main.url(forResource: "mobile-terminal", withExtension: "html", subdirectory: "Web") {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
@@ -46,6 +51,40 @@ struct MobileTerminalWebView: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         coordinator.removeKeyboardObservers()
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "tidyflowMobile")
+    }
+
+    // MARK: - 替换 inputAccessoryView
+
+    /// 查找 WKContentView 并通过 ObjC runtime 替换其 inputAccessoryView
+    private func replaceInputAccessoryView(in webView: WKWebView, onKey: @escaping (String) -> Void) {
+        guard let contentView = findWKContentView(in: webView) else { return }
+
+        let accessory = TerminalInputAccessoryView(
+            frame: CGRect(x: 0, y: 0, width: webView.bounds.width, height: 44)
+        )
+        accessory.onKey = onKey
+
+        // 用关联对象持有 accessory，防止被释放
+        objc_setAssociatedObject(
+            contentView, &AssociatedKeys.accessoryView, accessory, .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+
+        // 替换 inputAccessoryView getter
+        let selector = #selector(getter: UIResponder.inputAccessoryView)
+        guard let originalMethod = class_getInstanceMethod(type(of: contentView), selector) else { return }
+
+        let block: @convention(block) (AnyObject) -> UIView? = { _ in accessory }
+        let imp = imp_implementationWithBlock(block)
+        method_setImplementation(originalMethod, imp)
+    }
+
+    private func findWKContentView(in webView: WKWebView) -> UIView? {
+        for subview in webView.scrollView.subviews {
+            if String(describing: type(of: subview)).hasPrefix("WKContentView") {
+                return subview
+            }
+        }
+        return nil
     }
 
     class Coordinator {
@@ -90,4 +129,10 @@ struct MobileTerminalWebView: UIViewRepresentable {
             removeKeyboardObservers()
         }
     }
+}
+
+// MARK: - 关联对象 Key
+
+private enum AssociatedKeys {
+    static var accessoryView: UInt8 = 0
 }
