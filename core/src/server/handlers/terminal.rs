@@ -197,11 +197,23 @@ pub async fn handle_terminal_message(
 
                     // 远程连接：注册远程订阅
                     if ctx.conn_meta.is_remote {
+                        info!(
+                            term_id = %term_id,
+                            conn_id = %ctx.conn_meta.conn_id,
+                            device_name = ?ctx.conn_meta.device_name,
+                            "Registering remote subscription for new terminal"
+                        );
                         let mut rsub = ctx.remote_sub_registry.lock().await;
                         rsub.subscribe(
                             &term_id,
                             &ctx.conn_meta.conn_id,
                             ctx.conn_meta.device_name.as_deref().unwrap_or("Unknown"),
+                        );
+                    } else {
+                        debug!(
+                            term_id = %term_id,
+                            conn_id = %ctx.conn_meta.conn_id,
+                            "Local connection created terminal, skipping remote subscription"
                         );
                     }
 
@@ -249,6 +261,16 @@ pub async fn handle_terminal_message(
                     .collect();
             }
             drop(rsub);
+
+            let remote_count: usize = items.iter().map(|i| i.remote_subscribers.len()).sum();
+            info!(
+                total_terminals = items.len(),
+                remote_subscriber_count = remote_count,
+                conn_id = %ctx.conn_meta.conn_id,
+                "TermList response: {} terminals, {} remote subscribers",
+                items.len(),
+                remote_count
+            );
 
             send_message(socket, &ServerMessage::TermList { items }).await?;
             Ok(true)

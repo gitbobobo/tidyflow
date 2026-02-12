@@ -997,14 +997,22 @@ async fn handle_socket(
             }
 
             // 远程终端订阅变更通知（仅本地连接接收）
-            Ok(_event) = async {
+            result = async {
                 match remote_term_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                if let Err(e) = send_message(&mut socket, &ServerMessage::RemoteTermChanged).await {
-                    error!("Failed to send remote_term_changed: {}", e);
+                match result {
+                    Ok(_event) => {
+                        info!("Received RemoteTermEvent::Changed, sending remote_term_changed to local conn {}", conn_meta.conn_id);
+                        if let Err(e) = send_message(&mut socket, &ServerMessage::RemoteTermChanged).await {
+                            error!("Failed to send remote_term_changed: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("remote_term_rx recv error (lagged?): {:?}", e);
+                    }
                 }
             }
 
