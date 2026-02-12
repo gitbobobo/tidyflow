@@ -41,6 +41,10 @@ struct CustomCommandsSection: View {
     @EnvironmentObject var localizationManager: LocalizationManager
     @State private var editingCommand: CustomCommand?
     @State private var showingAddSheet = false
+    @State private var fixedPortText: String = {
+        let val = UserDefaults.standard.integer(forKey: AppConfig.fixedPortKey)
+        return val > 0 ? "\(val)" : ""
+    }()
 
     var body: some View {
         Form {
@@ -120,6 +124,30 @@ struct CustomCommandsSection: View {
                 Text("settings.mobile.section".localized)
             } footer: {
                 Text("settings.mobile.footer".localized)
+            }
+
+            Section {
+                HStack {
+                    Text("settings.mobile.fixedPort".localized)
+                    Spacer()
+                    TextField("settings.mobile.fixedPort.placeholder".localized, text: $fixedPortText)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 100)
+                        .onChange(of: fixedPortText) { _, newValue in
+                            let filtered = newValue.filter { $0.isNumber }
+                            if filtered != newValue { fixedPortText = filtered }
+                            if let val = Int(filtered), val > 0, val <= 65535 {
+                                UserDefaults.standard.set(val, forKey: AppConfig.fixedPortKey)
+                            } else {
+                                UserDefaults.standard.set(0, forKey: AppConfig.fixedPortKey)
+                            }
+                        }
+                }
+                Text("settings.mobile.fixedPort.hint".localized)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("settings.mobile.fixedPort.section".localized)
             }
 
             Section {

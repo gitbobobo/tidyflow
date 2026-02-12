@@ -68,6 +68,10 @@
 "settings.mobile.error.invalidResponse" = "配对服务响应异常";
 "settings.mobile.error.httpStatus" = "生成配对码失败（HTTP %d）";
 "settings.mobile.error.general" = "生成配对码失败：%@";
+"settings.mobile.fixedPort" = "固定端口";
+"settings.mobile.fixedPort.placeholder" = "自动";
+"settings.mobile.fixedPort.hint" = "为 Core 指定固定端口，留空则自动分配。下次重启 Core 生效。";
+"settings.mobile.fixedPort.section" = "端口设置";
 
 /* AI Agent 设置 */
 "settings.aiAgent" = "AI Agent";

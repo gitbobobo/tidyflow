@@ -11,6 +11,12 @@ enum AppConfig {
     static let coreBindRemote: String = "0.0.0.0"
     /// 远程访问开关（UserDefaults 键）
     static let remoteAccessEnabledKey: String = "core.remoteAccessEnabled"
+    /// 固定端口（UserDefaults 键），0 表示动态分配
+    static let fixedPortKey: String = "core.fixedPort"
+    /// 当前配置的固定端口，0 表示动态分配
+    static var configuredFixedPort: Int {
+        UserDefaults.standard.integer(forKey: fixedPortKey)
+    }
 
     // MARK: - Logging Configuration
 

@@ -68,6 +68,10 @@
 "settings.mobile.error.invalidResponse" = "Invalid pairing response";
 "settings.mobile.error.httpStatus" = "Failed to generate pair code (HTTP %d)";
 "settings.mobile.error.general" = "Failed to generate pair code: %@";
+"settings.mobile.fixedPort" = "Fixed Port";
+"settings.mobile.fixedPort.placeholder" = "Auto";
+"settings.mobile.fixedPort.hint" = "Set a fixed port for Core. Leave empty for auto-assign. Takes effect on next Core restart.";
+"settings.mobile.fixedPort.section" = "Port Settings";
 
 /* AI Agent Settings */
 "settings.aiAgent" = "AI Agent";

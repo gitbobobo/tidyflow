@@ -339,15 +339,34 @@ class CoreProcessManager: ObservableObject {
             return
         }
 
-        // Allocate a new port
-        guard let port = PortAllocator.findAvailablePort() else {
-            let msg = "Failed to allocate port"
-            TFLog.core.error("\(msg, privacy: .public)")
-            // Retry with next attempt
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.startWithRetry()
+        // 固定端口优先
+        let fixedPort = AppConfig.configuredFixedPort
+        let port: Int
+        if fixedPort > 0 && fixedPort <= 65535 {
+            if PortAllocator.isPortAvailable(fixedPort) {
+                port = fixedPort
+            } else {
+                let msg = "Fixed port \(fixedPort) is unavailable"
+                TFLog.core.error("\(msg, privacy: .public)")
+                DispatchQueue.main.async {
+                    self.status = .failed(message: msg)
+                    self.isStarting = false
+                    self.currentWSToken = nil
+                    self.onCoreFailed?(msg)
+                }
+                return
             }
-            return
+        } else {
+            // 动态分配
+            guard let dynamicPort = PortAllocator.findAvailablePort() else {
+                let msg = "Failed to allocate port"
+                TFLog.core.error("\(msg, privacy: .public)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.startWithRetry()
+                }
+                return
+            }
+            port = dynamicPort
         }
 
         DispatchQueue.main.async {

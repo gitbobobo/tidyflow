@@ -45,8 +45,8 @@ const MAX_WS_FRAME_SIZE: usize = 2 * 1024 * 1024;
 const MAX_WS_MESSAGE_SIZE: usize = 2 * 1024 * 1024;
 /// 配对码有效期（秒）
 const PAIR_CODE_TTL_SECS: u64 = 120;
-/// 移动端 WS token 有效期（秒）
-const PAIR_TOKEN_TTL_SECS: u64 = 24 * 60 * 60;
+/// 移动端 WS token 有效期（秒）— 30 天
+const PAIR_TOKEN_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 /// 待兑换配对码最大数量
 const MAX_PENDING_PAIR_CODES: usize = 64;
 /// 已签发移动端 token 最大数量
@@ -184,7 +184,10 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         terminal_registry,
         scrollback_tx,
         expected_ws_token,
-        pairing_registry: Arc::new(Mutex::new(PairingRegistry::default())),
+        pairing_registry: Arc::new(Mutex::new(PairingRegistry {
+            pending_codes: HashMap::new(),
+            issued_tokens: load_persisted_tokens(),
+        })),
     };
 
     let app = Router::new()
@@ -297,6 +300,80 @@ fn cleanup_expired_pairing_entries(reg: &mut PairingRegistry, now_ts: u64) {
         .retain(|_, entry| entry.expires_at_unix > now_ts);
     reg.issued_tokens
         .retain(|_, entry| entry.expires_at_unix > now_ts);
+}
+
+// ── Token 持久化 ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedTokenEntry {
+    token_id: String,
+    ws_token: String,
+    device_name: String,
+    issued_at_unix: u64,
+    expires_at_unix: u64,
+}
+
+fn paired_tokens_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .expect("Cannot find home directory")
+        .join(".tidyflow")
+        .join("paired_tokens.json")
+}
+
+fn load_persisted_tokens() -> HashMap<String, PairTokenEntry> {
+    let path = paired_tokens_path();
+    let data = match std::fs::read_to_string(&path) {
+        Ok(d) => d,
+        Err(_) => return HashMap::new(),
+    };
+    let entries: Vec<PersistedTokenEntry> = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Failed to parse paired_tokens.json: {}", e);
+            return HashMap::new();
+        }
+    };
+    let now_ts = now_unix_ts();
+    entries
+        .into_iter()
+        .filter(|e| e.expires_at_unix > now_ts)
+        .map(|e| {
+            (
+                e.ws_token.clone(),
+                PairTokenEntry {
+                    token_id: e.token_id,
+                    device_name: e.device_name,
+                    issued_at_unix: e.issued_at_unix,
+                    expires_at_unix: e.expires_at_unix,
+                },
+            )
+        })
+        .collect()
+}
+
+fn save_persisted_tokens(tokens: &HashMap<String, PairTokenEntry>) {
+    let entries: Vec<PersistedTokenEntry> = tokens
+        .iter()
+        .map(|(ws_token, entry)| PersistedTokenEntry {
+            token_id: entry.token_id.clone(),
+            ws_token: ws_token.clone(),
+            device_name: entry.device_name.clone(),
+            issued_at_unix: entry.issued_at_unix,
+            expires_at_unix: entry.expires_at_unix,
+        })
+        .collect();
+    let path = paired_tokens_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(&entries) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                warn!("Failed to write paired_tokens.json: {}", e);
+            }
+        }
+        Err(e) => warn!("Failed to serialize paired tokens: {}", e),
+    }
 }
 
 fn generate_pair_code() -> String {
@@ -467,6 +544,10 @@ async fn pair_exchange_handler(
         },
     );
 
+    // 持久化到磁盘
+    let tokens_snapshot = reg.issued_tokens.clone();
+    tokio::task::spawn_blocking(move || save_persisted_tokens(&tokens_snapshot));
+
     (
         StatusCode::OK,
         Json(PairExchangeResponse {
@@ -537,6 +618,12 @@ async fn pair_revoke_handler(
                 revoked += 1;
             }
         }
+    }
+
+    // 撤销后持久化
+    if revoked > 0 {
+        let tokens_snapshot = reg.issued_tokens.clone();
+        tokio::task::spawn_blocking(move || save_persisted_tokens(&tokens_snapshot));
     }
 
     (
