@@ -94,6 +94,8 @@
 		MDL000315 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
 		QAV00001 /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = QAV00011 /* QuickActionsView.swift */; };
+		RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00011 /* RemoteTerminalIndicatorView.swift */; };
+		RMT00002 /* AppState+RemoteTerminals.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00012 /* AppState+RemoteTerminals.swift */; };
 		SET00001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SET00011 /* SettingsView.swift */; };
 		SPL00001 /* ProjectProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00011 /* ProjectProtocolModels.swift */; };
 		SPL00002 /* GitProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00012 /* GitProtocolModels.swift */; };
@@ -208,6 +210,8 @@
 		MDL000114 /* AppState+BackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+BackgroundTasks.swift"; sourceTree = "<group>"; };
 		MDL000115 /* ProjectCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCommandModels.swift; sourceTree = "<group>"; };
 		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
+		RMT00011 /* RemoteTerminalIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteTerminalIndicatorView.swift; sourceTree = "<group>"; };
+		RMT00012 /* AppState+RemoteTerminals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+RemoteTerminals.swift"; sourceTree = "<group>"; };
 		SET00011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		SPL00011 /* ProjectProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectProtocolModels.swift; sourceTree = "<group>"; };
 		SPL00012 /* GitProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProtocolModels.swift; sourceTree = "<group>"; };
@@ -276,6 +280,7 @@
 				UX100013 /* ProjectConfigView.swift */,
 				UX100011 /* ProjectsSidebarView.swift */,
 				QAV00011 /* QuickActionsView.swift */,
+				RMT00011 /* RemoteTerminalIndicatorView.swift */,
 				2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */,
 				SET00011 /* SettingsView.swift */,
 				B3A00014 /* TabContentHostView.swift */,
@@ -454,6 +459,7 @@
 				EDS00002 /* EditorStore.swift */,
 				MDL00010C /* AppState+FileOps.swift */,
 				MDL00010D /* AppState+Projects.swift */,
+				RMT00012 /* AppState+RemoteTerminals.swift */,
 				MDL000110 /* AppState+Settings.swift */,
 				MDL00010E /* AppState+Tabs.swift */,
 				MDL00010A /* AppState+Workspace.swift */,
@@ -615,6 +621,8 @@
 				MDL000312 /* BackgroundTaskModels.swift in Sources */,
 				MDL000313 /* BackgroundTaskManager.swift in Sources */,
 				MDL000314 /* AppState+BackgroundTasks.swift in Sources */,
+				RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */,
+				RMT00002 /* AppState+RemoteTerminals.swift in Sources */,
 				BGT00001 /* BackgroundTaskViews.swift in Sources */,
 				FAQ00001 /* FAQView.swift in Sources */,
 				TST00001 /* ToastManager.swift in Sources */,
@@ -824,6 +832,7 @@
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
 					"AppState+Projects.swift",
+					"AppState+RemoteTerminals.swift",
 					"AppState+Settings.swift",
 					"AppState+Tabs.swift",
 					"AppState+Workspace.swift",
@@ -865,6 +874,7 @@
 					"ProjectWorkspaceModels.swift",
 					"ProjectsSidebarView.swift",
 					"QuickActionsView.swift",
+					"RemoteTerminalIndicatorView.swift",
 					"RightToolPanelView.swift",
 					"SettingsView.swift",
 					"TabContentHostView.swift",
@@ -944,6 +954,7 @@
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
 					"AppState+Projects.swift",
+					"AppState+RemoteTerminals.swift",
 					"AppState+Settings.swift",
 					"AppState+Tabs.swift",
 					"AppState+Workspace.swift",
@@ -985,6 +996,7 @@
 					"ProjectWorkspaceModels.swift",
 					"ProjectsSidebarView.swift",
 					"QuickActionsView.swift",
+					"RemoteTerminalIndicatorView.swift",
 					"RightToolPanelView.swift",
 					"SettingsView.swift",
 					"TabContentHostView.swift",

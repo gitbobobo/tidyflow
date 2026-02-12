@@ -284,6 +284,10 @@
 "toolbar.backgroundTasks" = "后台任务";
 "toolbar.projectCommands" = "项目命令";
 "toolbar.run" = "执行";
+"toolbar.remoteTerminals" = "远程终端";
+"toolbar.remoteTerminals.title" = "远程终端";
+"toolbar.remoteTerminals.close" = "关闭";
+"toolbar.remoteTerminals.closeAll" = "全部关闭";
 
 /* 系统通知 */
 "notification.task.completed" = "任务已完成";

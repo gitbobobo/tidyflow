@@ -43,6 +43,9 @@ class AppState: ObservableObject {
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false
 
+    // 远程终端追踪
+    @Published var remoteTerminals: [RemoteTerminalInfo] = []
+
     // Right Sidebar State
     @Published var rightSidebarCollapsed: Bool = false
 

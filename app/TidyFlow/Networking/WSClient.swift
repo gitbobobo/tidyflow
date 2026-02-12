@@ -87,6 +87,7 @@ class WSClient: NSObject, ObservableObject {
     // v1.31: LSP 诊断与状态
     var onLspDiagnostics: ((LspDiagnosticsResult) -> Void)?
     var onLspStatus: ((LspStatusResult) -> Void)?
+    var onRemoteTermChanged: (() -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

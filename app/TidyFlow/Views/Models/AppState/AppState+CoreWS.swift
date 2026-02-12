@@ -490,6 +490,14 @@ extension AppState {
             self?.handleLspStatus(result)
         }
 
+        // v1.32: 远程终端追踪
+        wsClient.onRemoteTermChanged = { [weak self] in
+            self?.refreshRemoteTerminals()
+        }
+        wsClient.onTermList = { [weak self] result in
+            self?.updateRemoteTerminals(from: result.items)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {

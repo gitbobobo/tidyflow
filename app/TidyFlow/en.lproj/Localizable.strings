@@ -284,6 +284,10 @@
 "toolbar.backgroundTasks" = "Background Tasks";
 "toolbar.projectCommands" = "Project Commands";
 "toolbar.run" = "Run";
+"toolbar.remoteTerminals" = "Remote Terminals";
+"toolbar.remoteTerminals.title" = "Remote Terminals";
+"toolbar.remoteTerminals.close" = "Close";
+"toolbar.remoteTerminals.closeAll" = "Close All";
 
 /* System Notifications */
 "notification.task.completed" = "Task Completed";

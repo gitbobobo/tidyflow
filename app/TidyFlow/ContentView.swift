@@ -51,6 +51,8 @@ struct ContentView: View {
                                 .environmentObject(appState)
                             BackgroundTaskToolbarButton(taskManager: appState.taskManager)
                                 .environmentObject(appState)
+                            RemoteTerminalIndicatorView()
+                                .environmentObject(appState)
                         }
                     }
                     ToolbarItem(placement: .principal) {

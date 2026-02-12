@@ -7,6 +7,10 @@ struct TerminalSessionInfo {
     let workspace: String
     let cwd: String
     let shell: String
+    let status: String
+    let remoteSubscribers: [RemoteSubscriberDetail]
+
+    var isRunning: Bool { status == "running" }
 
     static func from(json: [String: Any]) -> TerminalSessionInfo? {
         guard let termId = json["term_id"] as? String,
@@ -16,13 +20,34 @@ struct TerminalSessionInfo {
               let shell = json["shell"] as? String else {
             return nil
         }
+        let status = json["status"] as? String ?? "running"
+        var subscribers: [RemoteSubscriberDetail] = []
+        if let arr = json["remote_subscribers"] as? [[String: Any]] {
+            subscribers = arr.compactMap { RemoteSubscriberDetail.from(json: $0) }
+        }
         return TerminalSessionInfo(
             termId: termId,
             project: project,
             workspace: workspace,
             cwd: cwd,
-            shell: shell
+            shell: shell,
+            status: status,
+            remoteSubscribers: subscribers
         )
+    }
+}
+
+/// 远程订阅者详情
+struct RemoteSubscriberDetail {
+    let deviceName: String
+    let connId: String
+
+    static func from(json: [String: Any]) -> RemoteSubscriberDetail? {
+        guard let deviceName = json["device_name"] as? String,
+              let connId = json["conn_id"] as? String else {
+            return nil
+        }
+        return RemoteSubscriberDetail(deviceName: deviceName, connId: connId)
     }
 }
 

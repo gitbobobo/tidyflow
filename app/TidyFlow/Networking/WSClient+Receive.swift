@@ -303,6 +303,9 @@ extension WSClient {
                 onLspStatus?(result)
             }
 
+        case "remote_term_changed":
+            onRemoteTermChanged?()
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)
