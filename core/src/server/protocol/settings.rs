@@ -17,6 +17,10 @@ pub enum SettingsRequest {
         merge_ai_agent: Option<String>,
         #[serde(default)]
         selected_ai_agent: Option<String>,
+        #[serde(default)]
+        fixed_port: Option<u16>,
+        #[serde(default)]
+        app_language: Option<String>,
     },
 }
 
@@ -31,6 +35,8 @@ pub enum SettingsResponse {
         commit_ai_agent: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
+        fixed_port: u16,
+        app_language: String,
     },
     ClientSettingsSaved {
         ok: bool,

@@ -305,6 +305,12 @@ pub enum ClientMessage {
         /// 旧字段，兼容旧客户端
         #[serde(default)]
         selected_ai_agent: Option<String>,
+        /// 固定端口，0 表示动态分配
+        #[serde(default)]
+        fixed_port: Option<u16>,
+        /// 应用语言
+        #[serde(default)]
+        app_language: Option<String>,
     },
 
     // v1.22: File watcher
@@ -728,6 +734,8 @@ pub enum ServerMessage {
         commit_ai_agent: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
+        fixed_port: u16,
+        app_language: String,
     },
     ClientSettingsSaved {
         ok: bool,

@@ -61,6 +61,16 @@ pub struct ClientSettings {
     /// 旧字段，仅用于反序列化迁移
     #[serde(default, skip_serializing)]
     pub selected_ai_agent: Option<String>,
+    /// 固定端口，0 表示动态分配
+    #[serde(default)]
+    pub fixed_port: u16,
+    /// 应用语言：system / en / zh-Hans
+    #[serde(default = "default_app_language")]
+    pub app_language: String,
+}
+
+fn default_app_language() -> String {
+    "system".to_string()
 }
 
 impl ClientSettings {

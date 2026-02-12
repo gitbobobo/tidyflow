@@ -43,6 +43,8 @@ pub async fn handle_settings_message(
                         .client_settings
                         .merge_ai_agent
                         .clone(),
+                    fixed_port: state.client_settings.fixed_port,
+                    app_language: state.client_settings.app_language.clone(),
                 },
             )
             .await?;
@@ -56,6 +58,8 @@ pub async fn handle_settings_message(
             commit_ai_agent,
             merge_ai_agent,
             selected_ai_agent,
+            fixed_port,
+            app_language,
         } => {
             info!("SaveClientSettings request");
             {
@@ -77,6 +81,12 @@ pub async fn handle_settings_message(
                 } else if let Some(old) = selected_ai_agent {
                     state.client_settings.commit_ai_agent = Some(old.clone());
                     state.client_settings.merge_ai_agent = Some(old.clone());
+                }
+                if let Some(port) = fixed_port {
+                    state.client_settings.fixed_port = *port;
+                }
+                if let Some(lang) = app_language {
+                    state.client_settings.app_language = lang.clone();
                 }
             }
 
