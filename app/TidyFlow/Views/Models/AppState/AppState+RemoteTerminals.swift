@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 /// 远程终端信息（用于 macOS 工具栏展示）
@@ -57,3 +58,4 @@ extension AppState {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// 工具栏远程终端指示器 — 显示当前工作空间中被远程设备连接的终端
@@ -90,3 +91,4 @@ struct RemoteTerminalIndicatorView: View {
         .frame(minWidth: 220)
     }
 }
+#endif
