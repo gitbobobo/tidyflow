@@ -41,15 +41,19 @@ struct CustomCommandsSection: View {
     @EnvironmentObject var localizationManager: LocalizationManager
     @State private var editingCommand: CustomCommand?
     @State private var showingAddSheet = false
-    @State private var fixedPortText: String = {
-        let val = UserDefaults.standard.integer(forKey: AppConfig.fixedPortKey)
-        return val > 0 ? "\(val)" : ""
-    }()
+    @State private var fixedPortText: String = ""
 
     var body: some View {
         Form {
             Section {
-                Picker("settings.language".localized, selection: $localizationManager.appLanguage) {
+                Picker("settings.language".localized, selection: Binding(
+                    get: { localizationManager.appLanguage },
+                    set: { newLang in
+                        localizationManager.appLanguage = newLang
+                        appState.clientSettings.appLanguage = newLang
+                        appState.saveClientSettings()
+                    }
+                )) {
                     Text("settings.language.system".localized).tag("system")
                     Text("settings.language.zh".localized).tag("zh-Hans")
                     Text("settings.language.en".localized).tag("en")
@@ -125,10 +129,11 @@ struct CustomCommandsSection: View {
                             let filtered = newValue.filter { $0.isNumber }
                             if filtered != newValue { fixedPortText = filtered }
                             if let val = Int(filtered), val > 0, val <= 65535 {
-                                UserDefaults.standard.set(val, forKey: AppConfig.fixedPortKey)
+                                appState.clientSettings.fixedPort = val
                             } else {
-                                UserDefaults.standard.set(0, forKey: AppConfig.fixedPortKey)
+                                appState.clientSettings.fixedPort = 0
                             }
+                            appState.saveClientSettings()
                         }
                 }
                 Text("settings.mobile.fixedPort.hint".localized)
@@ -183,6 +188,10 @@ struct CustomCommandsSection: View {
                 }
             )
             .environmentObject(appState)
+        }
+        .onAppear {
+            let val = appState.clientSettings.fixedPort
+            fixedPortText = val > 0 ? "\(val)" : ""
         }
     }
     
