@@ -49,6 +49,12 @@ enum MobileWorkspaceTaskStatus: String {
     }
 }
 
+enum ReconnectState: Equatable {
+    case idle
+    case reconnecting(attempt: Int, maxAttempts: Int)
+    case failed
+}
+
 struct MobileWorkspaceTask: Identifiable, Equatable {
     let id: String
     let project: String
@@ -101,6 +107,7 @@ final class MobileAppState: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var connectionMessage: String = ""
     @Published var errorMessage: String = ""
+    @Published var reconnectState: ReconnectState = .idle
 
     // 数据
     @Published var projects: [ProjectInfo] = []
@@ -157,6 +164,8 @@ final class MobileAppState: ObservableObject {
     private var selectedProjectName: String = ""
 
     private let wsClient = WSClient()
+    /// 重连任务（指数退避）
+    private var reconnectTask: Task<Void, Never>?
 
     init() {
         setupWSCallbacks()
@@ -229,6 +238,7 @@ final class MobileAppState: ObservableObject {
     }
 
     func disconnect() {
+        cancelReconnect()
         wsClient.disconnect()
         isConnected = false
         currentTermId = ""
@@ -260,6 +270,81 @@ final class MobileAppState: ObservableObject {
         if !isConnected {
             connectionMessage = "自动连接超时，请手动配对"
         }
+    }
+
+    /// 使用指数退避重连（5次尝试：0.5s, 1s, 2s, 4s, 8s）
+    func reconnectWithBackoff() {
+        reconnectTask?.cancel()
+        
+        reconnectTask = Task { [weak self] in
+            guard let self else { return }
+            
+            let delays: [TimeInterval] = [0.5, 1, 2, 4, 8]
+            let maxAttempts = delays.count
+            
+            for (index, delay) in delays.enumerated() {
+                if Task.isCancelled { return }
+                
+                let attempt = index + 1
+                await MainActor.run {
+                    self.reconnectState = .reconnecting(attempt: attempt, maxAttempts: maxAttempts)
+                }
+                
+                guard let saved = ConnectionStorage.load() else {
+                    await MainActor.run {
+                        self.reconnectState = .failed
+                    }
+                    return
+                }
+                
+                await MainActor.run {
+                    self.wsClient.disconnect()
+                    self.wsClient.updateAuthToken(saved.wsToken)
+                    self.wsClient.updateBaseURL(
+                        AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken, secure: saved.useHTTPS),
+                        reconnect: false
+                    )
+                    self.wsClient.connect()
+                }
+                
+                // 等待连接结果，每轮最多等待 3 秒
+                let pollDeadline = Date().addingTimeInterval(3)
+                while !Task.isCancelled {
+                    let connected = await MainActor.run { self.isConnected }
+                    if connected {
+                        await MainActor.run { self.reconnectState = .idle }
+                        return
+                    }
+                    if Date() >= pollDeadline { break }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                
+                if Task.isCancelled { return }
+                
+                // 如果还有下一次尝试，等待指数退避时间
+                if attempt < maxAttempts {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+            
+            // 所有尝试都失败
+            await MainActor.run {
+                self.reconnectState = .failed
+            }
+        }
+    }
+    
+    /// 重置状态并重新开始指数退避重连
+    func retryReconnect() {
+        reconnectState = .idle
+        reconnectWithBackoff()
+    }
+    
+    /// 取消正在进行的重连任务
+    func cancelReconnect() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectState = .idle
     }
 
     /// 清除保存的连接信息
@@ -645,11 +730,15 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             self.isConnected = connected
             if connected {
+                self.reconnectState = .idle
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.refreshProjectTree()
             } else {
                 self.connectionMessage = "连接断开"
+                if !self.wsClient.isIntentionalDisconnect {
+                    self.reconnectWithBackoff()
+                }
             }
         }
 
