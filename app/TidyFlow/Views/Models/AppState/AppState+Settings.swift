@@ -132,7 +132,26 @@ extension AppState {
             commandId: commandId,
             taskId: taskId
         ) else {
-            TFLog.app.warning("项目命令 started 未匹配到执行上下文: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
+            // 远程任务：非本地发起，创建远程任务条目
+            let key = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+            let commandName = resolveCommandName(project: project, commandId: commandId)
+            let commandIcon = resolveCommandIcon(project: project, commandId: commandId)
+            let task = BackgroundTask(
+                type: .projectCommand,
+                context: .projectCommand(ProjectCommandContext(
+                    projectName: project,
+                    workspaceName: workspace,
+                    commandId: commandId,
+                    commandName: commandName,
+                    commandIcon: commandIcon,
+                    blocking: false
+                )),
+                workspaceGlobalKey: key
+            )
+            task.remoteTaskId = taskId
+            taskManager.insertRemoteRunningTask(task)
+            remoteProjectCommandTasks[taskId] = task
+            TFLog.app.info("远程项目命令 started: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
             return
         }
 
@@ -144,12 +163,16 @@ extension AppState {
 
     /// 处理命令输出事件：仅刷新最后一行（诊断来源已切换为 LSP）
     func handleProjectCommandOutput(taskId: String, line: String) {
-        guard let executionId = projectCommandExecutionIdByRemoteTaskId[taskId],
-              let execution = projectCommandExecutions[executionId] else {
+        // 本地任务
+        if let executionId = projectCommandExecutionIdByRemoteTaskId[taskId],
+           let execution = projectCommandExecutions[executionId] {
+            execution.task?.lastOutputLine = line
             return
         }
-
-        execution.task?.lastOutputLine = line
+        // 远程任务
+        if let task = remoteProjectCommandTasks[taskId] {
+            task.lastOutputLine = line
+        }
     }
 
     /// 处理命令完成事件：回传结果并清理路由映射
@@ -161,18 +184,24 @@ extension AppState {
         ok: Bool,
         message: String?
     ) {
-        guard let executionId = resolveExecutionId(
+        // 本地任务
+        if let executionId = resolveExecutionId(
             project: project,
             workspace: workspace,
             commandId: commandId,
             taskId: taskId
-        ), let execution = projectCommandExecutions[executionId] else {
-            TFLog.app.warning("项目命令 completed 未匹配到执行上下文: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
+        ), let execution = projectCommandExecutions[executionId] {
+            execution.complete(ProjectCommandResult(ok: ok, message: message ?? ""))
+            cleanupProjectCommandExecution(executionId)
             return
         }
 
-        execution.complete(ProjectCommandResult(ok: ok, message: message ?? ""))
-        cleanupProjectCommandExecution(executionId)
+        // 远程任务
+        if let task = remoteProjectCommandTasks.removeValue(forKey: taskId) {
+            let result = BackgroundTaskResult.projectCommand(ProjectCommandResult(ok: ok, message: message ?? ""))
+            taskManager.completeRemoteTask(task, result: result, appState: self)
+            TFLog.app.info("远程项目命令 completed: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
+        }
     }
 
     private func registerProjectCommandExecution(
@@ -247,6 +276,20 @@ extension AppState {
 
     private func projectCommandRoutingKey(project: String, workspace: String, commandId: String) -> String {
         "\(project)|\(workspace)|\(commandId)"
+    }
+
+    /// 从项目配置中查找命令名称
+    private func resolveCommandName(project: String, commandId: String) -> String {
+        projects.first(where: { $0.name == project })?
+            .commands.first(where: { $0.id == commandId })?
+            .name ?? commandId
+    }
+
+    /// 从项目配置中查找命令图标
+    private func resolveCommandIcon(project: String, commandId: String) -> String {
+        projects.first(where: { $0.name == project })?
+            .commands.first(where: { $0.id == commandId })?
+            .icon ?? "terminal"
     }
     
     // MARK: - 自动工作空间快捷键

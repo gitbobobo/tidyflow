@@ -88,9 +88,8 @@ class BackgroundTaskManager: ObservableObject {
         switch task.context {
         case .aiCommit(let ctx):
             let result = await appState.executeAICommit(
+                projectName: ctx.projectName,
                 workspaceKey: ctx.workspaceKey,
-                workspacePath: ctx.workspacePath,
-                projectPath: ctx.projectPath,
                 task: task
             )
             return .aiCommit(result)
@@ -225,10 +224,25 @@ class BackgroundTaskManager: ObservableObject {
 
         // 终止进程
         switch task.context {
-        case .aiCommit, .aiMerge:
-            // AI 任务：直接终止 Swift Process
+        case .aiCommit(let ctx):
+            // AI 提交：取消 WebSocket continuation（若有本地进程也终止）
             if let process = task.process, process.isRunning {
                 process.terminate()
+            }
+            // 恢复 continuation 以解除 performTask 阻塞
+            let wsKey = "\(ctx.projectName):\(ctx.workspaceKey)"
+            if let continuation = appState.aiCommitContinuations.removeValue(forKey: wsKey) {
+                continuation(AICommitResult(resultStatus: .failed, message: "task.cancelled".localized, commits: [], rawOutput: ""))
+            }
+        case .aiMerge(let ctx):
+            // AI 合并：取消 WebSocket continuation（若有本地进程也终止）
+            if let process = task.process, process.isRunning {
+                process.terminate()
+            }
+            // 恢复 continuation 以解除 performTask 阻塞
+            let wsKey = "\(ctx.projectName):\(ctx.workspaceName)"
+            if let continuation = appState.aiMergeContinuations.removeValue(forKey: wsKey) {
+                continuation(AIMergeResult(resultStatus: .failed, message: "task.cancelled".localized, conflicts: [], rawOutput: ""))
             }
         case .projectCommand(let ctx):
             // 项目命令：通过 WebSocket 通知 Rust Core 取消
@@ -284,6 +298,58 @@ class BackgroundTaskManager: ObservableObject {
     /// 调整 pending 队列顺序
     func reorderPendingTasks(for key: String, fromOffsets: IndexSet, toOffset: Int) {
         pendingQueues[key]?.move(fromOffsets: fromOffsets, toOffset: toOffset)
+    }
+
+    // MARK: - 远程任务管理
+
+    /// 插入远程运行中任务（跳过 pending/enqueue，直接进入 running 队列）
+    func insertRemoteRunningTask(_ task: BackgroundTask) {
+        let key = task.workspaceGlobalKey
+        task.status = .running
+        task.startedAt = Date()
+
+        // 远程任务默认为非阻塞（不影响本地任务调度）
+        if runningNonBlockingTasks[key] == nil {
+            runningNonBlockingTasks[key] = []
+        }
+        runningNonBlockingTasks[key]?.append(task)
+    }
+
+    /// 完成远程任务（直接标记完成并移入 completed 队列）
+    func completeRemoteTask(_ task: BackgroundTask, result: BackgroundTaskResult, appState: AppState) {
+        let key = task.workspaceGlobalKey
+        task.status = result.resultStatus == .success ? .completed : .failed
+        task.result = result
+        task.completedAt = Date()
+
+        // 从 running 移除
+        runningNonBlockingTasks[key]?.removeAll { $0.id == task.id }
+
+        // 加入 completed 队列
+        if completedQueues[key] == nil {
+            completedQueues[key] = []
+        }
+        completedQueues[key]?.insert(task, at: 0)
+        if let count = completedQueues[key]?.count, count > maxCompletedPerWorkspace {
+            completedQueues[key] = Array(completedQueues[key]!.prefix(maxCompletedPerWorkspace))
+        }
+
+        // 推送 Toast 通知
+        let toast = ToastManager.makeToast(from: task)
+        appState.toastManager.push(toast)
+
+        // 应用不在前台时，发送系统通知
+        if !NSApp.isActive {
+            sendSystemNotification(for: task)
+        }
+
+        // 刷新 Git 缓存
+        refreshGitCache(for: task, appState: appState)
+
+        // 若完成的工作空间不是当前选中，加入未读集合
+        if key != appState.currentGlobalWorkspaceKey {
+            workspaceKeysWithUnseenCompletion.insert(key)
+        }
     }
 
     // MARK: - 查询

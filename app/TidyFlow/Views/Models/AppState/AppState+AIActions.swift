@@ -1,95 +1,163 @@
 import Foundation
 
 extension AppState {
+    // MARK: - AI 任务 continuation 管理
+
+    /// 注册 AI 提交 continuation，返回路由 key
+    private func registerAICommitContinuation(
+        project: String,
+        workspace: String,
+        continuation: @escaping (AICommitResult) -> Void
+    ) -> String {
+        let key = "\(project):\(workspace)"
+        aiCommitContinuations[key] = continuation
+        return key
+    }
+
+    /// 注册 AI 合并 continuation，返回路由 key
+    private func registerAIMergeContinuation(
+        project: String,
+        workspace: String,
+        continuation: @escaping (AIMergeResult) -> Void
+    ) -> String {
+        let key = "\(project):\(workspace)"
+        aiMergeContinuations[key] = continuation
+        return key
+    }
+
+    // MARK: - AI 结果回调处理
+
+    /// 处理 AI 提交结果（来自 WebSocket）
+    func handleGitAICommitResult(_ result: GitAICommitResult) {
+        let key = "\(result.project):\(result.workspace)"
+        if let continuation = aiCommitContinuations.removeValue(forKey: key) {
+            // 本地发起的任务：转换为 AICommitResult 并恢复 continuation
+            let commits = result.commits.map {
+                AICommitEntry(sha: $0.sha, message: $0.message, files: $0.files)
+            }
+            let status: TaskResultStatus = result.success ? .success : .failed
+            let aiResult = AICommitResult(
+                resultStatus: status,
+                message: result.message,
+                commits: commits,
+                rawOutput: ""
+            )
+            continuation(aiResult)
+        } else {
+            // 远程任务：非本地发起，创建远程任务条目并直接标记完成
+            let wsKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+            let task = BackgroundTask(
+                type: .aiCommit,
+                context: .aiCommit(AICommitContext(
+                    projectName: result.project,
+                    workspaceKey: result.workspace,
+                    workspacePath: "",
+                    projectPath: nil
+                )),
+                workspaceGlobalKey: wsKey
+            )
+            let commits = result.commits.map {
+                AICommitEntry(sha: $0.sha, message: $0.message, files: $0.files)
+            }
+            let status: TaskResultStatus = result.success ? .success : .failed
+            let aiResult = AICommitResult(
+                resultStatus: status,
+                message: result.message,
+                commits: commits,
+                rawOutput: ""
+            )
+            taskManager.completeRemoteTask(task, result: .aiCommit(aiResult), appState: self)
+            TFLog.app.info("远程 AI 提交结果: \(result.project, privacy: .public)/\(result.workspace, privacy: .public)")
+        }
+    }
+
+    /// 处理 AI 合并结果（来自 WebSocket）
+    func handleGitAIMergeResult(_ result: GitAIMergeResult) {
+        let key = "\(result.project):\(result.workspace)"
+        if let continuation = aiMergeContinuations.removeValue(forKey: key) {
+            // 本地发起的任务：转换为 AIMergeResult 并恢复 continuation
+            let status: TaskResultStatus = result.success ? .success : .failed
+            let aiResult = AIMergeResult(
+                resultStatus: status,
+                message: result.message,
+                conflicts: result.conflicts,
+                rawOutput: ""
+            )
+            continuation(aiResult)
+        } else {
+            // 远程任务：非本地发起，创建远程任务条目并直接标记完成
+            let wsKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+            let task = BackgroundTask(
+                type: .aiMerge,
+                context: .aiMerge(AIMergeContext(
+                    projectName: result.project,
+                    workspaceName: result.workspace
+                )),
+                workspaceGlobalKey: wsKey
+            )
+            let status: TaskResultStatus = result.success ? .success : .failed
+            let aiResult = AIMergeResult(
+                resultStatus: status,
+                message: result.message,
+                conflicts: result.conflicts,
+                rawOutput: ""
+            )
+            taskManager.completeRemoteTask(task, result: .aiMerge(aiResult), appState: self)
+            TFLog.app.info("远程 AI 合并结果: \(result.project, privacy: .public)/\(result.workspace, privacy: .public)")
+        }
+    }
+
+    // MARK: - AI Agent 智能提交
+
+    /// 执行 AI 智能提交（通过 WebSocket 委托 Rust Core）
+    func executeAICommit(projectName: String, workspaceKey: String, task: BackgroundTask? = nil) async -> AICommitResult {
+        // 获取 AI Agent 名称
+        let agentName = clientSettings.commitAIAgent
+
+        return await withCheckedContinuation { continuation in
+            let _ = registerAICommitContinuation(
+                project: projectName,
+                workspace: workspaceKey
+            ) { result in
+                continuation.resume(returning: result)
+            }
+
+            wsClient.requestGitAICommit(
+                project: projectName,
+                workspace: workspaceKey,
+                aiAgent: agentName
+            )
+        }
+    }
+
     // MARK: - AI Agent 合并
 
-    /// 执行 AI 合并到默认分支
+    /// 执行 AI 合并到默认分支（通过 WebSocket 委托 Rust Core）
     func executeAIMerge(
         projectName: String,
         workspaceName: String,
         task: BackgroundTask? = nil
     ) async -> AIMergeResult {
-        // 1. 获取 AI Agent（合并使用 mergeAIAgent）
-        guard let agentName = clientSettings.mergeAIAgent,
-              let agent = AIAgent(rawValue: agentName) else {
-            return AIMergeResult(
-                resultStatus: .failed,
-                message: "settings.aiAgent.notConfigured".localized,
-                conflicts: [],
-                rawOutput: ""
-            )
-        }
+        // 获取 AI Agent 名称
+        let agentName = clientSettings.mergeAIAgent
 
-        // 2. 获取项目路径（默认工作空间路径）
-        guard let project = projects.first(where: { $0.name == projectName }),
-              let projectPath = project.path else {
-            return AIMergeResult(
-                resultStatus: .failed,
-                message: "sidebar.aiMerge.noProjectPath".localized,
-                conflicts: [],
-                rawOutput: ""
-            )
-        }
-
-        // 3. 获取功能分支名和默认分支名
-        let wsKey = workspaceName
-        let featureBranch = gitCache.gitBranchCache[wsKey]?.current ?? workspaceName
-        // 默认分支从默认工作空间的分支信息获取，兜底为 "main"
+        // 获取默认分支名
         let defaultBranch = gitCache.gitBranchCache["default"]?.current ?? "main"
 
-        // 4. 构建 prompt
-        let prompt = AIAgentPromptBuilder.buildMergePrompt(
-            featureBranch: featureBranch,
-            defaultBranch: defaultBranch,
-            projectName: projectName
-        )
+        return await withCheckedContinuation { continuation in
+            let _ = registerAIMergeContinuation(
+                project: projectName,
+                workspace: workspaceName
+            ) { result in
+                continuation.resume(returning: result)
+            }
 
-        // 5. 执行 AI Agent（工作目录为项目根目录）
-        return await AIAgentRunner.run(
-            agent: agent,
-            prompt: prompt,
-            workingDirectory: projectPath,
-            projectPath: projectPath,
-            task: task
-        )
-    }
-
-    // MARK: - AI Agent 智能提交
-
-    /// 执行 AI 智能提交
-    func executeAICommit(workspaceKey: String, workspacePath: String, projectPath: String? = nil, task: BackgroundTask? = nil) async -> AICommitResult {
-        // 1. 获取 AI Agent（提交使用 commitAIAgent）
-        guard let agentName = clientSettings.commitAIAgent,
-              let agent = AIAgent(rawValue: agentName) else {
-            return AICommitResult(
-                resultStatus: .failed,
-                message: "settings.aiAgent.notConfigured".localized,
-                commits: [],
-                rawOutput: ""
+            wsClient.requestGitAIMerge(
+                project: projectName,
+                workspace: workspaceName,
+                aiAgent: agentName,
+                defaultBranch: defaultBranch
             )
         }
-
-        // 2. 获取暂存/变更文件列表（仅用于 prompt 提示，不做前置校验）
-        let statusCache = gitCache.gitStatusCache[workspaceKey] ?? GitStatusCache.empty()
-        let stagedFiles = statusCache.items.filter { $0.staged == true }.map { $0.path }
-        let allChangedFiles = statusCache.items.map { $0.path }
-
-        // 3. 获取当前分支名
-        let branchName = gitCache.gitBranchCache[workspaceKey]?.current ?? "unknown"
-
-        // 4. 构建 prompt 并执行
-        let prompt = AIAgentPromptBuilder.buildCommitPrompt(
-            stagedFiles: stagedFiles,
-            allChangedFiles: allChangedFiles,
-            branchName: branchName
-        )
-
-        return await AIAgentRunner.runCommit(
-            agent: agent,
-            prompt: prompt,
-            workingDirectory: workspacePath,
-            projectPath: projectPath,
-            task: task
-        )
     }
 }

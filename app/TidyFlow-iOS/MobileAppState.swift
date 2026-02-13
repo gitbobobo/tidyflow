@@ -434,9 +434,10 @@ final class MobileAppState: ObservableObject {
         )
         aiMergePendingTaskIdByProject[project] = task.id
         let summary = gitSummaryForWorkspace(project: project, workspace: workspace)
-        wsClient.requestGitMergeToDefault(
+        wsClient.requestGitAIMerge(
             project: project,
             workspace: workspace,
+            aiAgent: mergeAIAgent,
             defaultBranch: summary.defaultBranch ?? "main"
         )
     }
@@ -781,12 +782,66 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onGitAICommitResult = { [weak self] result in
             guard let self else { return }
-            guard let taskId = self.aiCommitPendingTaskIds.first else { return }
-            self.aiCommitPendingTaskIds.removeFirst()
-            self.mutateTask(taskId) { task in
-                task.status = result.success ? .completed : .failed
-                task.message = result.message
-                task.completedAt = Date()
+            // 按 project:workspace 匹配本地任务
+            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            let localTaskId = self.aiCommitPendingTaskIds.first.flatMap { taskId -> String? in
+                // 验证 taskId 归属的 workspace key 匹配
+                if let tasks = self.workspaceTasksByKey[key],
+                   tasks.contains(where: { $0.id == taskId && $0.status.isActive }) {
+                    return taskId
+                }
+                return nil
+            } ?? self.aiCommitPendingTaskIds.first // 兜底：按顺序匹配
+
+            if let taskId = localTaskId {
+                self.aiCommitPendingTaskIds.removeAll { $0 == taskId }
+                self.mutateTask(taskId) { task in
+                    task.status = result.success ? .completed : .failed
+                    task.message = result.message
+                    task.completedAt = Date()
+                }
+            } else {
+                // 远程任务：非本地发起，创建条目并直接标记完成
+                let task = self.createTask(
+                    project: result.project,
+                    workspace: result.workspace,
+                    type: .aiCommit,
+                    title: "一键提交",
+                    icon: "sparkles",
+                    message: result.message
+                )
+                self.mutateTask(task.id) { t in
+                    t.status = result.success ? .completed : .failed
+                    t.completedAt = Date()
+                }
+            }
+        }
+
+        wsClient.onGitAIMergeResult = { [weak self] result in
+            guard let self else { return }
+            let resolvedTaskId =
+                self.aiMergePendingTaskIdByProject.removeValue(forKey: result.project)
+                ?? self.findLatestActiveTaskId(project: result.project, type: .aiMerge)
+            if let taskId = resolvedTaskId {
+                self.mutateTask(taskId) { task in
+                    task.status = result.success ? .completed : .failed
+                    task.message = result.message
+                    task.completedAt = Date()
+                }
+            } else {
+                // 远程任务：非本地发起，创建条目并直接标记完成
+                let task = self.createTask(
+                    project: result.project,
+                    workspace: result.workspace,
+                    type: .aiMerge,
+                    title: "智能合并",
+                    icon: "cpu",
+                    message: result.message
+                )
+                self.mutateTask(task.id) { t in
+                    t.status = result.success ? .completed : .failed
+                    t.completedAt = Date()
+                }
             }
         }
 
@@ -818,12 +873,30 @@ final class MobileAppState: ObservableObject {
             } else {
                 localTaskId = nil
             }
-            guard let resolvedId = localTaskId else { return }
-            self.mutateTask(resolvedId) { task in
-                task.status = .running
-                task.startedAt = task.startedAt ?? Date()
-                task.message = "运行中..."
-                task.remoteTaskId = taskId
+            if let resolvedId = localTaskId {
+                self.mutateTask(resolvedId) { task in
+                    task.status = .running
+                    task.startedAt = task.startedAt ?? Date()
+                    task.message = "运行中..."
+                    task.remoteTaskId = taskId
+                }
+            } else {
+                // 远程任务：非本地发起，创建远程任务条目
+                let commandName = self.resolveCommandName(project: project, commandId: commandId)
+                let commandIcon = self.resolveCommandIcon(project: project, commandId: commandId)
+                let task = self.createTask(
+                    project: project,
+                    workspace: workspace,
+                    type: .projectCommand,
+                    title: commandName,
+                    icon: commandIcon,
+                    message: "运行中..."
+                )
+                self.mutateTask(task.id) { t in
+                    t.commandId = commandId
+                    t.remoteTaskId = taskId
+                }
+                self.projectCommandTaskIdByRemoteTaskId[taskId] = task.id
             }
         }
 
@@ -954,6 +1027,20 @@ final class MobileAppState: ObservableObject {
 
     private func projectCommandRoutingKey(project: String, workspace: String, commandId: String) -> String {
         "\(project)|\(workspace)|\(commandId)"
+    }
+
+    /// 从项目配置中查找命令名称
+    private func resolveCommandName(project: String, commandId: String) -> String {
+        projects.first(where: { $0.name == project })?
+            .commands.first(where: { $0.id == commandId })?
+            .name ?? commandId
+    }
+
+    /// 从项目配置中查找命令图标
+    private func resolveCommandIcon(project: String, commandId: String) -> String {
+        projects.first(where: { $0.name == project })?
+            .commands.first(where: { $0.id == commandId })?
+            .icon ?? "terminal"
     }
 
     // MARK: - 输出缓冲

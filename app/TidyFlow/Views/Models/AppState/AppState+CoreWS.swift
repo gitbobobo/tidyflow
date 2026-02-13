@@ -498,6 +498,14 @@ extension AppState {
             self?.updateRemoteTerminals(from: result.items)
         }
 
+        // v1.33: AI 提交/合并结果（从 Rust Core 返回）
+        wsClient.onGitAICommitResult = { [weak self] result in
+            self?.handleGitAICommitResult(result)
+        }
+        wsClient.onGitAIMergeResult = { [weak self] result in
+            self?.handleGitAIMergeResult(result)
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {

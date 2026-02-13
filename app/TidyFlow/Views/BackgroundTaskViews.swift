@@ -146,8 +146,11 @@ struct ActiveTaskListView: View {
                         }
                         .onDelete { offsets in
                             let tasks = taskManager.pendingTasks(for: workspaceKey)
-                            for idx in offsets {
-                                appState.removeBackgroundTask(tasks[idx])
+                            let tasksToRemove = offsets.map { tasks[$0] }
+                            DispatchQueue.main.async {
+                                for task in tasksToRemove {
+                                    appState.removeBackgroundTask(task)
+                                }
                             }
                         }
                     }
@@ -191,7 +194,10 @@ struct RunningTaskRow: View {
                 .foregroundColor(.secondary)
                 .id(tick)
             Button {
-                appState.stopBackgroundTask(task)
+                // 延迟执行，避免 Popover 内部状态变更触发 NSPopoverFrame 释放时 KVO 野指针崩溃
+                DispatchQueue.main.async {
+                    appState.stopBackgroundTask(task)
+                }
             } label: {
                 Image(systemName: "stop.circle")
                     .font(.system(size: 14))
@@ -224,7 +230,9 @@ struct PendingTaskRow: View {
                 .font(.system(size: 13))
             Spacer()
             Button {
-                appState.removeBackgroundTask(task)
+                DispatchQueue.main.async {
+                    appState.removeBackgroundTask(task)
+                }
             } label: {
                 Image(systemName: "xmark.circle")
                     .font(.system(size: 14))

@@ -104,6 +104,13 @@ class AppState: ObservableObject {
     var pendingProjectCommandExecutionIdsByKey: [String: [UUID]] = [:]
     var projectCommandExecutionIdByRemoteTaskId: [String: UUID] = [:]
 
+    // AI 任务 continuation（key: "project:workspace"）
+    var aiCommitContinuations: [String: (AICommitResult) -> Void] = [:]
+    var aiMergeContinuations: [String: (AIMergeResult) -> Void] = [:]
+
+    // 远程项目命令任务跟踪（key: remoteTaskId）
+    var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
+
     // Toast 通知管理器
     let toastManager = ToastManager()
 
