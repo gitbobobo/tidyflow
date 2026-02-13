@@ -162,12 +162,10 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             var bytes = Array(data)
             bytes = normalizeC1IntroducersTo7BitIfNeeded(bytes)
 
-            // 远程终端场景下，CPR 应答（ESC[row;colR）经网络往返后到达 shell 时已超时，
-            // zle 把 ESC[ 当作不完整按键序列消费，剩余 "3R"/"3RR" 被当命令执行。
-            // 直接丢弃——CSI digits(;digits)* R 格式仅用于 CPR，不会误伤正常输入。
-            if isCPRResponse(bytes) {
-                return
-            }
+            // CPR 应答（ESC[row;colR）不再丢弃：
+            // C1→7-bit 规范化已修复 zle 误解析问题（0x9b 被 shell 当垃圾字节），
+            // 而 TUI 应用（如 helix/lazygit）依赖 CPR 获取光标位置，丢弃会导致功能异常。
+            // xterm.js 时代同样经过网络往返但无此问题，佐证根因是 C1 编码而非延迟。
 
             if Thread.isMainThread {
                 appState?.sendTerminalInputBytes(bytes)
@@ -190,47 +188,7 @@ struct SwiftTermTerminalView: UIViewRepresentable {
 
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
-        // MARK: - CPR 抑制
-
-        /// 检测 CSI digits(;digits)* R 格式的 CPR (Cursor Position Report) 应答。
-        /// 该格式仅用于终端自动应答，不会出现在用户手动输入中。
-        private func isCPRResponse(_ bytes: [UInt8]) -> Bool {
-            guard !bytes.isEmpty else { return false }
-
-            var i = 0
-
-            // CSI 引导符（7-bit ESC[ 或 8-bit 0x9b）
-            if bytes.count >= 2, bytes[0] == 0x1b, bytes[1] == 0x5b {
-                i = 2
-            } else if bytes[0] == 0x9b {
-                i = 1
-            } else {
-                return false
-            }
-
-            // 可选 '?' 前缀（DEC-specific CPR: ESC[?row;col;pageR）
-            if i < bytes.count, bytes[i] == 0x3f {
-                i += 1
-            }
-
-            // 至少一组数字
-            var sawDigit = false
-            while i < bytes.count {
-                let b = bytes[i]
-                if b >= 0x30 && b <= 0x39 {
-                    sawDigit = true
-                    i += 1
-                } else if b == 0x3b { // ';'
-                    i += 1
-                } else {
-                    break
-                }
-            }
-            guard sawDigit else { return false }
-
-            // 末尾必须是 'R' 且无多余字节
-            return i == bytes.count - 1 && bytes[i] == 0x52
-        }
+        // MARK: - C1 规范化
 
         private func normalizeC1IntroducersTo7BitIfNeeded(_ bytes: [UInt8]) -> [UInt8] {
             // 关键兼容：有些 shell/程序不接受 8-bit C1 的 CSI(0x9b)，会把后续 "row;colR" 当普通输入，
