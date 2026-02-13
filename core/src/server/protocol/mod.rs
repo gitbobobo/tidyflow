@@ -350,11 +350,22 @@ pub enum ClientMessage {
     },
 
     // v1.26: AI Git commit
+    #[serde(rename = "git_ai_commit")]
     GitAICommit {
         project: String,
         workspace: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         ai_agent: Option<String>,
+    },
+
+    // v1.33: AI Git merge
+    #[serde(rename = "git_ai_merge")]
+    GitAIMerge {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ai_agent: Option<String>,
+        default_branch: String,
     },
 
     // v1.27: Terminal persistence — 重连附着
@@ -802,10 +813,24 @@ pub enum ServerMessage {
     },
 
     // v1.26: AI Git commit result
+    #[serde(rename = "git_ai_commit_result")]
     GitAICommitResult {
+        project: String,
+        workspace: String,
         success: bool,
         message: String,
         commits: Vec<AIGitCommit>,
+    },
+
+    // v1.33: AI Git merge result
+    #[serde(rename = "git_ai_merge_result")]
+    GitAIMergeResult {
+        project: String,
+        workspace: String,
+        success: bool,
+        message: String,
+        #[serde(default)]
+        conflicts: Vec<String>,
     },
 
     // v1.27: Terminal persistence — 附着响应

@@ -2,16 +2,22 @@ use axum::extract::ws::WebSocket;
 use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
+use tracing::{info, warn, error};
 
-use crate::server::context::{resolve_workspace, SharedAppState};
+use crate::server::context::{resolve_workspace, HandlerContext, SharedAppState, TaskBroadcastEvent};
 use crate::server::git;
 use crate::server::protocol::{AIGitCommit, ClientMessage, GitBranchInfo, ServerMessage};
 use crate::server::ws::send_message;
+
+/// AI 代理执行超时（10 分钟）
+const AI_AGENT_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub async fn try_handle_git_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
         // v1.8: Git branches
@@ -270,20 +276,21 @@ pub async fn try_handle_git_message(
             workspace,
             ai_agent,
         } => {
-            try_handle_git_ai_commit(project.clone(), workspace.clone(), ai_agent.clone(), socket, app_state).await
+            try_handle_git_ai_commit(project.clone(), workspace.clone(), ai_agent.clone(), socket, app_state, ctx).await
         }
 
         _ => Ok(false),
     }
 }
 
-/// 处理 AI 智能提交
+/// 处理 AI 智能提交（后台执行，不阻塞 WebSocket 主循环）
 pub async fn try_handle_git_ai_commit(
     project: String,
     workspace: String,
     ai_agent: Option<String>,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     let ws_ctx = match resolve_workspace(app_state, &project, &workspace).await {
         Ok(ctx) => ctx,
@@ -296,283 +303,161 @@ pub async fn try_handle_git_ai_commit(
     let root = ws_ctx.root_path;
     let ai_agent_type = ai_agent.unwrap_or_else(|| "cursor".to_string());
 
-    let root_clone = root.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        handle_ai_commit_internal(&root_clone, &ai_agent_type)
-    })
-    .await;
+    // 通过 cmd_output_tx 异步回传结果，不阻塞 WS 主循环
+    let cmd_output_tx = ctx.cmd_output_tx.clone();
+    let task_broadcast_tx = ctx.task_broadcast_tx.clone();
+    let origin_conn_id = ctx.conn_meta.conn_id.clone();
 
-    match result {
-        Ok(Ok(ai_commit_result)) => {
-            send_message(
-                socket,
-                &ServerMessage::GitAICommitResult {
+    info!(
+        "AI commit started: project={}, workspace={}, agent={}",
+        project, workspace, ai_agent_type
+    );
+
+    tokio::spawn(async move {
+        let root_clone = root.clone();
+        let agent_clone = ai_agent_type.clone();
+
+        // 带超时执行 AI 代理
+        let result = tokio::time::timeout(
+            AI_AGENT_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                handle_ai_commit_internal(&root_clone, &agent_clone)
+            }),
+        )
+        .await;
+
+        let msg = match result {
+            Ok(Ok(Ok(ai_commit_result))) => {
+                info!(
+                    "AI commit succeeded: project={}, workspace={}, commits={}",
+                    project, workspace, ai_commit_result.commits.len()
+                );
+                ServerMessage::GitAICommitResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
                     success: true,
                     message: ai_commit_result.message,
                     commits: ai_commit_result.commits,
-                },
-            )
-            .await?;
-        }
-        Ok(Err(e)) => {
-            send_message(
-                socket,
-                &ServerMessage::GitAICommitResult {
+                }
+            }
+            Ok(Ok(Err(e))) => {
+                warn!("AI commit failed: project={}, workspace={}, error={}", project, workspace, e);
+                ServerMessage::GitAICommitResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
                     success: false,
                     message: e,
                     commits: vec![],
-                },
-            )
-            .await?;
-        }
-        Err(e) => {
-            send_message(
-                socket,
-                &ServerMessage::Error {
-                    code: "internal_error".to_string(),
+                }
+            }
+            Ok(Err(e)) => {
+                error!("AI commit task panicked: {}", e);
+                ServerMessage::GitAICommitResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success: false,
                     message: format!("AI commit task failed: {}", e),
-                },
-            )
-            .await?;
+                    commits: vec![],
+                }
+            }
+            Err(_) => {
+                error!(
+                    "AI commit timed out after {}s: project={}, workspace={}",
+                    AI_AGENT_TIMEOUT.as_secs(), project, workspace
+                );
+                ServerMessage::GitAICommitResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success: false,
+                    message: format!(
+                        "AI agent timed out after {} seconds",
+                        AI_AGENT_TIMEOUT.as_secs()
+                    ),
+                    commits: vec![],
+                }
+            }
+        };
+
+        // 发送给发起者
+        if let Err(e) = cmd_output_tx.send(msg.clone()).await {
+            error!("Failed to send AI commit result to WS: {}", e);
         }
-    }
+        // 广播给其他连接
+        let _ = task_broadcast_tx.send(TaskBroadcastEvent {
+            origin_conn_id,
+            message: msg,
+        });
+    });
+
     Ok(true)
 }
 
-/// 内部函数：执行 AI 智能提交逻辑
+/// 内部函数：执行 AI 智能提交逻辑（委托式：AI 代理执行 git 操作，我们解析结果）
 fn handle_ai_commit_internal(workspace_root: &Path, ai_agent: &str) -> Result<AIGitCommitOutput, String> {
-    use std::process::Command;
-
     // 检查是否为 git 仓库
     if git::utils::get_git_repo_root(workspace_root).is_none() {
         return Err("Not a git repository".to_string());
     }
 
-    // 步骤 1: 分析现有提交风格
-    let commit_style = analyze_commit_style(workspace_root)?;
-
-    // 步骤 2: 分析变更
-    let changes = analyze_changes(workspace_root)?;
-
-    if changes.is_empty() {
+    // 快速检查：是否有变更
+    if !has_changes(workspace_root)? {
         return Ok(AIGitCommitOutput {
             message: "No changes to commit".to_string(),
             commits: vec![],
         });
     }
 
-    // 步骤 3: 构建并执行 AI 命令
-    let ai_command = build_ai_commit_prompt(&commit_style, &changes);
-
-    let agent_args = build_ai_agent_command(ai_agent, &ai_command)?;
+    // 构建提示词 → 交给 AI 执行 → 解析结果
+    let prompt = build_ai_commit_prompt();
+    let agent_args = build_ai_agent_command(ai_agent, &prompt)?;
     let ai_output = execute_ai_agent(workspace_root, &agent_args)?;
+    let ai_result = parse_ai_commit_result(&ai_output)?;
 
-    // 步骤 4: 解析 AI 输出并执行提交
-    let commit_plan = parse_ai_output(&ai_output)?;
-
-    // 步骤 5: 执行原子提交
-    let commits = execute_commits(workspace_root, &commit_plan)?;
-
-    // 步骤 6: 验证结果
-    let final_status = Command::new("git")
-        .args(["status", "--short"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| format!("Failed to verify git status: {}", e))?;
-
-    if final_status.status.success() {
-        let stdout = String::from_utf8_lossy(&final_status.stdout);
-        if stdout.trim().is_empty() {
-            Ok(AIGitCommitOutput {
-                message: format!(
-                    "AI commit completed successfully. Created {} commit(s).",
-                    commits.len()
-                ),
-                commits,
-            })
-        } else {
-            Ok(AIGitCommitOutput {
-                message: format!(
-                    "AI commit completed with {} commit(s). Some changes remain uncommitted: {}",
-                    commits.len(),
-                    stdout.lines().count()
-                ),
-                commits,
-            })
-        }
-    } else {
-        Err(format!(
-            "Failed to verify final status: {}",
-            String::from_utf8_lossy(&final_status.stderr)
-        ))
-    }
-}
-
-/// 分析提交风格
-fn analyze_commit_style(workspace_root: &Path) -> Result<CommitStyle, String> {
-    let output = Command::new("git")
-        .args(["log", "--oneline", "-30"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| format!("Failed to analyze commit style: {}", e))?;
-
-    if !output.status.success() {
-        // 新仓库无历史，使用默认风格
-        return Ok(CommitStyle::default());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-
-    if lines.is_empty() {
-        return Ok(CommitStyle::default());
-    }
-
-    // 检测风格
-    let mut conventional_count = 0;
-    let mut chinese_count = 0;
-
-    for line in lines.iter().take(10) {
-        let parts: Vec<&str> = line.splitn(2, ' ').collect();
-        if parts.len() >= 2 {
-            let msg = parts[1];
-            if msg.contains('(') && msg.contains(')') && msg.contains(':') {
-                conventional_count += 1;
-            }
-        }
-        if line.chars().any(|c| {
-            let c = c as u32;
-            (0x4E00..=0x9FFF).contains(&c) || (0x3400..=0x4DBF).contains(&c)
-        }) {
-            chinese_count += 1;
-        }
-    }
-
-    Ok(CommitStyle {
-        is_conventional: conventional_count > 5,
-        is_chinese: chinese_count > 5,
+    Ok(AIGitCommitOutput {
+        message: format!(
+            "AI commit completed. Created {} commit(s).",
+            ai_result.len()
+        ),
+        commits: ai_result,
     })
 }
 
-/// 分析变更
-fn analyze_changes(workspace_root: &Path) -> Result<Vec<ChangeGroup>, String> {
-    use std::process::Command;
-    use std::collections::HashMap;
-
-    let mut groups: HashMap<String, ChangeGroup> = HashMap::new();
-
-    // 分析暂存变更
-    let staged = Command::new("git")
-        .args(["diff", "--staged", "--name-only"])
+/// 快速检查是否有变更（暂存或未暂存）
+fn has_changes(workspace_root: &Path) -> Result<bool, String> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| format!("Failed to list staged changes: {}", e))?;
+        .map_err(|e| format!("Failed to check git status: {}", e))?;
 
-    if staged.status.success() {
-        let stdout = String::from_utf8_lossy(&staged.stdout);
-        for path in stdout.lines() {
-            if !path.is_empty() {
-                let group_key = get_change_group_key(path);
-                let key_clone = group_key.clone();
-                groups
-                    .entry(group_key)
-                    .or_insert_with(|| ChangeGroup::new(key_clone))
-                    .add_file(path.to_string(), true);
-            }
-        }
-    }
-
-    // 分析未暂存变更
-    let unstaged = Command::new("git")
-        .args(["diff", "--name-only"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| format!("Failed to list unstaged changes: {}", e))?;
-
-    if unstaged.status.success() {
-        let stdout = String::from_utf8_lossy(&unstaged.stdout);
-        for path in stdout.lines() {
-            if !path.is_empty() {
-                let group_key = get_change_group_key(path);
-                let key_clone = group_key.clone();
-                groups
-                    .entry(group_key)
-                    .or_insert_with(|| ChangeGroup::new(key_clone))
-                    .add_file(path.to_string(), false);
-            }
-        }
-    }
-
-    let mut groups_vec: Vec<ChangeGroup> = groups.into_values().collect();
-    groups_vec.sort_by(|a, b| a.key.cmp(&b.key));
-    Ok(groups_vec)
+    Ok(output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
-/// 根据文件路径获取分组键
-fn get_change_group_key(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() >= 2 {
-        // 按第一层目录分组
-        parts[0].to_string()
-    } else {
-        // 根目录文件
-        "root".to_string()
-    }
+/// 构建 AI 提交提示词（所有分析交给 AI 自行完成）
+fn build_ai_commit_prompt() -> String {
+    r#"你是一个 Git 提交助手。请在当前目录分析变更并执行智能提交。这是纯本地操作，禁止任何网络请求。
+
+请按以下步骤执行：
+1. 运行 `git log --oneline -10` 了解现有提交风格（Conventional Commits 与否、中英文），并沿用
+2. 运行 `git status` 和 `git diff` 理解所有变更（含未追踪文件）
+3. 对未追踪文件进行判断：构建产物、缓存、IDE 配置、依赖目录、敏感文件等不应入库的文件，追加到 `.gitignore`（如已存在则跳过）
+4. 将应提交的变更按逻辑分组为原子提交（按模块/关注点）
+5. 对每组执行 `git add <files>` 然后 `git commit -m "<message>"`（若修改了 `.gitignore`，将其纳入第一个提交）
+6. 以严格 JSON 格式输出结果（只输出 JSON，不要输出其他内容）：
+```json
+{
+  "success": true,
+  "message": "操作结果描述",
+  "commits": [
+    { "sha": "短SHA", "message": "提交消息", "files": ["文件路径"] }
+  ]
 }
-
-/// 构建 AI 提交提示词
-fn build_ai_commit_prompt(style: &CommitStyle, changes: &[ChangeGroup]) -> String {
-    let mut prompt = String::from(
-        "你是一个 Git 提交助手。请在当前目录分析变更并执行智能提交。这是纯本地操作，禁止任何网络请求。\n\n",
-    );
-
-    prompt.push_str(&format!("**提交风格要求**：\n"));
-    if style.is_conventional {
-        prompt.push_str("- 格式：`type(scope): description` (Conventional Commits)\n");
-    } else {
-        prompt.push_str("- 格式：简洁明了的描述性消息\n");
-    }
-    if style.is_chinese {
-        prompt.push_str("- 语言：中文为主，技术术语保持英文\n");
-    } else {
-        prompt.push_str("- 语言：英文\n");
-    }
-    prompt.push_str("\n");
-
-    prompt.push_str("**变更文件列表**：\n");
-    for (i, group) in changes.iter().enumerate() {
-        prompt.push_str(&format!("\n### 分组 {} ({})\n", i + 1, group.key));
-        for file in &group.files {
-            let status = if file.staged { "已暂存" } else { "未暂存" };
-            prompt.push_str(&format!("- {} [{}]\n", file.path, status));
-        }
-    }
-
-    prompt.push_str("\n**请按以下步骤执行**：\n");
-    prompt.push_str("1. 使用 `git diff --staged` 和 `git diff` 理解每个文件的修改意图\n");
-    prompt.push_str("2. 将变更按逻辑分组为原子提交（按目录/模块/关注点）\n");
-    prompt.push_str("3. 对每组文件执行 `git add <files>` 然后 `git commit -m \"<message>\"`\n");
-    prompt.push_str("4. 以严格 JSON 格式输出结果：\n");
-    prompt.push_str("```json\n");
-    prompt.push_str("{\n");
-    prompt.push_str("  \"success\": true/false,\n");
-    prompt.push_str("  \"message\": \"操作结果描述\",\n");
-    prompt.push_str("  \"commits\": [\n");
-    prompt.push_str("    {\n");
-    prompt.push_str("      \"sha\": \"提交的短 SHA\",\n");
-    prompt.push_str("      \"message\": \"提交消息\",\n");
-    prompt.push_str("      \"files\": [\"提交包含的文件路径列表\"]\n");
-    prompt.push_str("    }\n");
-    prompt.push_str("  ]\n");
-    prompt.push_str("}\n");
-    prompt.push_str("```\n");
-    prompt.push_str("只输出 JSON，不要输出其他内容。\n");
-
-    prompt
+```"#
+    .to_string()
 }
 
 /// 构建 AI 代理命令
-fn build_ai_agent_command(agent: &str, prompt: &str) -> Result<Vec<String>, String> {
+pub fn build_ai_agent_command(agent: &str, prompt: &str) -> Result<Vec<String>, String> {
     match agent {
         "claude" => Ok(vec![
             "claude".to_string(),
@@ -626,224 +511,254 @@ fn build_ai_agent_command(agent: &str, prompt: &str) -> Result<Vec<String>, Stri
 }
 
 /// 执行 AI 代理
-fn execute_ai_agent(workspace_root: &Path, args: &[String]) -> Result<String, String> {
+pub fn execute_ai_agent(workspace_root: &Path, args: &[String]) -> Result<String, String> {
     use std::process::Command;
 
-    let output = Command::new(&args[0])
-        .args(&args[1..])
+    info!("Executing AI agent: {} (cwd: {})", args[0], workspace_root.display());
+
+    let output = Command::new("/usr/bin/env")
+        .args(args)
         .current_dir(workspace_root)
+        .envs(build_extended_env())
         .output()
         .map_err(|e| format!("Failed to execute AI agent '{}': {}", args[0], e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!("AI agent '{}' exited with error: {}", args[0], stderr);
         return Err(format!("AI agent failed: {}", stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    info!("AI agent '{}' completed, output length: {} bytes", args[0], stdout.len());
     Ok(stdout.to_string())
 }
 
-/// 解析 AI 输出
-fn parse_ai_output(output: &str) -> Result<Vec<CommitPlan>, String> {
+/// 构建包含常见 CLI 安装路径的环境变量
+/// macOS App 默认 PATH 不含 Homebrew、~/.local/bin 等用户路径，需手动补充
+fn build_extended_env() -> std::collections::HashMap<String, String> {
+    let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/unknown".to_string());
+    let extra_paths = [
+        format!("{}/.local/bin", home),
+        format!("{}/.cargo/bin", home),
+        format!("{}/.opencode/bin", home),
+        format!("{}/.bun/bin", home),
+        "/opt/homebrew/bin".to_string(),
+        "/opt/homebrew/sbin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/local/sbin".to_string(),
+    ];
+    let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let mut seen = std::collections::HashSet::new();
+    let mut parts = Vec::new();
+    for p in extra_paths.iter().chain(system_path.split(':').map(|s| s.to_string()).collect::<Vec<_>>().iter()) {
+        if seen.insert(p.clone()) {
+            parts.push(p.clone());
+        }
+    }
+    env.insert("PATH".to_string(), parts.join(":"));
+    env
+}
+
+/// 解析 AI 输出为提交结果（委托式：AI 已执行提交，直接解析结果 JSON）
+fn parse_ai_commit_result(output: &str) -> Result<Vec<AIGitCommit>, String> {
     let json_str = extract_json_from_output(output)?;
     let value: Value = serde_json::from_str(&json_str)
         .map_err(|e| format!("Failed to parse AI output as JSON: {}", e))?;
 
-    let success = value
+    // 兼容 envelope 格式：某些 agent 输出 { "response": "..." } 或 { "result": "..." }
+    let inner = extract_inner_json(&value);
+
+    let success = inner
         .get("success")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
     if !success {
-        let message = value
+        let message = inner
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
         return Err(format!("AI commit failed: {}", message));
     }
 
-    let commits = value
+    let commits = inner
         .get("commits")
         .and_then(|v| v.as_array())
         .ok_or("Missing 'commits' field in AI output")?;
 
-    let mut plans = Vec::new();
+    let mut result = Vec::new();
     for commit in commits {
-        let _sha = commit
+        let sha = commit
             .get("sha")
             .and_then(|v| v.as_str())
-            .ok_or("Missing 'sha' in commit")?;
+            .unwrap_or("unknown")
+            .to_string();
         let message = commit
             .get("message")
             .and_then(|v| v.as_str())
-            .ok_or("Missing 'message' in commit")?;
+            .unwrap_or("")
+            .to_string();
         let files = commit
             .get("files")
             .and_then(|v| v.as_array())
-            .ok_or("Missing 'files' in commit")?;
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        let file_list: Vec<String> = files
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
-
-        plans.push(CommitPlan {
-            message: message.to_string(),
-            files: file_list,
-        });
+        result.push(AIGitCommit { sha, message, files });
     }
 
-    Ok(plans)
+    Ok(result)
 }
 
-/// 从 AI 输出中提取 JSON
-fn extract_json_from_output(output: &str) -> Result<String, String> {
-    let lines: Vec<&str> = output.lines().collect();
+/// 从 envelope 格式中提取内层 JSON（兼容 { "response": "..." } 等包装）
+pub fn extract_inner_json(value: &Value) -> Value {
+    // 尝试常见 envelope 字段
+    for key in &["response", "result", "output", "data"] {
+        if let Some(inner_str) = value.get(*key).and_then(|v| v.as_str()) {
+            // 尝试解析内层字符串为 JSON
+            if let Ok(inner) = serde_json::from_str::<Value>(inner_str) {
+                if inner.is_object() {
+                    return inner;
+                }
+            }
+        }
+        // 如果 envelope 字段本身就是对象
+        if let Some(inner) = value.get(*key) {
+            if inner.is_object() && inner.get("commits").is_some() {
+                return inner.clone();
+            }
+        }
+    }
+    value.clone()
+}
 
+/// 从 AI 输出中提取 JSON（改进版：支持 markdown 代码块、裸 JSON、事件流）
+pub fn extract_json_from_output(output: &str) -> Result<String, String> {
+    // 策略 1: 从 markdown 代码块提取
+    if let Some(json) = extract_json_from_code_block(output) {
+        return Ok(json);
+    }
+
+    // 策略 2: 从事件流中提取最后一个 type=text 事件（OpenCode --format json）
+    if let Some(json) = extract_json_from_event_stream(output) {
+        return Ok(json);
+    }
+
+    // 策略 3: 使用平衡括号提取裸 JSON 对象
+    if let Some(json) = extract_balanced_json(output) {
+        return Ok(json);
+    }
+
+    Err("Could not find JSON in AI output".to_string())
+}
+
+/// 从 markdown 代码块中提取 JSON
+fn extract_json_from_code_block(output: &str) -> Option<String> {
+    let lines: Vec<&str> = output.lines().collect();
     let mut json_start = None;
     let mut json_end = None;
-    let mut brace_count = 0;
     let mut in_json = false;
 
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-
-        if trimmed.starts_with("```json") {
-            in_json = true;
-            continue;
-        }
-
-        if trimmed == "```" && in_json {
-            json_end = Some(i);
-            break;
-        }
-
-        if in_json {
-            if json_start.is_none() {
-                json_start = Some(i);
-            }
-            brace_count += trimmed.matches('{').count() as i32;
-            brace_count -= trimmed.matches('}').count() as i32;
-
-            if brace_count == 0 && json_start.is_some() {
-                json_end = Some(i + 1);
+        if trimmed.starts_with("```json") || trimmed == "```" && in_json {
+            if in_json {
+                json_end = Some(i);
                 break;
+            } else {
+                in_json = true;
+                continue;
             }
+        }
+        if in_json && json_start.is_none() && !trimmed.is_empty() {
+            json_start = Some(i);
         }
     }
 
     if let (Some(start), Some(end)) = (json_start, json_end) {
         let json_str = lines[start..end].join("\n");
-        Ok(json_str)
-    } else {
-        Err("Could not find JSON in AI output".to_string())
-    }
-}
-
-/// 执行提交计划
-fn execute_commits(workspace_root: &Path, plans: &[CommitPlan]) -> Result<Vec<AIGitCommit>, String> {
-    use std::process::Command;
-
-    let mut commits = Vec::new();
-
-    for plan in plans {
-        if plan.files.is_empty() {
-            continue;
-        }
-
-        // 添加文件
-        let mut add_args = vec!["add".to_string()];
-        add_args.extend(plan.files.iter().cloned());
-
-        let add_output = Command::new("git")
-            .args(&add_args)
-            .current_dir(workspace_root)
-            .output()
-            .map_err(|e| format!("Failed to git add files: {}", e))?;
-
-        if !add_output.status.success() {
-            return Err(format!(
-                "Failed to stage files: {}",
-                String::from_utf8_lossy(&add_output.stderr)
-            ));
-        }
-
-        // 提交
-        let commit_output = Command::new("git")
-            .args(["commit", "-m", &plan.message])
-            .current_dir(workspace_root)
-            .output()
-            .map_err(|e| format!("Failed to git commit: {}", e))?;
-
-        if !commit_output.status.success() {
-            return Err(format!(
-                "Failed to commit: {}",
-                String::from_utf8_lossy(&commit_output.stderr)
-            ));
-        }
-
-        // 获取短 SHA
-        let sha = git::utils::get_short_head_sha(workspace_root).unwrap_or_else(|| "unknown".to_string());
-
-        commits.push(AIGitCommit {
-            sha,
-            message: plan.message.clone(),
-            files: plan.files.clone(),
-        });
-    }
-
-    Ok(commits)
-}
-
-/// 提交风格
-#[derive(Debug, Clone)]
-struct CommitStyle {
-    is_conventional: bool,
-    is_chinese: bool,
-}
-
-impl Default for CommitStyle {
-    fn default() -> Self {
-        Self {
-            is_conventional: true,
-            is_chinese: true,
+        // 验证是否为有效 JSON
+        if serde_json::from_str::<Value>(&json_str).is_ok() {
+            return Some(json_str);
         }
     }
+    None
 }
 
-/// 变更分组
-#[derive(Debug, Clone)]
-struct ChangeGroup {
-    key: String,
-    files: Vec<ChangeFile>,
-}
-
-impl ChangeGroup {
-    fn new(key: String) -> Self {
-        Self {
-            key,
-            files: Vec::new(),
+/// 从事件流中提取 JSON（OpenCode --format json 输出格式）
+fn extract_json_from_event_stream(output: &str) -> Option<String> {
+    // 逆序查找最后一个包含 "type":"text" 或 type=text 的事件
+    let mut last_text_content = None;
+    for line in output.lines().rev() {
+        let trimmed = line.trim();
+        if let Ok(event) = serde_json::from_str::<Value>(trimmed) {
+            if event.get("type").and_then(|v| v.as_str()) == Some("text") {
+                if let Some(part) = event.get("part") {
+                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                        last_text_content = Some(text.to_string());
+                        break;
+                    }
+                }
+            }
         }
     }
 
-    fn add_file(&mut self, path: String, staged: bool) {
-        self.files.push(ChangeFile { path, staged });
+    if let Some(text) = last_text_content {
+        // 从 text 内容中提取 JSON
+        if let Some(json) = extract_balanced_json(&text) {
+            return Some(json);
+        }
     }
+    None
 }
 
-/// 变更文件
-#[derive(Debug, Clone)]
-struct ChangeFile {
-    path: String,
-    staged: bool,
-}
-
-/// 提交计划
-#[derive(Debug, Clone)]
-struct CommitPlan {
-    message: String,
-    files: Vec<String>,
+/// 使用平衡括号提取第一个完整 JSON 对象
+fn extract_balanced_json(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' {
+            let start = i;
+            let mut depth = 0;
+            let mut in_string = false;
+            let mut escape = false;
+            while i < chars.len() {
+                let c = chars[i];
+                if escape {
+                    escape = false;
+                } else if c == '\\' && in_string {
+                    escape = true;
+                } else if c == '"' {
+                    in_string = !in_string;
+                } else if !in_string {
+                    if c == '{' {
+                        depth += 1;
+                    } else if c == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            let candidate: String = chars[start..=i].iter().collect();
+                            if let Ok(val) = serde_json::from_str::<Value>(&candidate) {
+                                // 确保包含 commits 或 success 字段
+                                if val.get("commits").is_some() || val.get("success").is_some() {
+                                    return Some(candidate);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 /// AI 提交输出

@@ -1,17 +1,24 @@
 use axum::extract::ws::WebSocket;
 use std::path::PathBuf;
+use std::time::Duration;
+use tracing::{info, warn, error};
 
 use crate::server::context::{
-    resolve_project, resolve_workspace, resolve_workspace_branch, SharedAppState,
+    resolve_project, resolve_workspace, resolve_workspace_branch, HandlerContext, SharedAppState,
+    TaskBroadcastEvent,
 };
 use crate::server::git;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
+/// AI 代理执行超时（5 分钟）
+const AI_AGENT_TIMEOUT: Duration = Duration::from_secs(600);
+
 pub async fn try_handle_git_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
         // v1.11: Git fetch (UX-3a)
@@ -606,6 +613,242 @@ pub async fn try_handle_git_message(
             Ok(true)
         }
 
+        // v1.33: AI Git merge
+        ClientMessage::GitAIMerge {
+            project,
+            workspace,
+            ai_agent,
+            default_branch,
+        } => {
+            try_handle_git_ai_merge(
+                project.clone(),
+                workspace.clone(),
+                ai_agent.clone(),
+                default_branch.clone(),
+                socket,
+                app_state,
+                ctx,
+            )
+            .await
+        }
+
         _ => Ok(false),
     }
+}
+
+/// 处理 AI 智能合并（后台执行，不阻塞 WebSocket 主循环）
+async fn try_handle_git_ai_merge(
+    project: String,
+    workspace: String,
+    ai_agent: Option<String>,
+    default_branch: String,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    let (proj_ctx, source_branch) =
+        match resolve_workspace_branch(app_state, &project, &workspace).await {
+            Ok(r) => r,
+            Err(e) => {
+                send_message(socket, &e.to_server_error()).await?;
+                return Ok(true);
+            }
+        };
+
+    if source_branch == "HEAD" || source_branch.is_empty() {
+        let msg = ServerMessage::GitAIMergeResult {
+            project: project.clone(),
+            workspace: workspace.clone(),
+            success: false,
+            message: "Workspace is in detached HEAD state. Create/switch to a branch first."
+                .to_string(),
+            conflicts: vec![],
+        };
+        send_message(socket, &msg).await?;
+        let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
+            origin_conn_id: ctx.conn_meta.conn_id.clone(),
+            message: msg,
+        });
+        return Ok(true);
+    }
+
+    let root = proj_ctx.root_path;
+    let project_name = proj_ctx.project_name;
+    let ai_agent_type = ai_agent.unwrap_or_else(|| "cursor".to_string());
+
+    // 通过 cmd_output_tx 异步回传结果，不阻塞 WS 主循环
+    let cmd_output_tx = ctx.cmd_output_tx.clone();
+    let task_broadcast_tx = ctx.task_broadcast_tx.clone();
+    let origin_conn_id = ctx.conn_meta.conn_id.clone();
+
+    info!(
+        "AI merge started: project={}, workspace={}, agent={}, {} -> {}",
+        project, workspace, ai_agent_type, source_branch, default_branch
+    );
+
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(
+            AI_AGENT_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                handle_ai_merge_internal(
+                    &root,
+                    &project_name,
+                    &source_branch,
+                    &default_branch,
+                    &ai_agent_type,
+                )
+            }),
+        )
+        .await;
+
+        let msg = match result {
+            Ok(Ok(Ok(merge_result))) => {
+                info!(
+                    "AI merge succeeded: project={}, workspace={}",
+                    project, workspace
+                );
+                ServerMessage::GitAIMergeResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success: merge_result.success,
+                    message: merge_result.message,
+                    conflicts: merge_result.conflicts,
+                }
+            }
+            Ok(Ok(Err(e))) => {
+                warn!("AI merge failed: project={}, workspace={}, error={}", project, workspace, e);
+                ServerMessage::GitAIMergeResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success: false,
+                    message: e,
+                    conflicts: vec![],
+                }
+            }
+            Ok(Err(e)) => {
+                error!("AI merge task panicked: {}", e);
+                ServerMessage::GitAIMergeResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success: false,
+                    message: format!("AI merge task failed: {}", e),
+                    conflicts: vec![],
+                }
+            }
+            Err(_) => {
+                error!(
+                    "AI merge timed out after {}s: project={}, workspace={}",
+                    AI_AGENT_TIMEOUT.as_secs(), project, workspace
+                );
+                ServerMessage::GitAIMergeResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success: false,
+                    message: format!(
+                        "AI agent timed out after {} seconds",
+                        AI_AGENT_TIMEOUT.as_secs()
+                    ),
+                    conflicts: vec![],
+                }
+            }
+        };
+
+        // 发送给发起者
+        if let Err(e) = cmd_output_tx.send(msg.clone()).await {
+            error!("Failed to send AI merge result to WS: {}", e);
+        }
+        // 广播给其他连接
+        let _ = task_broadcast_tx.send(TaskBroadcastEvent {
+            origin_conn_id,
+            message: msg,
+        });
+    });
+
+    Ok(true)
+}
+
+/// AI 合并结果
+struct AIMergeOutput {
+    success: bool,
+    message: String,
+    conflicts: Vec<String>,
+}
+
+/// 内部函数：执行 AI 智能合并逻辑
+fn handle_ai_merge_internal(
+    repo_root: &std::path::Path,
+    project_name: &str,
+    source_branch: &str,
+    default_branch: &str,
+    ai_agent: &str,
+) -> Result<AIMergeOutput, String> {
+    // 确保 integration worktree 存在
+    let integration_path =
+        git::ensure_integration_worktree(repo_root, project_name, default_branch)
+            .map_err(|e| format!("Failed to ensure integration worktree: {}", e))?;
+    let integration_root = std::path::PathBuf::from(&integration_path);
+
+    // 构建合并 prompt
+    let prompt = build_ai_merge_prompt(source_branch, default_branch);
+
+    // 调用 AI agent
+    let agent_args = super::branch_commit::build_ai_agent_command(ai_agent, &prompt)?;
+    let ai_output = super::branch_commit::execute_ai_agent(&integration_root, &agent_args)?;
+
+    // 解析结果
+    parse_ai_merge_result(&ai_output)
+}
+
+/// 构建 AI 合并提示词
+fn build_ai_merge_prompt(source_branch: &str, default_branch: &str) -> String {
+    format!(
+        r#"你是一个 Git 合并助手。请在当前目录执行合并操作。这是纯本地操作，禁止任何网络请求。
+
+**任务**：将分支 `{source_branch}` 合并到 `{default_branch}`
+
+请确保当前在 `{default_branch}` 分支上，然后执行合并。如果有冲突，尝试解决并提交。
+以严格 JSON 格式输出结果（只输出 JSON，不要输出其他内容）：
+```json
+{{
+  "success": true,
+  "message": "操作结果描述",
+  "conflicts": ["冲突文件路径列表，无冲突则为空数组"]
+}}
+```"#
+    )
+}
+
+/// 解析 AI 合并结果
+fn parse_ai_merge_result(output: &str) -> Result<AIMergeOutput, String> {
+    let json_str = super::branch_commit::extract_json_from_output(output)?;
+    let value: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|e| format!("Failed to parse AI merge output as JSON: {}", e))?;
+
+    // 兼容 envelope 格式
+    let inner = super::branch_commit::extract_inner_json(&value);
+
+    let success = inner
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let message = inner
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown result")
+        .to_string();
+    let conflicts = inner
+        .get("conflicts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(AIMergeOutput {
+        success,
+        message,
+        conflicts,
+    })
 }

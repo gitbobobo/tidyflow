@@ -1,6 +1,6 @@
 use axum::extract::ws::WebSocket;
 
-use crate::server::context::SharedAppState;
+use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::protocol::ClientMessage;
 
 mod branch_commit;
@@ -14,6 +14,7 @@ pub async fn handle_git_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     if status_diff::try_handle_git_message(client_msg, socket, app_state).await? {
         return Ok(true);
@@ -23,11 +24,11 @@ pub async fn handle_git_message(
         return Ok(true);
     }
 
-    if branch_commit::try_handle_git_message(client_msg, socket, app_state).await? {
+    if branch_commit::try_handle_git_message(client_msg, socket, app_state, ctx).await? {
         return Ok(true);
     }
 
-    if integration::try_handle_git_message(client_msg, socket, app_state).await? {
+    if integration::try_handle_git_message(client_msg, socket, app_state, ctx).await? {
         return Ok(true);
     }
 
