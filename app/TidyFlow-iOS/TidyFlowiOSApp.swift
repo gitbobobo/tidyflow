@@ -3,8 +3,15 @@ import SwiftUI
 /// 导航路由定义
 enum MobileRoute: Hashable {
     case projects
-    case workspaces(project: String)
-    case terminal(project: String, workspace: String, command: String? = nil)
+    case workspaceDetail(project: String, workspace: String)
+    case workspaceTasks(project: String, workspace: String)
+    case terminal(
+        project: String,
+        workspace: String,
+        command: String? = nil,
+        commandIcon: String? = nil,
+        commandName: String? = nil
+    )
     case terminalAttach(project: String, workspace: String, termId: String)
 }
 
@@ -20,10 +27,18 @@ struct TidyFlowiOSApp: App {
                         switch route {
                         case .projects:
                             ProjectListView()
-                        case .workspaces(let project):
-                            WorkspaceListView(project: project)
-                        case .terminal(let project, let workspace, let command):
-                            MobileTerminalView(project: project, workspace: workspace, command: command)
+                        case .workspaceDetail(let project, let workspace):
+                            WorkspaceDetailView(project: project, workspace: workspace)
+                        case .workspaceTasks(let project, let workspace):
+                            WorkspaceTasksView(project: project, workspace: workspace)
+                        case .terminal(let project, let workspace, let command, let commandIcon, let commandName):
+                            MobileTerminalView(
+                                project: project,
+                                workspace: workspace,
+                                command: command,
+                                commandIcon: commandIcon,
+                                commandName: commandName
+                            )
                         case .terminalAttach(let project, let workspace, let termId):
                             MobileTerminalView(project: project, workspace: workspace, termId: termId)
                         }

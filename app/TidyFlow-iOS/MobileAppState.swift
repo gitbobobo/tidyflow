@@ -31,6 +31,53 @@ private struct PairErrorHTTPResponse: Decodable {
     let message: String
 }
 
+enum MobileWorkspaceTaskType: String {
+    case aiCommit
+    case aiMerge
+    case projectCommand
+}
+
+enum MobileWorkspaceTaskStatus: String {
+    case pending
+    case running
+    case completed
+    case failed
+    case cancelled
+
+    var isActive: Bool {
+        self == .pending || self == .running
+    }
+}
+
+struct MobileWorkspaceTask: Identifiable, Equatable {
+    let id: String
+    let project: String
+    let workspace: String
+    let type: MobileWorkspaceTaskType
+    var title: String
+    var icon: String
+    var status: MobileWorkspaceTaskStatus
+    var message: String
+    let createdAt: Date
+    var startedAt: Date?
+    var completedAt: Date?
+    var commandId: String?
+    var remoteTaskId: String?
+    var lastOutputLine: String?
+}
+
+struct MobileWorkspaceGitSummary: Equatable {
+    let additions: Int
+    let deletions: Int
+    let defaultBranch: String?
+}
+
+private struct MobileTerminalPresentation {
+    let icon: String
+    let name: String
+    let sourceCommand: String?
+}
+
 @MainActor
 protocol MobileTerminalOutputSink: AnyObject {
     func writeOutput(_ bytes: [UInt8])
@@ -58,8 +105,15 @@ final class MobileAppState: ObservableObject {
     // 数据
     @Published var projects: [ProjectInfo] = []
     @Published var workspaces: [WorkspaceInfo] = []
+    @Published var workspacesByProject: [String: [WorkspaceInfo]] = [:]
     @Published var activeTerminals: [TerminalSessionInfo] = []
     @Published var customCommands: [CustomCommand] = []
+    @Published var workspaceShortcuts: [String: String] = [:]
+    @Published var workspaceTerminalOpenTime: [String: Date] = [:]
+    @Published var workspaceGitSummary: [String: MobileWorkspaceGitSummary] = [:]
+    @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
+    @Published var commitAIAgent: String?
+    @Published var mergeAIAgent: String?
 
     // 导航
     @Published var navigationPath = NavigationPath()
@@ -75,6 +129,10 @@ final class MobileAppState: ObservableObject {
     private var pendingAttachTermId: String = ""
     /// 待执行的自定义命令（终端创建后自动发送）
     private var pendingCustomCommand: String = ""
+    /// 待执行命令图标（用于终端列表展示）
+    private var pendingCustomCommandIcon: String = ""
+    /// 待执行命令名称（用于终端列表展示）
+    private var pendingCustomCommandName: String = ""
     /// Ctrl 一次性修饰状态（用于虚拟键盘输入）
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
@@ -85,6 +143,18 @@ final class MobileAppState: ObservableObject {
     /// 终端未 ready 或尚未绑定 sink 时暂存输出，避免首屏丢数据
     private var pendingOutputChunks: [[UInt8]] = []
     private let pendingOutputChunkLimit = 128
+    /// term_id -> 展示信息（图标/名称）
+    private var terminalPresentationById: [String: MobileTerminalPresentation] = [:]
+    /// AI 提交结果不带 project/workspace，按触发顺序匹配
+    private var aiCommitPendingTaskIds: [String] = []
+    /// AI 合并按 project 匹配
+    private var aiMergePendingTaskIdByProject: [String: String] = [:]
+    /// 项目命令 started/completed 路由（project|workspace|commandId -> taskId 队列）
+    private var projectCommandPendingTaskIdsByKey: [String: [String]] = [:]
+    /// 项目命令 remote task_id -> 本地 taskId
+    private var projectCommandTaskIdByRemoteTaskId: [String: String] = [:]
+    /// 当前详情页选中的项目名（兼容旧接口）
+    private var selectedProjectName: String = ""
 
     private let wsClient = WSClient()
 
@@ -200,15 +270,209 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 项目/工作空间
 
+    /// 刷新项目树（项目、工作空间、终端、设置）
+    func refreshProjectTree() {
+        wsClient.requestListProjects()
+        wsClient.requestTermList()
+        wsClient.requestGetClientSettings()
+    }
+
     func selectProject(_ projectName: String) {
+        selectedProjectName = projectName
         workspaces = []
         wsClient.requestListWorkspaces(project: projectName)
         wsClient.requestTermList()
     }
 
+    /// 工作空间详情页刷新
+    func refreshWorkspaceDetail(project: String, workspace: String) {
+        wsClient.requestTermList()
+        wsClient.requestGitStatus(project: project, workspace: workspace)
+    }
+
+    /// 懒加载项目工作空间
+    func requestWorkspacesIfNeeded(project: String) {
+        if workspacesByProject[project] == nil {
+            wsClient.requestListWorkspaces(project: project)
+        }
+    }
+
+    func workspacesForProject(_ project: String) -> [WorkspaceInfo] {
+        workspacesByProject[project] ?? []
+    }
+
+    func projectCommands(for project: String) -> [ProjectCommand] {
+        projects.first(where: { $0.name == project })?.commands ?? []
+    }
+
+    /// 自动分配的工作空间快捷键（按终端首次打开时间）
+    var autoWorkspaceShortcuts: [String: String] {
+        let sorted = workspaceTerminalOpenTime.sorted { $0.value < $1.value }.prefix(9)
+        let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+        var result: [String: String] = [:]
+        for (index, item) in sorted.enumerated() {
+            result[keys[index]] = item.key
+        }
+        return result
+    }
+
+    func getWorkspaceShortcutKey(workspaceKey: String) -> String? {
+        let globalKey: String
+        if workspaceKey.contains(":") {
+            globalKey = workspaceKey
+        } else {
+            let components = workspaceKey.split(separator: "/", maxSplits: 1)
+            if components.count == 2 {
+                var wsName = String(components[1])
+                if wsName == "(default)" { wsName = "default" }
+                globalKey = "\(components[0]):\(wsName)"
+            } else {
+                globalKey = workspaceKey
+            }
+        }
+        for (shortcut, key) in autoWorkspaceShortcuts where key == globalKey {
+            return shortcut
+        }
+        return nil
+    }
+
+    /// iOS 侧与 macOS 相同的项目排序策略
+    var sortedProjectsForSidebar: [ProjectInfo] {
+        projects.sorted { lhs, rhs in
+            let lhsHasShortcut = projectMinShortcutKey(lhs) < Int.max
+            let rhsHasShortcut = projectMinShortcutKey(rhs) < Int.max
+            if lhsHasShortcut != rhsHasShortcut {
+                return lhsHasShortcut
+            }
+
+            if lhsHasShortcut && rhsHasShortcut {
+                let lhsTime = projectEarliestTerminalTime(lhs)
+                let rhsTime = projectEarliestTerminalTime(rhs)
+                if let l = lhsTime, let r = rhsTime, l != r {
+                    return l < r
+                }
+            }
+
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
     /// 获取指定项目+工作空间的活跃终端
     func terminalsForWorkspace(project: String, workspace: String) -> [TerminalSessionInfo] {
         activeTerminals.filter { $0.project == project && $0.workspace == workspace && $0.isRunning }
+    }
+
+    func terminalPresentation(for termId: String) -> (icon: String, name: String)? {
+        guard let presentation = terminalPresentationById[termId] else { return nil }
+        return (presentation.icon, presentation.name)
+    }
+
+    func gitSummaryForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitSummary {
+        workspaceGitSummary[globalWorkspaceKey(project: project, workspace: workspace)] ??
+        MobileWorkspaceGitSummary(additions: 0, deletions: 0, defaultBranch: nil)
+    }
+
+    func tasksForWorkspace(project: String, workspace: String) -> [MobileWorkspaceTask] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let tasks = workspaceTasksByKey[key] ?? []
+        return tasks.sorted { lhs, rhs in
+            if lhs.status.isActive != rhs.status.isActive {
+                return lhs.status.isActive && !rhs.status.isActive
+            }
+            return lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    func runningTasksForWorkspace(project: String, workspace: String) -> [MobileWorkspaceTask] {
+        tasksForWorkspace(project: project, workspace: workspace).filter { $0.status.isActive }
+    }
+
+    func canCancelTask(_ task: MobileWorkspaceTask) -> Bool {
+        task.type == .projectCommand && task.status.isActive
+    }
+
+    func cancelTask(_ task: MobileWorkspaceTask) {
+        guard canCancelTask(task) else { return }
+
+        if let commandId = task.commandId {
+            wsClient.requestCancelProjectCommand(
+                project: task.project,
+                workspace: task.workspace,
+                commandId: commandId,
+                taskId: task.remoteTaskId
+            )
+        }
+
+        mutateTask(task.id) { item in
+            item.status = .cancelled
+            item.message = "已取消"
+            item.completedAt = Date()
+        }
+    }
+
+    func runAICommit(project: String, workspace: String) {
+        let task = createTask(
+            project: project,
+            workspace: workspace,
+            type: .aiCommit,
+            title: "一键提交",
+            icon: "sparkles",
+            message: "执行中..."
+        )
+        aiCommitPendingTaskIds.append(task.id)
+        wsClient.requestGitAICommit(project: project, workspace: workspace, aiAgent: commitAIAgent)
+    }
+
+    func runAIMerge(project: String, workspace: String) {
+        let task = createTask(
+            project: project,
+            workspace: workspace,
+            type: .aiMerge,
+            title: "智能合并",
+            icon: "cpu",
+            message: "执行中..."
+        )
+        aiMergePendingTaskIdByProject[project] = task.id
+        let summary = gitSummaryForWorkspace(project: project, workspace: workspace)
+        wsClient.requestGitMergeToDefault(
+            project: project,
+            workspace: workspace,
+            defaultBranch: summary.defaultBranch ?? "main"
+        )
+    }
+
+    func runProjectCommand(project: String, workspace: String, command: ProjectCommand) {
+        if command.interactive {
+            navigationPath.append(MobileRoute.terminal(
+                project: project,
+                workspace: workspace,
+                command: command.command,
+                commandIcon: command.icon,
+                commandName: command.name
+            ))
+            return
+        }
+
+        let task = createTask(
+            project: project,
+            workspace: workspace,
+            type: .projectCommand,
+            title: command.name,
+            icon: command.icon,
+            message: "等待启动..."
+        )
+        mutateTask(task.id) { item in
+            item.status = .pending
+            item.startedAt = nil
+            item.commandId = command.id
+        }
+
+        let routingKey = projectCommandRoutingKey(project: project, workspace: workspace, commandId: command.id)
+        var queue = projectCommandPendingTaskIdsByKey[routingKey] ?? []
+        queue.append(task.id)
+        projectCommandPendingTaskIdsByKey[routingKey] = queue
+
+        wsClient.requestRunProjectCommand(project: project, workspace: workspace, commandId: command.id)
     }
 
     // MARK: - 终端视图绑定
@@ -256,14 +520,24 @@ final class MobileAppState: ObservableObject {
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
         pendingCustomCommand = ""
+        pendingCustomCommandIcon = ""
+        pendingCustomCommandName = ""
         if isTerminalViewReady {
             fireTermCreate()
         }
     }
 
     /// 创建终端并在就绪后自动执行命令
-    func createTerminalWithCommand(project: String, workspace: String, command: String) {
+    func createTerminalWithCommand(
+        project: String,
+        workspace: String,
+        command: String,
+        icon: String? = nil,
+        name: String? = nil
+    ) {
         pendingCustomCommand = command
+        pendingCustomCommandIcon = icon ?? ""
+        pendingCustomCommandName = name ?? ""
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = ""
@@ -282,6 +556,9 @@ final class MobileAppState: ObservableObject {
         pendingTermProject = project
         pendingTermWorkspace = workspace
         pendingAttachTermId = termId
+        pendingCustomCommand = ""
+        pendingCustomCommandIcon = ""
+        pendingCustomCommandName = ""
         if isTerminalViewReady {
             fireTermCreate()
         }
@@ -300,6 +577,9 @@ final class MobileAppState: ObservableObject {
 
         if !attachId.isEmpty {
             // 附着已有终端
+            pendingCustomCommand = ""
+            pendingCustomCommandIcon = ""
+            pendingCustomCommandName = ""
             wsClient.requestTermAttach(termId: attachId)
         } else {
             // 创建新终端
@@ -349,6 +629,8 @@ final class MobileAppState: ObservableObject {
         pendingTermWorkspace = ""
         pendingAttachTermId = ""
         pendingCustomCommand = ""
+        pendingCustomCommandIcon = ""
+        pendingCustomCommandName = ""
         isTerminalViewReady = false
         pendingOutputChunks.removeAll()
         terminalSink = nil
@@ -364,9 +646,7 @@ final class MobileAppState: ObservableObject {
             if connected {
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
-                self.wsClient.requestListProjects()
-                self.wsClient.requestTermList()
-                self.wsClient.requestGetClientSettings()
+                self.refreshProjectTree()
             } else {
                 self.connectionMessage = "连接断开"
             }
@@ -375,21 +655,68 @@ final class MobileAppState: ObservableObject {
         wsClient.onProjectsList = { [weak self] result in
             guard let self else { return }
             self.projects = result.items
+            let names = Set(result.items.map(\.name))
+            self.workspacesByProject = self.workspacesByProject.filter { names.contains($0.key) }
+            for project in result.items {
+                self.wsClient.requestListWorkspaces(project: project.name)
+            }
         }
 
         wsClient.onWorkspacesList = { [weak self] result in
             guard let self else { return }
-            self.workspaces = result.items
+            self.workspacesByProject[result.project] = result.items
+            if self.selectedProjectName == result.project || self.workspaces.isEmpty {
+                self.workspaces = result.items
+            }
+        }
+
+        wsClient.onGitStatusResult = { [weak self] result in
+            guard let self else { return }
+            let additions = result.items.reduce(0) { $0 + ( $1.additions ?? 0 ) }
+            let deletions = result.items.reduce(0) { $0 + ( $1.deletions ?? 0 ) }
+            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            self.workspaceGitSummary[key] = MobileWorkspaceGitSummary(
+                additions: additions,
+                deletions: deletions,
+                defaultBranch: result.defaultBranch
+            )
         }
 
         wsClient.onTermList = { [weak self] result in
             guard let self else { return }
             self.activeTerminals = result.items
+            let liveIds = Set(result.items.map(\.termId))
+            self.terminalPresentationById = self.terminalPresentationById.filter { liveIds.contains($0.key) }
+
+            var activeWorkspaceKeys: Set<String> = []
+            for term in result.items where term.isRunning {
+                let key = self.globalWorkspaceKey(project: term.project, workspace: term.workspace)
+                activeWorkspaceKeys.insert(key)
+                if self.workspaceTerminalOpenTime[key] == nil {
+                    self.workspaceTerminalOpenTime[key] = Date()
+                }
+            }
+            self.workspaceTerminalOpenTime = self.workspaceTerminalOpenTime.filter { activeWorkspaceKeys.contains($0.key) }
         }
 
         wsClient.onTermCreated = { [weak self] result in
             guard let self else { return }
             self.currentTermId = result.termId
+            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            if self.workspaceTerminalOpenTime[key] == nil {
+                self.workspaceTerminalOpenTime[key] = Date()
+            }
+
+            let commandIcon = self.pendingCustomCommandIcon
+            let commandName = self.pendingCustomCommandName
+            if !commandIcon.isEmpty || !commandName.isEmpty {
+                self.terminalPresentationById[result.termId] = MobileTerminalPresentation(
+                    icon: commandIcon.isEmpty ? "terminal" : commandIcon,
+                    name: commandName.isEmpty ? "终端" : commandName,
+                    sourceCommand: self.pendingCustomCommand
+                )
+            }
+
             // 确保 PTY 尺寸与终端视图一致（兜底 resize）
             self.wsClient.requestTermResize(
                 termId: result.termId,
@@ -402,12 +729,14 @@ final class MobileAppState: ObservableObject {
             // 自定义命令：延迟发送，等 shell 初始化完成
             let cmd = self.pendingCustomCommand
             if !cmd.isEmpty {
-                self.pendingCustomCommand = ""
                 let termId = result.termId
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                     self?.wsClient.sendTerminalInput(cmd + "\n", termId: termId)
                 }
             }
+            self.pendingCustomCommand = ""
+            self.pendingCustomCommandIcon = ""
+            self.pendingCustomCommandName = ""
         }
 
         wsClient.onTermAttached = { [weak self] result in
@@ -440,11 +769,87 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onTermClosed = { [weak self] termId in
             guard let self else { return }
+            self.terminalPresentationById.removeValue(forKey: termId)
             if self.currentTermId == termId {
                 self.currentTermId = ""
             }
             // 刷新终端列表
             self.wsClient.requestTermList()
+        }
+
+        wsClient.onGitAICommitResult = { [weak self] result in
+            guard let self else { return }
+            guard let taskId = self.aiCommitPendingTaskIds.first else { return }
+            self.aiCommitPendingTaskIds.removeFirst()
+            self.mutateTask(taskId) { task in
+                task.status = result.success ? .completed : .failed
+                task.message = result.message
+                task.completedAt = Date()
+            }
+        }
+
+        wsClient.onGitMergeToDefaultResult = { [weak self] result in
+            guard let self else { return }
+            let resolvedTaskId =
+                self.aiMergePendingTaskIdByProject.removeValue(forKey: result.project)
+                ?? self.findLatestActiveTaskId(project: result.project, type: .aiMerge)
+            guard let taskId = resolvedTaskId else { return }
+            self.mutateTask(taskId) { task in
+                let success = result.ok && result.state == .completed
+                task.status = success ? .completed : .failed
+                task.message = result.message ?? (success ? "完成" : "失败")
+                task.completedAt = Date()
+            }
+        }
+
+        wsClient.onProjectCommandStarted = { [weak self] project, workspace, commandId, taskId in
+            guard let self else { return }
+            let routeKey = self.projectCommandRoutingKey(project: project, workspace: workspace, commandId: commandId)
+            let localTaskId: String?
+            if let mapped = self.projectCommandTaskIdByRemoteTaskId[taskId] {
+                localTaskId = mapped
+            } else if var queue = self.projectCommandPendingTaskIdsByKey[routeKey], !queue.isEmpty {
+                let first = queue.removeFirst()
+                self.projectCommandPendingTaskIdsByKey[routeKey] = queue.isEmpty ? nil : queue
+                self.projectCommandTaskIdByRemoteTaskId[taskId] = first
+                localTaskId = first
+            } else {
+                localTaskId = nil
+            }
+            guard let resolvedId = localTaskId else { return }
+            self.mutateTask(resolvedId) { task in
+                task.status = .running
+                task.startedAt = task.startedAt ?? Date()
+                task.message = "运行中..."
+                task.remoteTaskId = taskId
+            }
+        }
+
+        wsClient.onProjectCommandOutput = { [weak self] taskId, line in
+            guard let self else { return }
+            guard let localTaskId = self.projectCommandTaskIdByRemoteTaskId[taskId] else { return }
+            self.mutateTask(localTaskId) { task in
+                task.lastOutputLine = line
+            }
+        }
+
+        wsClient.onProjectCommandCompleted = { [weak self] project, workspace, commandId, taskId, ok, message in
+            guard let self else { return }
+            let routeKey = self.projectCommandRoutingKey(project: project, workspace: workspace, commandId: commandId)
+            let localTaskId = self.projectCommandTaskIdByRemoteTaskId.removeValue(forKey: taskId)
+                ?? self.projectCommandPendingTaskIdsByKey[routeKey]?.first
+            if let localTaskId,
+               var queue = self.projectCommandPendingTaskIdsByKey[routeKey],
+               queue.first == localTaskId {
+                queue.removeFirst()
+                self.projectCommandPendingTaskIdsByKey[routeKey] = queue.isEmpty ? nil : queue
+            }
+            guard let resolvedId = localTaskId else { return }
+            self.mutateTask(resolvedId) { task in
+                task.status = ok ? .completed : .failed
+                task.message = message ?? (ok ? "完成" : "失败")
+                task.completedAt = Date()
+            }
         }
 
         wsClient.onError = { [weak self] message in
@@ -454,7 +859,99 @@ final class MobileAppState: ObservableObject {
         wsClient.onClientSettingsResult = { [weak self] settings in
             guard let self else { return }
             self.customCommands = settings.customCommands
+            self.workspaceShortcuts = settings.workspaceShortcuts
+            self.commitAIAgent = settings.commitAIAgent
+            self.mergeAIAgent = settings.mergeAIAgent
         }
+    }
+
+    // MARK: - 排序/任务内部工具
+
+    private func globalWorkspaceKey(project: String, workspace: String) -> String {
+        "\(project):\(workspace)"
+    }
+
+    private func projectEarliestTerminalTime(_ project: ProjectInfo) -> Date? {
+        var earliest: Date?
+        for workspace in workspacesForProject(project.name) {
+            let key = globalWorkspaceKey(project: project.name, workspace: workspace.name)
+            if let time = workspaceTerminalOpenTime[key] {
+                if earliest == nil || time < earliest! {
+                    earliest = time
+                }
+            }
+        }
+        return earliest
+    }
+
+    private func projectMinShortcutKey(_ project: ProjectInfo) -> Int {
+        var minKey = Int.max
+        for workspace in workspacesForProject(project.name) {
+            let wsKey = workspace.name == "default"
+                ? "\(project.name)/(default)"
+                : "\(project.name)/\(workspace.name)"
+            if let shortcut = getWorkspaceShortcutKey(workspaceKey: wsKey),
+               let num = Int(shortcut) {
+                let sortValue = num == 0 ? 10 : num
+                minKey = min(minKey, sortValue)
+            }
+        }
+        return minKey
+    }
+
+    @discardableResult
+    private func createTask(
+        project: String,
+        workspace: String,
+        type: MobileWorkspaceTaskType,
+        title: String,
+        icon: String,
+        message: String
+    ) -> MobileWorkspaceTask {
+        let task = MobileWorkspaceTask(
+            id: UUID().uuidString,
+            project: project,
+            workspace: workspace,
+            type: type,
+            title: title,
+            icon: icon,
+            status: .running,
+            message: message,
+            createdAt: Date(),
+            startedAt: Date(),
+            completedAt: nil,
+            commandId: nil,
+            remoteTaskId: nil,
+            lastOutputLine: nil
+        )
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var tasks = workspaceTasksByKey[key] ?? []
+        tasks.append(task)
+        workspaceTasksByKey[key] = tasks
+        return task
+    }
+
+    private func mutateTask(_ taskId: String, mutate: (inout MobileWorkspaceTask) -> Void) {
+        for (key, var tasks) in workspaceTasksByKey {
+            if let index = tasks.firstIndex(where: { $0.id == taskId }) {
+                mutate(&tasks[index])
+                workspaceTasksByKey[key] = tasks
+                return
+            }
+        }
+    }
+
+    private func findLatestActiveTaskId(project: String, type: MobileWorkspaceTaskType) -> String? {
+        workspaceTasksByKey.values
+            .flatMap { $0 }
+            .filter { $0.project == project && $0.type == type && $0.status.isActive }
+            .sorted { $0.createdAt > $1.createdAt }
+            .first?
+            .id
+    }
+
+    private func projectCommandRoutingKey(project: String, workspace: String, commandId: String) -> String {
+        "\(project)|\(workspace)|\(commandId)"
     }
 
     // MARK: - 输出缓冲

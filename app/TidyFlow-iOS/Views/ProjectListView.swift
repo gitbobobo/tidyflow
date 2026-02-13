@@ -6,27 +6,63 @@ struct ProjectListView: View {
 
     var body: some View {
         List {
-            if appState.projects.isEmpty {
+            if appState.sortedProjectsForSidebar.isEmpty {
                 ContentUnavailableView("暂无项目", systemImage: "folder")
             } else {
-                ForEach(appState.projects, id: \.name) { project in
-                    NavigationLink(value: MobileRoute.workspaces(project: project.name)) {
-                        VStack(alignment: .leading, spacing: 4) {
+                ForEach(appState.sortedProjectsForSidebar, id: \.name) { project in
+                    Section {
+                        let workspaces = appState.workspacesForProject(project.name)
+                        if workspaces.isEmpty {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.85)
+                                Text("加载工作空间中...")
+                                    .foregroundColor(.secondary)
+                            }
+                            .onAppear {
+                                appState.requestWorkspacesIfNeeded(project: project.name)
+                            }
+                        } else {
+                            ForEach(workspaces, id: \.name) { workspace in
+                                NavigationLink(value: MobileRoute.workspaceDetail(
+                                    project: project.name,
+                                    workspace: workspace.name
+                                )) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(workspace.name)
+                                            .font(.body)
+                                        HStack(spacing: 8) {
+                                            Text(workspace.branch)
+                                            Text(workspace.status)
+                                        }
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(project.name)
-                                .font(.body)
+                                .font(.headline)
                             if !project.root.isEmpty {
                                 Text(project.root)
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
-                                    .lineLimit(1)
                             }
                         }
-                        .padding(.vertical, 2)
                     }
                 }
             }
         }
         .navigationTitle("项目")
+        .refreshable {
+            appState.refreshProjectTree()
+        }
+        .onAppear {
+            appState.refreshProjectTree()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

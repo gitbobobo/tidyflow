@@ -9,6 +9,10 @@ struct MobileTerminalView: View {
     var termId: String? = nil
     /// 创建后自动执行的命令
     var command: String? = nil
+    /// 命令图标（用于终端列表展示）
+    var commandIcon: String? = nil
+    /// 命令名称（用于终端列表展示）
+    var commandName: String? = nil
 
     var body: some View {
         SwiftTermTerminalView(
@@ -29,7 +33,13 @@ struct MobileTerminalView: View {
             if let termId {
                 appState.attachTerminal(project: project, workspace: workspace, termId: termId)
             } else if let command {
-                appState.createTerminalWithCommand(project: project, workspace: workspace, command: command)
+                appState.createTerminalWithCommand(
+                    project: project,
+                    workspace: workspace,
+                    command: command,
+                    icon: commandIcon,
+                    name: commandName
+                )
             } else {
                 appState.createTerminalForWorkspace(project: project, workspace: workspace)
             }
