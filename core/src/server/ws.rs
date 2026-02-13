@@ -23,7 +23,7 @@ use std::os::unix::process::parent_id;
 
 use crate::server::context::{
     ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningCommands,
-    TermSubscription,
+    TaskBroadcastTx, TermSubscription,
 };
 use crate::server::handlers;
 use crate::server::lsp::LspSupervisor;
@@ -138,6 +138,8 @@ struct AppContext {
     expected_ws_token: Option<String>,
     pairing_registry: SharedPairingRegistry,
     remote_sub_registry: SharedRemoteSubRegistry,
+    task_broadcast_tx: TaskBroadcastTx,
+    running_commands: SharedRunningCommands,
 }
 
 /// Run the WebSocket server on the specified port
@@ -177,6 +179,12 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("Binding on {} (LAN clients can connect)", bind_addr);
 
+    // 创建全局任务广播通道
+    let (task_broadcast_tx, _) = tokio::sync::broadcast::channel(256);
+
+    // 全局共享的运行中命令注册表
+    let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
+
     let ctx = AppContext {
         app_state: shared_state.clone(),
         save_tx,
@@ -188,6 +196,8 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
             issued_tokens: load_tokens_from_state(&shared_state.read().await.paired_tokens),
         })),
         remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
+        task_broadcast_tx,
+        running_commands,
     };
 
     let app = Router::new()
@@ -300,6 +310,8 @@ async fn ws_handler(
                 ctx.scrollback_tx,
                 conn_meta,
                 ctx.remote_sub_registry,
+                ctx.task_broadcast_tx,
+                ctx.running_commands,
             )
         })
         .into_response()
@@ -780,6 +792,8 @@ async fn handle_socket(
     scrollback_tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     conn_meta: ConnectionMeta,
     remote_sub_registry: SharedRemoteSubRegistry,
+    task_broadcast_tx: TaskBroadcastTx,
+    running_commands: SharedRunningCommands,
 ) {
     info!(
         "New WebSocket connection established (conn_id={}, remote={})",
@@ -801,13 +815,13 @@ async fn handle_socket(
     // Create file watcher
     let watcher = Arc::new(Mutex::new(WorkspaceWatcher::new(tx_watch)));
 
-    // 正在运行的项目命令注册表
-    let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
-
     // 项目命令输出通道：后台 task 逐行推送 → 主循环转发到 WebSocket
     let (cmd_output_tx, mut cmd_output_rx) =
         tokio::sync::mpsc::channel::<ServerMessage>(256);
     let lsp_supervisor = LspSupervisor::new(cmd_output_tx.clone());
+
+    // 订阅任务广播通道（接收其他连接发起的任务事件）
+    let mut task_broadcast_rx = task_broadcast_tx.subscribe();
 
     // 构造 HandlerContext，收拢所有共享依赖
     let handler_ctx = HandlerContext {
@@ -819,6 +833,7 @@ async fn handle_socket(
         agg_tx: agg_tx.clone(),
         running_commands: running_commands.clone(),
         cmd_output_tx: cmd_output_tx.clone(),
+        task_broadcast_tx: task_broadcast_tx.clone(),
         lsp_supervisor: lsp_supervisor.clone(),
         conn_meta: conn_meta.clone(),
         remote_sub_registry: remote_sub_registry.clone(),
@@ -1011,6 +1026,25 @@ async fn handle_socket(
             Some(msg) = cmd_output_rx.recv() => {
                 if let Err(e) = send_message(&mut socket, &msg).await {
                     error!("Failed to send command output message: {}", e);
+                }
+            }
+
+            // 任务广播：接收其他连接发起的任务事件
+            result = task_broadcast_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        if event.origin_conn_id != conn_meta.conn_id {
+                            if let Err(e) = send_message(&mut socket, &event.message).await {
+                                error!("Failed to send broadcast task event: {}", e);
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("Task broadcast lagged by {} messages", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        debug!("Task broadcast channel closed");
+                    }
                 }
             }
 
@@ -1228,7 +1262,7 @@ async fn handle_client_message(
     }
 
     // Git 消息
-    if handlers::git::handle_git_message(&client_msg, socket, &ctx.app_state).await? {
+    if handlers::git::handle_git_message(&client_msg, socket, &ctx.app_state, ctx).await? {
         return Ok(());
     }
 

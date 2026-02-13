@@ -5,7 +5,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::server::context::{resolve_workspace, HandlerContext, RunningCommandEntry};
+use crate::server::context::{resolve_workspace, HandlerContext, RunningCommandEntry, TaskBroadcastEvent};
 use crate::server::protocol::{
     ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, WorkspaceInfo,
 };
@@ -450,16 +450,18 @@ pub async fn handle_project_message(
 
             let task_id = uuid::Uuid::new_v4().to_string();
 
-            // 发送开始通知
-            send_message(
-                socket,
-                &ServerMessage::ProjectCommandStarted {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    command_id: command_id.clone(),
-                    task_id: task_id.clone(),
-                },
-            ).await?;
+            // 发送开始通知（发起者 + 广播给其他连接）
+            let started_msg = ServerMessage::ProjectCommandStarted {
+                project: project.clone(),
+                workspace: workspace.clone(),
+                command_id: command_id.clone(),
+                task_id: task_id.clone(),
+            };
+            send_message(socket, &started_msg).await?;
+            let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
+                origin_conn_id: ctx.conn_meta.conn_id.clone(),
+                message: started_msg,
+            });
 
             // 使用登录 shell 执行，确保加载用户环境变量（PATH 等）
             let shell = if std::path::Path::new("/bin/zsh").exists() {
@@ -478,14 +480,19 @@ pub async fn handle_project_message(
             {
                 Ok(child) => child,
                 Err(e) => {
-                    let _ = ctx.cmd_output_tx.send(ServerMessage::ProjectCommandCompleted {
+                    let msg = ServerMessage::ProjectCommandCompleted {
                         project: project.clone(),
                         workspace: workspace.clone(),
                         command_id: command_id.clone(),
                         task_id,
                         ok: false,
                         message: Some(format!("执行失败: {}", e)),
-                    }).await;
+                    };
+                    let _ = ctx.cmd_output_tx.send(msg.clone()).await;
+                    let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
+                        origin_conn_id: ctx.conn_meta.conn_id.clone(),
+                        message: msg,
+                    });
                     return Ok(true);
                 }
             };
@@ -506,6 +513,8 @@ pub async fn handle_project_message(
 
             let tx = ctx.cmd_output_tx.clone();
             let rc = ctx.running_commands.clone();
+            let broadcast_tx = ctx.task_broadcast_tx.clone();
+            let origin_conn_id = ctx.conn_meta.conn_id.clone();
             let p = project.clone();
             let w = workspace.clone();
             let c = command_id.clone();
@@ -516,6 +525,8 @@ pub async fn handle_project_message(
 
                 let stdout_collected = collected.clone();
                 let stdout_tx = tx.clone();
+                let stdout_broadcast_tx = broadcast_tx.clone();
+                let stdout_origin = origin_conn_id.clone();
                 let stdout_tid = tid.clone();
                 let stdout_handle = tokio::spawn(async move {
                     if let Some(pipe) = stdout_pipe {
@@ -523,16 +534,23 @@ pub async fn handle_project_message(
                         let mut lines = reader.lines();
                         while let Ok(Some(line)) = lines.next_line().await {
                             stdout_collected.lock().await.push(line.clone());
-                            let _ = stdout_tx.send(ServerMessage::ProjectCommandOutput {
+                            let msg = ServerMessage::ProjectCommandOutput {
                                 task_id: stdout_tid.clone(),
                                 line,
-                            }).await;
+                            };
+                            let _ = stdout_tx.send(msg.clone()).await;
+                            let _ = stdout_broadcast_tx.send(TaskBroadcastEvent {
+                                origin_conn_id: stdout_origin.clone(),
+                                message: msg,
+                            });
                         }
                     }
                 });
 
                 let stderr_collected = collected.clone();
                 let stderr_tx = tx.clone();
+                let stderr_broadcast_tx = broadcast_tx.clone();
+                let stderr_origin = origin_conn_id.clone();
                 let stderr_tid = tid.clone();
                 let stderr_handle = tokio::spawn(async move {
                     if let Some(pipe) = stderr_pipe {
@@ -540,10 +558,15 @@ pub async fn handle_project_message(
                         let mut lines = reader.lines();
                         while let Ok(Some(line)) = lines.next_line().await {
                             stderr_collected.lock().await.push(line.clone());
-                            let _ = stderr_tx.send(ServerMessage::ProjectCommandOutput {
+                            let msg = ServerMessage::ProjectCommandOutput {
                                 task_id: stderr_tid.clone(),
                                 line,
-                            }).await;
+                            };
+                            let _ = stderr_tx.send(msg.clone()).await;
+                            let _ = stderr_broadcast_tx.send(TaskBroadcastEvent {
+                                origin_conn_id: stderr_origin.clone(),
+                                message: msg,
+                            });
                         }
                     }
                 });
@@ -565,14 +588,19 @@ pub async fn handle_project_message(
                 let exit_status = match wait_result {
                     Some(Ok(status)) => status,
                     Some(Err(e)) => {
-                        let _ = tx.send(ServerMessage::ProjectCommandCompleted {
+                        let msg = ServerMessage::ProjectCommandCompleted {
                             project: p,
                             workspace: w,
                             command_id: c,
                             task_id: tid,
                             ok: false,
                             message: Some(format!("执行失败: {}", e)),
-                        }).await;
+                        };
+                        let _ = tx.send(msg.clone()).await;
+                        let _ = broadcast_tx.send(TaskBroadcastEvent {
+                            origin_conn_id: origin_conn_id.clone(),
+                            message: msg,
+                        });
                         return;
                     }
                     None => return,
@@ -593,13 +621,24 @@ pub async fn handle_project_message(
                 );
 
                 let _ = tx.send(ServerMessage::ProjectCommandCompleted {
-                    project: p,
-                    workspace: w,
-                    command_id: c,
-                    task_id: tid,
+                    project: p.clone(),
+                    workspace: w.clone(),
+                    command_id: c.clone(),
+                    task_id: tid.clone(),
                     ok,
-                    message: Some(message),
+                    message: Some(message.clone()),
                 }).await;
+                let _ = broadcast_tx.send(TaskBroadcastEvent {
+                    origin_conn_id,
+                    message: ServerMessage::ProjectCommandCompleted {
+                        project: p,
+                        workspace: w,
+                        command_id: c,
+                        task_id: tid,
+                        ok,
+                        message: Some(message),
+                    },
+                });
             });
 
             Ok(true)
@@ -682,16 +721,17 @@ pub async fn handle_project_message(
                 "ProjectCommand cancelled: project={}, command_id={}, task_id={}",
                 project, command_id, cancelled_task_id
             );
-            send_message(
-                socket,
-                &ServerMessage::ProjectCommandCancelled {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    command_id: command_id.clone(),
-                    task_id: cancelled_task_id,
-                },
-            )
-            .await?;
+            let cancelled_msg = ServerMessage::ProjectCommandCancelled {
+                project: project.clone(),
+                workspace: workspace.clone(),
+                command_id: command_id.clone(),
+                task_id: cancelled_task_id,
+            };
+            send_message(socket, &cancelled_msg).await?;
+            let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
+                origin_conn_id: ctx.conn_meta.conn_id.clone(),
+                message: cancelled_msg,
+            });
 
             Ok(true)
         }

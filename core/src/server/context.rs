@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
@@ -38,6 +38,18 @@ pub struct RunningCommandEntry {
 
 /// 正在运行的项目命令注册表（task_id → 命令条目）
 pub type SharedRunningCommands = Arc<Mutex<HashMap<String, RunningCommandEntry>>>;
+
+/// 任务广播事件 — 用于跨连接同步后台任务状态
+#[derive(Clone, Debug)]
+pub struct TaskBroadcastEvent {
+    /// 发起请求的连接 ID（广播时跳过自身）
+    pub origin_conn_id: String,
+    /// 要广播的消息
+    pub message: ServerMessage,
+}
+
+/// 任务广播发送端
+pub type TaskBroadcastTx = broadcast::Sender<TaskBroadcastEvent>;
 
 /// WebSocket 连接元数据 — 在握手时构建
 #[derive(Debug, Clone)]
@@ -70,6 +82,7 @@ pub struct HandlerContext {
     pub agg_tx: mpsc::Sender<(String, Vec<u8>)>,
     pub running_commands: SharedRunningCommands,
     pub cmd_output_tx: mpsc::Sender<ServerMessage>,
+    pub task_broadcast_tx: TaskBroadcastTx,
     pub lsp_supervisor: LspSupervisor,
     pub conn_meta: ConnectionMeta,
     pub remote_sub_registry: SharedRemoteSubRegistry,
