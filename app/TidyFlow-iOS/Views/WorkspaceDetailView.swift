@@ -62,6 +62,13 @@ struct WorkspaceDetailView: View {
                             }
                             .padding(.vertical, 2)
                         }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                appState.closeTerminal(termId: term.termId)
+                            } label: {
+                                Label("终止", systemImage: "xmark.circle")
+                            }
+                        }
                     }
                 }
             }
