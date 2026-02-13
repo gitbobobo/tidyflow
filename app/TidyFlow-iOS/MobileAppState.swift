@@ -759,6 +759,8 @@ final class MobileAppState: ObservableObject {
             if let termId, self.currentTermId.isEmpty {
                 self.currentTermId = termId
             }
+            // 只接受当前查看终端的输出，其他终端的数据丢弃（scrollback 在服务端保留）
+            guard let termId, termId == self.currentTermId else { return }
             self.emitTerminalOutput(bytes)
         }
 
