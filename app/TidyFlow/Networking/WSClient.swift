@@ -40,6 +40,7 @@ class WSClient: NSObject, ObservableObject {
     var onGitBranchesResult: ((GitBranchesResult) -> Void)?
     var onGitCommitResult: ((GitCommitResult) -> Void)?
     var onGitAICommitResult: ((GitAICommitResult) -> Void)?
+    var onGitAIMergeResult: ((GitAIMergeResult) -> Void)?
     var onGitRebaseResult: ((GitRebaseResult) -> Void)?
     var onGitOpStatusResult: ((GitOpStatusResult) -> Void)?
     var onGitMergeToDefaultResult: ((GitMergeToDefaultResult) -> Void)?

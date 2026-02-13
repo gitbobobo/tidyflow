@@ -189,6 +189,22 @@ extension WSClient {
         send(dict)
     }
 
+    /// AI 智能合并到默认分支（v1.33）
+    func requestGitAIMerge(project: String, workspace: String, aiAgent: String? = nil, defaultBranch: String? = nil) {
+        var dict: [String: Any] = [
+            "type": "git_ai_merge",
+            "project": project,
+            "workspace": workspace
+        ]
+        if let agent = aiAgent {
+            dict["ai_agent"] = agent
+        }
+        if let branch = defaultBranch {
+            dict["default_branch"] = branch
+        }
+        send(dict)
+    }
+
     // Phase UX-3a: Request git fetch
     func requestGitFetch(project: String, workspace: String) {
         send([

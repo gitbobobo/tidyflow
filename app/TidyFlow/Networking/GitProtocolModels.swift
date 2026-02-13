@@ -1179,17 +1179,41 @@ struct AIGitCommit {
 
 /// AI Git commit 结果
 struct GitAICommitResult {
+    let project: String
+    let workspace: String
     let success: Bool
     let message: String
     let commits: [AIGitCommit]
 
     static func from(json: [String: Any]) -> GitAICommitResult? {
-        guard let success = json["success"] as? Bool,
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let success = json["success"] as? Bool,
               let message = json["message"] as? String,
               let commitsArray = json["commits"] as? [[String: Any]] else {
             return nil
         }
         let commits = commitsArray.compactMap { AIGitCommit.from(json: $0) }
-        return GitAICommitResult(success: success, message: message, commits: commits)
+        return GitAICommitResult(project: project, workspace: workspace, success: success, message: message, commits: commits)
+    }
+}
+
+/// AI Git 合并结果（v1.33）
+struct GitAIMergeResult {
+    let project: String
+    let workspace: String
+    let success: Bool
+    let message: String
+    let conflicts: [String]
+
+    static func from(json: [String: Any]) -> GitAIMergeResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let success = json["success"] as? Bool,
+              let message = json["message"] as? String else {
+            return nil
+        }
+        let conflicts = json["conflicts"] as? [String] ?? []
+        return GitAIMergeResult(project: project, workspace: workspace, success: success, message: message, conflicts: conflicts)
     }
 }

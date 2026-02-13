@@ -120,6 +120,11 @@ extension WSClient {
                 onGitAICommitResult?(result)
             }
 
+        case "git_ai_merge_result":
+            if let result = GitAIMergeResult.from(json: json) {
+                onGitAIMergeResult?(result)
+            }
+
         case "git_rebase_result":
             if let result = GitRebaseResult.from(json: json) {
                 onGitRebaseResult?(result)
