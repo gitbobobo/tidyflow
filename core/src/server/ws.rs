@@ -215,10 +215,37 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         addr, PROTOCOL_VERSION
     );
 
+    let shutdown_tx = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown_tx_for_signal = shutdown_tx.clone();
+
+    #[cfg(unix)]
+    {
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate()).unwrap();
+            let mut sigint = signal(SignalKind::interrupt()).unwrap();
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM, shutting down gracefully");
+                }
+                _ = sigint.recv() => {
+                    info!("Received SIGINT, shutting down gracefully");
+                }
+            }
+            shutdown_tx_for_signal.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(async move {
+        while !shutdown_tx.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+        info!("Graceful shutdown initiated");
+    })
     .await?;
 
     Ok(())
