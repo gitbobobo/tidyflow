@@ -115,6 +115,11 @@ extension WSClient {
                 onGitCommitResult?(result)
             }
 
+        case "git_ai_commit_result":
+            if let result = GitAICommitResult.from(json: json) {
+                onGitAICommitResult?(result)
+            }
+
         case "git_rebase_result":
             if let result = GitRebaseResult.from(json: json) {
                 onGitRebaseResult?(result)
