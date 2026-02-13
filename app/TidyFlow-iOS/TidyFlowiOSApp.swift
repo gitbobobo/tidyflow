@@ -18,34 +18,49 @@ enum MobileRoute: Hashable {
 @main
 struct TidyFlowiOSApp: App {
     @StateObject private var appState = MobileAppState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack(path: $appState.navigationPath) {
-                ConnectionView()
-                    .navigationDestination(for: MobileRoute.self) { route in
-                        switch route {
-                        case .projects:
-                            ProjectListView()
-                        case .workspaceDetail(let project, let workspace):
-                            WorkspaceDetailView(project: project, workspace: workspace)
-                        case .workspaceTasks(let project, let workspace):
-                            WorkspaceTasksView(project: project, workspace: workspace)
-                        case .terminal(let project, let workspace, let command, let commandIcon, let commandName):
-                            MobileTerminalView(
-                                project: project,
-                                workspace: workspace,
-                                command: command,
-                                commandIcon: commandIcon,
-                                commandName: commandName
-                            )
-                        case .terminalAttach(let project, let workspace, let termId):
-                            MobileTerminalView(project: project, workspace: workspace, termId: termId)
+            ZStack(alignment: .top) {
+                NavigationStack(path: $appState.navigationPath) {
+                    ConnectionView()
+                        .navigationDestination(for: MobileRoute.self) { route in
+                            switch route {
+                            case .projects:
+                                ProjectListView()
+                            case .workspaceDetail(let project, let workspace):
+                                WorkspaceDetailView(project: project, workspace: workspace)
+                            case .workspaceTasks(let project, let workspace):
+                                WorkspaceTasksView(project: project, workspace: workspace)
+                            case .terminal(let project, let workspace, let command, let commandIcon, let commandName):
+                                MobileTerminalView(
+                                    project: project,
+                                    workspace: workspace,
+                                    command: command,
+                                    commandIcon: commandIcon,
+                                    commandName: commandName
+                                )
+                            case .terminalAttach(let project, let workspace, let termId):
+                                MobileTerminalView(project: project, workspace: workspace, termId: termId)
+                            }
                         }
-                    }
+                }
+                .environmentObject(appState)
+
+                DisconnectBannerView()
+                    .environmentObject(appState)
             }
-            .environmentObject(appState)
             .preferredColorScheme(.dark)
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    // 回到前台，检查连接状态
+                    if !appState.isConnected && appState.hasSavedConnection {
+                        // 仅在非主动断开时触发
+                        Task { appState.reconnectWithBackoff() }
+                    }
+                }
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(iOS)
 struct DisconnectBannerView: View {
     @EnvironmentObject var appState: MobileAppState
     
@@ -60,3 +61,4 @@ struct DisconnectBannerView: View {
         Spacer()
     }
 }
+#endif
