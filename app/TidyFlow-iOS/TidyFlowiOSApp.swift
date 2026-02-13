@@ -45,6 +45,7 @@ struct TidyFlowiOSApp: App {
                     }
             }
             .environmentObject(appState)
+            .preferredColorScheme(.dark)
         }
     }
 }
