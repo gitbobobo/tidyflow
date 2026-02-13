@@ -299,6 +299,12 @@ final class MobileAppState: ObservableObject {
                 
                 await MainActor.run {
                     self.wsClient.disconnect()
+                }
+                
+                // 等待旧连接完全清理（disconnect 会取消 webSocketTask，需要时间完全关闭）
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                
+                await MainActor.run {
                     self.wsClient.updateAuthToken(saved.wsToken)
                     self.wsClient.updateBaseURL(
                         AppConfig.makeWsURL(host: saved.host, port: saved.port, token: saved.wsToken, secure: saved.useHTTPS),
