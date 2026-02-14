@@ -25,9 +25,10 @@ struct MobileTerminalView: View {
             }
         )
         .background(Color(red: 30/255, green: 30/255, blue: 30/255))
-        .navigationTitle(workspace)
+        .ignoresSafeArea(.container, edges: .top)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             if let termId {
