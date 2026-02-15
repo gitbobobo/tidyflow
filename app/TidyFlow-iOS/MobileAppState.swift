@@ -147,15 +147,6 @@ final class MobileAppState: ObservableObject {
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
     private var isTerminalViewReady: Bool = false
-    /// 用户是否处于"向上滚动查看 scrollback"的状态；此时暂停把新输出直接喂给渲染，避免被 TUI 刷新抢回底部造成抖动
-    private var isScrollbackLocked: Bool = false
-    /// 滚动锁定期间因缓冲溢出退化为 detach 模式
-    private var isDetachedDueToOverflow: Bool = false
-    /// 滚动锁定期间本地缓冲的字节数
-    private var scrollLockBufferedBytes: Int = 0
-    /// 滚动锁定本地缓冲上限（512KB），超过后退化为 detach 模式
-    private let scrollLockBufferLimit = 512 * 1024
-
     /// 终端输出流控 ACK：累计未确认字节数
     private var termOutputUnackedBytes: Int = 0
     /// ACK 阈值（50KB），与 macOS xterm.js 端一致
@@ -651,47 +642,6 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    /// SwiftTerm / UIScrollView 滚动状态更新：
-    /// - 用户离开底部时：锁定 scrollback，继续接收输出但缓冲在本地（不再 detach）
-    /// - 用户回到底部且不再交互时：解锁并 flush 本地缓冲（无需 resetTerminal + attach）
-    /// - 缓冲溢出时退化为 detach 模式（安全阀）
-    func terminalViewDidUpdateScrollState(isAtBottom: Bool, isUserInteracting: Bool) {
-        // 用户离开底部：立即锁定（避免 TUI 刷新抢回底部）
-        if !isAtBottom {
-            if !isScrollbackLocked {
-                isScrollbackLocked = true
-                scrollLockBufferedBytes = 0
-                isDetachedDueToOverflow = false
-                pendingOutputChunks.removeAll()
-            }
-            return
-        }
-
-        // 回到底部但仍在拖拽/减速：不要立刻解锁，否则 flush+持续输出会和手势竞争造成抖动
-        if isUserInteracting {
-            return
-        }
-
-        // 回到底部且空闲：解锁并补齐积压输出
-        if isScrollbackLocked {
-            isScrollbackLocked = false
-
-            if isDetachedDueToOverflow {
-                // 溢出退化模式：走原有 resetTerminal + term_attach 路径
-                isDetachedDueToOverflow = false
-                scrollLockBufferedBytes = 0
-                pendingOutputChunks.removeAll()
-                terminalSink?.resetTerminal()
-                if !currentTermId.isEmpty {
-                    wsClient.requestTermAttach(termId: currentTermId)
-                }
-            } else {
-                // 正常模式：直接 flush 本地缓冲到 SwiftTerm，无闪屏
-                scrollLockBufferedBytes = 0
-                flushPendingOutput()
-            }
-        }
-    }
 
     // MARK: - 终端
 
@@ -784,9 +734,6 @@ final class MobileAppState: ObservableObject {
 
         // 防止 SwiftUI 复用同一个 TerminalView 时，把新终端输出追加到旧缓冲。
         pendingOutputChunks.removeAll()
-        isScrollbackLocked = false
-        isDetachedDueToOverflow = false
-        scrollLockBufferedBytes = 0
         termOutputUnackedBytes = 0
         currentTermId = newId
         lastRenderedTermId = ""
@@ -857,9 +804,6 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommandIcon = ""
         pendingCustomCommandName = ""
         isTerminalViewReady = false
-        isScrollbackLocked = false
-        isDetachedDueToOverflow = false
-        scrollLockBufferedBytes = 0
         termOutputUnackedBytes = 0
         pendingOutputChunks.removeAll()
         terminalSink = nil
@@ -1339,26 +1283,15 @@ final class MobileAppState: ObservableObject {
             termOutputUnackedBytes = 0
         }
 
-        if let sink = terminalSink, !isScrollbackLocked {
+        if let sink = terminalSink {
             sink.writeOutput(bytes)
             return
         }
 
-        // 滚动锁定期间：缓冲到本地
+        // 终端视图尚未就绪：缓冲到本地，等 ready 后 flush
         pendingOutputChunks.append(bytes)
-        scrollLockBufferedBytes += bytes.count
         if pendingOutputChunks.count > pendingOutputChunkLimit {
             pendingOutputChunks.removeFirst(pendingOutputChunks.count - pendingOutputChunkLimit)
-        }
-
-        // 安全阀：本地缓冲超过上限时退化为 detach 模式
-        if scrollLockBufferedBytes > scrollLockBufferLimit, !isDetachedDueToOverflow {
-            isDetachedDueToOverflow = true
-            pendingOutputChunks.removeAll()
-            scrollLockBufferedBytes = 0
-            if !currentTermId.isEmpty {
-                wsClient.requestTermDetach(termId: currentTermId)
-            }
         }
     }
 
