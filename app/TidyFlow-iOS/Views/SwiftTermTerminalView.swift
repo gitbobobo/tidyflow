@@ -143,6 +143,18 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             _ = terminalView?.becomeFirstResponder()
         }
 
+        func resetTerminal() {
+            // 使用 ANSI 序列清空屏幕与滚动回放，并重置样式。
+            // 说明：SwiftUI 可能复用同一个 TerminalView，若不清空会导致切换终端时内容“混在一起”。
+            let seq: [UInt8] = [
+                0x1b, 0x5b, 0x30, 0x6d, // ESC[0m reset attributes
+                0x1b, 0x5b, 0x33, 0x4a, // ESC[3J clear scrollback (xterm compatible)
+                0x1b, 0x5b, 0x32, 0x4a, // ESC[2J clear screen
+                0x1b, 0x5b, 0x48       // ESC[H  home cursor
+            ]
+            terminalView?.feed(byteArray: seq[...])
+        }
+
         // MARK: - TerminalViewDelegate
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {

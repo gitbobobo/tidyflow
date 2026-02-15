@@ -88,6 +88,9 @@ private struct MobileTerminalPresentation {
 protocol MobileTerminalOutputSink: AnyObject {
     func writeOutput(_ bytes: [UInt8])
     func focusTerminal()
+    /// 切换 term_id 时必须重置本地终端视图，否则 SwiftUI 可能复用同一个 TerminalView，
+    /// 导致新终端的 scrollback/输出追加到旧缓冲里，表现为“多终端数据混在一起”。
+    func resetTerminal()
 }
 
 @MainActor
@@ -150,6 +153,8 @@ final class MobileAppState: ObservableObject {
     /// 终端未 ready 或尚未绑定 sink 时暂存输出，避免首屏丢数据
     private var pendingOutputChunks: [[UInt8]] = []
     private let pendingOutputChunkLimit = 128
+    /// 记录最近一次已重置并开始渲染的 term_id，用于避免 SwiftUI 复用视图导致内容串台
+    private var lastRenderedTermId: String = ""
     /// term_id -> 展示信息（图标/名称）
     private var terminalPresentationById: [String: MobileTerminalPresentation] = [:]
     /// AI 提交结果不带 project/workspace，按触发顺序匹配
@@ -595,6 +600,11 @@ final class MobileAppState: ObservableObject {
     /// 绑定 SwiftTerm 输出目标
     func attachTerminalSink(_ sink: MobileTerminalOutputSink) {
         terminalSink = sink
+        // 先确保视图处于“当前 term_id 的干净状态”，再 flush 缓冲/scrollback。
+        if currentTermId.isEmpty || lastRenderedTermId != currentTermId {
+            sink.resetTerminal()
+            lastRenderedTermId = currentTermId
+        }
         flushPendingOutput()
     }
 
@@ -606,6 +616,7 @@ final class MobileAppState: ObservableObject {
         terminalSink = nil
         isTerminalViewReady = false
         pendingOutputChunks.removeAll()
+        lastRenderedTermId = ""
     }
 
     /// SwiftTerm 视图尺寸变化（首次拿到有效尺寸也会走这里）
@@ -707,6 +718,21 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    private func switchToTerminal(termId: String) {
+        let newId = termId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newId.isEmpty else { return }
+        guard newId != currentTermId else { return }
+
+        // 防止 SwiftUI 复用同一个 TerminalView 时，把新终端输出追加到旧缓冲。
+        pendingOutputChunks.removeAll()
+        currentTermId = newId
+        lastRenderedTermId = ""
+        if let sink = terminalSink {
+            sink.resetTerminal()
+            lastRenderedTermId = newId
+        }
+    }
+
     /// 发送特殊键序列到终端
     func sendSpecialKey(_ sequence: String) {
         guard !currentTermId.isEmpty else { return }
@@ -749,6 +775,7 @@ final class MobileAppState: ObservableObject {
         isTerminalViewReady = false
         pendingOutputChunks.removeAll()
         terminalSink = nil
+        lastRenderedTermId = ""
         setCtrlArmed(false)
     }
 
@@ -820,7 +847,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onTermCreated = { [weak self] result in
             guard let self else { return }
-            self.currentTermId = result.termId
+            self.switchToTerminal(termId: result.termId)
             let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
             if self.workspaceTerminalOpenTime[key] == nil {
                 self.workspaceTerminalOpenTime[key] = Date()
@@ -860,7 +887,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onTermAttached = { [weak self] result in
             guard let self else { return }
-            self.currentTermId = result.termId
+            self.switchToTerminal(termId: result.termId)
             // 写入 scrollback 到 SwiftTerm
             if !result.scrollback.isEmpty {
                 self.emitTerminalOutput(result.scrollback)
@@ -876,7 +903,7 @@ final class MobileAppState: ObservableObject {
         wsClient.onTerminalOutput = { [weak self] termId, bytes in
             guard let self else { return }
             if let termId, self.currentTermId.isEmpty {
-                self.currentTermId = termId
+                self.switchToTerminal(termId: termId)
             }
             // 只接受当前查看终端的输出，其他终端的数据丢弃（scrollback 在服务端保留）
             guard let termId, termId == self.currentTermId else { return }
