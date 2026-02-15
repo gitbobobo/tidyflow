@@ -326,6 +326,11 @@ extension WSClient {
                 onAITaskCancelled?(result)
             }
 
+        case "clipboard_image_set":
+            let ok = json["ok"] as? Bool ?? false
+            let message = json["message"] as? String
+            onClipboardImageSet?(ok, message)
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)

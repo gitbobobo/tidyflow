@@ -92,6 +92,8 @@ class WSClient: NSObject, ObservableObject {
     var onRemoteTermChanged: (() -> Void)?
     // v1.37: AI 任务取消确认
     var onAITaskCancelled: ((AITaskCancelled) -> Void)?
+    // v1.39: 剪贴板图片写入结果
+    var onClipboardImageSet: ((Bool, String?) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

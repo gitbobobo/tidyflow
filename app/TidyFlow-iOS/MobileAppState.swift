@@ -788,6 +788,22 @@ final class MobileAppState: ObservableObject {
         wsClient.sendTerminalInput(transformed, termId: currentTermId)
     }
 
+    /// 粘贴按钮：文本直接发送，图片上传到服务端转 JPG 写入 macOS 剪贴板
+    func handlePaste() {
+        let pb = UIPasteboard.general
+        // 1. 文本优先
+        if let text = pb.string, !text.isEmpty {
+            sendSpecialKey(text)
+            return
+        }
+        // 2. 图片：上传到服务端转 JPG 并写入 macOS 剪贴板
+        if let image = pb.image, let pngData = image.pngData() {
+            wsClient.sendClipboardImageUpload(imageData: [UInt8](pngData))
+            return
+        }
+        // 3. 其他类型跳过
+    }
+
     /// 发送键盘输入到终端（原始字节）
     func sendTerminalInputBytes(_ data: [UInt8]) {
         guard !currentTermId.isEmpty else { return }
@@ -1143,6 +1159,16 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onError = { [weak self] message in
             self?.errorMessage = message
+        }
+
+        wsClient.onClipboardImageSet = { [weak self] ok, message in
+            guard let self else { return }
+            if ok {
+                // 图片已写入 macOS 剪贴板，发送 Ctrl+V 让 TUI 应用读取
+                self.sendSpecialKey("\u{16}")
+            } else {
+                self.errorMessage = message ?? "剪贴板图片写入失败"
+            }
         }
 
         wsClient.onAITaskCancelled = { [weak self] result in

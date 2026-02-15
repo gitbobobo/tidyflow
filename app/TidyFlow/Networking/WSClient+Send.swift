@@ -658,6 +658,16 @@ extension WSClient {
         ])
     }
 
+    // MARK: - v1.39: 剪贴板图片上传
+
+    /// 上传剪贴板图片到服务端（转 JPG 写入 macOS 系统剪贴板）
+    func sendClipboardImageUpload(imageData: [UInt8]) {
+        send([
+            "type": "clipboard_image_upload",
+            "image_data": Data(imageData)
+        ])
+    }
+
     // MARK: - 日志上报
 
     /// 发送日志到 Rust Core 统一写入文件

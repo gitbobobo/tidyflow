@@ -24,6 +24,9 @@ struct MobileTerminalView: View {
                 },
                 onCtrlArmedChanged: { armed in
                     appState.setCtrlArmed(armed)
+                },
+                onPaste: {
+                    appState.handlePaste()
                 }
             )
             .background(Color(red: 30/255, green: 30/255, blue: 30/255))

@@ -33,6 +33,7 @@ struct SwiftTermTerminalView: UIViewRepresentable {
     let topSafeAreaInset: CGFloat
     let onKey: (String) -> Void
     let onCtrlArmedChanged: (Bool) -> Void
+    let onPaste: () -> Void
 
     /// SwiftTerm(iOS) 的 TerminalView 内部会直接用 `contentOffset` 计算可见行，并在 updateScroller() 中强制重置 contentOffset。
     /// 为了实现“首屏避开顶部安全区，但允许用户把内容滑进安全区”，这里采用：
@@ -184,6 +185,7 @@ struct SwiftTermTerminalView: UIViewRepresentable {
         let accessory = TerminalInputAccessoryView(frame: CGRect(x: 0, y: 0, width: 0, height: 44))
         accessory.onKey = onKey
         accessory.onCtrlArmedChanged = onCtrlArmedChanged
+        accessory.onPaste = onPaste
         terminalView.inputAccessoryView = accessory
 
         context.coordinator.bind(terminalView: terminalView)

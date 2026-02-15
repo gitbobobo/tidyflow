@@ -7,6 +7,7 @@ private let terminalBgColor = UIColor(red: 30/255, green: 30/255, blue: 30/255, 
 final class TerminalInputAccessoryView: UIView {
     var onKey: ((String) -> Void)?
     var onCtrlArmedChanged: ((Bool) -> Void)?
+    var onPaste: (() -> Void)?
 
     private enum KeyKind {
         case ctrl
@@ -22,6 +23,8 @@ final class TerminalInputAccessoryView: UIView {
         case slash
         case at
         case hash
+        case optionEnter
+        case paste
     }
 
     private struct ToolbarKey {
@@ -44,6 +47,8 @@ final class TerminalInputAccessoryView: UIView {
         ToolbarKey(label: "Shift+Tab", kind: .shiftTab),
         ToolbarKey(label: "Ctrl+C", kind: .ctrlC),
         ToolbarKey(label: "Ctrl+X", kind: .ctrlX),
+        ToolbarKey(label: "⏎", kind: .optionEnter),
+        ToolbarKey(label: "Paste", kind: .paste),
     ]
 
     /// Ctrl 一次性锁定：点击 Ctrl 后，下一个非 Ctrl 键按组合发送
@@ -187,6 +192,10 @@ final class TerminalInputAccessoryView: UIView {
             ctrlArmed.toggle()
             return
         }
+        if key.kind == .paste {
+            onPaste?()
+            return
+        }
 
         let sequence = sequenceForKey(key.kind, ctrl: ctrlArmed)
         ctrlArmed = false
@@ -229,6 +238,10 @@ final class TerminalInputAccessoryView: UIView {
                 return "\t"
             case .ctrl:
                 return ""
+            case .optionEnter:
+                return "\u{1b}\r"
+            case .paste:
+                return ""
             }
         }
 
@@ -258,6 +271,10 @@ final class TerminalInputAccessoryView: UIView {
         case .hash:
             return "#"
         case .ctrl:
+            return ""
+        case .optionEnter:
+            return "\u{1b}\r"
+        case .paste:
             return ""
         }
     }
