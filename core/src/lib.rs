@@ -4,6 +4,6 @@ pub mod server;
 pub mod util;
 pub mod workspace;
 
-pub use ai::OpenCodeManager;
 pub use ai::OpenCodeAgent;
+pub use ai::OpenCodeManager;
 pub use pty::{resize_pty, PtySession};

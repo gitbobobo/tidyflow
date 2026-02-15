@@ -101,6 +101,7 @@ class WSClient: NSObject, ObservableObject {
     // v1.41: AI Chat 回调
     var onAISessionStarted: ((String, String) -> Void)?       // (sessionId, title)
     var onAIChatText: ((String, String, String?, Bool) -> Void)? // (sessionId, text, delta, done)
+    var onAIChatThinking: ((String, String, String?, Bool) -> Void)? // (sessionId, text, delta, done)
     var onAIChatTool: ((String, String, [String: Any]) -> Void)? // (sessionId, tool, input)
     var onAIChatError: ((String, String) -> Void)?             // (sessionId, error)
     var onAISessionList: (([[String: Any]]) -> Void)?          // sessions

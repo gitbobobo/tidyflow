@@ -339,6 +339,13 @@ extension WSClient {
             let done = json["done"] as? Bool ?? false
             onAIChatText?(sessionId, text, delta, done)
 
+        case "ai_chat_thinking":
+            let sessionId = json["session_id"] as? String ?? ""
+            let text = json["text"] as? String ?? ""
+            let delta = json["delta"] as? String
+            let done = json["done"] as? Bool ?? false
+            onAIChatThinking?(sessionId, text, delta, done)
+
         case "ai_chat_tool":
             let sessionId = json["session_id"] as? String ?? ""
             let tool = json["tool"] as? String ?? ""

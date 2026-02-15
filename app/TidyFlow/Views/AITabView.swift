@@ -205,6 +205,9 @@ struct AITabView: View {
         appState.aiChatMessages.append(userMessage)
         appState.aiIsStreaming = true
 
+        // 预先插入一个“回复气泡占位”，避免工具调用插队或首包延迟导致 UI 没有回复气泡
+        appState.aiChatMessages.append(ChatMessage(role: .assistant, kind: .text, content: "", isStreaming: true))
+
         if let sessionId = appState.aiCurrentSessionId {
             // 已有会话，直接发送
             appState.wsClient.requestAIChatSend(
@@ -227,6 +230,28 @@ struct AITabView: View {
             appState.wsClient.requestAIChatAbort(sessionId: sessionId)
         }
         appState.aiIsStreaming = false
+
+        // 立即停止“加载中”展示，避免等待服务端 done 才收敛
+        if let idx = appState.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming }) {
+            let prev = appState.aiChatMessages[idx]
+            let contentEmpty = prev.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let thinkingEmpty = (prev.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let toolEmpty = (prev.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if contentEmpty && thinkingEmpty && toolEmpty {
+                appState.aiChatMessages.remove(at: idx)
+            } else {
+                appState.aiChatMessages[idx] = ChatMessage(
+                    id: prev.id,
+                    role: .assistant,
+                    kind: .text,
+                    content: prev.content,
+                    thinking: prev.thinking,
+                    toolTrace: prev.toolTrace,
+                    isStreaming: false,
+                    timestamp: prev.timestamp
+                )
+            }
+        }
     }
 
     private func showFilePicker() {}

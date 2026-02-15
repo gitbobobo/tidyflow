@@ -27,6 +27,8 @@ struct MessageListView: View {
 
 private struct MessageBubble: View {
     let message: ChatMessage
+
+    @State private var isMetaExpanded: Bool = false
     
     private var isUser: Bool {
         message.role == .user
@@ -46,39 +48,113 @@ private struct MessageBubble: View {
                     .padding(.top, 4)
             }
             
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-                if !message.content.isEmpty {
-                    Text(LocalizedStringKey(message.content))
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .foregroundColor(isUser ? .white : .primary)
-                        .background(bubbleBackgroundColor)
-                        .cornerRadius(12)
-                }
-                
-                if message.isStreaming {
-                    TypingIndicator()
-                        .padding(.leading, isUser ? 0 : 4)
-                }
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+                bubble
             }
             
             if !isUser {
                 Spacer(minLength: 32)
             }
         }
+        .onAppear {
+            // 流式期间默认展开，做到“思考过程实时展示”
+            if message.isStreaming && shouldShowMetaDisclosure {
+                isMetaExpanded = true
+            }
+        }
+        .onChange(of: message.isStreaming) { isStreaming in
+            // 回复结束后收起，避免占据太多空间
+            if isStreaming {
+                if shouldShowMetaDisclosure { isMetaExpanded = true }
+            } else {
+                isMetaExpanded = false
+            }
+        }
+        .onChange(of: message.thinking) { _ in
+            if message.isStreaming && shouldShowMetaDisclosure {
+                isMetaExpanded = true
+            }
+        }
+        .onChange(of: message.toolTrace) { _ in
+            if message.isStreaming && shouldShowMetaDisclosure {
+                isMetaExpanded = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bubble: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !message.content.isEmpty {
+                Text(message.content)
+                    .textSelection(.enabled)
+                    .font(.system(size: 13))
+                    .foregroundColor(isUser ? .white : .primary)
+            } else if message.isStreaming {
+                // 没有文本但仍在生成时，也要有“消息气泡”
+                TypingIndicator()
+            }
+
+            if !isUser, shouldShowMetaDisclosure {
+                DisclosureGroup("思考过程", isExpanded: $isMetaExpanded) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let thinking = message.thinking, !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(thinking)
+                                .textSelection(.enabled)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if let toolTrace = message.toolTrace, !toolTrace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(toolTrace)
+                                .textSelection(.enabled)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+                .disclosureGroupStyle(.automatic)
+            }
+
+            if message.isStreaming && !message.content.isEmpty {
+                TypingIndicator()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(bubbleBackgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
+        )
+        .cornerRadius(12)
+        .frame(maxWidth: 520, alignment: isUser ? .trailing : .leading)
     }
     
     private var bubbleBackgroundColor: Color {
         if isUser {
             return Color.blue
         } else {
-            #if os(macOS)
-            return Color(NSColor.controlBackgroundColor)
-            #else
-            return Color(UIColor.secondarySystemBackground)
-            #endif
+            // 回复消息使用更明显的气泡底色，避免与背景融在一起
+            return Color.secondary.opacity(0.10)
         }
+    }
+
+    private var bubbleBorderColor: Color {
+        if isUser {
+            return Color.clear
+        }
+        return Color.secondary.opacity(0.12)
+    }
+
+    private var shouldShowMetaDisclosure: Bool {
+        if isUser { return false }
+        let thinkingEmpty = (message.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let toolEmpty = (message.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !(thinkingEmpty && toolEmpty)
     }
 }
 
@@ -109,7 +185,13 @@ struct MessageListView_Previews: PreviewProvider {
             ChatMessage(role: .user, content: "Hello AI"),
             ChatMessage(role: .assistant, content: "Hello! How can I help you today?"),
             ChatMessage(role: .user, content: "Write some code"),
-            ChatMessage(role: .assistant, content: "Sure, here is some code:\n```swift\nprint(\"Hello\")\n```", isStreaming: true)
+            ChatMessage(
+                role: .assistant,
+                content: "Sure, here is some code:\n```swift\nprint(\"Hello\")\n```",
+                thinking: "模型推理中...\n下一步调用工具读取文件。",
+                toolTrace: "🔧 read_file\n{\n  \"path\": \"src/main.swift\"\n}",
+                isStreaming: true
+            )
         ]
         
         return MessageListView(messages: messages)

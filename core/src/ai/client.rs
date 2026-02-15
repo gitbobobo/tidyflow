@@ -1,8 +1,8 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 use tokio_stream::Stream;
-use std::sync::Arc;
 
 #[derive(Debug, Error)]
 pub enum OpenCodeError {
@@ -66,11 +66,7 @@ impl OpenCodeClient {
             title: title.to_string(),
         };
 
-        let response = self.client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&request).send().await?;
 
         if response.status().is_success() {
             let session: SessionResponse = response.json().await?;
@@ -110,11 +106,7 @@ impl OpenCodeClient {
 
         let body = serde_json::json!({ "parts": parts });
 
-        let response = self.client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&body).send().await?;
 
         let status = response.status().as_u16();
         if status == 204 || response.status().is_success() {
@@ -131,10 +123,7 @@ impl OpenCodeClient {
     ) -> Result<impl Stream<Item = Result<BusEvent, OpenCodeError>>, OpenCodeError> {
         let url = format!("{}/event", self.base_url);
 
-        let response = self.client
-            .get(&url)
-            .send()
-            .await?;
+        let response = self.client.get(&url).send().await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -149,10 +138,7 @@ impl OpenCodeClient {
     pub async fn list_sessions(&self) -> Result<Vec<SessionResponse>, OpenCodeError> {
         let url = format!("{}/session", self.base_url);
 
-        let response = self.client
-            .get(&url)
-            .send()
-            .await?;
+        let response = self.client.get(&url).send().await?;
 
         if response.status().is_success() {
             // OpenCode 返回数组格式，兼容两种：直接数组 或 {sessions: [...]}
@@ -163,7 +149,10 @@ impl OpenCodeClient {
             if let Ok(list) = serde_json::from_str::<SessionListResponse>(&body) {
                 return Ok(list.sessions);
             }
-            Err(OpenCodeError::SseError(format!("Failed to parse session list: {}", &body[..body.len().min(200)])))
+            Err(OpenCodeError::SseError(format!(
+                "Failed to parse session list: {}",
+                &body[..body.len().min(200)]
+            )))
         } else {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
@@ -174,10 +163,7 @@ impl OpenCodeClient {
     pub async fn delete_session(&self, session_id: &str) -> Result<(), OpenCodeError> {
         let url = format!("{}/session/{}", self.base_url, session_id);
 
-        let response = self.client
-            .delete(&url)
-            .send()
-            .await?;
+        let response = self.client.delete(&url).send().await?;
 
         if response.status().as_u16() == 204 || response.status().is_success() {
             Ok(())
@@ -194,13 +180,20 @@ use std::task::{Context, Poll};
 
 struct SseStream {
     buffer: String,
-    inner: Pin<Box<dyn tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + Unpin>>,
+    inner: Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + Unpin>,
+    >,
     /// 已解析但尚未 yield 的事件队列
     pending: std::collections::VecDeque<Result<BusEvent, OpenCodeError>>,
 }
 
 impl SseStream {
-    fn new(bytes: impl tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + Unpin + 'static) -> Self {
+    fn new(
+        bytes: impl tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>>
+            + Send
+            + Unpin
+            + 'static,
+    ) -> Self {
         Self {
             buffer: String::new(),
             inner: Box::pin(bytes),
@@ -236,9 +229,11 @@ impl SseStream {
                     self.pending.push_back(Ok(event));
                 }
                 Err(e) => {
-                    self.pending.push_back(Err(OpenCodeError::SseError(
-                        format!("Failed to parse SSE event: {} (data: {})", e, &data[..data.len().min(200)])
-                    )));
+                    self.pending.push_back(Err(OpenCodeError::SseError(format!(
+                        "Failed to parse SSE event: {} (data: {})",
+                        e,
+                        &data[..data.len().min(200)]
+                    ))));
                 }
             }
         }
@@ -272,9 +267,7 @@ impl tokio_stream::Stream for SseStream {
                     Poll::Pending
                 }
             }
-            Poll::Ready(Some(Err(e))) => {
-                Poll::Ready(Some(Err(OpenCodeError::HttpError(e))))
-            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(OpenCodeError::HttpError(e)))),
             Poll::Ready(None) => {
                 // 流结束，处理 buffer 中剩余数据
                 if !this.buffer.trim().is_empty() {
@@ -296,8 +289,10 @@ impl tokio_stream::Stream for SseStream {
 // OpenCodeAgent: 实现通用 AiAgent trait
 // ============================================================================
 
-use async_trait::async_trait;
 use super::{AiAgent, AiEvent, AiEventStream, AiSession, OpenCodeManager};
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
 /// OpenCode 后端的 AiAgent 实现
 ///
@@ -358,102 +353,280 @@ impl AiAgent for OpenCodeAgent {
             .map_err(|e| format!("Failed to send message: {}", e))?;
 
         // 3. 过滤 SSE 事件，只保留当前 session 的事件，映射为通用 AiEvent
+        //
+        // 注意：OpenCode 会通过 message.updated 事件告知 message role（user/assistant），
+        // message.part.updated 只有 messageID，不包含 role。若不做 role 过滤，
+        // 很容易把用户消息的 part 当成 assistant 文本转发，导致客户端“重复显示用户消息”。
         let session_id = session_id.to_string();
+        let user_message = message.to_string();
+        let message_roles: StdArc<StdMutex<HashMap<String, String>>> =
+            StdArc::new(StdMutex::new(HashMap::new()));
+        // partID -> part.type （用于把 message.part.delta 路由到 text/reasoning）
+        let part_types: StdArc<StdMutex<HashMap<String, String>>> =
+            StdArc::new(StdMutex::new(HashMap::new()));
+
         let mapped = tokio_stream::StreamExt::filter_map(sse_stream, move |result| {
+            let message_roles = message_roles.clone();
+            let part_types = part_types.clone();
+            let session_id = session_id.clone();
+            let user_message = user_message.clone();
+
             match result {
-                Ok(bus_event) => {
-                    match bus_event.event_type.as_str() {
-                        // 文本增量：message.part.updated
-                        "message.part.updated" => {
-                            let props = &bus_event.properties;
-                            let part = props.get("part")?;
-                            let part_session = part.get("sessionID")
-                                .and_then(|v| v.as_str())?;
-                            if part_session != session_id {
+                Ok(bus_event) => match bus_event.event_type.as_str() {
+                    // message.updated：记录 messageID -> role 映射
+                    "message.updated" => {
+                        let props = &bus_event.properties;
+                        let info = props.get("info")?;
+                        let info_session = info.get("sessionID").and_then(|v| v.as_str())?;
+                        if info_session != session_id {
+                            return None;
+                        }
+                        let message_id = info.get("id").and_then(|v| v.as_str())?.to_string();
+                        let role = info
+                            .get("role")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if !message_id.is_empty() && !role.is_empty() {
+                            if let Ok(mut map) = message_roles.lock() {
+                                map.insert(message_id, role);
+                            }
+                        }
+                        None
+                    }
+
+                    // 文本增量：message.part.updated
+                    "message.part.updated" => {
+                        let props = &bus_event.properties;
+                        let part = props.get("part")?;
+                        let part_session = part.get("sessionID").and_then(|v| v.as_str())?;
+                        if part_session != session_id {
+                            return None;
+                        }
+                        let message_id =
+                            part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
+                        let part_id = part.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+                        let role = if !message_id.is_empty() {
+                            message_roles
+                                .lock()
+                                .ok()
+                                .and_then(|m| m.get(message_id).cloned())
+                        } else {
+                            None
+                        };
+
+                        // 已知是 user 的 message：一律不转发到 AIChatText，避免重复显示
+                        if let Some(ref r) = role {
+                            if r == "user" {
                                 return None;
                             }
-                            let part_type = part.get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            match part_type {
-                                "text" => {
-                                    // 优先使用 delta（增量），否则用完整 text
-                                    let delta = props.get("delta")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                    let text = delta.or_else(|| {
+                        }
+
+                        let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                        // 记录 partID -> type，用于后续 message.part.delta
+                        if !part_id.is_empty() && !part_type.is_empty() {
+                            if let Ok(mut map) = part_types.lock() {
+                                map.insert(part_id.to_string(), part_type.to_string());
+                            }
+                        }
+
+                        match part_type {
+                            "text" => {
+                                // 优先使用 delta（增量），否则用完整 text
+                                let delta = props
+                                    .get("delta")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let text = delta
+                                    .or_else(|| {
                                         part.get("text")
                                             .and_then(|v| v.as_str())
                                             .map(|s| s.to_string())
-                                    }).unwrap_or_default();
-                                    if text.is_empty() {
-                                        return None;
-                                    }
-                                    Some(Ok(AiEvent::TextDelta { text }))
+                                    })
+                                    .unwrap_or_default();
+                                if text.is_empty() {
+                                    return None;
                                 }
-                                "tool" => {
-                                    let tool = part.get("tool")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("unknown")
-                                        .to_string();
-                                    Some(Ok(AiEvent::ToolUse {
-                                        tool,
-                                        input: part.get("state").cloned()
-                                            .unwrap_or(serde_json::Value::Null),
-                                    }))
+
+                                // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
+                                if role.is_none()
+                                    && !user_message.is_empty()
+                                    && text.trim() == user_message.trim()
+                                {
+                                    return None;
                                 }
-                                _ => None,
+                                Some(Ok(AiEvent::TextDelta { text }))
                             }
-                        }
-                        // 会话状态变为 idle 表示处理完成
-                        "session.status" => {
-                            let props = &bus_event.properties;
-                            // session.status 的 properties 可能直接包含 sessionID
-                            // 也可能是 Record<sessionID, status>
-                            let matches_session = props.get(&session_id).is_some()
-                                || props.get("sessionID")
+                            "reasoning" => {
+                                // 思考过程增量：进入可折叠区域，不污染最终回复文本
+                                let delta = props
+                                    .get("delta")
                                     .and_then(|v| v.as_str())
-                                    .map(|s| s == session_id)
-                                    .unwrap_or(false);
-                            if !matches_session {
+                                    .map(|s| s.to_string());
+                                let text = delta
+                                    .or_else(|| {
+                                        part.get("text")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    })
+                                    .unwrap_or_default();
+                                if text.is_empty() {
+                                    return None;
+                                }
+                                Some(Ok(AiEvent::ThinkingDelta { text }))
+                            }
+                            "tool" => {
+                                let tool = part
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| part.get("tool").and_then(|v| v.as_str()))
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                Some(Ok(AiEvent::ToolUse {
+                                    tool,
+                                    input: part
+                                        .get("state")
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null),
+                                }))
+                            }
+                            _ => None,
+                        }
+                    }
+                    // OpenCode 新版：message.part.delta 承载真正的流式增量（按 partID 分发）
+                    "message.part.delta" => {
+                        let props = &bus_event.properties;
+                        let delta_session = props.get("sessionID").and_then(|v| v.as_str())?;
+                        if delta_session != session_id {
+                            return None;
+                        }
+                        let message_id = props
+                            .get("messageID")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let part_id = props.get("partID").and_then(|v| v.as_str()).unwrap_or("");
+                        let field = props.get("field").and_then(|v| v.as_str()).unwrap_or("");
+                        let delta = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                        if delta.is_empty() || field != "text" {
+                            return None;
+                        }
+
+                        let role = if !message_id.is_empty() {
+                            message_roles
+                                .lock()
+                                .ok()
+                                .and_then(|m| m.get(message_id).cloned())
+                        } else {
+                            None
+                        };
+                        if let Some(ref r) = role {
+                            if r == "user" {
                                 return None;
                             }
-                            let is_idle = props.get(&session_id)
+                        }
+
+                        let part_type = if !part_id.is_empty() {
+                            part_types.lock().ok().and_then(|m| m.get(part_id).cloned())
+                        } else {
+                            None
+                        };
+
+                        match part_type.as_deref() {
+                            Some("reasoning") => Some(Ok(AiEvent::ThinkingDelta {
+                                text: delta.to_string(),
+                            })),
+                            Some("text") => {
+                                // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
+                                if role.is_none()
+                                    && !user_message.is_empty()
+                                    && delta.trim() == user_message.trim()
+                                {
+                                    return None;
+                                }
+                                Some(Ok(AiEvent::TextDelta {
+                                    text: delta.to_string(),
+                                }))
+                            }
+                            // 未知 part 类型：宁可当成 text（至少实现实时输出）
+                            None => Some(Ok(AiEvent::TextDelta {
+                                text: delta.to_string(),
+                            })),
+                            _ => None,
+                        }
+                    }
+                    // 会话状态变为 idle 表示处理完成
+                    "session.idle" => {
+                        let props = &bus_event.properties;
+                        let idle_session = props
+                            .get("sessionID")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if idle_session == session_id {
+                            Some(Ok(AiEvent::Done))
+                        } else {
+                            None
+                        }
+                    }
+                    "session.status" => {
+                        let props = &bus_event.properties;
+                        // session.status 的 properties 可能直接包含 sessionID
+                        // 也可能是 Record<sessionID, status>
+                        let matches_session = props.get(&session_id).is_some()
+                            || props
+                                .get("sessionID")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s == session_id)
+                                .unwrap_or(false);
+                        if !matches_session {
+                            return None;
+                        }
+                        let is_idle = props
+                            .get(&session_id)
+                            .and_then(|v| v.get("type"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s == "idle")
+                            .unwrap_or(false)
+                            || props
+                                .get("status")
                                 .and_then(|v| v.get("type"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s == "idle")
                                 .unwrap_or(false)
-                                || props.get("type")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s == "idle")
-                                    .unwrap_or(false);
-                            if is_idle {
-                                Some(Ok(AiEvent::Done))
-                            } else {
-                                None
-                            }
-                        }
-                        // 会话错误
-                        "session.error" => {
-                            let props = &bus_event.properties;
-                            let err_session = props.get("sessionID")
+                            || props
+                                .get("type")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            if err_session != session_id {
-                                return None;
-                            }
-                            let message = props.get("error")
-                                .and_then(|v| v.get("message"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error")
-                                .to_string();
-                            Some(Ok(AiEvent::Error { message }))
+                                .map(|s| s == "idle")
+                                .unwrap_or(false);
+                        if is_idle {
+                            Some(Ok(AiEvent::Done))
+                        } else {
+                            None
                         }
-                        // 心跳和连接事件忽略
-                        "server.heartbeat" | "server.connected" => None,
-                        _ => None,
                     }
-                }
+                    // 会话错误
+                    "session.error" => {
+                        let props = &bus_event.properties;
+                        let err_session = props
+                            .get("sessionID")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if err_session != session_id {
+                            return None;
+                        }
+                        let message = props
+                            .get("error")
+                            .and_then(|v| v.get("message"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error")
+                            .to_string();
+                        Some(Ok(AiEvent::Error { message }))
+                    }
+                    // 心跳和连接事件忽略
+                    "server.heartbeat" | "server.connected" => None,
+                    _ => None,
+                },
                 Err(e) => Some(Err(e.to_string())),
             }
         });
@@ -548,7 +721,10 @@ mod tests {
         assert_eq!(event.event_type, "message.part.updated");
         let part = event.properties.get("part").unwrap();
         assert_eq!(part.get("type").unwrap().as_str().unwrap(), "text");
-        assert_eq!(event.properties.get("delta").unwrap().as_str().unwrap(), "Hello World");
+        assert_eq!(
+            event.properties.get("delta").unwrap().as_str().unwrap(),
+            "Hello World"
+        );
     }
 
     #[test]
@@ -584,7 +760,9 @@ mod tests {
         };
         assert_eq!(err.to_string(), "Server error: 500 - Internal Server Error");
 
-        let json_err = OpenCodeError::JsonError(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err());
+        let json_err = OpenCodeError::JsonError(
+            serde_json::from_str::<serde_json::Value>("invalid").unwrap_err(),
+        );
         assert!(json_err.to_string().contains("JSON error"));
     }
 }

@@ -992,6 +992,14 @@ pub enum ServerMessage {
         delta: Option<String>,
         done: bool,
     },
+    #[serde(rename = "ai_chat_thinking")]
+    AIChatThinking {
+        session_id: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delta: Option<String>,
+        done: bool,
+    },
     #[serde(rename = "ai_chat_tool")]
     AIChatTool {
         session_id: String,

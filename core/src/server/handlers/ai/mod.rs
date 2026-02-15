@@ -13,9 +13,9 @@ use crate::server::protocol::ClientMessage;
 use crate::server::ws::send_message;
 
 pub mod ai_state;
-pub mod file_ref;
 #[cfg(test)]
 mod ai_test;
+pub mod file_ref;
 
 pub use ai_state::AIState;
 
@@ -81,7 +81,10 @@ async fn try_handle_ai_chat_start(
     let agent = create_agent(workspace_root);
     info!("AIChatStart: starting agent...");
     agent.start().await?;
-    info!("AIChatStart: agent started, creating session '{}'...", title);
+    info!(
+        "AIChatStart: agent started, creating session '{}'...",
+        title
+    );
 
     let session = agent.create_session(&title).await?;
     info!("AIChatStart: session created, id={}", session.id);
@@ -100,7 +103,10 @@ async fn try_handle_ai_chat_start(
         },
     )
     .await?;
-    info!("AIChatStart: sent AISessionStarted, session_id={}", session.id);
+    info!(
+        "AIChatStart: sent AISessionStarted, session_id={}",
+        session.id
+    );
 
     Ok(true)
 }
@@ -119,7 +125,11 @@ async fn try_handle_ai_chat_send(
         return Ok(false);
     };
 
-    info!("AIChatSend: session_id={}, message_len={}", session_id, message.len());
+    info!(
+        "AIChatSend: session_id={}, message_len={}",
+        session_id,
+        message.len()
+    );
 
     let agent = {
         let ai = ai_state.lock().await;
@@ -131,8 +141,10 @@ async fn try_handle_ai_chat_send(
 
     let session_id = session_id.clone();
     let mut accumulated_text = String::new();
+    let mut accumulated_thinking = String::new();
     let ai_state_clone = ai_state.clone();
     let session_id_for_abort = session_id.clone();
+    let mut aborted = false;
 
     // 通过 trait 获取通用事件流
     info!("AIChatSend: calling agent.send_message...");
@@ -152,11 +164,21 @@ async fn try_handle_ai_chat_send(
         tokio::select! {
             _ = abort_rx.recv() => {
                 info!("AIChatSend: aborted");
+                aborted = true;
                 send_message(
                     socket,
                     &crate::server::protocol::ServerMessage::AIChatText {
                         session_id: session_id.clone(),
                         text: accumulated_text.clone(),
+                        delta: None,
+                        done: true,
+                    },
+                ).await?;
+                send_message(
+                    socket,
+                    &crate::server::protocol::ServerMessage::AIChatThinking {
+                        session_id: session_id.clone(),
+                        text: accumulated_thinking.clone(),
                         delta: None,
                         done: true,
                     },
@@ -175,6 +197,18 @@ async fn try_handle_ai_chat_send(
                                     &crate::server::protocol::ServerMessage::AIChatText {
                                         session_id: session_id.clone(),
                                         text: accumulated_text.clone(),
+                                        delta: Some(text),
+                                        done: false,
+                                    },
+                                ).await?;
+                            }
+                            AiEvent::ThinkingDelta { text } => {
+                                accumulated_thinking.push_str(&text);
+                                send_message(
+                                    socket,
+                                    &crate::server::protocol::ServerMessage::AIChatThinking {
+                                        session_id: session_id.clone(),
+                                        text: accumulated_thinking.clone(),
                                         delta: Some(text),
                                         done: false,
                                     },
@@ -230,11 +264,25 @@ async fn try_handle_ai_chat_send(
         ai.active_streams.remove(&session_id_for_abort);
     }
 
+    if aborted {
+        return Ok(true);
+    }
+
     send_message(
         socket,
         &crate::server::protocol::ServerMessage::AIChatText {
-            session_id,
+            session_id: session_id.clone(),
             text: accumulated_text,
+            delta: None,
+            done: true,
+        },
+    )
+    .await?;
+    send_message(
+        socket,
+        &crate::server::protocol::ServerMessage::AIChatThinking {
+            session_id,
+            text: accumulated_thinking,
             delta: None,
             done: true,
         },

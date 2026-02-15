@@ -57,7 +57,13 @@ impl OpenCodeManager {
             .ok_or_else(|| "opencode not found in PATH or common install locations".to_string())?;
 
         let mut child = Command::new(&opencode_bin)
-            .args(["serve", "--port", &self.port.to_string(), "--hostname", "127.0.0.1"])
+            .args([
+                "serve",
+                "--port",
+                &self.port.to_string(),
+                "--hostname",
+                "127.0.0.1",
+            ])
             .current_dir(&self.working_dir)
             .envs(Self::build_extended_env())
             .stdout(std::process::Stdio::piped())
@@ -127,7 +133,10 @@ impl OpenCodeManager {
         let client = reqwest::Client::new();
 
         for attempt in 1..=MAX_HEALTH_CHECK_ATTEMPTS {
-            debug!("Health check attempt {}/{}", attempt, MAX_HEALTH_CHECK_ATTEMPTS);
+            debug!(
+                "Health check attempt {}/{}",
+                attempt, MAX_HEALTH_CHECK_ATTEMPTS
+            );
 
             match client
                 .get(&health_url)
@@ -152,7 +161,10 @@ impl OpenCodeManager {
             }
         }
 
-        error!("Health check failed after {} attempts", MAX_HEALTH_CHECK_ATTEMPTS);
+        error!(
+            "Health check failed after {} attempts",
+            MAX_HEALTH_CHECK_ATTEMPTS
+        );
         Err(format!(
             "Health check timed out after {}ms",
             HEALTH_CHECK_TIMEOUT_MS
@@ -166,7 +178,9 @@ impl OpenCodeManager {
         if let Some(mut child) = process_lock.take() {
             info!("Sending SIGTERM to OpenCode server (PID: {:?})", child.id());
 
-            child.start_kill().map_err(|e| format!("Failed to send SIGTERM: {}", e))?;
+            child
+                .start_kill()
+                .map_err(|e| format!("Failed to send SIGTERM: {}", e))?;
 
             match timeout(
                 Duration::from_millis(GRACEFUL_SHUTDOWN_TIMEOUT_MS),
@@ -218,13 +232,11 @@ impl OpenCodeManager {
             }
         }
         // 兜底：尝试当前 PATH
-        std::env::var("PATH")
-            .ok()
-            .and_then(|p| {
-                p.split(':')
-                    .map(|dir| format!("{}/opencode", dir))
-                    .find(|path| std::path::Path::new(path).exists())
-            })
+        std::env::var("PATH").ok().and_then(|p| {
+            p.split(':')
+                .map(|dir| format!("{}/opencode", dir))
+                .find(|path| std::path::Path::new(path).exists())
+        })
     }
 
     /// macOS App 默认 PATH 不含 Homebrew、~/.local/bin 等用户路径，需手动补充
@@ -241,10 +253,17 @@ impl OpenCodeManager {
             "/usr/local/bin".to_string(),
             "/usr/local/sbin".to_string(),
         ];
-        let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+        let system_path =
+            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
         let mut seen = std::collections::HashSet::new();
         let mut parts = Vec::new();
-        for p in extra_paths.iter().chain(system_path.split(':').map(|s| s.to_string()).collect::<Vec<_>>().iter()) {
+        for p in extra_paths.iter().chain(
+            system_path
+                .split(':')
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .iter(),
+        ) {
             if seen.insert(p.clone()) {
                 parts.push(p.clone());
             }
@@ -256,7 +275,10 @@ impl OpenCodeManager {
 
 impl Drop for OpenCodeManager {
     fn drop(&mut self) {
-        info!("OpenCodeManager dropped, port {} will be released", self.port);
+        info!(
+            "OpenCodeManager dropped, port {} will be released",
+            self.port
+        );
     }
 }
 
@@ -273,6 +295,9 @@ mod tests {
     #[test]
     fn test_base_url_format() {
         let manager = OpenCodeManager::new(PathBuf::from("/tmp"));
-        assert_eq!(manager.get_base_url(), format!("http://127.0.0.1:{}", manager.get_port()));
+        assert_eq!(
+            manager.get_base_url(),
+            format!("http://127.0.0.1:{}", manager.get_port())
+        );
     }
 }

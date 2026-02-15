@@ -6,8 +6,8 @@
 pub mod client;
 pub mod manager;
 
-pub use client::OpenCodeClient;
 pub use client::OpenCodeAgent;
+pub use client::OpenCodeClient;
 pub use manager::OpenCodeManager;
 
 use async_trait::async_trait;
@@ -23,6 +23,8 @@ use tokio_stream::Stream;
 pub enum AiEvent {
     /// 文本增量
     TextDelta { text: String },
+    /// 思考过程增量（用于可折叠展示，不进入最终回复文本）
+    ThinkingDelta { text: String },
     /// 工具调用
     ToolUse {
         tool: String,

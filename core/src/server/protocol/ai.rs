@@ -79,6 +79,19 @@ pub enum AIResponse {
         /// 是否为最终响应
         done: bool,
     },
+    /// AI 思考过程响应（流式输出，可折叠显示）
+    #[serde(rename = "ai_chat_thinking")]
+    AIChatThinking {
+        /// 会话 ID
+        session_id: String,
+        /// 累积思考过程文本
+        text: String,
+        /// 本次增量文本（用于流式更新）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delta: Option<String>,
+        /// 是否为最终响应
+        done: bool,
+    },
     /// AI 工具调用响应
     #[serde(rename = "ai_chat_tool")]
     AIChatTool {
@@ -345,6 +358,36 @@ mod tests {
                 assert_eq!(delta, None);
             }
             _ => panic!("Expected AIChatText"),
+        }
+    }
+
+    #[test]
+    fn test_ai_chat_thinking_serialization() {
+        let resp = AIResponse::AIChatThinking {
+            session_id: "session-think".to_string(),
+            text: "thinking...".to_string(),
+            delta: Some("thinking...".to_string()),
+            done: false,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"type\":\"ai_chat_thinking\""));
+        assert!(json.contains("\"session_id\":\"session-think\""));
+        assert!(json.contains("\"done\":false"));
+
+        let parsed: AIResponse = serde_json::from_str(&json).unwrap();
+        match parsed {
+            AIResponse::AIChatThinking {
+                session_id,
+                text,
+                delta,
+                done,
+            } => {
+                assert_eq!(session_id, "session-think");
+                assert_eq!(text, "thinking...");
+                assert_eq!(delta, Some("thinking...".to_string()));
+                assert_eq!(done, false);
+            }
+            _ => panic!("Expected AIChatThinking"),
         }
     }
 
