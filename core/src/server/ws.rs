@@ -23,7 +23,7 @@ use std::os::unix::process::parent_id;
 
 use crate::server::context::{
     ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningAITasks,
-    SharedRunningCommands, TaskBroadcastTx, TermSubscription,
+    SharedRunningCommands, SharedTaskHistory, TaskBroadcastTx, TermSubscription,
 };
 use crate::server::handlers;
 use crate::server::lsp::LspSupervisor;
@@ -141,6 +141,7 @@ struct AppContext {
     task_broadcast_tx: TaskBroadcastTx,
     running_commands: SharedRunningCommands,
     running_ai_tasks: SharedRunningAITasks,
+    task_history: SharedTaskHistory,
 }
 
 /// Run the WebSocket server on the specified port
@@ -189,6 +190,9 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     // 全局共享的运行中 AI 任务注册表
     let running_ai_tasks: SharedRunningAITasks = Arc::new(Mutex::new(HashMap::new()));
 
+    // 全局共享的任务历史注册表（iOS 重连恢复用）
+    let task_history: SharedTaskHistory = Arc::new(Mutex::new(Vec::new()));
+
     let ctx = AppContext {
         app_state: shared_state.clone(),
         save_tx,
@@ -203,6 +207,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         task_broadcast_tx,
         running_commands,
         running_ai_tasks,
+        task_history,
     };
 
     let app = Router::new()
@@ -345,6 +350,7 @@ async fn ws_handler(
                 ctx.task_broadcast_tx,
                 ctx.running_commands,
                 ctx.running_ai_tasks,
+                ctx.task_history,
             )
         })
         .into_response()
@@ -828,6 +834,7 @@ async fn handle_socket(
     task_broadcast_tx: TaskBroadcastTx,
     running_commands: SharedRunningCommands,
     running_ai_tasks: SharedRunningAITasks,
+    task_history: SharedTaskHistory,
 ) {
     info!(
         "New WebSocket connection established (conn_id={}, remote={})",
@@ -869,6 +876,7 @@ async fn handle_socket(
         running_ai_tasks: running_ai_tasks.clone(),
         cmd_output_tx: cmd_output_tx.clone(),
         task_broadcast_tx: task_broadcast_tx.clone(),
+        task_history: task_history.clone(),
         lsp_supervisor: lsp_supervisor.clone(),
         conn_meta: conn_meta.clone(),
         remote_sub_registry: remote_sub_registry.clone(),

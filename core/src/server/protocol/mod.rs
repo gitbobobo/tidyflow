@@ -445,6 +445,9 @@ pub enum ClientMessage {
         #[serde(with = "serde_bytes")]
         image_data: Vec<u8>,
     },
+
+    // v1.40: 查询任务历史（iOS 重连恢复）
+    ListTasks,
 }
 
 fn default_diff_mode() -> String {
@@ -944,6 +947,11 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    // v1.40: 任务历史快照（iOS 重连恢复）
+    TasksSnapshot {
+        tasks: Vec<TaskSnapshotEntry>,
+    },
 }
 
 // ============================================================================
@@ -1093,6 +1101,24 @@ pub struct LspDiagnosticInfo {
     pub language: String,
 }
 
+/// 任务快照条目（iOS 重连恢复用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskSnapshotEntry {
+    pub task_id: String,
+    pub project: String,
+    pub workspace: String,
+    pub task_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
+    pub title: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub started_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<i64>,
+}
+
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -1124,6 +1150,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "project_commands".to_string(),
         "lsp_diagnostics".to_string(),
         "remote_term_tracking".to_string(),
+        "task_history".to_string(),
     ]
 }
 

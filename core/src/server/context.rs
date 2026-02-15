@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use chrono::Utc;
 
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
@@ -51,6 +52,55 @@ pub struct RunningAITaskEntry {
 
 /// AI 任务注册表（task_id → 条目）
 pub type SharedRunningAITasks = Arc<Mutex<HashMap<String, RunningAITaskEntry>>>;
+
+/// 任务历史条目 — 用于 iOS 重连后恢复任务状态
+#[derive(Debug, Clone)]
+pub struct TaskHistoryEntry {
+    pub task_id: String,
+    pub project: String,
+    pub workspace: String,
+    pub task_type: String,       // "project_command" | "ai_commit" | "ai_merge"
+    pub command_id: Option<String>,
+    pub title: String,
+    pub status: String,          // "running" | "completed" | "failed" | "cancelled"
+    pub message: Option<String>,
+    pub started_at: i64,         // Unix timestamp ms
+    pub completed_at: Option<i64>,
+}
+
+/// 任务历史注册表（全局共享，上限 200 条）
+pub type SharedTaskHistory = Arc<Mutex<Vec<TaskHistoryEntry>>>;
+
+/// 向任务历史注册表追加条目（超过上限时移除最早的已完成条目）
+pub async fn push_task_history(history: &SharedTaskHistory, entry: TaskHistoryEntry) {
+    let mut h = history.lock().await;
+    h.push(entry);
+    // 超过 200 条时移除最早的已完成条目
+    while h.len() > 200 {
+        if let Some(pos) = h.iter().position(|e| e.status != "running") {
+            h.remove(pos);
+        } else {
+            break;
+        }
+    }
+}
+
+/// 更新任务历史条目状态
+pub async fn update_task_history(
+    history: &SharedTaskHistory,
+    task_id: &str,
+    status: &str,
+    message: Option<String>,
+) {
+    let mut h = history.lock().await;
+    if let Some(entry) = h.iter_mut().find(|e| e.task_id == task_id) {
+        entry.status = status.to_string();
+        entry.message = message;
+        if status != "running" {
+            entry.completed_at = Some(Utc::now().timestamp_millis());
+        }
+    }
+}
 
 /// 任务广播事件 — 用于跨连接同步后台任务状态
 #[derive(Clone, Debug)]
@@ -97,6 +147,7 @@ pub struct HandlerContext {
     pub running_ai_tasks: SharedRunningAITasks,
     pub cmd_output_tx: mpsc::Sender<ServerMessage>,
     pub task_broadcast_tx: TaskBroadcastTx,
+    pub task_history: SharedTaskHistory,
     pub lsp_supervisor: LspSupervisor,
     pub conn_meta: ConnectionMeta,
     pub remote_sub_registry: SharedRemoteSubRegistry,
