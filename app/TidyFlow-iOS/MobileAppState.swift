@@ -188,6 +188,46 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    // MARK: - 前后台生命周期
+
+    /// 进入后台时标记连接为 stale，确保回到前台时能正确触发探活/重连
+    func handleEnterBackground() {
+        guard !wsClient.isIntentionalDisconnect else { return }
+        wsClient.markStaleIfConnected()
+    }
+
+    /// 回到前台：探活 → 重连 → 恢复键盘焦点
+    func handleReturnToForeground() {
+        // 恢复终端键盘焦点（无论连接状态，先让键盘弹出来）
+        terminalSink?.focusTerminal()
+
+        guard hasSavedConnection, !wsClient.isIntentionalDisconnect else { return }
+
+        if wsClient.isStale || !isConnected {
+            // 后台回来或已断开，直接重连
+            reconnectWithBackoff()
+            return
+        }
+
+        // 看起来还连着，ping 一下确认
+        wsClient.sendPing(timeout: 2.0) { [weak self] alive in
+            guard let self else { return }
+            if alive {
+                // 连接正常，重新附着终端输出（后台期间可能丢失订阅）
+                self.reattachTerminalIfNeeded()
+            } else {
+                // ping 超时，连接已死
+                self.reconnectWithBackoff()
+            }
+        }
+    }
+
+    /// 重连成功后或 ping 存活时，重新附着当前终端的输出订阅
+    private func reattachTerminalIfNeeded() {
+        guard !currentTermId.isEmpty else { return }
+        wsClient.requestTermAttach(termId: currentTermId)
+    }
+
     // MARK: - 连接
 
     func pairAndConnect() async {
@@ -823,6 +863,10 @@ final class MobileAppState: ObservableObject {
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.refreshProjectTree()
+                // 重连成功后重新附着终端输出订阅（后台期间订阅可能已丢失）
+                self.reattachTerminalIfNeeded()
+                // 恢复键盘焦点
+                self.terminalSink?.focusTerminal()
             } else {
                 self.connectionMessage = "连接断开"
                 if !self.wsClient.isIntentionalDisconnect {

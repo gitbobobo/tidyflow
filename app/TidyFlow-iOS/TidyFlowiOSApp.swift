@@ -53,12 +53,13 @@ struct TidyFlowiOSApp: App {
             }
             .preferredColorScheme(.dark)
             .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active {
-                    // 回到前台，检查连接状态
-                    if !appState.isConnected && appState.hasSavedConnection {
-                        // 仅在非主动断开时触发
-                        Task { appState.reconnectWithBackoff() }
-                    }
+                switch newPhase {
+                case .active:
+                    appState.handleReturnToForeground()
+                case .background:
+                    appState.handleEnterBackground()
+                default:
+                    break
                 }
             }
         }

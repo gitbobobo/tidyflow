@@ -15,6 +15,8 @@ class WSClient: NSObject, ObservableObject {
     @Published private(set) var isConnected: Bool = false
     /// 标记当前断连是否为主动行为（disconnect/reconnect），用于区分意外断连
     private(set) var isIntentionalDisconnect: Bool = false
+    /// 进入后台时标记为 stale，回到前台时据此判断是否需要重连
+    private(set) var isStale: Bool = false
 
     var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
@@ -161,6 +163,7 @@ class WSClient: NSObject, ObservableObject {
         }
 
         isIntentionalDisconnect = false
+        isStale = false
         TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
         webSocketTask = urlSession?.webSocketTask(with: url)
         webSocketTask?.resume()
@@ -175,6 +178,7 @@ class WSClient: NSObject, ObservableObject {
 
     func disconnect() {
         isIntentionalDisconnect = true
+        isStale = false
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         updateConnectionState(false)
@@ -215,6 +219,13 @@ class WSClient: NSObject, ObservableObject {
                 completed = true
                 completion(error == nil)
             }
+        }
+    }
+
+    /// 进入后台时标记连接为 stale；回到前台后据此直接走重连而非 ping 探活
+    func markStaleIfConnected() {
+        if isConnected {
+            isStale = true
         }
     }
 
