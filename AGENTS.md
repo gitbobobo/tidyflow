@@ -47,10 +47,12 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - iOS 侧若在 `List` 等容器内使用 SwiftUI `Menu` 触发 UIKit “`_UIReparentingView` 加到 `UIHostingController.view`”告警/层级异常，可优先尝试给 `Menu`（或其 label）加 `.compositingGroup()`；若仍存在再考虑将入口移到 `toolbar` 的 `Menu`（避免在 `List` cell 内弹出）。
 - iOS 终端若改为原生输入代理，不能同时关闭 xterm stdin 作为唯一输入路径；至少保留 xterm `onData` 兜底，并确保触摸手势可触发 `term.focus()`，否则会出现“无法输入/键盘不弹出”。
 - 远程终端订阅归属必须使用稳定设备标识（如配对 `token_id`），不要绑定瞬时 `conn_id`；移动端进程被系统回收后重连应可继续看到并附着原会话。
+- 移动端终端页面切换/返回时，优先做“仅取消当前 WS 输出订阅、不关闭 PTY”的 detach（例如 `term_detach`）；避免后台持续转发输出导致滚动抖动、卡顿与不必要的内存/带宽占用。真正终止会话必须显式走 `term_close`/kill。
 - iOS 虚拟键盘输入链路应采用 `onData` 主路径 + `textarea input/composition` 兜底；仅依赖 `onData` 会在部分键盘布局下丢失空格或特殊符号。
 - iOS 终端工具栏提供 `Ctrl` 时，不能只在工具栏按键内做组合映射；必须把 `Ctrl` 锁定态接入 `onData` 主输入链路，并在消费后同步回写工具栏状态，确保 `Ctrl+C` 等“Ctrl + 虚拟键盘字符”可用。
 - iOS 终端从 `WKWebView + xterm.js` 迁移到 `SwiftTerm` 时，应以 `TerminalViewDelegate.send` 作为统一输入路径，并通过 `TerminalView.inputAccessoryView` 挂接原生工具栏，避免继续依赖 `WKContentView` 的 runtime 替换。
 - iOS 多终端切换时，客户端必须按 `term_id` 隔离本地渲染状态；切换前先重置/清空 `TerminalView`（含 scrollback），避免 SwiftUI 复用视图导致不同终端输出“串台”。
+- iOS SwiftTerm 的 scrollback 滚动本质是 `UIScrollView.contentOffset`；若 TUI 持续刷新导致用户滚动被“抢回底部”/抖动，可采用“离开底部即暂停输出（必要时 `term_detach`），回到底部且手势结束后再 `term_attach` 回放 scrollback”的策略，并配合禁用 `bounces` 降低回弹抖动。
 - iOS SwiftTerm 远程终端场景下，zle 出现 `3R` 乱码的根因是 SwiftTerm 使用 8-bit C1 引导符（`0x9b`）而 shell 不识别，并非网络延迟；正确做法是在 `TerminalViewDelegate.send` 中做 C1→7-bit 规范化（`0x9b`→`ESC[`），而非丢弃 CPR 应答——丢弃会导致依赖 DSR/CPR 的 TUI 应用（helix、lazygit 等）无法获取光标位置而报错。
 
 ## Build Commands
