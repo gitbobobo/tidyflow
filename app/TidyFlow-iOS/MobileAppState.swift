@@ -147,6 +147,8 @@ final class MobileAppState: ObservableObject {
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
     private var isTerminalViewReady: Bool = false
+    /// 用户是否处于“向上滚动查看 scrollback”的状态；此时暂停把新输出直接喂给渲染，避免被 TUI 刷新抢回底部造成抖动
+    private var isScrollbackLocked: Bool = false
 
     /// 原生终端输出目标（SwiftTerm）
     private weak var terminalSink: MobileTerminalOutputSink?
@@ -638,6 +640,41 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    /// SwiftTerm / UIScrollView 滚动状态更新：
+    /// - 用户离开底部时：锁定 scrollback（暂停自动跟随输出）
+    /// - 用户回到底部且不再交互（不拖拽/不减速）时：解锁并 flush
+    func terminalViewDidUpdateScrollState(isAtBottom: Bool, isUserInteracting: Bool) {
+        // 用户离开底部：立即锁定（避免 TUI 刷新抢回底部）
+        if !isAtBottom {
+            if !isScrollbackLocked {
+                isScrollbackLocked = true
+                // 关键：直接让 Core 停止向当前连接转发输出，避免后台持续刷新导致滚动抖动。
+                // 输出由 Core 的 scrollback 环形缓冲保留；回到底部时再 term_attach 回放。
+                if !currentTermId.isEmpty {
+                    wsClient.requestTermDetach(termId: currentTermId)
+                }
+                pendingOutputChunks.removeAll()
+            }
+            return
+        }
+
+        // 回到底部但仍在拖拽/减速：不要立刻解锁，否则 flush+持续输出会和手势竞争造成抖动
+        if isUserInteracting {
+            return
+        }
+
+        // 回到底部且空闲：解锁并补齐积压输出
+        if isScrollbackLocked {
+            isScrollbackLocked = false
+            pendingOutputChunks.removeAll()
+            // 重置本地渲染并重新附着：用服务端 scrollback 还原最新状态，避免一次性 flush 大量增量导致抖动。
+            terminalSink?.resetTerminal()
+            if !currentTermId.isEmpty {
+                wsClient.requestTermAttach(termId: currentTermId)
+            }
+        }
+    }
+
     // MARK: - 终端
 
     /// 记录待创建的终端信息，实际创建延迟到终端视图 ready 后
@@ -708,12 +745,16 @@ final class MobileAppState: ObservableObject {
             pendingCustomCommandName = ""
             wsClient.requestTermAttach(termId: attachId)
         } else {
-            // 创建新终端
+            // 创建新终端，携带展示信息供 Core 持久化
+            let name: String? = pendingCustomCommandName.isEmpty ? nil : pendingCustomCommandName
+            let icon: String? = pendingCustomCommandIcon.isEmpty ? nil : pendingCustomCommandIcon
             wsClient.requestTermCreate(
                 project: project,
                 workspace: workspace,
                 cols: terminalCols,
-                rows: terminalRows
+                rows: terminalRows,
+                name: name,
+                icon: icon
             )
         }
     }
@@ -725,6 +766,7 @@ final class MobileAppState: ObservableObject {
 
         // 防止 SwiftUI 复用同一个 TerminalView 时，把新终端输出追加到旧缓冲。
         pendingOutputChunks.removeAll()
+        isScrollbackLocked = false
         currentTermId = newId
         lastRenderedTermId = ""
         if let sink = terminalSink {
@@ -765,6 +807,11 @@ final class MobileAppState: ObservableObject {
 
     /// 离开终端视图时清理
     func detachTerminal() {
+        // 离开页面时仅取消输出订阅，避免后台持续转发导致卡顿/抖动/不必要的资源占用。
+        // 注意：不要触发 term_close（那会直接 kill 远端 PTY）。
+        if !currentTermId.isEmpty {
+            wsClient.requestTermDetach(termId: currentTermId)
+        }
         currentTermId = ""
         pendingTermProject = ""
         pendingTermWorkspace = ""
@@ -773,6 +820,7 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommandIcon = ""
         pendingCustomCommandName = ""
         isTerminalViewReady = false
+        isScrollbackLocked = false
         pendingOutputChunks.removeAll()
         terminalSink = nil
         lastRenderedTermId = ""
@@ -834,6 +882,18 @@ final class MobileAppState: ObservableObject {
             let liveIds = Set(result.items.map(\.termId))
             self.terminalPresentationById = self.terminalPresentationById.filter { liveIds.contains($0.key) }
 
+            // 从服务端恢复展示信息（重连场景：本地无缓存但 Core 有记录）
+            for term in result.items {
+                if self.terminalPresentationById[term.termId] == nil,
+                   let name = term.name, !name.isEmpty {
+                    self.terminalPresentationById[term.termId] = MobileTerminalPresentation(
+                        icon: term.icon ?? "terminal",
+                        name: name,
+                        sourceCommand: nil
+                    )
+                }
+            }
+
             var activeWorkspaceKeys: Set<String> = []
             for term in result.items where term.isRunning {
                 let key = self.globalWorkspaceKey(project: term.project, workspace: term.workspace)
@@ -888,6 +948,15 @@ final class MobileAppState: ObservableObject {
         wsClient.onTermAttached = { [weak self] result in
             guard let self else { return }
             self.switchToTerminal(termId: result.termId)
+            // 从服务端恢复展示信息
+            if self.terminalPresentationById[result.termId] == nil,
+               let name = result.name, !name.isEmpty {
+                self.terminalPresentationById[result.termId] = MobileTerminalPresentation(
+                    icon: result.icon ?? "terminal",
+                    name: name,
+                    sourceCommand: nil
+                )
+            }
             // 写入 scrollback 到 SwiftTerm
             if !result.scrollback.isEmpty {
                 self.emitTerminalOutput(result.scrollback)
@@ -1208,7 +1277,7 @@ final class MobileAppState: ObservableObject {
     private func emitTerminalOutput(_ bytes: [UInt8]) {
         guard !bytes.isEmpty else { return }
 
-        if let sink = terminalSink {
+        if let sink = terminalSink, !isScrollbackLocked {
             sink.writeOutput(bytes)
             return
         }

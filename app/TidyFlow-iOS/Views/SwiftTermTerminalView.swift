@@ -39,6 +39,15 @@ struct SwiftTermTerminalView: UIViewRepresentable {
         let terminalView = TerminalView(frame: .zero)
         terminalView.terminalDelegate = context.coordinator
 
+        // SwiftTerm 的 TerminalView 在部分版本中是 UIScrollView 子类/或内部依赖滚动。
+        // 禁用系统自动 inset 与交互式收起键盘，避免在滚动 scrollback 时出现“页面上下抖动”。
+        terminalView.contentInsetAdjustmentBehavior = .never
+        terminalView.keyboardDismissMode = .none
+        terminalView.scrollsToTop = false
+        // 终端滚动更像编辑器：关闭回弹可显著降低“拉到底部/顶部时”的抖动感
+        terminalView.bounces = false
+        terminalView.alwaysBounceVertical = false
+
         // 与原 xterm.js 保持一致的基础视觉配置
         // 使用 MesloLGS NF 以支持 Powerline/Nerd Font 字形，回退到系统等宽字体
         let terminalFontSize: CGFloat = 14
@@ -90,8 +99,10 @@ struct SwiftTermTerminalView: UIViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate, MobileTerminalOutputSink {
         private weak var appState: MobileAppState?
         private weak var terminalView: TerminalView?
+        private var contentOffsetObserver: NSKeyValueObservation?
         private var lastReportedCols: Int = 0
         private var lastReportedRows: Int = 0
+        private var lastIsAtBottom: Bool?
 
         init(appState: MobileAppState) {
             self.appState = appState
@@ -101,6 +112,14 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             let shouldRebind = self.terminalView !== terminalView
             self.terminalView = terminalView
             guard shouldRebind else { return }
+
+            // 监听用户滚动位置：离开底部时暂停“自动跟随输出”，避免 TUI 持续刷新导致滚动抖动/被抢回底部。
+            contentOffsetObserver?.invalidate()
+            contentOffsetObserver = terminalView.observe(\.contentOffset, options: [.new]) { [weak self] view, _ in
+                guard let self else { return }
+                self.reportScrollStateIfNeeded(from: view)
+            }
+            reportScrollStateIfNeeded(from: terminalView)
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -112,6 +131,9 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             if self.terminalView === terminalView {
                 self.terminalView = nil
             }
+
+            contentOffsetObserver?.invalidate()
+            contentOffsetObserver = nil
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -129,6 +151,29 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             lastReportedRows = rows
             Task { @MainActor [weak self] in
                 self?.appState?.terminalViewDidResize(cols: cols, rows: rows)
+            }
+        }
+
+        private func reportScrollStateIfNeeded(from terminalView: TerminalView) {
+            // SwiftTerm(iOS) 通过 UIScrollView 的 contentOffset 实现 scrollback：
+            // 新输出会触发内部 updateScroller() 把 contentOffset 拉回底部，因此需要“用户离开底部即锁定输出”。
+            let maxOffsetY = max(0, terminalView.contentSize.height - terminalView.bounds.height)
+            let distanceToBottom = maxOffsetY - terminalView.contentOffset.y
+            // 允许一点浮动，避免临界区频繁抖动
+            let isAtBottom = maxOffsetY <= 0 || distanceToBottom <= 2
+            // 只在状态变化时触发（减少主线程消息风暴）
+            if let last = lastIsAtBottom, last == isAtBottom {
+                // 仍需要在“用户交互结束”时让上层有机会解锁，所以继续往下走
+            } else {
+                lastIsAtBottom = isAtBottom
+            }
+
+            let isUserInteracting = terminalView.isTracking || terminalView.isDragging || terminalView.isDecelerating
+            Task { @MainActor [weak self] in
+                self?.appState?.terminalViewDidUpdateScrollState(
+                    isAtBottom: isAtBottom,
+                    isUserInteracting: isUserInteracting
+                )
             }
         }
 
@@ -188,7 +233,11 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             }
         }
 
-        func scrolled(source: TerminalView, position: Double) {}
+        func scrolled(source: TerminalView, position: Double) {
+            // 兼容：macOS 版本的 SwiftTerm 会通过 yDisp -> scrollPosition 回调。
+            // iOS 端真实滚动以 contentOffset 为准（已由 KVO 监听），这里作为兜底同步一次“是否在底部”。
+            reportScrollStateIfNeeded(from: source)
+        }
 
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
             // 第二阶段再接入链接打开能力
