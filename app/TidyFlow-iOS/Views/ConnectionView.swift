@@ -99,7 +99,7 @@ struct ConnectionView: View {
             }
         }
         .onChange(of: appState.isConnected) { _, connected in
-            if connected {
+            if connected && appState.navigationPath.count == 0 {
                 appState.navigationPath.append(MobileRoute.projects)
             }
         }
