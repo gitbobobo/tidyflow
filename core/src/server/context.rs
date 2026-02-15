@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
-use crate::server::terminal_registry::SharedTerminalRegistry;
+use crate::server::terminal_registry::{PtyFlowGate, SharedTerminalRegistry};
 use crate::workspace::state::AppState;
 
 /// 共享应用状态
@@ -24,8 +24,8 @@ pub struct FlowControl {
     pub notify: tokio::sync::Notify,
 }
 
-/// subscribed_terms 的 value 类型：(转发任务句柄, 流控状态)
-pub type TermSubscription = (tokio::task::JoinHandle<()>, Arc<FlowControl>);
+/// subscribed_terms 的 value 类型：(转发任务句柄, 流控状态, PTY 背压门控)
+pub type TermSubscription = (tokio::task::JoinHandle<()>, Arc<FlowControl>, Arc<PtyFlowGate>);
 
 /// 正在运行的项目命令条目
 pub struct RunningCommandEntry {

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -10,6 +11,81 @@ use crate::server::protocol::TerminalInfo;
 
 /// 默认 scrollback 缓冲区大小：256KB
 const DEFAULT_SCROLLBACK_CAPACITY: usize = 256 * 1024;
+
+/// PTY 读取线程背压门控
+///
+/// 当所有订阅者都处于高水位暂停状态时，阻塞 PTY 读取线程，
+/// 让子进程的 stdout 管道自然产生背压，避免无限制内存分配。
+pub struct PtyFlowGate {
+    state: std::sync::Mutex<FlowGateState>,
+    condvar: std::sync::Condvar,
+}
+
+struct FlowGateState {
+    subscriber_count: u32,
+    paused_count: u32,
+}
+
+impl PtyFlowGate {
+    pub fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(FlowGateState {
+                subscriber_count: 0,
+                paused_count: 0,
+            }),
+            condvar: std::sync::Condvar::new(),
+        }
+    }
+
+    /// PTY 读取线程每次 read 前调用；当所有订阅者都暂停时阻塞等待（带超时兜底）
+    pub fn wait_if_all_paused(&self, timeout: Duration) {
+        let guard = self.state.lock().unwrap();
+        if guard.subscriber_count > 0 && guard.paused_count >= guard.subscriber_count {
+            let _result = self
+                .condvar
+                .wait_timeout_while(guard, timeout, |s| {
+                    s.subscriber_count > 0 && s.paused_count >= s.subscriber_count
+                });
+        }
+    }
+
+    /// 转发任务进入高水位时调用
+    pub fn mark_paused(&self) {
+        let mut guard = self.state.lock().unwrap();
+        guard.paused_count = guard.paused_count.saturating_add(1);
+    }
+
+    /// 转发任务离开高水位时调用
+    pub fn mark_resumed(&self) {
+        let mut guard = self.state.lock().unwrap();
+        guard.paused_count = guard.paused_count.saturating_sub(1);
+        if guard.subscriber_count == 0 || guard.paused_count < guard.subscriber_count {
+            self.condvar.notify_all();
+        }
+    }
+
+    /// 新增订阅者
+    pub fn add_subscriber(&self) {
+        let mut guard = self.state.lock().unwrap();
+        guard.subscriber_count += 1;
+        // 新订阅者加入后，paused_count < subscriber_count，唤醒读取线程
+        self.condvar.notify_all();
+    }
+
+    /// 移除订阅者（同时减少 paused_count 以保持一致性）
+    pub fn remove_subscriber(&self) {
+        let mut guard = self.state.lock().unwrap();
+        guard.subscriber_count = guard.subscriber_count.saturating_sub(1);
+        // 保守处理：同步减少 paused_count，避免 paused > subscriber
+        if guard.paused_count > guard.subscriber_count {
+            guard.paused_count = guard.subscriber_count;
+        }
+        // 订阅者减少后可能不再全部暂停，唤醒读取线程
+        if guard.subscriber_count == 0 || guard.paused_count < guard.subscriber_count {
+            self.condvar.notify_all();
+        }
+    }
+}
 
 /// 终端状态
 #[derive(Debug, Clone)]
@@ -72,6 +148,8 @@ pub struct TerminalEntry {
     /// 多订阅者广播通道（term_id, data）
     pub output_tx: broadcast::Sender<(String, Vec<u8>)>,
     pub scrollback: ScrollbackBuffer,
+    /// PTY 读取线程背压门控
+    pub flow_gate: Arc<PtyFlowGate>,
 }
 
 /// 全局终端注册表，生命周期 = Core 进程生命周期
@@ -121,11 +199,15 @@ impl TerminalRegistry {
         // 创建 broadcast 通道，用于多 WS 订阅者
         let (output_tx, _) = broadcast::channel::<(String, Vec<u8>)>(256);
 
+        // 创建背压门控
+        let flow_gate = Arc::new(PtyFlowGate::new());
+
         // 为读取线程创建 broadcast sender 的克隆
         let reader_output_tx = output_tx.clone();
         let reader_scrollback_tx = scrollback_tx;
         // 使用 Arc<str> 避免每次循环都 clone String
         let reader_term_id: Arc<str> = Arc::from(term_id.as_str());
+        let reader_flow_gate = flow_gate.clone();
 
         let reader = session
             .take_reader()
@@ -140,6 +222,8 @@ impl TerminalRegistry {
             // 预分配 term_id String，循环内直接 clone（比 Arc<str>.to_string() 略快）
             let tid_string = reader_term_id.to_string();
             loop {
+                // 背压门控：当所有订阅者都处于高水位时阻塞，让子进程 stdout 管道自然产生背压
+                reader_flow_gate.wait_if_all_paused(Duration::from_secs(2));
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         if !pending.is_empty() {
@@ -203,6 +287,7 @@ impl TerminalRegistry {
             icon,
             output_tx,
             scrollback: ScrollbackBuffer::new(DEFAULT_SCROLLBACK_CAPACITY),
+            flow_gate,
         };
 
         if self.default_term_id.is_none() {
@@ -214,14 +299,14 @@ impl TerminalRegistry {
         Ok((term_id, shell_name))
     }
 
-    /// 订阅终端输出，返回 broadcast::Receiver
+    /// 订阅终端输出，返回 (broadcast::Receiver, Arc<PtyFlowGate>)
     pub fn subscribe(
         &self,
         term_id: &str,
-    ) -> Option<broadcast::Receiver<(String, Vec<u8>)>> {
+    ) -> Option<(broadcast::Receiver<(String, Vec<u8>)>, Arc<PtyFlowGate>)> {
         self.terminals
             .get(term_id)
-            .map(|e| e.output_tx.subscribe())
+            .map(|e| (e.output_tx.subscribe(), e.flow_gate.clone()))
     }
 
     /// 获取终端的 scrollback 快照

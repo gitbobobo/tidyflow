@@ -1113,9 +1113,10 @@ async fn handle_socket(
     // WS 断开：只清理订阅关系，不杀终端
     {
         let mut subs = subscribed_terms.lock().await;
-        for (term_id, (handle, _fc)) in subs.drain() {
+        for (term_id, (handle, _fc, flow_gate)) in subs.drain() {
             info!("Unsubscribing from terminal {} on WS disconnect", term_id);
             handle.abort();
+            flow_gate.remove_subscriber();
         }
     }
 
@@ -1158,8 +1159,8 @@ pub async fn subscribe_terminal(
     agg_tx: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 ) -> bool {
     let reg = registry.lock().await;
-    let rx = match reg.subscribe(term_id) {
-        Some(rx) => rx,
+    let (rx, flow_gate) = match reg.subscribe(term_id) {
+        Some(pair) => pair,
         None => return false,
     };
     drop(reg);
@@ -1172,21 +1173,35 @@ pub async fn subscribe_terminal(
         notify: Notify::new(),
     });
     let fc_clone = fc.clone();
+    let fg_clone = flow_gate.clone();
+
+    // 注册订阅者到 flow_gate
+    flow_gate.add_subscriber();
 
     let handle = tokio::spawn(async move {
         let mut rx = rx;
+        let mut is_paused = false;
         loop {
             // 流控：unacked 超过高水位时暂停，等待 ACK 唤醒
             while fc_clone.unacked.load(Ordering::Relaxed) > FLOW_CONTROL_HIGH_WATER {
+                if !is_paused {
+                    is_paused = true;
+                    fg_clone.mark_paused();
+                }
                 // 带超时等待，防止前端 ACK 丢失导致永久阻塞
                 tokio::select! {
                     _ = fc_clone.notify.notified() => {}
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {
-                        // 超时后强制重置 unacked，避免死锁
-                        warn!("Terminal {} flow control timeout, resetting unacked", tid);
-                        fc_clone.unacked.store(0, Ordering::Relaxed);
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {
+                        // 超时后渐进衰减 unacked，避免完全失效
+                        let prev = fc_clone.unacked.load(Ordering::Relaxed);
+                        warn!("Terminal {} flow control timeout, decaying unacked {} -> {}", tid, prev, prev / 2);
+                        fc_clone.unacked.store(prev / 2, Ordering::Relaxed);
                     }
                 }
+            }
+            if is_paused {
+                is_paused = false;
+                fg_clone.mark_resumed();
             }
 
             match rx.recv().await {
@@ -1208,14 +1223,20 @@ pub async fn subscribe_terminal(
                 }
             }
         }
+        // 任务结束时确保释放暂停状态和订阅者计数
+        if is_paused {
+            fg_clone.mark_resumed();
+        }
+        fg_clone.remove_subscriber();
     });
 
     let mut subs = subscribed_terms.lock().await;
     // 如果已有旧订阅，先取消
-    if let Some((old_handle, _old_fc)) = subs.remove(term_id) {
+    if let Some((old_handle, _old_fc, old_fg)) = subs.remove(term_id) {
         old_handle.abort();
+        old_fg.remove_subscriber();
     }
-    subs.insert(term_id.to_string(), (handle, fc));
+    subs.insert(term_id.to_string(), (handle, fc, flow_gate));
     true
 }
 
@@ -1225,8 +1246,9 @@ pub async fn unsubscribe_terminal(
     subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
 ) {
     let mut subs = subscribed_terms.lock().await;
-    if let Some((handle, _fc)) = subs.remove(term_id) {
+    if let Some((handle, _fc, flow_gate)) = subs.remove(term_id) {
         handle.abort();
+        flow_gate.remove_subscriber();
     }
 }
 
@@ -1237,7 +1259,7 @@ pub async fn ack_terminal_output(
     subscribed_terms: &Arc<Mutex<HashMap<String, TermSubscription>>>,
 ) {
     let subs = subscribed_terms.lock().await;
-    if let Some((_handle, fc)) = subs.get(term_id) {
+    if let Some((_handle, fc, _flow_gate)) = subs.get(term_id) {
         // 减少未确认字节数（使用饱和减法避免下溢）
         let prev = fc.unacked.load(Ordering::Relaxed);
         let new_val = prev.saturating_sub(bytes);
