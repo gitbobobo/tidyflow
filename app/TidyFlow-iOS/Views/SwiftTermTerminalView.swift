@@ -28,16 +28,125 @@ private let mobileTerminalCaretColor = UIColor(
 /// 原生 SwiftTerm 终端容器
 struct SwiftTermTerminalView: UIViewRepresentable {
     let appState: MobileAppState
+    /// 顶部安全区高度（通常包含状态栏 + 导航栏高度）。用于给终端滚动内容留出默认起始间距，
+    /// 同时仍允许用户滚动把内容推入安全区（因为终端本体会 ignoresSafeArea(.top)）。
+    let topSafeAreaInset: CGFloat
     let onKey: (String) -> Void
     let onCtrlArmedChanged: (Bool) -> Void
+
+    /// SwiftTerm(iOS) 的 TerminalView 内部会直接用 `contentOffset` 计算可见行，并在 updateScroller() 中强制重置 contentOffset。
+    /// 为了实现“首屏避开顶部安全区，但允许用户把内容滑进安全区”，这里采用：
+    /// 1) 设置 `contentInset.top = topPadding`，允许 top 位置为 `-topPadding`
+    /// 2) 在内容高度不足一屏且用户未主动把内容滑到 0 的情况下，把 SwiftTerm 强制重置到 0 的 offset 再纠正为 `-topPadding`
+    private final class SafeAreaPaddedTerminalView: TerminalView {
+        /// 来自 SwiftUI 侧的提示值（在某些布局下可能为 0）
+        var requestedTopPadding: CGFloat = 0 {
+            didSet { updateTopPaddingIfNeeded() }
+        }
+
+        private var appliedTopPadding: CGFloat = 0
+        private var isAdjustingOffset: Bool = false
+        private var sawUserDrag: Bool = false
+        private var userDismissedTopPadding: Bool = false
+
+        override var contentOffset: CGPoint {
+            didSet {
+                guard !isAdjustingOffset else { return }
+
+                let interacting = isTracking || isDragging || isDecelerating
+                if interacting {
+                    sawUserDrag = true
+                } else if sawUserDrag {
+                    // 用户一次拖拽结束后，如果停在接近 0 的位置，视为“用户主动把内容滑进安全区”，后续不再自动纠正回 -topPadding。
+                    if isContentNonScrollable() && contentOffset.y >= -0.5 {
+                        userDismissedTopPadding = true
+                    }
+                    sawUserDrag = false
+                }
+
+                enforceInitialTopPaddingIfNeeded()
+            }
+        }
+
+        override func safeAreaInsetsDidChange() {
+            super.safeAreaInsetsDidChange()
+            updateTopPaddingIfNeeded()
+            enforceInitialTopPaddingIfNeeded()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            updateTopPaddingIfNeeded()
+            enforceInitialTopPaddingIfNeeded()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            // 布局变化时（首次挂载、旋转、导航栏变化）安全区可能刷新，这里做一次兜底更新。
+            updateTopPaddingIfNeeded()
+            enforceInitialTopPaddingIfNeeded()
+        }
+
+        private func updateTopPaddingIfNeeded() {
+            // UIKit 的 safeAreaInsets 在 view 挂到 window 后才可靠；这里取两者较大值。
+            let newPadding = max(0, max(requestedTopPadding, safeAreaInsets.top))
+            guard abs(newPadding - appliedTopPadding) > 0.5 else {
+                // padding 未变化时也需要确保 inset 正确（避免外部把 inset 清掉）
+                applyInsets(topPadding: appliedTopPadding)
+                return
+            }
+
+            appliedTopPadding = newPadding
+
+            // 允许 topPadding 生效，即使内容高度不足一屏也能停在 -topPadding。
+            alwaysBounceVertical = true
+
+            applyInsets(topPadding: newPadding)
+        }
+
+        private func applyInsets(topPadding: CGFloat) {
+            // 让 UIScrollView 允许最小 offset 到 -topPadding（SwiftTerm 绘制仍基于 contentOffset/bounds）
+            if abs(contentInset.top - topPadding) > 0.5 {
+                contentInset.top = topPadding
+            }
+
+            var indicatorInsets = verticalScrollIndicatorInsets
+            if abs(indicatorInsets.top - topPadding) > 0.5 {
+                indicatorInsets.top = topPadding
+                verticalScrollIndicatorInsets = indicatorInsets
+            }
+        }
+
+        private func isContentNonScrollable() -> Bool {
+            // contentSize/bounds 在终端刚挂载时可能为 0，这里做一个保守判定
+            guard bounds.height > 1 else { return true }
+            return contentSize.height <= bounds.height + 1
+        }
+
+        private func enforceInitialTopPaddingIfNeeded() {
+            guard appliedTopPadding > 0 else { return }
+            guard !userDismissedTopPadding else { return }
+            guard !(isTracking || isDragging || isDecelerating) else { return }
+            guard isContentNonScrollable() else { return }
+
+            // 仅在 SwiftTerm 把 offset 强制归零(=0) 或接近 0 时，把它纠正到 -topPadding。
+            // 这样首屏会下移；但用户拖拽并停在 0 后会被标记为 dismissed，不再自动纠正。
+            if contentOffset.y >= -0.5 {
+                isAdjustingOffset = true
+                setContentOffset(CGPoint(x: contentOffset.x, y: -appliedTopPadding), animated: false)
+                isAdjustingOffset = false
+            }
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(appState: appState)
     }
 
     func makeUIView(context: Context) -> TerminalView {
-        let terminalView = TerminalView(frame: .zero)
+        let terminalView = SafeAreaPaddedTerminalView(frame: .zero)
         terminalView.terminalDelegate = context.coordinator
+        terminalView.requestedTopPadding = topSafeAreaInset
 
         // SwiftTerm 的 TerminalView 在部分版本中是 UIScrollView 子类/或内部依赖滚动。
         // 禁用系统自动 inset 与交互式收起键盘，避免在滚动 scrollback 时出现“页面上下抖动”。
@@ -46,7 +155,8 @@ struct SwiftTermTerminalView: UIViewRepresentable {
         terminalView.scrollsToTop = false
         // 终端滚动更像编辑器：关闭回弹可显著降低“拉到底部/顶部时”的抖动感
         terminalView.bounces = false
-        terminalView.alwaysBounceVertical = false
+        // 注意：这里必须为 true，否则在内容不足一屏时 topPadding(-contentInset.top) 可能无法生效
+        terminalView.alwaysBounceVertical = true
 
         // 与原 xterm.js 保持一致的基础视觉配置
         // 使用 MesloLGS NF 以支持 Powerline/Nerd Font 字形，回退到系统等宽字体
@@ -89,6 +199,9 @@ struct SwiftTermTerminalView: UIViewRepresentable {
 
     func updateUIView(_ uiView: TerminalView, context: Context) {
         context.coordinator.bind(terminalView: uiView)
+        if let padded = uiView as? SafeAreaPaddedTerminalView {
+            padded.requestedTopPadding = topSafeAreaInset
+        }
         context.coordinator.reportCurrentSizeIfNeeded(from: uiView)
     }
 
@@ -117,7 +230,9 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             contentOffsetObserver?.invalidate()
             contentOffsetObserver = terminalView.observe(\.contentOffset, options: [.new]) { [weak self] view, _ in
                 guard let self else { return }
-                self.reportScrollStateIfNeeded(from: view)
+                Task { @MainActor [weak self] in
+                    self?.reportScrollStateIfNeeded(from: view)
+                }
             }
             reportScrollStateIfNeeded(from: terminalView)
 
@@ -157,7 +272,12 @@ struct SwiftTermTerminalView: UIViewRepresentable {
         private func reportScrollStateIfNeeded(from terminalView: TerminalView) {
             // SwiftTerm(iOS) 通过 UIScrollView 的 contentOffset 实现 scrollback：
             // 新输出会触发内部 updateScroller() 把 contentOffset 拉回底部，因此需要“用户离开底部即锁定输出”。
-            let maxOffsetY = max(0, terminalView.contentSize.height - terminalView.bounds.height)
+            // 注意：这里必须考虑 inset（特别是顶部安全区 inset），否则会误判 isAtBottom。
+            let inset = terminalView.adjustedContentInset
+            let maxOffsetY = max(
+                -inset.top,
+                terminalView.contentSize.height + inset.bottom - terminalView.bounds.height
+            )
             let distanceToBottom = maxOffsetY - terminalView.contentOffset.y
             // 允许一点浮动，避免临界区频繁抖动
             let isAtBottom = maxOffsetY <= 0 || distanceToBottom <= 2

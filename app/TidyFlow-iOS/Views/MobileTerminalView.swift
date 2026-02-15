@@ -15,17 +15,21 @@ struct MobileTerminalView: View {
     var commandName: String? = nil
 
     var body: some View {
-        SwiftTermTerminalView(
-            appState: appState,
-            onKey: { sequence in
-                appState.sendSpecialKey(sequence)
-            },
-            onCtrlArmedChanged: { armed in
-                appState.setCtrlArmed(armed)
-            }
-        )
-        .background(Color(red: 30/255, green: 30/255, blue: 30/255))
-        .ignoresSafeArea(.container, edges: .top)
+        GeometryReader { proxy in
+            SwiftTermTerminalView(
+                appState: appState,
+                topSafeAreaInset: proxy.safeAreaInsets.top,
+                onKey: { sequence in
+                    appState.sendSpecialKey(sequence)
+                },
+                onCtrlArmedChanged: { armed in
+                    appState.setCtrlArmed(armed)
+                }
+            )
+            .background(Color(red: 30/255, green: 30/255, blue: 30/255))
+            // 让终端可以“滑到安全区域”，但通过 contentInset 把默认内容起点下移，避免被状态栏/导航栏遮挡。
+            .ignoresSafeArea(.container, edges: .top)
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)

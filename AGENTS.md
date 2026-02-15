@@ -53,6 +53,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - iOS 终端从 `WKWebView + xterm.js` 迁移到 `SwiftTerm` 时，应以 `TerminalViewDelegate.send` 作为统一输入路径，并通过 `TerminalView.inputAccessoryView` 挂接原生工具栏，避免继续依赖 `WKContentView` 的 runtime 替换。
 - iOS 多终端切换时，客户端必须按 `term_id` 隔离本地渲染状态；切换前先重置/清空 `TerminalView`（含 scrollback），避免 SwiftUI 复用视图导致不同终端输出“串台”。
 - iOS SwiftTerm 的 scrollback 滚动本质是 `UIScrollView.contentOffset`；若 TUI 持续刷新导致用户滚动被“抢回底部”/抖动，可采用“离开底部即暂停输出（必要时 `term_detach`），回到底部且手势结束后再 `term_attach` 回放 scrollback”的策略，并配合禁用 `bounces` 降低回弹抖动。
+- iOS 需要“默认避开顶部安全区但仍允许内容滚进安全区”时，可让容器 `ignoresSafeArea(.top)`，同时对内部滚动视图设置 `contentInset.top = safeAreaTop`；`GeometryProxy.safeAreaInsets` 在部分布局下可能为 0，建议用 `UIView.safeAreaInsets.top` 兜底取较大值。
+- SwiftTerm(iOS) 的 `TerminalView` 会在内部 `updateScroller()` 中强制重置 `contentOffset`，并直接用 `contentOffset` 做可见行映射；仅设置 `contentInset.top` 往往不会得到“首屏下移”的效果。要实现顶部安全区留白且可滚入，建议对子类在 `scrolled/sizeChanged/safeAreaInsetsDidChange` 后把 `contentOffset.y` 平移为 `logicalOffset - topPadding`（配合 `contentInset.top = topPadding`）。
 - iOS SwiftTerm 远程终端场景下，zle 出现 `3R` 乱码的根因是 SwiftTerm 使用 8-bit C1 引导符（`0x9b`）而 shell 不识别，并非网络延迟；正确做法是在 `TerminalViewDelegate.send` 中做 C1→7-bit 规范化（`0x9b`→`ESC[`），而非丢弃 CPR 应答——丢弃会导致依赖 DSR/CPR 的 TUI 应用（helix、lazygit 等）无法获取光标位置而报错。
 
 ## Build Commands
