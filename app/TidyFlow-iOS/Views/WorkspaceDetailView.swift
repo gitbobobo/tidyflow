@@ -14,6 +14,14 @@ struct WorkspaceDetailView: View {
         appState.runningTasksForWorkspace(project: project, workspace: workspace)
     }
 
+    private var allTasks: [MobileWorkspaceTask] {
+        appState.tasksForWorkspace(project: project, workspace: workspace)
+    }
+
+    private var completedTaskCount: Int {
+        allTasks.filter { !$0.status.isActive }.count
+    }
+
     private var gitSummary: MobileWorkspaceGitSummary {
         appState.gitSummaryForWorkspace(project: project, workspace: workspace)
     }
@@ -79,21 +87,44 @@ struct WorkspaceDetailView: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(runningTasks) { task in
-                        NavigationLink(value: MobileRoute.workspaceTasks(project: project, workspace: workspace)) {
-                            HStack(spacing: 10) {
-                                MobileCommandIconView(iconName: task.icon, size: 16)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(task.title)
-                                    Text(task.message)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                ProgressView()
-                                    .scaleEffect(0.9)
+                        HStack(spacing: 10) {
+                            MobileCommandIconView(iconName: task.icon, size: 16)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(task.title)
+                                Text(task.message)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
                             }
-                            .padding(.vertical, 2)
+                            Spacer()
+                            if appState.canCancelTask(task) {
+                                Button {
+                                    appState.cancelTask(task)
+                                } label: {
+                                    Image(systemName: "stop.circle")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            ProgressView()
+                                .scaleEffect(0.9)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
+                NavigationLink(value: MobileRoute.workspaceTasks(project: project, workspace: workspace)) {
+                    HStack {
+                        Text("查看全部任务")
+                        Spacer()
+                        if completedTaskCount > 0 {
+                            Text("\(completedTaskCount)")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary)
+                                .clipShape(Capsule())
                         }
                     }
                 }

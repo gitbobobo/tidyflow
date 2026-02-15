@@ -479,18 +479,33 @@ final class MobileAppState: ObservableObject {
     }
 
     func canCancelTask(_ task: MobileWorkspaceTask) -> Bool {
-        task.type == .projectCommand && task.status.isActive
+        task.status.isActive
     }
 
     func cancelTask(_ task: MobileWorkspaceTask) {
         guard canCancelTask(task) else { return }
 
-        if let commandId = task.commandId {
-            wsClient.requestCancelProjectCommand(
+        switch task.type {
+        case .projectCommand:
+            if let commandId = task.commandId {
+                wsClient.requestCancelProjectCommand(
+                    project: task.project,
+                    workspace: task.workspace,
+                    commandId: commandId,
+                    taskId: task.remoteTaskId
+                )
+            }
+        case .aiCommit:
+            wsClient.requestCancelAITask(
                 project: task.project,
                 workspace: task.workspace,
-                commandId: commandId,
-                taskId: task.remoteTaskId
+                operationType: "ai_commit"
+            )
+        case .aiMerge:
+            wsClient.requestCancelAITask(
+                project: task.project,
+                workspace: task.workspace,
+                operationType: "ai_merge"
             )
         }
 
@@ -499,6 +514,14 @@ final class MobileAppState: ObservableObject {
             item.message = "已取消"
             item.completedAt = Date()
         }
+    }
+
+    /// 清除指定工作空间的已完成任务
+    func clearCompletedTasks(project: String, workspace: String) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        guard var tasks = workspaceTasksByKey[key] else { return }
+        tasks.removeAll { !$0.status.isActive }
+        workspaceTasksByKey[key] = tasks.isEmpty ? nil : tasks
     }
 
     func runAICommit(project: String, workspace: String) {
@@ -1024,6 +1047,21 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onError = { [weak self] message in
             self?.errorMessage = message
+        }
+
+        wsClient.onAITaskCancelled = { [weak self] result in
+            guard let self else { return }
+            // 按 project + workspace + operation_type 查找活跃任务并标记取消
+            let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
+            let taskType: MobileWorkspaceTaskType = result.operationType == "ai_merge" ? .aiMerge : .aiCommit
+            if let tasks = self.workspaceTasksByKey[key],
+               let task = tasks.first(where: { $0.type == taskType && $0.status.isActive }) {
+                self.mutateTask(task.id) { t in
+                    t.status = .cancelled
+                    t.message = "已取消"
+                    t.completedAt = Date()
+                }
+            }
         }
 
         wsClient.onClientSettingsResult = { [weak self] settings in
