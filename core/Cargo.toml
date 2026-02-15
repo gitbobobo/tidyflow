@@ -36,6 +36,11 @@ walkdir = "2"
 url = "2"
 # v1.39: 剪贴板图片转码（iOS 粘贴图片到 macOS 剪贴板）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# AI Server 进程管理
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio-stream = "0.1"
+bytes = "1"
+async-trait = "0.1.89"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

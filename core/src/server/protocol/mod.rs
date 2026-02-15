@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 // 按领域拆分的协议类型子模块（组织性拆分，保持类型引用路径不变）
+pub mod ai;
 pub mod file;
 pub mod git;
 pub mod project;
@@ -444,6 +445,35 @@ pub enum ClientMessage {
     ClipboardImageUpload {
         #[serde(with = "serde_bytes")]
         image_data: Vec<u8>,
+    },
+
+    // v1.41: AI Chat
+    #[serde(rename = "ai_chat_start")]
+    AIChatStart {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
+    #[serde(rename = "ai_chat_send")]
+    AIChatSend {
+        session_id: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_refs: Option<Vec<String>>,
+    },
+    #[serde(rename = "ai_chat_abort")]
+    AIChatAbort {
+        session_id: String,
+    },
+    #[serde(rename = "ai_session_list")]
+    AISessionList {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+    },
+    #[serde(rename = "ai_session_delete")]
+    AISessionDelete {
+        session_id: String,
     },
 
     // v1.40: 查询任务历史（iOS 重连恢复）
@@ -951,6 +981,38 @@ pub enum ServerMessage {
     // v1.40: 任务历史快照（iOS 重连恢复）
     TasksSnapshot {
         tasks: Vec<TaskSnapshotEntry>,
+    },
+
+    // v1.41: AI Chat 响应
+    #[serde(rename = "ai_chat_text")]
+    AIChatText {
+        session_id: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delta: Option<String>,
+        done: bool,
+    },
+    #[serde(rename = "ai_chat_tool")]
+    AIChatTool {
+        session_id: String,
+        tool: String,
+        input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<serde_json::Value>,
+    },
+    #[serde(rename = "ai_chat_error")]
+    AIChatError {
+        session_id: String,
+        error: String,
+    },
+    #[serde(rename = "ai_session_started")]
+    AISessionStarted {
+        session_id: String,
+        title: String,
+    },
+    #[serde(rename = "ai_session_list")]
+    AISessionList {
+        sessions: Vec<ai::SessionInfo>,
     },
 }
 

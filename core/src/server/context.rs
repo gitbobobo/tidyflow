@@ -10,6 +10,7 @@ use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use chrono::Utc;
 
+use crate::server::handlers::ai::SharedAIState;
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
@@ -151,6 +152,7 @@ pub struct HandlerContext {
     pub lsp_supervisor: LspSupervisor,
     pub conn_meta: ConnectionMeta,
     pub remote_sub_registry: SharedRemoteSubRegistry,
+    pub ai_state: SharedAIState,
 }
 
 /// 统一应用错误类型 — 由调度层自动转换为 `ServerMessage::Error`

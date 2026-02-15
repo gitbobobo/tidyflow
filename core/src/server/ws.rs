@@ -21,6 +21,9 @@ use uuid::Uuid;
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
 
+use crate::server::handlers::ai::AIState;
+use crate::server::handlers::ai::SharedAIState;
+
 use crate::server::context::{
     ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningAITasks,
     SharedRunningCommands, SharedTaskHistory, TaskBroadcastTx, TermSubscription,
@@ -142,6 +145,7 @@ struct AppContext {
     running_commands: SharedRunningCommands,
     running_ai_tasks: SharedRunningAITasks,
     task_history: SharedTaskHistory,
+    ai_state: SharedAIState,
 }
 
 /// Run the WebSocket server on the specified port
@@ -193,6 +197,9 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     // 全局共享的任务历史注册表（iOS 重连恢复用）
     let task_history: SharedTaskHistory = Arc::new(Mutex::new(Vec::new()));
 
+    // 全局共享的 AI 状态
+    let ai_state: SharedAIState = Arc::new(Mutex::new(AIState::new()));
+
     let ctx = AppContext {
         app_state: shared_state.clone(),
         save_tx,
@@ -208,6 +215,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         running_commands,
         running_ai_tasks,
         task_history,
+        ai_state,
     };
 
     let app = Router::new()
@@ -351,6 +359,7 @@ async fn ws_handler(
                 ctx.running_commands,
                 ctx.running_ai_tasks,
                 ctx.task_history,
+                ctx.ai_state,
             )
         })
         .into_response()
@@ -835,6 +844,7 @@ async fn handle_socket(
     running_commands: SharedRunningCommands,
     running_ai_tasks: SharedRunningAITasks,
     task_history: SharedTaskHistory,
+    ai_state: SharedAIState,
 ) {
     info!(
         "New WebSocket connection established (conn_id={}, remote={})",
@@ -880,6 +890,7 @@ async fn handle_socket(
         lsp_supervisor: lsp_supervisor.clone(),
         conn_meta: conn_meta.clone(),
         remote_sub_registry: remote_sub_registry.clone(),
+        ai_state: ai_state.clone(),
     };
 
     // Send Hello message with v1 capabilities
@@ -1361,6 +1372,18 @@ async fn handle_client_message(
 
     // 日志消息
     if handlers::log::handle_log_message(&client_msg)? {
+        return Ok(());
+    }
+
+    // AI 消息
+    if handlers::ai::handle_ai_message(
+        &client_msg,
+        socket,
+        &ctx.app_state,
+        &ctx.ai_state,
+    )
+    .await?
+    {
         return Ok(());
     }
 
