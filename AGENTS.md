@@ -56,6 +56,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - iOS 需要“默认避开顶部安全区但仍允许内容滚进安全区”时，可让容器 `ignoresSafeArea(.top)`，同时对内部滚动视图设置 `contentInset.top = safeAreaTop`；`GeometryProxy.safeAreaInsets` 在部分布局下可能为 0，建议用 `UIView.safeAreaInsets.top` 兜底取较大值。
 - SwiftTerm(iOS) 的 `TerminalView` 会在内部 `updateScroller()` 中强制重置 `contentOffset`，并直接用 `contentOffset` 做可见行映射；仅设置 `contentInset.top` 往往不会得到“首屏下移”的效果。要实现顶部安全区留白且可滚入，建议对子类在 `scrolled/sizeChanged/safeAreaInsetsDidChange` 后把 `contentOffset.y` 平移为 `logicalOffset - topPadding`（配合 `contentInset.top = topPadding`）。
 - iOS SwiftTerm 远程终端场景下，zle 出现 `3R` 乱码的根因是 SwiftTerm 使用 8-bit C1 引导符（`0x9b`）而 shell 不识别，并非网络延迟；正确做法是在 `TerminalViewDelegate.send` 中做 C1→7-bit 规范化（`0x9b`→`ESC[`），而非丢弃 CPR 应答——丢弃会导致依赖 DSR/CPR 的 TUI 应用（helix、lazygit 等）无法获取光标位置而报错。
+- 终端 PTY 的 `cols/rows` 来自客户端上报，服务端必须做范围 clamp 并记录告警日志；异常尺寸（过大/为 0）可能触发远端 TUI/CLI 进程按屏幕大小分配缓存，从而 OOM 被系统 kill。
 
 ## Build Commands
 

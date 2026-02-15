@@ -6,6 +6,20 @@ use uuid::Uuid;
 
 use super::resize::resize_pty;
 
+// 终端尺寸来自客户端（macOS/xterm.js、iOS/SwiftTerm、未来可能还有其他设备）。
+// 这里必须做服务端兜底 clamp：异常上报（如 cols/rows 极大）会导致某些 TUI 在 SIGWINCH 后按屏幕大小分配缓冲，
+// 进而触发远端 CLI 进程（例如 claude）OOM 被系统 kill。
+const PTY_MIN_COLS: u16 = 20;
+const PTY_MIN_ROWS: u16 = 5;
+const PTY_MAX_COLS: u16 = 1000;
+const PTY_MAX_ROWS: u16 = 300;
+
+fn clamp_pty_size(cols: u16, rows: u16) -> (u16, u16) {
+    let cols = cols.clamp(PTY_MIN_COLS, PTY_MAX_COLS);
+    let rows = rows.clamp(PTY_MIN_ROWS, PTY_MAX_ROWS);
+    (cols, rows)
+}
+
 pub struct PtySession {
     session_id: String,
     master: Option<Box<dyn MasterPty + Send>>,
@@ -38,10 +52,24 @@ impl PtySession {
         // Create PTY system
         let pty_system = portable_pty::native_pty_system();
 
-        // 使用客户端传入的尺寸，或回退到默认值
+        // 使用客户端传入的尺寸，或回退到默认值。服务端必须 clamp，避免异常尺寸把 TUI 应用撑爆内存。
+        let requested_cols = initial_cols.unwrap_or(80);
+        let requested_rows = initial_rows.unwrap_or(24);
+        let (cols, rows) = clamp_pty_size(requested_cols, requested_rows);
+        if cols != requested_cols || rows != requested_rows {
+            warn!(
+                session_id = %session_id,
+                requested_cols,
+                requested_rows,
+                applied_cols = cols,
+                applied_rows = rows,
+                "Requested PTY size out of range; clamped"
+            );
+        }
+
         let size = PtySize {
-            rows: initial_rows.unwrap_or(24),
-            cols: initial_cols.unwrap_or(80),
+            rows,
+            cols,
             pixel_width: 0,
             pixel_height: 0,
         };
@@ -160,11 +188,24 @@ impl PtySession {
             .master
             .as_ref()
             .ok_or_else(|| "PTY master already closed".to_string())?;
-        resize_pty(master.as_ref(), cols, rows)?;
+
+        let (applied_cols, applied_rows) = clamp_pty_size(cols, rows);
+        if applied_cols != cols || applied_rows != rows {
+            warn!(
+                session_id = %self.session_id,
+                requested_cols = cols,
+                requested_rows = rows,
+                applied_cols,
+                applied_rows,
+                "Requested PTY resize out of range; clamped"
+            );
+        }
+
+        resize_pty(master.as_ref(), applied_cols, applied_rows)?;
         info!(
             session_id = %self.session_id,
-            cols,
-            rows,
+            cols = applied_cols,
+            rows = applied_rows,
             "PTY session resized"
         );
         Ok(())
@@ -234,6 +275,29 @@ impl PtySession {
 
         // 最后释放 master FD
         drop(self.master.take());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clamp_pty_size() {
+        // too small
+        let (c, r) = clamp_pty_size(0, 0);
+        assert_eq!(c, PTY_MIN_COLS);
+        assert_eq!(r, PTY_MIN_ROWS);
+
+        // in range
+        let (c, r) = clamp_pty_size(120, 40);
+        assert_eq!(c, 120);
+        assert_eq!(r, 40);
+
+        // too large
+        let (c, r) = clamp_pty_size(60000, 60000);
+        assert_eq!(c, PTY_MAX_COLS);
+        assert_eq!(r, PTY_MAX_ROWS);
     }
 }
 
