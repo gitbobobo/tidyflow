@@ -124,9 +124,7 @@ pub fn index_files(workspace_root: &Path) -> Result<FileIndexResult, std::io::Er
     }
 
     // Sort for consistent ordering（使用 sort_unstable_by 避免额外分配）
-    items.sort_unstable_by(|a, b| {
-        a.to_lowercase().cmp(&b.to_lowercase())
-    });
+    items.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
 
     debug!(
         "Indexed {} files from {:?} (truncated: {})",

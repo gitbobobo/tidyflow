@@ -220,13 +220,17 @@ impl LspSupervisor {
                             runtime.sessions.insert(language, session);
                         }
                         Err(e) => {
-                            runtime.missing_languages.push(language.as_str().to_string());
+                            runtime
+                                .missing_languages
+                                .push(language.as_str().to_string());
                             start_errors.push(format!("{}: {}", language.as_str(), e));
                         }
                     }
                 }
                 None => {
-                    runtime.missing_languages.push(language.as_str().to_string());
+                    runtime
+                        .missing_languages
+                        .push(language.as_str().to_string());
                 }
             }
         }
@@ -298,7 +302,10 @@ impl LspSupervisor {
         let key = workspace_key(project, workspace);
         let guard = self.inner.lock().await;
         if let Some(runtime) = guard.workspaces.get(&key) {
-            return vec![runtime.to_status_message(), runtime.to_diagnostics_message()];
+            return vec![
+                runtime.to_status_message(),
+                runtime.to_diagnostics_message(),
+            ];
         }
         vec![
             ServerMessage::LspStatus {
@@ -364,7 +371,11 @@ impl LspSupervisor {
     pub async fn shutdown_all(&self) {
         let mut all = {
             let mut guard = self.inner.lock().await;
-            guard.workspaces.drain().map(|(_, runtime)| runtime).collect::<Vec<_>>()
+            guard
+                .workspaces
+                .drain()
+                .map(|(_, runtime)| runtime)
+                .collect::<Vec<_>>()
         };
 
         for runtime in &mut all {
@@ -526,6 +537,9 @@ mod tests {
             "src/lib.rs".to_string(),
         ];
         let merged = coalesce_relative_paths(&input);
-        assert_eq!(merged, vec!["src/lib.rs".to_string(), "src/main.rs".to_string()]);
+        assert_eq!(
+            merged,
+            vec!["src/lib.rs".to_string(), "src/main.rs".to_string()]
+        );
     }
 }

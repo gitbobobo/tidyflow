@@ -74,8 +74,7 @@ pub async fn handle_file_message(
                 }
                 Err(e) => {
                     let (code, message) = file_error_to_response(&e);
-                    send_message(socket, &ServerMessage::Error { code, message })
-                        .await?;
+                    send_message(socket, &ServerMessage::Error { code, message }).await?;
                 }
             }
             Ok(true)
@@ -127,15 +126,13 @@ pub async fn handle_file_message(
                         }
                         Err(e) => {
                             let (code, message) = file_error_to_response(&e);
-                            send_message(socket, &ServerMessage::Error { code, message })
-                                .await?;
+                            send_message(socket, &ServerMessage::Error { code, message }).await?;
                         }
                     }
                 }
                 Err(e) => {
                     let (code, message) = file_error_to_response(&e);
-                    send_message(socket, &ServerMessage::Error { code, message })
-                        .await?;
+                    send_message(socket, &ServerMessage::Error { code, message }).await?;
                 }
             }
             Ok(true)
@@ -158,31 +155,25 @@ pub async fn handle_file_message(
             let root = ws_ctx.root_path;
             // Decode UTF-8 content
             match String::from_utf8(content.clone()) {
-                Ok(content_str) => {
-                    match file_api::write_file(&root, path, &content_str) {
-                        Ok(size) => {
-                            send_message(
-                                socket,
-                                &ServerMessage::FileWriteResult {
-                                    project: project.clone(),
-                                    workspace: workspace.clone(),
-                                    path: path.clone(),
-                                    success: true,
-                                    size,
-                                },
-                            )
-                            .await?;
-                        }
-                        Err(e) => {
-                            let (code, message) = file_error_to_response(&e);
-                            send_message(
-                                socket,
-                                &ServerMessage::Error { code, message },
-                            )
-                            .await?;
-                        }
+                Ok(content_str) => match file_api::write_file(&root, path, &content_str) {
+                    Ok(size) => {
+                        send_message(
+                            socket,
+                            &ServerMessage::FileWriteResult {
+                                project: project.clone(),
+                                workspace: workspace.clone(),
+                                path: path.clone(),
+                                success: true,
+                                size,
+                            },
+                        )
+                        .await?;
                     }
-                }
+                    Err(e) => {
+                        let (code, message) = file_error_to_response(&e);
+                        send_message(socket, &ServerMessage::Error { code, message }).await?;
+                    }
+                },
                 Err(_) => {
                     send_message(
                         socket,
@@ -209,9 +200,7 @@ pub async fn handle_file_message(
 
             let root = ws_ctx.root_path;
             // Run indexing in blocking task to avoid blocking async runtime
-            let result =
-                tokio::task::spawn_blocking(move || file_index::index_files(&root))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || file_index::index_files(&root)).await;
 
             match result {
                 Ok(Ok(index_result)) => {

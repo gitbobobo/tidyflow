@@ -168,7 +168,12 @@ pub async fn try_handle_git_message(
             let scope_clone = scope.clone();
             let include_untracked_clone = *include_untracked;
             let result = tokio::task::spawn_blocking(move || {
-                git::git_discard(&root, path_clone.as_deref(), &scope_clone, include_untracked_clone)
+                git::git_discard(
+                    &root,
+                    path_clone.as_deref(),
+                    &scope_clone,
+                    include_untracked_clone,
+                )
             })
             .await;
 

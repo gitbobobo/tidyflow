@@ -66,12 +66,7 @@ impl FileLogger {
     }
 
     /// 写入来自 Rust Core 自身的日志（source = "core"）
-    pub fn write_core_log(
-        &self,
-        level: &str,
-        target: &str,
-        message: &str,
-    ) {
+    pub fn write_core_log(&self, level: &str, target: &str, message: &str) {
         let record = LogRecord {
             ts: Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
             level: level.to_string(),
@@ -194,9 +189,7 @@ impl FileLogger {
                 }
             })
             .collect();
-        let is_empty_after_normalize = normalized
-            .chars()
-            .all(|ch| ch == '-');
+        let is_empty_after_normalize = normalized.chars().all(|ch| ch == '-');
         if is_empty_after_normalize {
             None
         } else {

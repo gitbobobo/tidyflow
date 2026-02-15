@@ -41,11 +41,9 @@ impl PtyFlowGate {
     pub fn wait_if_all_paused(&self, timeout: Duration) {
         let guard = self.state.lock().unwrap();
         if guard.subscriber_count > 0 && guard.paused_count >= guard.subscriber_count {
-            let _result = self
-                .condvar
-                .wait_timeout_while(guard, timeout, |s| {
-                    s.subscriber_count > 0 && s.paused_count >= s.subscriber_count
-                });
+            let _result = self.condvar.wait_timeout_while(guard, timeout, |s| {
+                s.subscriber_count > 0 && s.paused_count >= s.subscriber_count
+            });
         }
     }
 
@@ -227,10 +225,9 @@ impl TerminalRegistry {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         if !pending.is_empty() {
-                            let _ = reader_output_tx
-                                .send((tid_string.clone(), pending.clone()));
-                            let _ = reader_scrollback_tx
-                                .blocking_send((tid_string.clone(), pending));
+                            let _ = reader_output_tx.send((tid_string.clone(), pending.clone()));
+                            let _ =
+                                reader_scrollback_tx.blocking_send((tid_string.clone(), pending));
                         }
                         break;
                     }
@@ -243,9 +240,7 @@ impl TerminalRegistry {
                             combined
                         };
 
-                        if let Some(incomplete_start) =
-                            find_incomplete_escape_sequence(&data)
-                        {
+                        if let Some(incomplete_start) = find_incomplete_escape_sequence(&data) {
                             pending = data.split_off(incomplete_start);
                         }
 
@@ -253,8 +248,7 @@ impl TerminalRegistry {
                             // 先发送到 scrollback（clone 数据）
                             let scrollback_data = data.clone();
                             // 发送到 broadcast（多订阅者），转移 data 所有权避免额外 clone
-                            let _ = reader_output_tx
-                                .send((tid_string.clone(), data));
+                            let _ = reader_output_tx.send((tid_string.clone(), data));
                             // 发送到 scrollback 写入通道
                             if reader_scrollback_tx
                                 .blocking_send((tid_string.clone(), scrollback_data))
@@ -265,10 +259,7 @@ impl TerminalRegistry {
                         }
                     }
                     Err(e) => {
-                        debug!(
-                            "PTY read error for {}: {}",
-                            reader_term_id, e
-                        );
+                        debug!("PTY read error for {}: {}", reader_term_id, e);
                         break;
                     }
                 }
@@ -311,17 +302,11 @@ impl TerminalRegistry {
 
     /// 获取终端的 scrollback 快照
     pub fn get_scrollback(&self, term_id: &str) -> Option<Vec<u8>> {
-        self.terminals
-            .get(term_id)
-            .map(|e| e.scrollback.snapshot())
+        self.terminals.get(term_id).map(|e| e.scrollback.snapshot())
     }
 
     /// 写入终端输入
-    pub fn write_input(
-        &mut self,
-        term_id: &str,
-        data: &[u8],
-    ) -> Result<(), String> {
+    pub fn write_input(&mut self, term_id: &str, data: &[u8]) -> Result<(), String> {
         if let Some(entry) = self.terminals.get_mut(term_id) {
             entry
                 .session
@@ -333,12 +318,7 @@ impl TerminalRegistry {
     }
 
     /// 调整终端大小
-    pub fn resize(
-        &self,
-        term_id: &str,
-        cols: u16,
-        rows: u16,
-    ) -> Result<(), String> {
+    pub fn resize(&self, term_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         if let Some(entry) = self.terminals.get(term_id) {
             entry
                 .session
@@ -397,7 +377,14 @@ impl TerminalRegistry {
     pub fn get_info(
         &self,
         term_id: &str,
-    ) -> Option<(String, String, String, String, Option<String>, Option<String>)> {
+    ) -> Option<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    )> {
         self.terminals.get(term_id).map(|e| {
             (
                 e.project.clone(),
@@ -416,9 +403,7 @@ impl TerminalRegistry {
 
     pub fn resolve_term_id(&self, term_id: Option<&str>) -> Option<String> {
         match term_id {
-            Some(id) if self.terminals.contains_key(id) => {
-                Some(id.to_string())
-            }
+            Some(id) if self.terminals.contains_key(id) => Some(id.to_string()),
             Some(_) => None,
             None => self.default_term_id.clone(),
         }
@@ -538,10 +523,7 @@ fn find_incomplete_escape_sequence(data: &[u8]) -> Option<usize> {
         }
         if data.len() >= 3 {
             let third_last = data[data.len() - 3];
-            if third_last >= 0xF0
-                && data[data.len() - 2] >= 0x80
-                && last >= 0x80
-            {
+            if third_last >= 0xF0 && data[data.len() - 2] >= 0x80 && last >= 0x80 {
                 return Some(data.len() - 3);
             }
         }

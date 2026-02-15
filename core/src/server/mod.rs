@@ -11,8 +11,8 @@ pub mod watcher;
 pub mod ws;
 
 pub use context::{
-    resolve_project, resolve_workspace, resolve_workspace_branch,
-    AppError, HandlerContext, ProjectContext, SharedAppState, WorkspaceContext,
+    resolve_project, resolve_workspace, resolve_workspace_branch, AppError, HandlerContext,
+    ProjectContext, SharedAppState, WorkspaceContext,
 };
 pub use file_api::{list_files, read_file, resolve_safe_path, write_file, FileApiError, FileEntry};
 pub use file_index::{index_files, FileIndexResult, DEFAULT_IGNORE_DIRS, MAX_FILE_COUNT};

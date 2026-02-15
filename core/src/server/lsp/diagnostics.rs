@@ -23,7 +23,8 @@ impl DiagnosticsStore {
     }
 
     pub fn clear_language(&mut self, language: LspLanguage) {
-        self.by_language_uri.retain(|(lang, _), _| *lang != language);
+        self.by_language_uri
+            .retain(|(lang, _), _| *lang != language);
         self.updated_at = Some(Utc::now());
     }
 

@@ -2,10 +2,9 @@ use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{ConnectInfo, Query, State},
     http::StatusCode,
-    Json,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -28,6 +27,7 @@ use crate::server::context::{
     ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningAITasks,
     SharedRunningCommands, SharedTaskHistory, TaskBroadcastTx, TermSubscription,
 };
+use crate::server::git::status::invalidate_git_status_cache;
 use crate::server::handlers;
 use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::{
@@ -38,7 +38,6 @@ use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
 use crate::server::watcher::{WatchEvent, WorkspaceWatcher};
-use crate::server::git::status::invalidate_git_status_cache;
 use crate::workspace::state::AppState;
 use crate::workspace::state::PersistedTokenEntry;
 use crate::workspace::state_saver::spawn_state_saver;
@@ -164,8 +163,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let save_tx = spawn_state_saver(shared_state.clone());
 
     // 创建全局终端注册表
-    let terminal_registry: SharedTerminalRegistry =
-        Arc::new(Mutex::new(TerminalRegistry::new()));
+    let terminal_registry: SharedTerminalRegistry = Arc::new(Mutex::new(TerminalRegistry::new()));
 
     // 启动 scrollback 写入 task
     let scrollback_tx = spawn_scrollback_writer(terminal_registry.clone());
@@ -487,7 +485,7 @@ async fn pair_start_handler(
                 message: "pair/start only accepts loopback requests".to_string(),
             }),
         )
-        .into_response();
+            .into_response();
     }
 
     let now_ts = now_unix_ts();
@@ -526,7 +524,7 @@ async fn pair_start_handler(
             expires_at_unix,
         }),
     )
-    .into_response()
+        .into_response()
 }
 
 async fn pair_exchange_handler(
@@ -542,7 +540,7 @@ async fn pair_exchange_handler(
                 message: "pair_code must be 6 digits".to_string(),
             }),
         )
-        .into_response();
+            .into_response();
     }
 
     let device_name = payload
@@ -563,7 +561,7 @@ async fn pair_exchange_handler(
                 message: "pair_code is invalid or expired".to_string(),
             }),
         )
-        .into_response();
+            .into_response();
     };
     if code_entry.expires_at_unix <= now_ts {
         return (
@@ -573,7 +571,7 @@ async fn pair_exchange_handler(
                 message: "pair_code is expired".to_string(),
             }),
         )
-        .into_response();
+            .into_response();
     }
 
     while reg.issued_tokens.len() >= MAX_ISSUED_PAIR_TOKENS {
@@ -623,7 +621,7 @@ async fn pair_exchange_handler(
             expires_at_unix,
         }),
     )
-    .into_response()
+        .into_response()
 }
 
 async fn pair_revoke_handler(
@@ -639,7 +637,7 @@ async fn pair_revoke_handler(
                 message: "pair/revoke only accepts loopback requests".to_string(),
             }),
         )
-        .into_response();
+            .into_response();
     }
 
     if payload.token_id.is_none() && payload.ws_token.is_none() {
@@ -650,7 +648,7 @@ async fn pair_revoke_handler(
                 message: "token_id or ws_token is required".to_string(),
             }),
         )
-        .into_response();
+            .into_response();
     }
 
     let mut reg = ctx.pairing_registry.lock().await;
@@ -707,20 +705,16 @@ async fn pair_revoke_handler(
 
     (
         StatusCode::OK,
-        Json(PairRevokeResponse {
-            ok: true,
-            revoked,
-        }),
+        Json(PairRevokeResponse { ok: true, revoked }),
     )
-    .into_response()
+        .into_response()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        cleanup_expired_pairing_entries, is_request_from_loopback,
-        is_ws_token_authorized, now_unix_ts, PairCodeEntry, PairTokenEntry,
-        PairingRegistry, SharedPairingRegistry,
+        cleanup_expired_pairing_entries, is_request_from_loopback, is_ws_token_authorized,
+        now_unix_ts, PairCodeEntry, PairTokenEntry, PairingRegistry, SharedPairingRegistry,
     };
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -790,8 +784,18 @@ mod tests {
         let now_ts = now_unix_ts();
         let mut reg = PairingRegistry {
             pending_codes: HashMap::from([
-                ("111111".to_string(), PairCodeEntry { expires_at_unix: now_ts + 10 }),
-                ("222222".to_string(), PairCodeEntry { expires_at_unix: now_ts.saturating_sub(1) }),
+                (
+                    "111111".to_string(),
+                    PairCodeEntry {
+                        expires_at_unix: now_ts + 10,
+                    },
+                ),
+                (
+                    "222222".to_string(),
+                    PairCodeEntry {
+                        expires_at_unix: now_ts.saturating_sub(1),
+                    },
+                ),
             ]),
             issued_tokens: HashMap::from([
                 (
@@ -852,23 +856,20 @@ async fn handle_socket(
     );
 
     // 聚合输出通道：所有订阅终端的输出汇聚到这里
-    let (agg_tx, mut agg_rx) =
-        tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
+    let (agg_tx, mut agg_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
 
     // 跟踪当前 WS 连接订阅的终端及其转发 task + 流控状态
     let subscribed_terms: Arc<Mutex<HashMap<String, TermSubscription>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     // Create channel for file watcher events
-    let (tx_watch, mut rx_watch) =
-        tokio::sync::mpsc::channel::<WatchEvent>(100);
+    let (tx_watch, mut rx_watch) = tokio::sync::mpsc::channel::<WatchEvent>(100);
 
     // Create file watcher
     let watcher = Arc::new(Mutex::new(WorkspaceWatcher::new(tx_watch)));
 
     // 项目命令输出通道：后台 task 逐行推送 → 主循环转发到 WebSocket
-    let (cmd_output_tx, mut cmd_output_rx) =
-        tokio::sync::mpsc::channel::<ServerMessage>(256);
+    let (cmd_output_tx, mut cmd_output_rx) = tokio::sync::mpsc::channel::<ServerMessage>(256);
     let lsp_supervisor = LspSupervisor::new(cmd_output_tx.clone());
 
     // 订阅任务广播通道（接收其他连接发起的任务事件）
@@ -1322,13 +1323,7 @@ async fn handle_client_message(
 
     // 按领域分发，handler 返回 Option<ServerMessage>，由此处统一发送
     // 终端消息需要特殊处理（可能返回多条消息），沿用旧模式
-    if handlers::terminal::handle_terminal_message(
-        &client_msg,
-        socket,
-        ctx,
-    )
-    .await?
-    {
+    if handlers::terminal::handle_terminal_message(&client_msg, socket, ctx).await? {
         return Ok(());
     }
 
@@ -1343,13 +1338,7 @@ async fn handle_client_message(
     }
 
     // 项目/工作空间消息
-    if handlers::project::handle_project_message(
-        &client_msg,
-        socket,
-        ctx,
-    )
-    .await?
-    {
+    if handlers::project::handle_project_message(&client_msg, socket, ctx).await? {
         return Ok(());
     }
 
@@ -1376,14 +1365,7 @@ async fn handle_client_message(
     }
 
     // AI 消息
-    if handlers::ai::handle_ai_message(
-        &client_msg,
-        socket,
-        &ctx.app_state,
-        &ctx.ai_state,
-    )
-    .await?
-    {
+    if handlers::ai::handle_ai_message(&client_msg, socket, &ctx.app_state, &ctx.ai_state).await? {
         return Ok(());
     }
 
@@ -1400,12 +1382,8 @@ async fn handle_client_message(
                 project, workspace
             );
 
-            match crate::server::context::resolve_workspace(
-                &ctx.app_state,
-                &project,
-                &workspace,
-            )
-            .await
+            match crate::server::context::resolve_workspace(&ctx.app_state, &project, &workspace)
+                .await
             {
                 Ok(ws_ctx) => {
                     let mut w = watcher.lock().await;
@@ -1444,7 +1422,10 @@ async fn handle_client_message(
 
         // 所有其他消息类型已在上方 handler 链中处理，此处兜底
         _ => {
-            warn!("Unhandled message type: {:?}", std::mem::discriminant(&client_msg));
+            warn!(
+                "Unhandled message type: {:?}",
+                std::mem::discriminant(&client_msg)
+            );
             send_message(
                 socket,
                 &ServerMessage::Error {

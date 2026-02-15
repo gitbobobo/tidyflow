@@ -17,7 +17,11 @@ pub async fn handle_terminal_message(
     match client_msg {
         // v0/v1.1: Terminal data plane with optional term_id
         ClientMessage::Input { data, term_id } => {
-            debug!("Input received: term_id={:?}, data_len={}", term_id, data.len());
+            debug!(
+                "Input received: term_id={:?}, data_len={}",
+                term_id,
+                data.len()
+            );
 
             let mut reg = ctx.terminal_registry.lock().await;
             let resolved_id = reg.resolve_term_id(term_id.as_deref());
@@ -37,10 +41,7 @@ pub async fn handle_terminal_message(
                     socket,
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
-                        message: format!(
-                            "Terminal '{}' not found",
-                            term_id.as_ref().unwrap()
-                        ),
+                        message: format!("Terminal '{}' not found", term_id.as_ref().unwrap()),
                     },
                 )
                 .await?;
@@ -150,29 +151,28 @@ pub async fn handle_terminal_message(
                 drop(reg);
 
                 info!(term_id = %id, "Terminal killed by client request");
-                send_message(
-                    socket,
-                    &ServerMessage::TerminalKilled { session_id: id },
-                )
-                .await?;
+                send_message(socket, &ServerMessage::TerminalKilled { session_id: id }).await?;
             }
             Ok(true)
         }
 
         // v1.2: Multi-workspace extension
-        ClientMessage::TermCreate { project, workspace, cols, rows, name, icon } => {
+        ClientMessage::TermCreate {
+            project,
+            workspace,
+            cols,
+            rows,
+            name,
+            icon,
+        } => {
             info!(
                 project = %project,
                 workspace = %workspace,
                 "TermCreate request received"
             );
 
-            match crate::server::context::resolve_workspace(
-                &ctx.app_state,
-                project,
-                workspace,
-            )
-            .await
+            match crate::server::context::resolve_workspace(&ctx.app_state, project, workspace)
+                .await
             {
                 Ok(ws_ctx) => {
                     let (term_id, shell_name) = {
@@ -320,10 +320,7 @@ pub async fn handle_terminal_message(
                     socket,
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
-                        message: format!(
-                            "Terminal '{}' not found",
-                            term_id
-                        ),
+                        message: format!("Terminal '{}' not found", term_id),
                     },
                 )
                 .await?;
@@ -344,11 +341,8 @@ pub async fn handle_terminal_message(
             info!(term_id = %term_id, "TermAttach request received");
 
             let reg = ctx.terminal_registry.lock().await;
-            if let Some((project, workspace, cwd, shell, name, icon)) =
-                reg.get_info(term_id)
-            {
-                let scrollback =
-                    reg.get_scrollback(term_id).unwrap_or_default();
+            if let Some((project, workspace, cwd, shell, name, icon)) = reg.get_info(term_id) {
+                let scrollback = reg.get_scrollback(term_id).unwrap_or_default();
                 drop(reg);
 
                 // 订阅终端输出
@@ -390,10 +384,7 @@ pub async fn handle_terminal_message(
                     socket,
                     &ServerMessage::Error {
                         code: "term_not_found".to_string(),
-                        message: format!(
-                            "Terminal '{}' not found (may have exited)",
-                            term_id
-                        ),
+                        message: format!("Terminal '{}' not found (may have exited)", term_id),
                     },
                 )
                 .await?;

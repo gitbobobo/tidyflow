@@ -3,12 +3,12 @@
 //! 提供统一的工作空间路径解析、错误处理和 handler 上下文，
 //! 消除各 handler 中重复的 `get_workspace_root` 和样板错误处理代码。
 
+use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
-use chrono::Utc;
 
 use crate::server::handlers::ai::SharedAIState;
 use crate::server::lsp::LspSupervisor;
@@ -27,7 +27,11 @@ pub struct FlowControl {
 }
 
 /// subscribed_terms 的 value 类型：(转发任务句柄, 流控状态, PTY 背压门控)
-pub type TermSubscription = (tokio::task::JoinHandle<()>, Arc<FlowControl>, Arc<PtyFlowGate>);
+pub type TermSubscription = (
+    tokio::task::JoinHandle<()>,
+    Arc<FlowControl>,
+    Arc<PtyFlowGate>,
+);
 
 /// 正在运行的项目命令条目
 pub struct RunningCommandEntry {
@@ -60,12 +64,12 @@ pub struct TaskHistoryEntry {
     pub task_id: String,
     pub project: String,
     pub workspace: String,
-    pub task_type: String,       // "project_command" | "ai_commit" | "ai_merge"
+    pub task_type: String, // "project_command" | "ai_commit" | "ai_merge"
     pub command_id: Option<String>,
     pub title: String,
-    pub status: String,          // "running" | "completed" | "failed" | "cancelled"
+    pub status: String, // "running" | "completed" | "failed" | "cancelled"
     pub message: Option<String>,
-    pub started_at: i64,         // Unix timestamp ms
+    pub started_at: i64, // Unix timestamp ms
     pub completed_at: Option<i64>,
 }
 

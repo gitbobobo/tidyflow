@@ -61,7 +61,11 @@ impl RemoteSubRegistry {
             changed = subs.len() != before;
         }
         // 清理空条目
-        if self.subscribers.get(term_id).map_or(false, |s| s.is_empty()) {
+        if self
+            .subscribers
+            .get(term_id)
+            .map_or(false, |s| s.is_empty())
+        {
             self.subscribers.remove(term_id);
         }
         if changed {
@@ -94,10 +98,7 @@ impl RemoteSubRegistry {
 
     /// 获取某终端的远程订阅者列表
     pub fn get_subscribers(&self, term_id: &str) -> Vec<RemoteSubscriberInfo> {
-        self.subscribers
-            .get(term_id)
-            .cloned()
-            .unwrap_or_default()
+        self.subscribers.get(term_id).cloned().unwrap_or_default()
     }
 
     /// 订阅变更事件（本地连接用于接收推送通知）

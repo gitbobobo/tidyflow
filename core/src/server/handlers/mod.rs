@@ -4,8 +4,8 @@
 pub mod ai;
 pub mod file;
 pub mod git;
-pub mod lsp;
 pub mod log;
+pub mod lsp;
 pub mod project;
 pub mod settings;
 pub mod terminal;

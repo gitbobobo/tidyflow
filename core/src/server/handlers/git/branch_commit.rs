@@ -3,11 +3,11 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use crate::server::context::{
-    resolve_workspace, HandlerContext, RunningAITaskEntry, SharedAppState, TaskBroadcastEvent,
-    TaskHistoryEntry, push_task_history, update_task_history,
+    push_task_history, resolve_workspace, update_task_history, HandlerContext, RunningAITaskEntry,
+    SharedAppState, TaskBroadcastEvent, TaskHistoryEntry,
 };
 use crate::server::git;
 use crate::server::protocol::{AIGitCommit, ClientMessage, GitBranchInfo, ServerMessage};
@@ -95,10 +95,9 @@ pub async fn try_handle_git_message(
 
             let root = ws_ctx.root_path;
             let branch_clone = branch.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                git::git_switch_branch(&root, &branch_clone)
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || git::git_switch_branch(&root, &branch_clone))
+                    .await;
 
             match result {
                 Ok(Ok(op_result)) => {
@@ -161,10 +160,9 @@ pub async fn try_handle_git_message(
 
             let root = ws_ctx.root_path;
             let branch_clone = branch.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                git::git_create_branch(&root, &branch_clone)
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || git::git_create_branch(&root, &branch_clone))
+                    .await;
 
             match result {
                 Ok(Ok(op_result)) => {
@@ -227,10 +225,8 @@ pub async fn try_handle_git_message(
 
             let root = ws_ctx.root_path;
             let message_clone = message.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                git::git_commit(&root, &message_clone)
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || git::git_commit(&root, &message_clone)).await;
 
             match result {
                 Ok(Ok(commit_result)) => {
@@ -279,7 +275,15 @@ pub async fn try_handle_git_message(
             workspace,
             ai_agent,
         } => {
-            try_handle_git_ai_commit(project.clone(), workspace.clone(), ai_agent.clone(), socket, app_state, ctx).await
+            try_handle_git_ai_commit(
+                project.clone(),
+                workspace.clone(),
+                ai_agent.clone(),
+                socket,
+                app_state,
+                ctx,
+            )
+            .await
         }
 
         _ => Ok(false),
@@ -346,7 +350,9 @@ pub async fn try_handle_git_ai_commit(
             Ok(Ok(Ok(ai_commit_result))) => {
                 info!(
                     "AI commit succeeded: project={}, workspace={}, commits={}",
-                    project, workspace, ai_commit_result.commits.len()
+                    project,
+                    workspace,
+                    ai_commit_result.commits.len()
                 );
                 ServerMessage::GitAICommitResult {
                     project: project.clone(),
@@ -357,7 +363,10 @@ pub async fn try_handle_git_ai_commit(
                 }
             }
             Ok(Ok(Err(e))) => {
-                warn!("AI commit failed: project={}, workspace={}, error={}", project, workspace, e);
+                warn!(
+                    "AI commit failed: project={}, workspace={}, error={}",
+                    project, workspace, e
+                );
                 ServerMessage::GitAICommitResult {
                     project: project.clone(),
                     workspace: workspace.clone(),
@@ -379,7 +388,9 @@ pub async fn try_handle_git_ai_commit(
             Err(_) => {
                 error!(
                     "AI commit timed out after {}s: project={}, workspace={}",
-                    AI_AGENT_TIMEOUT.as_secs(), project, workspace
+                    AI_AGENT_TIMEOUT.as_secs(),
+                    project,
+                    workspace
                 );
                 ServerMessage::GitAICommitResult {
                     project: project.clone(),
@@ -404,7 +415,12 @@ pub async fn try_handle_git_ai_commit(
             message: msg.clone(),
         });
         // 更新任务历史
-        if let ServerMessage::GitAICommitResult { success, ref message, .. } = msg {
+        if let ServerMessage::GitAICommitResult {
+            success,
+            ref message,
+            ..
+        } = msg
+        {
             let status = if success { "completed" } else { "failed" };
             update_task_history(&task_history, &task_id_clone, status, Some(message.clone())).await;
         }
@@ -426,18 +442,22 @@ pub async fn try_handle_git_ai_commit(
     );
 
     // 写入任务历史
-    push_task_history(&ctx.task_history, TaskHistoryEntry {
-        task_id: task_id_for_history,
-        project: project_for_registry,
-        workspace: workspace_for_registry,
-        task_type: "ai_commit".to_string(),
-        command_id: None,
-        title: "AI 提交".to_string(),
-        status: "running".to_string(),
-        message: None,
-        started_at: chrono::Utc::now().timestamp_millis(),
-        completed_at: None,
-    }).await;
+    push_task_history(
+        &ctx.task_history,
+        TaskHistoryEntry {
+            task_id: task_id_for_history,
+            project: project_for_registry,
+            workspace: workspace_for_registry,
+            task_type: "ai_commit".to_string(),
+            command_id: None,
+            title: "AI 提交".to_string(),
+            status: "running".to_string(),
+            message: None,
+            started_at: chrono::Utc::now().timestamp_millis(),
+            completed_at: None,
+        },
+    )
+    .await;
 
     Ok(true)
 }
@@ -572,7 +592,11 @@ pub fn execute_ai_agent(
 ) -> Result<String, String> {
     use std::process::Command;
 
-    info!("Executing AI agent: {} (cwd: {})", args[0], workspace_root.display());
+    info!(
+        "Executing AI agent: {} (cwd: {})",
+        args[0],
+        workspace_root.display()
+    );
 
     let child = Command::new("/usr/bin/env")
         .args(args)
@@ -601,7 +625,11 @@ pub fn execute_ai_agent(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    info!("AI agent '{}' completed, output length: {} bytes", args[0], stdout.len());
+    info!(
+        "AI agent '{}' completed, output length: {} bytes",
+        args[0],
+        stdout.len()
+    );
     Ok(stdout.to_string())
 }
 
@@ -620,10 +648,17 @@ fn build_extended_env() -> std::collections::HashMap<String, String> {
         "/usr/local/bin".to_string(),
         "/usr/local/sbin".to_string(),
     ];
-    let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let system_path =
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
     let mut seen = std::collections::HashSet::new();
     let mut parts = Vec::new();
-    for p in extra_paths.iter().chain(system_path.split(':').map(|s| s.to_string()).collect::<Vec<_>>().iter()) {
+    for p in extra_paths.iter().chain(
+        system_path
+            .split(':')
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .iter(),
+    ) {
         if seen.insert(p.clone()) {
             parts.push(p.clone());
         }
@@ -681,7 +716,11 @@ fn parse_ai_commit_result(output: &str) -> Result<Vec<AIGitCommit>, String> {
             })
             .unwrap_or_default();
 
-        result.push(AIGitCommit { sha, message, files });
+        result.push(AIGitCommit {
+            sha,
+            message,
+            files,
+        });
     }
 
     Ok(result)
@@ -900,7 +939,13 @@ pub async fn handle_cancel_ai_task(
 
         // 更新任务历史
         drop(registry);
-        update_task_history(&ctx.task_history, &task_id, "cancelled", Some("已取消".to_string())).await;
+        update_task_history(
+            &ctx.task_history,
+            &task_id,
+            "cancelled",
+            Some("已取消".to_string()),
+        )
+        .await;
     }
 
     Ok(true)

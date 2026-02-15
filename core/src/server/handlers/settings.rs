@@ -31,18 +31,9 @@ pub async fn handle_settings_message(
                 socket,
                 &ServerMessage::ClientSettingsResult {
                     custom_commands: commands,
-                    workspace_shortcuts: state
-                        .client_settings
-                        .workspace_shortcuts
-                        .clone(),
-                    commit_ai_agent: state
-                        .client_settings
-                        .commit_ai_agent
-                        .clone(),
-                    merge_ai_agent: state
-                        .client_settings
-                        .merge_ai_agent
-                        .clone(),
+                    workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
+                    commit_ai_agent: state.client_settings.commit_ai_agent.clone(),
+                    merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
                     fixed_port: state.client_settings.fixed_port,
                     app_language: state.client_settings.app_language.clone(),
                 },

@@ -54,12 +54,8 @@ impl LspSession {
             .ok_or_else(|| format!("{} stdout not available", spec.program))?;
 
         let stdin = Arc::new(Mutex::new(stdin));
-        let reader_task = Self::spawn_reader_task(
-            stdout,
-            workspace_key.clone(),
-            language,
-            event_tx.clone(),
-        );
+        let reader_task =
+            Self::spawn_reader_task(stdout, workspace_key.clone(), language, event_tx.clone());
 
         let mut session = LspSession {
             language,
@@ -91,9 +87,7 @@ impl LspSession {
             ]
         });
         let _ = session.send_request("initialize", init_params).await?;
-        let _ = session
-            .send_notification("initialized", json!({}))
-            .await;
+        let _ = session.send_notification("initialized", json!({})).await;
 
         info!(
             "LSP session started: workspace={}, language={}",
@@ -345,17 +339,9 @@ impl LspSession {
             .unwrap_or_else(|| json!({}));
 
         let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32 + 1;
-        let column = start
-            .get("character")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32
-            + 1;
+        let column = start.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32 + 1;
         let end_line = end.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32 + 1;
-        let end_column = end
-            .get("character")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32
-            + 1;
+        let end_column = end.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32 + 1;
 
         let severity = raw
             .get("severity")

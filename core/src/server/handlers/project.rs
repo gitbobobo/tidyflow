@@ -5,7 +5,10 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::server::context::{resolve_workspace, HandlerContext, RunningCommandEntry, TaskBroadcastEvent, TaskHistoryEntry, push_task_history, update_task_history};
+use crate::server::context::{
+    push_task_history, resolve_workspace, update_task_history, HandlerContext, RunningCommandEntry,
+    TaskBroadcastEvent, TaskHistoryEntry,
+};
 use crate::server::protocol::{
     ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, TaskSnapshotEntry, WorkspaceInfo,
 };
@@ -42,22 +45,23 @@ pub async fn handle_project_message(
                     name: p.name.clone(),
                     root: p.root_path.to_string_lossy().to_string(),
                     workspace_count: p.workspaces.len(),
-                    commands: p.commands.iter().map(|c| ProjectCommandInfo {
-                        id: c.id.clone(),
-                        name: c.name.clone(),
-                        icon: c.icon.clone(),
-                        command: c.command.clone(),
-                        blocking: c.blocking,
-                        interactive: c.interactive,
-                    }).collect(),
+                    commands: p
+                        .commands
+                        .iter()
+                        .map(|c| ProjectCommandInfo {
+                            id: c.id.clone(),
+                            name: c.name.clone(),
+                            icon: c.icon.clone(),
+                            command: c.command.clone(),
+                            blocking: c.blocking,
+                            interactive: c.interactive,
+                        })
+                        .collect(),
                 })
                 .collect();
             // HashMap 迭代顺序不稳定；在服务端固定字母序
-            items.sort_by(|a, b| {
-                a.name.to_lowercase().cmp(&b.name.to_lowercase())
-            });
-            send_message(socket, &ServerMessage::Projects { items })
-                .await?;
+            items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            send_message(socket, &ServerMessage::Projects { items }).await?;
             Ok(true)
         }
 
@@ -224,12 +228,7 @@ pub async fn handle_project_message(
         } => {
             let mut state = ctx.app_state.write().await;
 
-            match WorkspaceManager::create(
-                &mut state,
-                project,
-                from_branch.as_deref(),
-                false,
-            ) {
+            match WorkspaceManager::create(&mut state, project, from_branch.as_deref(), false) {
                 Ok(ws) => {
                     send_message(
                         socket,
@@ -318,7 +317,10 @@ pub async fn handle_project_message(
                     .collect();
                 for tid in &term_ids {
                     reg.close(tid);
-                    info!("Closed terminal {} for workspace {}/{}", tid, project, workspace);
+                    info!(
+                        "Closed terminal {} for workspace {}/{}",
+                        tid, project, workspace
+                    );
                 }
             }
 
@@ -368,16 +370,17 @@ pub async fn handle_project_message(
                 let mut state = ctx.app_state.write().await;
                 match state.get_project_mut(project) {
                     Some(p) => {
-                        p.commands = commands.iter().map(|c| {
-                            crate::workspace::state::ProjectCommand {
+                        p.commands = commands
+                            .iter()
+                            .map(|c| crate::workspace::state::ProjectCommand {
                                 id: c.id.clone(),
                                 name: c.name.clone(),
                                 icon: c.icon.clone(),
                                 command: c.command.clone(),
                                 blocking: c.blocking,
                                 interactive: c.interactive,
-                            }
-                        }).collect();
+                            })
+                            .collect();
                     }
                     None => {
                         send_message(
@@ -387,7 +390,8 @@ pub async fn handle_project_message(
                                 ok: false,
                                 message: Some(format!("Project '{}' not found", project)),
                             },
-                        ).await?;
+                        )
+                        .await?;
                         return Ok(true);
                     }
                 }
@@ -403,13 +407,21 @@ pub async fn handle_project_message(
                     ok: true,
                     message: None,
                 },
-            ).await?;
+            )
+            .await?;
             Ok(true)
         }
 
         // v1.29: 执行项目命令
-        ClientMessage::RunProjectCommand { project, workspace, command_id } => {
-            info!("RunProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
+        ClientMessage::RunProjectCommand {
+            project,
+            workspace,
+            command_id,
+        } => {
+            info!(
+                "RunProjectCommand request: project={}, workspace={}, command_id={}",
+                project, workspace, command_id
+            );
 
             // 查找命令和工作目录
             let (command_text, command_name, cwd) = {
@@ -430,9 +442,13 @@ pub async fn handle_project_message(
                                     socket,
                                     &ServerMessage::Error {
                                         code: "command_not_found".to_string(),
-                                        message: format!("Command '{}' not found or workspace '{}' not found", command_id, workspace),
+                                        message: format!(
+                                            "Command '{}' not found or workspace '{}' not found",
+                                            command_id, workspace
+                                        ),
                                     },
-                                ).await?;
+                                )
+                                .await?;
                                 return Ok(true);
                             }
                         }
@@ -444,7 +460,8 @@ pub async fn handle_project_message(
                                 code: "project_not_found".to_string(),
                                 message: format!("Project '{}' not found", project),
                             },
-                        ).await?;
+                        )
+                        .await?;
                         return Ok(true);
                     }
                 }
@@ -514,18 +531,22 @@ pub async fn handle_project_message(
             );
 
             // 写入任务历史
-            push_task_history(&ctx.task_history, TaskHistoryEntry {
-                task_id: task_id.clone(),
-                project: project.clone(),
-                workspace: workspace.clone(),
-                task_type: "project_command".to_string(),
-                command_id: Some(command_id.clone()),
-                title: command_name,
-                status: "running".to_string(),
-                message: None,
-                started_at: chrono::Utc::now().timestamp_millis(),
-                completed_at: None,
-            }).await;
+            push_task_history(
+                &ctx.task_history,
+                TaskHistoryEntry {
+                    task_id: task_id.clone(),
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    task_type: "project_command".to_string(),
+                    command_id: Some(command_id.clone()),
+                    title: command_name,
+                    status: "running".to_string(),
+                    message: None,
+                    started_at: chrono::Utc::now().timestamp_millis(),
+                    completed_at: None,
+                },
+            )
+            .await;
 
             let tx = ctx.cmd_output_tx.clone();
             let rc = ctx.running_commands.clone();
@@ -605,7 +626,13 @@ pub async fn handle_project_message(
                 let exit_status = match wait_result {
                     Some(Ok(status)) => status,
                     Some(Err(e)) => {
-                        update_task_history(&task_history, &tid, "failed", Some(format!("执行失败: {}", e))).await;
+                        update_task_history(
+                            &task_history,
+                            &tid,
+                            "failed",
+                            Some(format!("执行失败: {}", e)),
+                        )
+                        .await;
                         let msg = ServerMessage::ProjectCommandCompleted {
                             project: p,
                             workspace: w,
@@ -638,14 +665,16 @@ pub async fn handle_project_message(
                     p, c, ok
                 );
 
-                let _ = tx.send(ServerMessage::ProjectCommandCompleted {
-                    project: p.clone(),
-                    workspace: w.clone(),
-                    command_id: c.clone(),
-                    task_id: tid.clone(),
-                    ok,
-                    message: Some(message.clone()),
-                }).await;
+                let _ = tx
+                    .send(ServerMessage::ProjectCommandCompleted {
+                        project: p.clone(),
+                        workspace: w.clone(),
+                        command_id: c.clone(),
+                        task_id: tid.clone(),
+                        ok,
+                        message: Some(message.clone()),
+                    })
+                    .await;
                 let _ = broadcast_tx.send(TaskBroadcastEvent {
                     origin_conn_id,
                     message: ServerMessage::ProjectCommandCompleted {
@@ -665,7 +694,12 @@ pub async fn handle_project_message(
         }
 
         // 取消正在运行的项目命令
-        ClientMessage::CancelProjectCommand { project, workspace, command_id, task_id } => {
+        ClientMessage::CancelProjectCommand {
+            project,
+            workspace,
+            command_id,
+            task_id,
+        } => {
             info!(
                 "CancelProjectCommand request: project={}, workspace={}, command_id={}, task_id={}",
                 project,
@@ -752,7 +786,13 @@ pub async fn handle_project_message(
                 origin_conn_id: ctx.conn_meta.conn_id.clone(),
                 message: cancelled_msg,
             });
-            update_task_history(&ctx.task_history, &cancelled_task_id, "cancelled", Some("已取消".to_string())).await;
+            update_task_history(
+                &ctx.task_history,
+                &cancelled_task_id,
+                "cancelled",
+                Some("已取消".to_string()),
+            )
+            .await;
 
             Ok(true)
         }
@@ -760,18 +800,21 @@ pub async fn handle_project_message(
         // v1.40: 查询任务历史（iOS 重连恢复）
         ClientMessage::ListTasks => {
             let history = ctx.task_history.lock().await;
-            let tasks: Vec<TaskSnapshotEntry> = history.iter().map(|e| TaskSnapshotEntry {
-                task_id: e.task_id.clone(),
-                project: e.project.clone(),
-                workspace: e.workspace.clone(),
-                task_type: e.task_type.clone(),
-                command_id: e.command_id.clone(),
-                title: e.title.clone(),
-                status: e.status.clone(),
-                message: e.message.clone(),
-                started_at: e.started_at,
-                completed_at: e.completed_at,
-            }).collect();
+            let tasks: Vec<TaskSnapshotEntry> = history
+                .iter()
+                .map(|e| TaskSnapshotEntry {
+                    task_id: e.task_id.clone(),
+                    project: e.project.clone(),
+                    workspace: e.workspace.clone(),
+                    task_type: e.task_type.clone(),
+                    command_id: e.command_id.clone(),
+                    title: e.title.clone(),
+                    status: e.status.clone(),
+                    message: e.message.clone(),
+                    started_at: e.started_at,
+                    completed_at: e.completed_at,
+                })
+                .collect();
             drop(history);
             send_message(socket, &ServerMessage::TasksSnapshot { tasks }).await?;
             Ok(true)

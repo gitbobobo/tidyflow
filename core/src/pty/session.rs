@@ -31,7 +31,11 @@ pub struct PtySession {
 
 impl PtySession {
     #[instrument]
-    pub fn new(cwd: Option<PathBuf>, initial_cols: Option<u16>, initial_rows: Option<u16>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        cwd: Option<PathBuf>,
+        initial_cols: Option<u16>,
+        initial_rows: Option<u16>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let session_id = Uuid::new_v4().to_string();
         info!(session_id = %session_id, "Creating new PTY session");
 

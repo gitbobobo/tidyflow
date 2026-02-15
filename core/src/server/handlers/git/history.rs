@@ -27,10 +27,7 @@ pub async fn try_handle_git_message(
 
             let root = ws_ctx.root_path;
             let limit_copy = *limit;
-            let result = tokio::task::spawn_blocking(move || {
-                git::git_log(&root, limit_copy)
-            })
-            .await;
+            let result = tokio::task::spawn_blocking(move || git::git_log(&root, limit_copy)).await;
 
             match result {
                 Ok(Ok(log_result)) => {
@@ -96,10 +93,8 @@ pub async fn try_handle_git_message(
 
             let root = ws_ctx.root_path;
             let sha_clone = sha.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                git::git_show(&root, &sha_clone)
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || git::git_show(&root, &sha_clone)).await;
 
             match result {
                 Ok(Ok(show_result)) => {

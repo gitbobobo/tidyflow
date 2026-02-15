@@ -511,10 +511,7 @@ pub fn copy_file_from_absolute(
     // 生成不冲突的目标路径
     let dest_full_path = generate_unique_path(&dest_dir_full, source_name);
 
-    debug!(
-        "Copying {:?} to {:?}",
-        source_full_path, dest_full_path
-    );
+    debug!("Copying {:?} to {:?}", source_full_path, dest_full_path);
 
     // 执行复制
     if source_full_path.is_dir() {

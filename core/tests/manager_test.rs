@@ -1,5 +1,5 @@
-use tidyflow_core::OpenCodeManager;
 use std::path::PathBuf;
+use tidyflow_core::OpenCodeManager;
 
 #[tokio::test]
 async fn test_manager_creation() {

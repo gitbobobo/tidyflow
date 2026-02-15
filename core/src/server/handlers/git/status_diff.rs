@@ -37,11 +37,7 @@ pub async fn try_handle_git_message(
                 };
 
                 let divergence = if let Some(branch) = current_branch.as_deref() {
-                    match git::check_branch_divergence_local(
-                        &root,
-                        branch,
-                        &default_branch,
-                    ) {
+                    match git::check_branch_divergence_local(&root, branch, &default_branch) {
                         Ok(result) => Some(result),
                         Err(e) => {
                             warn!(

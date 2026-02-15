@@ -333,7 +333,9 @@ pub fn git_discard(
                 .map_err(GitError::IoError)?;
 
             if !clean_output.status.success() {
-                let stderr = String::from_utf8_lossy(&clean_output.stderr).trim().to_string();
+                let stderr = String::from_utf8_lossy(&clean_output.stderr)
+                    .trim()
+                    .to_string();
                 return Ok(GitOpResult {
                     op: "discard".to_string(),
                     ok: false,
