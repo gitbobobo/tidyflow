@@ -29,7 +29,7 @@ private struct MessageBubble: View {
     let message: ChatMessage
 
     @State private var isMetaExpanded: Bool = false
-    
+
     private var isUser: Bool {
         message.role == .user
     }
@@ -86,10 +86,18 @@ private struct MessageBubble: View {
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !message.content.isEmpty {
-                Text(message.content)
-                    .textSelection(.enabled)
-                    .font(.system(size: 13))
-                    .foregroundColor(isUser ? .white : .primary)
+                if isUser {
+                    Text(message.content)
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white)
+                } else {
+                    // 流式期间做“打字机”渲染，避免一次性大段文字跳变的生硬感
+                    TypewriterText(text: message.content, isStreaming: message.isStreaming)
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .foregroundColor(.primary)
+                }
             } else if message.isStreaming {
                 // 没有文本但仍在生成时，也要有“消息气泡”
                 TypingIndicator()
@@ -99,7 +107,7 @@ private struct MessageBubble: View {
                 DisclosureGroup("思考过程", isExpanded: $isMetaExpanded) {
                     VStack(alignment: .leading, spacing: 10) {
                         if let thinking = message.thinking, !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(thinking)
+                            TypewriterText(text: thinking, isStreaming: message.isStreaming)
                                 .textSelection(.enabled)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
@@ -107,7 +115,7 @@ private struct MessageBubble: View {
                         }
 
                         if let toolTrace = message.toolTrace, !toolTrace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(toolTrace)
+                            TypewriterText(text: toolTrace, isStreaming: message.isStreaming)
                                 .textSelection(.enabled)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
@@ -158,9 +166,102 @@ private struct MessageBubble: View {
     }
 }
 
+/// 打字机效果：把“目标文本”平滑地增量渲染到 UI 上。
+///
+/// 说明：
+/// - 后端/网络可能一次推送较长的增量片段，直接替换整段 Text 会产生明显跳变。
+/// - 这里把差异部分拆成小 chunk 按节拍追加，视觉上更接近自然的流式输出。
+private struct TypewriterText: View {
+    let text: String
+    let isStreaming: Bool
+
+    @State private var displayed: String = ""
+    @State private var target: String = ""
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        Text(displayed)
+            .onAppear {
+                target = text
+                if isStreaming {
+                    // 流式开始：从当前已显示内容继续追加（避免列表重用导致清空）
+                    if displayed.isEmpty, !text.isEmpty {
+                        displayed = "" // 让后续逐步 append
+                    }
+                    startIfNeeded()
+                } else {
+                    displayed = text
+                }
+            }
+            .onDisappear {
+                task?.cancel()
+                task = nil
+            }
+            .onChange(of: text) { newValue in
+                target = newValue
+                if !isStreaming {
+                    displayed = newValue
+                } else {
+                    startIfNeeded()
+                }
+            }
+            .onChange(of: isStreaming) { streaming in
+                if streaming {
+                    startIfNeeded()
+                } else {
+                    // 结束时直接收敛到最终文本并停止任务
+                    task?.cancel()
+                    task = nil
+                    displayed = target
+                }
+            }
+    }
+
+    private func startIfNeeded() {
+        guard task == nil else { return }
+        task = Task { @MainActor in
+            // 30ms 一帧，按 backlog 动态调整速度
+            let tickNs: UInt64 = 30_000_000
+            while !Task.isCancelled {
+                if displayed == target {
+                    if !isStreaming { break }
+                    try? await Task.sleep(nanoseconds: tickNs)
+                    continue
+                }
+
+                // 若 target 发生回退/重写（非前缀），直接同步，避免卡死
+                if !target.hasPrefix(displayed) {
+                    displayed = target
+                    try? await Task.sleep(nanoseconds: tickNs)
+                    continue
+                }
+
+                let backlog = max(0, target.count - displayed.count)
+                let cps: Int
+                if backlog > 500 {
+                    cps = 2000
+                } else if backlog > 200 {
+                    cps = 1200
+                } else if backlog > 80 {
+                    cps = 600
+                } else {
+                    cps = 240
+                }
+                let chunkSize = max(1, Int(Double(cps) * (Double(tickNs) / 1_000_000_000.0)))
+
+                let startIdx = target.index(target.startIndex, offsetBy: displayed.count)
+                let endIdx = target.index(startIdx, offsetBy: min(chunkSize, backlog))
+                displayed.append(contentsOf: target[startIdx..<endIdx])
+
+                try? await Task.sleep(nanoseconds: tickNs)
+            }
+        }
+    }
+}
+
 private struct TypingIndicator: View {
     @State private var offset: CGFloat = 0
-    
+
     var body: some View {
         HStack(spacing: 4) {
             ForEach(0..<3) { index in
