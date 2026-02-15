@@ -399,6 +399,15 @@ extension WSClient {
         ])
     }
 
+    /// 终端输出流控 ACK：通知 Core 已消费指定字节数，释放背压
+    func sendTermOutputAck(termId: String, bytes: Int) {
+        send([
+            "type": "term_output_ack",
+            "term_id": termId,
+            "bytes": bytes
+        ])
+    }
+
     /// 发送终端输入（二进制字节）
     func sendTerminalInput(_ bytes: [UInt8], termId: String) {
         send([
