@@ -326,6 +326,34 @@ extension WSClient {
                 onAITaskCancelled?(result)
             }
 
+        // v1.41: AI Chat 响应
+        case "ai_session_started":
+            let sessionId = json["session_id"] as? String ?? ""
+            let title = json["title"] as? String ?? ""
+            onAISessionStarted?(sessionId, title)
+
+        case "ai_chat_text":
+            let sessionId = json["session_id"] as? String ?? ""
+            let text = json["text"] as? String ?? ""
+            let delta = json["delta"] as? String
+            let done = json["done"] as? Bool ?? false
+            onAIChatText?(sessionId, text, delta, done)
+
+        case "ai_chat_tool":
+            let sessionId = json["session_id"] as? String ?? ""
+            let tool = json["tool"] as? String ?? ""
+            let input = json["input"] as? [String: Any] ?? [:]
+            onAIChatTool?(sessionId, tool, input)
+
+        case "ai_chat_error":
+            let sessionId = json["session_id"] as? String ?? ""
+            let error = json["error"] as? String ?? "Unknown error"
+            onAIChatError?(sessionId, error)
+
+        case "ai_session_list":
+            let sessions = json["sessions"] as? [[String: Any]] ?? []
+            onAISessionList?(sessions)
+
         case "clipboard_image_set":
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String

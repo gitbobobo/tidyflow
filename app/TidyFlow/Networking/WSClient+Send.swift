@@ -698,8 +698,49 @@ extension WSClient {
 
     // MARK: - 任务历史
 
-    /// 查询任务历史快照（iOS 重连恢复用）
-    func requestListTasks() {
-        send(["type": "list_tasks"])
+    // MARK: - v1.41: AI Chat
+
+    /// 开始新的 AI 聊天会话
+    func requestAIChatStart(projectName: String? = nil, title: String? = nil) {
+        var msg: [String: Any] = ["type": "ai_chat_start"]
+        if let projectName { msg["project_name"] = projectName }
+        if let title { msg["title"] = title }
+        send(msg)
+    }
+
+    /// 发送 AI 聊天消息
+    func requestAIChatSend(sessionId: String, message: String, fileRefs: [String]? = nil) {
+        var msg: [String: Any] = [
+            "type": "ai_chat_send",
+            "session_id": sessionId,
+            "message": message
+        ]
+        if let fileRefs, !fileRefs.isEmpty {
+            msg["file_refs"] = fileRefs
+        }
+        send(msg)
+    }
+
+    /// 终止正在进行的 AI 聊天
+    func requestAIChatAbort(sessionId: String) {
+        send([
+            "type": "ai_chat_abort",
+            "session_id": sessionId
+        ])
+    }
+
+    /// 获取 AI 会话列表
+    func requestAISessionList(projectName: String? = nil) {
+        var msg: [String: Any] = ["type": "ai_session_list"]
+        if let projectName { msg["project_name"] = projectName }
+        send(msg)
+    }
+
+    /// 删除 AI 会话
+    func requestAISessionDelete(sessionId: String) {
+        send([
+            "type": "ai_session_delete",
+            "session_id": sessionId
+        ])
     }
 }

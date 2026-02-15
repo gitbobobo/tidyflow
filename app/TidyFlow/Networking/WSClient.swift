@@ -98,6 +98,12 @@ class WSClient: NSObject, ObservableObject {
     var onClipboardImageSet: ((Bool, String?) -> Void)?
     // v1.40: 任务历史快照（iOS 重连恢复）
     var onTasksSnapshot: (([TaskSnapshotEntry]) -> Void)?
+    // v1.41: AI Chat 回调
+    var onAISessionStarted: ((String, String) -> Void)?       // (sessionId, title)
+    var onAIChatText: ((String, String, String?, Bool) -> Void)? // (sessionId, text, delta, done)
+    var onAIChatTool: ((String, String, [String: Any]) -> Void)? // (sessionId, tool, input)
+    var onAIChatError: ((String, String) -> Void)?             // (sessionId, error)
+    var onAISessionList: (([[String: Any]]) -> Void)?          // sessions
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 
