@@ -147,8 +147,19 @@ final class MobileAppState: ObservableObject {
     private var ctrlArmedForNextInput: Bool = false
     /// 终端视图是否已经拿到有效 cols/rows
     private var isTerminalViewReady: Bool = false
-    /// 用户是否处于“向上滚动查看 scrollback”的状态；此时暂停把新输出直接喂给渲染，避免被 TUI 刷新抢回底部造成抖动
+    /// 用户是否处于"向上滚动查看 scrollback"的状态；此时暂停把新输出直接喂给渲染，避免被 TUI 刷新抢回底部造成抖动
     private var isScrollbackLocked: Bool = false
+    /// 滚动锁定期间因缓冲溢出退化为 detach 模式
+    private var isDetachedDueToOverflow: Bool = false
+    /// 滚动锁定期间本地缓冲的字节数
+    private var scrollLockBufferedBytes: Int = 0
+    /// 滚动锁定本地缓冲上限（512KB），超过后退化为 detach 模式
+    private let scrollLockBufferLimit = 512 * 1024
+
+    /// 终端输出流控 ACK：累计未确认字节数
+    private var termOutputUnackedBytes: Int = 0
+    /// ACK 阈值（50KB），与 macOS xterm.js 端一致
+    private let termOutputAckThreshold = 50 * 1024
 
     /// 原生终端输出目标（SwiftTerm）
     private weak var terminalSink: MobileTerminalOutputSink?
@@ -641,18 +652,16 @@ final class MobileAppState: ObservableObject {
     }
 
     /// SwiftTerm / UIScrollView 滚动状态更新：
-    /// - 用户离开底部时：锁定 scrollback（暂停自动跟随输出）
-    /// - 用户回到底部且不再交互（不拖拽/不减速）时：解锁并 flush
+    /// - 用户离开底部时：锁定 scrollback，继续接收输出但缓冲在本地（不再 detach）
+    /// - 用户回到底部且不再交互时：解锁并 flush 本地缓冲（无需 resetTerminal + attach）
+    /// - 缓冲溢出时退化为 detach 模式（安全阀）
     func terminalViewDidUpdateScrollState(isAtBottom: Bool, isUserInteracting: Bool) {
         // 用户离开底部：立即锁定（避免 TUI 刷新抢回底部）
         if !isAtBottom {
             if !isScrollbackLocked {
                 isScrollbackLocked = true
-                // 关键：直接让 Core 停止向当前连接转发输出，避免后台持续刷新导致滚动抖动。
-                // 输出由 Core 的 scrollback 环形缓冲保留；回到底部时再 term_attach 回放。
-                if !currentTermId.isEmpty {
-                    wsClient.requestTermDetach(termId: currentTermId)
-                }
+                scrollLockBufferedBytes = 0
+                isDetachedDueToOverflow = false
                 pendingOutputChunks.removeAll()
             }
             return
@@ -666,11 +675,20 @@ final class MobileAppState: ObservableObject {
         // 回到底部且空闲：解锁并补齐积压输出
         if isScrollbackLocked {
             isScrollbackLocked = false
-            pendingOutputChunks.removeAll()
-            // 重置本地渲染并重新附着：用服务端 scrollback 还原最新状态，避免一次性 flush 大量增量导致抖动。
-            terminalSink?.resetTerminal()
-            if !currentTermId.isEmpty {
-                wsClient.requestTermAttach(termId: currentTermId)
+
+            if isDetachedDueToOverflow {
+                // 溢出退化模式：走原有 resetTerminal + term_attach 路径
+                isDetachedDueToOverflow = false
+                scrollLockBufferedBytes = 0
+                pendingOutputChunks.removeAll()
+                terminalSink?.resetTerminal()
+                if !currentTermId.isEmpty {
+                    wsClient.requestTermAttach(termId: currentTermId)
+                }
+            } else {
+                // 正常模式：直接 flush 本地缓冲到 SwiftTerm，无闪屏
+                scrollLockBufferedBytes = 0
+                flushPendingOutput()
             }
         }
     }
@@ -767,6 +785,9 @@ final class MobileAppState: ObservableObject {
         // 防止 SwiftUI 复用同一个 TerminalView 时，把新终端输出追加到旧缓冲。
         pendingOutputChunks.removeAll()
         isScrollbackLocked = false
+        isDetachedDueToOverflow = false
+        scrollLockBufferedBytes = 0
+        termOutputUnackedBytes = 0
         currentTermId = newId
         lastRenderedTermId = ""
         if let sink = terminalSink {
@@ -837,6 +858,9 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommandName = ""
         isTerminalViewReady = false
         isScrollbackLocked = false
+        isDetachedDueToOverflow = false
+        scrollLockBufferedBytes = 0
+        termOutputUnackedBytes = 0
         pendingOutputChunks.removeAll()
         terminalSink = nil
         lastRenderedTermId = ""
@@ -976,6 +1000,11 @@ final class MobileAppState: ObservableObject {
             // 写入 scrollback 到 SwiftTerm
             if !result.scrollback.isEmpty {
                 self.emitTerminalOutput(result.scrollback)
+                // scrollback 回放后立即发送 ACK，避免大量 scrollback 数据触发背压
+                if !result.termId.isEmpty {
+                    self.wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
+                    self.termOutputUnackedBytes = 0
+                }
             }
             self.wsClient.requestTermResize(
                 termId: result.termId,
@@ -1303,14 +1332,33 @@ final class MobileAppState: ObservableObject {
     private func emitTerminalOutput(_ bytes: [UInt8]) {
         guard !bytes.isEmpty else { return }
 
+        // 流控 ACK：累计字节数，超过阈值时通知 Core 释放背压
+        termOutputUnackedBytes += bytes.count
+        if termOutputUnackedBytes >= termOutputAckThreshold, !currentTermId.isEmpty {
+            wsClient.sendTermOutputAck(termId: currentTermId, bytes: termOutputUnackedBytes)
+            termOutputUnackedBytes = 0
+        }
+
         if let sink = terminalSink, !isScrollbackLocked {
             sink.writeOutput(bytes)
             return
         }
 
+        // 滚动锁定期间：缓冲到本地
         pendingOutputChunks.append(bytes)
+        scrollLockBufferedBytes += bytes.count
         if pendingOutputChunks.count > pendingOutputChunkLimit {
             pendingOutputChunks.removeFirst(pendingOutputChunks.count - pendingOutputChunkLimit)
+        }
+
+        // 安全阀：本地缓冲超过上限时退化为 detach 模式
+        if scrollLockBufferedBytes > scrollLockBufferLimit, !isDetachedDueToOverflow {
+            isDetachedDueToOverflow = true
+            pendingOutputChunks.removeAll()
+            scrollLockBufferedBytes = 0
+            if !currentTermId.isEmpty {
+                wsClient.requestTermDetach(termId: currentTermId)
+            }
         }
     }
 
