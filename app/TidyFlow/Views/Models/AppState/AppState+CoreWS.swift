@@ -506,6 +506,76 @@ extension AppState {
             self?.handleGitAIMergeResult(result)
         }
 
+        // v1.41: AI Chat 回调
+        wsClient.onAISessionStarted = { [weak self] sessionId, title in
+            self?.aiCurrentSessionId = sessionId
+            // 添加到会话列表
+            let session = SessionInfo(
+                id: sessionId,
+                title: title,
+                updatedAt: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+            if !(self?.aiSessions.contains(where: { $0.id == sessionId }) ?? false) {
+                self?.aiSessions.insert(session, at: 0)
+            }
+        }
+
+        wsClient.onAIChatText = { [weak self] sessionId, text, delta, done in
+            guard self?.aiCurrentSessionId == sessionId else { return }
+            if done {
+                // 流式结束：更新最后一条 assistant 消息为最终文本
+                if let lastIdx = self?.aiChatMessages.lastIndex(where: { $0.role == .assistant }) {
+                    let final = ChatMessage(
+                        id: self?.aiChatMessages[lastIdx].id ?? UUID().uuidString,
+                        role: .assistant,
+                        content: text,
+                        isStreaming: false
+                    )
+                    self?.aiChatMessages[lastIdx] = final
+                }
+                self?.aiIsStreaming = false
+            } else if let delta, !delta.isEmpty {
+                // 流式增量：追加到最后一条 assistant 消息
+                if let lastIdx = self?.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
+                    let updated = ChatMessage(
+                        id: self?.aiChatMessages[lastIdx].id ?? UUID().uuidString,
+                        role: .assistant,
+                        content: text,
+                        isStreaming: true
+                    )
+                    self?.aiChatMessages[lastIdx] = updated
+                } else {
+                    // 首个增量：创建新的 assistant 消息
+                    let msg = ChatMessage(role: .assistant, content: text, isStreaming: true)
+                    self?.aiChatMessages.append(msg)
+                }
+            }
+        }
+
+        wsClient.onAIChatError = { [weak self] sessionId, error in
+            guard self?.aiCurrentSessionId == sessionId else { return }
+            let errorMsg = ChatMessage(role: .assistant, content: "⚠️ \(error)")
+            self?.aiChatMessages.append(errorMsg)
+            self?.aiIsStreaming = false
+        }
+
+        wsClient.onAIChatTool = { [weak self] sessionId, tool, input in
+            guard self?.aiCurrentSessionId == sessionId else { return }
+            let desc = "🔧 \(tool)"
+            let toolMsg = ChatMessage(role: .assistant, content: desc)
+            self?.aiChatMessages.append(toolMsg)
+        }
+
+        wsClient.onAISessionList = { [weak self] sessionsData in
+            let sessions = sessionsData.compactMap { dict -> SessionInfo? in
+                guard let id = dict["id"] as? String,
+                      let title = dict["title"] as? String else { return nil }
+                let updatedAt = dict["updated_at"] as? Int64 ?? 0
+                return SessionInfo(id: id, title: title, updatedAt: updatedAt)
+            }
+            self?.aiSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {

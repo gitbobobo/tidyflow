@@ -28,6 +28,7 @@ enum TabKind: String, Codable {
     case editor
     case diff
     case settings
+    case aiChat
     
     var iconName: String {
         switch self {
@@ -35,6 +36,7 @@ enum TabKind: String, Codable {
         case .editor: return "doc.text"
         case .diff: return "arrow.left.arrow.right"
         case .settings: return "gearshape"
+        case .aiChat: return "sparkles"
         }
     }
 }

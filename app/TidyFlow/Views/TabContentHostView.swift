@@ -49,6 +49,11 @@ struct TabContentHostView: View {
                     SettingsContentView()
                         .environmentObject(appState)
                         .onAppear { webViewVisible = false }
+                case .aiChat:
+                    // AI Chat Tab (Native SwiftUI)
+                    AITabView()
+                        .environmentObject(appState)
+                        .onAppear { webViewVisible = false }
                 }
 
             } else if appState.currentGlobalWorkspaceKey != nil {

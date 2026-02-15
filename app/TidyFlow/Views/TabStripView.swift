@@ -31,7 +31,18 @@ struct TabStripView: View {
                 // 新建终端按钮（根据是否有自定义命令显示不同UI）
                 NewTerminalButton(globalKey: globalKey)
                     .environmentObject(appState)
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 4)
+                
+                Button(action: {
+                    appState.addTab(workspaceKey: globalKey, kind: .aiChat, title: "AI Chat", payload: "")
+                }) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("AI Chat")
+                .padding(.horizontal, 4)
             } else {
                 Spacer()
             }

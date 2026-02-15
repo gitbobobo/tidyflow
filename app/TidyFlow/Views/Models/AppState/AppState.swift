@@ -108,6 +108,12 @@ class AppState: ObservableObject {
     var aiCommitContinuations: [String: (AICommitResult) -> Void] = [:]
     var aiMergeContinuations: [String: (AIMergeResult) -> Void] = [:]
 
+    // v1.41: AI Chat 状态
+    @Published var aiCurrentSessionId: String?
+    @Published var aiChatMessages: [ChatMessage] = []
+    @Published var aiIsStreaming: Bool = false
+    @Published var aiSessions: [SessionInfo] = []
+
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
 
