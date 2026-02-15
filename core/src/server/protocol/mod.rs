@@ -439,6 +439,12 @@ pub enum ClientMessage {
         workspace: String,
         operation_type: String, // "ai_commit" | "ai_merge"
     },
+
+    // v1.39: iOS 剪贴板图片上传（转 JPG 写入 macOS 系统剪贴板）
+    ClipboardImageUpload {
+        #[serde(with = "serde_bytes")]
+        image_data: Vec<u8>,
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -928,6 +934,13 @@ pub enum ServerMessage {
         workspace: String,
         running_languages: Vec<String>,
         missing_languages: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+
+    // v1.39: 剪贴板图片写入结果
+    ClipboardImageSet {
+        ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
