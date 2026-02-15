@@ -695,4 +695,11 @@ extension WSClient {
         }
         send(dict)
     }
+
+    // MARK: - 任务历史
+
+    /// 查询任务历史快照（iOS 重连恢复用）
+    func requestListTasks() {
+        send(["type": "list_tasks"])
+    }
 }

@@ -370,11 +370,12 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 项目/工作空间
 
-    /// 刷新项目树（项目、工作空间、终端、设置）
+    /// 刷新项目树（项目、工作空间、终端、设置、任务历史）
     func refreshProjectTree() {
         wsClient.requestListProjects()
         wsClient.requestTermList()
         wsClient.requestGetClientSettings()
+        wsClient.requestListTasks()
     }
 
     func selectProject(_ projectName: String) {
@@ -1166,9 +1167,73 @@ final class MobileAppState: ObservableObject {
             self.commitAIAgent = settings.commitAIAgent
             self.mergeAIAgent = settings.mergeAIAgent
         }
+
+        wsClient.onTasksSnapshot = { [weak self] entries in
+            guard let self else { return }
+            self.restoreTasksFromSnapshot(entries)
+        }
     }
 
     // MARK: - 排序/任务内部工具
+
+    /// 从服务端任务快照恢复本地任务状态（重连场景）
+    private func restoreTasksFromSnapshot(_ entries: [TaskSnapshotEntry]) {
+        // 收集当前本地已有的 remoteTaskId，避免重复创建
+        let existingRemoteIds: Set<String> = Set(
+            workspaceTasksByKey.values.flatMap { $0 }.compactMap { $0.remoteTaskId }
+        )
+
+        for entry in entries {
+            // 跳过已存在的任务
+            if existingRemoteIds.contains(entry.taskId) { continue }
+
+            let taskType: MobileWorkspaceTaskType
+            switch entry.taskType {
+            case "ai_commit": taskType = .aiCommit
+            case "ai_merge": taskType = .aiMerge
+            default: taskType = .projectCommand
+            }
+
+            let status: MobileWorkspaceTaskStatus
+            switch entry.status {
+            case "running": status = .running
+            case "completed": status = .completed
+            case "failed": status = .failed
+            case "cancelled": status = .cancelled
+            default: status = .running
+            }
+
+            let startedDate = Date(timeIntervalSince1970: TimeInterval(entry.startedAt) / 1000.0)
+            let completedDate = entry.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
+
+            let task = MobileWorkspaceTask(
+                id: UUID().uuidString,
+                project: entry.project,
+                workspace: entry.workspace,
+                type: taskType,
+                title: entry.title,
+                icon: taskType == .projectCommand ? "terminal" : "sparkles",
+                status: status,
+                message: entry.message ?? "",
+                createdAt: startedDate,
+                startedAt: startedDate,
+                completedAt: completedDate,
+                commandId: entry.commandId,
+                remoteTaskId: entry.taskId,
+                lastOutputLine: nil
+            )
+
+            let key = globalWorkspaceKey(project: entry.project, workspace: entry.workspace)
+            var tasks = workspaceTasksByKey[key] ?? []
+            tasks.append(task)
+            workspaceTasksByKey[key] = tasks
+
+            // 维护 remoteTaskId 映射（running 状态的项目命令需要接收后续输出）
+            if taskType == .projectCommand && status == .running {
+                projectCommandTaskIdByRemoteTaskId[entry.taskId] = task.id
+            }
+        }
+    }
 
     private func globalWorkspaceKey(project: String, workspace: String) -> String {
         "\(project):\(workspace)"

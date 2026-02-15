@@ -94,6 +94,8 @@ class WSClient: NSObject, ObservableObject {
     var onAITaskCancelled: ((AITaskCancelled) -> Void)?
     // v1.39: 剪贴板图片写入结果
     var onClipboardImageSet: ((Bool, String?) -> Void)?
+    // v1.40: 任务历史快照（iOS 重连恢复）
+    var onTasksSnapshot: (([TaskSnapshotEntry]) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

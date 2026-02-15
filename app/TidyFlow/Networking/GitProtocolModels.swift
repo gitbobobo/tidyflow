@@ -1235,3 +1235,41 @@ struct AITaskCancelled {
         return AITaskCancelled(project: project, workspace: workspace, operationType: operationType)
     }
 }
+
+/// 任务快照条目（iOS 重连恢复用）
+struct TaskSnapshotEntry {
+    let taskId: String
+    let project: String
+    let workspace: String
+    let taskType: String
+    let commandId: String?
+    let title: String
+    let status: String
+    let message: String?
+    let startedAt: Int64
+    let completedAt: Int64?
+
+    static func from(json: [String: Any]) -> TaskSnapshotEntry? {
+        guard let taskId = json["task_id"] as? String,
+              let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let taskType = json["task_type"] as? String,
+              let title = json["title"] as? String,
+              let status = json["status"] as? String,
+              let startedAt = json["started_at"] as? Int64 else {
+            return nil
+        }
+        return TaskSnapshotEntry(
+            taskId: taskId,
+            project: project,
+            workspace: workspace,
+            taskType: taskType,
+            commandId: json["command_id"] as? String,
+            title: title,
+            status: status,
+            message: json["message"] as? String,
+            startedAt: startedAt,
+            completedAt: json["completed_at"] as? Int64
+        )
+    }
+}

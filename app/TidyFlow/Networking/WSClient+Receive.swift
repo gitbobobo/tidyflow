@@ -331,6 +331,12 @@ extension WSClient {
             let message = json["message"] as? String
             onClipboardImageSet?(ok, message)
 
+        case "tasks_snapshot":
+            if let items = json["tasks"] as? [[String: Any]] {
+                let entries = items.compactMap { TaskSnapshotEntry.from(json: $0) }
+                onTasksSnapshot?(entries)
+            }
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)
