@@ -8,6 +8,8 @@ struct TerminalSessionInfo {
     let cwd: String
     let shell: String
     let status: String
+    let name: String?
+    let icon: String?
     let remoteSubscribers: [RemoteSubscriberDetail]
 
     var isRunning: Bool { status == "running" }
@@ -21,6 +23,8 @@ struct TerminalSessionInfo {
             return nil
         }
         let status = json["status"] as? String ?? "running"
+        let name = json["name"] as? String
+        let icon = json["icon"] as? String
         var subscribers: [RemoteSubscriberDetail] = []
         if let arr = json["remote_subscribers"] as? [[String: Any]] {
             subscribers = arr.compactMap { RemoteSubscriberDetail.from(json: $0) }
@@ -32,6 +36,8 @@ struct TerminalSessionInfo {
             cwd: cwd,
             shell: shell,
             status: status,
+            name: name,
+            icon: icon,
             remoteSubscribers: subscribers
         )
     }
@@ -58,6 +64,8 @@ struct TermCreatedResult {
     let workspace: String
     let cwd: String
     let shell: String
+    let name: String?
+    let icon: String?
 
     static func from(json: [String: Any]) -> TermCreatedResult? {
         guard let termId = json["term_id"] as? String,
@@ -67,7 +75,12 @@ struct TermCreatedResult {
               let shell = json["shell"] as? String else {
             return nil
         }
-        return TermCreatedResult(termId: termId, project: project, workspace: workspace, cwd: cwd, shell: shell)
+        return TermCreatedResult(
+            termId: termId, project: project, workspace: workspace,
+            cwd: cwd, shell: shell,
+            name: json["name"] as? String,
+            icon: json["icon"] as? String
+        )
     }
 }
 
@@ -79,6 +92,8 @@ struct TermAttachedResult {
     let cwd: String
     let shell: String
     let scrollback: [UInt8]
+    let name: String?
+    let icon: String?
 
     static func from(json: [String: Any]) -> TermAttachedResult? {
         guard let termId = json["term_id"] as? String,
@@ -95,7 +110,9 @@ struct TermAttachedResult {
             workspace: workspace,
             cwd: cwd,
             shell: shell,
-            scrollback: scrollback
+            scrollback: scrollback,
+            name: json["name"] as? String,
+            icon: json["icon"] as? String
         )
     }
 }

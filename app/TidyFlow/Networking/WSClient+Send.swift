@@ -354,8 +354,8 @@ extension WSClient {
 
     // MARK: - 终端会话（供 iOS / 远程客户端复用）
 
-    /// 创建终端（基于项目与工作空间），可附带初始尺寸
-    func requestTermCreate(project: String, workspace: String, cols: Int? = nil, rows: Int? = nil) {
+    /// 创建终端（基于项目与工作空间），可附带初始尺寸和展示信息
+    func requestTermCreate(project: String, workspace: String, cols: Int? = nil, rows: Int? = nil, name: String? = nil, icon: String? = nil) {
         var msg: [String: Any] = [
             "type": "term_create",
             "project": project,
@@ -363,6 +363,8 @@ extension WSClient {
         ]
         if let cols { msg["cols"] = cols }
         if let rows { msg["rows"] = rows }
+        if let name { msg["name"] = name }
+        if let icon { msg["icon"] = icon }
         send(msg)
     }
 
@@ -385,6 +387,14 @@ extension WSClient {
     func requestTermAttach(termId: String) {
         send([
             "type": "term_attach",
+            "term_id": termId
+        ])
+    }
+
+    /// 取消当前 WS 连接对该终端的输出订阅（不关闭 PTY）
+    func requestTermDetach(termId: String) {
+        send([
+            "type": "term_detach",
             "term_id": termId
         ])
     }
