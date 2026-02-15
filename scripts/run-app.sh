@@ -11,19 +11,42 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$PROJECT_ROOT/app"
 BUILD_DIR="$PROJECT_ROOT/build"
 BUILD_LOG="$BUILD_DIR/build.log"
+CORE_DIR="$PROJECT_ROOT/core"
 
 mkdir -p "$BUILD_DIR"
 
+# 1. 先编译 Rust Core（确保二进制始终最新）
+echo "[run-app] Building tidyflow-core (release)..."
+export PATH="$HOME/.cargo/bin:$PATH"
+(cd "$CORE_DIR" && cargo build --release)
+echo "[run-app] Core build done."
+
+# 2. 触发 Xcode 重新执行 Build Core 脚本（强制复制最新二进制到 app bundle）
+#    Xcode 用 inputPaths/outputPaths 做增量判断，编辑 src 子文件不一定更新目录 mtime，
+#    导致 Xcode 跳过复制步骤。这里 touch src 目录确保 input 比 output 新。
+touch "$CORE_DIR/src"
+
+# 3. 构建 Swift App（Xcode 会检测到 src 更新，重新执行 copy 脚本）
 echo "[run-app] Building TidyFlow.app..."
 if xcodebuild -project "$APP_DIR/TidyFlow.xcodeproj" \
     -scheme TidyFlow \
     -configuration Debug \
     -derivedDataPath "$BUILD_DIR" \
+    SKIP_CORE_BUILD=1 \
     build 2>&1 | tee "$BUILD_LOG" | grep -E "(Build Succeeded|error:|warning:)" || true; then
     :
 fi
 
 APP_PATH="$BUILD_DIR/Build/Products/Debug/TidyFlow-Debug.app"
+
+# 4. 兜底：直接复制 Core 二进制到 app bundle（防止 Xcode 增量判断仍跳过）
+CORE_BINARY="$CORE_DIR/target/release/tidyflow-core"
+DEST_DIR="$APP_PATH/Contents/Resources/Core"
+if [ -f "$CORE_BINARY" ] && [ -d "$APP_PATH" ]; then
+    mkdir -p "$DEST_DIR"
+    cp "$CORE_BINARY" "$DEST_DIR/"
+    echo "[run-app] Copied latest tidyflow-core to app bundle."
+fi
 
 if [ -d "$APP_PATH" ]; then
     echo "[run-app] Launching TidyFlow.app..."
