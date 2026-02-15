@@ -133,5 +133,7 @@ buildServer.json
 
 # Local release helper (contains local signing identity/profile)
 scripts/release_local.sh
+# Local upgrade helper
+scripts/upgrade.sh
 
 docs/product-requirements.md
