@@ -4,8 +4,8 @@ use std::time::Duration;
 use tracing::{info, warn, error};
 
 use crate::server::context::{
-    resolve_project, resolve_workspace, resolve_workspace_branch, HandlerContext, SharedAppState,
-    TaskBroadcastEvent,
+    resolve_project, resolve_workspace, resolve_workspace_branch, HandlerContext,
+    RunningAITaskEntry, SharedAppState, TaskBroadcastEvent,
 };
 use crate::server::git;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -686,7 +686,18 @@ async fn try_handle_git_ai_merge(
         project, workspace, ai_agent_type, source_branch, default_branch
     );
 
-    tokio::spawn(async move {
+    let running_ai_tasks = ctx.running_ai_tasks.clone();
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let child_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let child_pid_clone = child_pid.clone();
+    let task_id_clone = task_id.clone();
+    let running_ai_tasks_cleanup = running_ai_tasks.clone();
+    let project_for_registry = project.clone();
+    let workspace_for_registry = workspace.clone();
+
+    let join_handle = tokio::spawn(async move {
+        let pid_for_blocking = child_pid_clone.clone();
         let result = tokio::time::timeout(
             AI_AGENT_TIMEOUT,
             tokio::task::spawn_blocking(move || {
@@ -696,6 +707,7 @@ async fn try_handle_git_ai_merge(
                     &source_branch,
                     &default_branch,
                     &ai_agent_type,
+                    Some(&pid_for_blocking),
                 )
             }),
         )
@@ -762,7 +774,22 @@ async fn try_handle_git_ai_merge(
             origin_conn_id,
             message: msg,
         });
+        // 从注册表移除
+        running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
     });
+
+    // 注册到 AI 任务注册表
+    running_ai_tasks.lock().await.insert(
+        task_id.clone(),
+        RunningAITaskEntry {
+            task_id,
+            project: project_for_registry,
+            workspace: workspace_for_registry,
+            operation_type: "ai_merge".to_string(),
+            child_pid,
+            join_handle,
+        },
+    );
 
     Ok(true)
 }
@@ -781,6 +808,7 @@ fn handle_ai_merge_internal(
     source_branch: &str,
     default_branch: &str,
     ai_agent: &str,
+    pid_holder: Option<&std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
 ) -> Result<AIMergeOutput, String> {
     // 确保 integration worktree 存在
     let integration_path =
@@ -793,7 +821,7 @@ fn handle_ai_merge_internal(
 
     // 调用 AI agent
     let agent_args = super::branch_commit::build_ai_agent_command(ai_agent, &prompt)?;
-    let ai_output = super::branch_commit::execute_ai_agent(&integration_root, &agent_args)?;
+    let ai_output = super::branch_commit::execute_ai_agent(&integration_root, &agent_args, pid_holder)?;
 
     // 解析结果
     parse_ai_merge_result(&ai_output)

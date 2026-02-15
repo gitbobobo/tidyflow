@@ -22,8 +22,8 @@ use uuid::Uuid;
 use std::os::unix::process::parent_id;
 
 use crate::server::context::{
-    ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningCommands,
-    TaskBroadcastTx, TermSubscription,
+    ConnectionMeta, FlowControl, HandlerContext, SharedAppState, SharedRunningAITasks,
+    SharedRunningCommands, TaskBroadcastTx, TermSubscription,
 };
 use crate::server::handlers;
 use crate::server::lsp::LspSupervisor;
@@ -140,6 +140,7 @@ struct AppContext {
     remote_sub_registry: SharedRemoteSubRegistry,
     task_broadcast_tx: TaskBroadcastTx,
     running_commands: SharedRunningCommands,
+    running_ai_tasks: SharedRunningAITasks,
 }
 
 /// Run the WebSocket server on the specified port
@@ -185,6 +186,9 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     // 全局共享的运行中命令注册表
     let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
 
+    // 全局共享的运行中 AI 任务注册表
+    let running_ai_tasks: SharedRunningAITasks = Arc::new(Mutex::new(HashMap::new()));
+
     let ctx = AppContext {
         app_state: shared_state.clone(),
         save_tx,
@@ -198,6 +202,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
         task_broadcast_tx,
         running_commands,
+        running_ai_tasks,
     };
 
     let app = Router::new()
@@ -339,6 +344,7 @@ async fn ws_handler(
                 ctx.remote_sub_registry,
                 ctx.task_broadcast_tx,
                 ctx.running_commands,
+                ctx.running_ai_tasks,
             )
         })
         .into_response()
@@ -821,6 +827,7 @@ async fn handle_socket(
     remote_sub_registry: SharedRemoteSubRegistry,
     task_broadcast_tx: TaskBroadcastTx,
     running_commands: SharedRunningCommands,
+    running_ai_tasks: SharedRunningAITasks,
 ) {
     info!(
         "New WebSocket connection established (conn_id={}, remote={})",
@@ -859,6 +866,7 @@ async fn handle_socket(
         subscribed_terms: subscribed_terms.clone(),
         agg_tx: agg_tx.clone(),
         running_commands: running_commands.clone(),
+        running_ai_tasks: running_ai_tasks.clone(),
         cmd_output_tx: cmd_output_tx.clone(),
         task_broadcast_tx: task_broadcast_tx.clone(),
         lsp_supervisor: lsp_supervisor.clone(),

@@ -421,6 +421,13 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+
+    // v1.37: 取消 AI 任务
+    CancelAiTask {
+        project: String,
+        workspace: String,
+        operation_type: String, // "ai_commit" | "ai_merge"
+    },
 }
 
 fn default_diff_mode() -> String {
@@ -879,6 +886,14 @@ pub enum ServerMessage {
     ProjectCommandOutput {
         task_id: String,
         line: String,
+    },
+
+    // v1.37: AI 任务已取消
+    #[serde(rename = "ai_task_cancelled")]
+    AITaskCancelled {
+        project: String,
+        workspace: String,
+        operation_type: String,
     },
 
     // v1.31: LSP diagnostics / status

@@ -5,7 +5,9 @@ use std::process::Command;
 use std::time::Duration;
 use tracing::{info, warn, error};
 
-use crate::server::context::{resolve_workspace, HandlerContext, SharedAppState, TaskBroadcastEvent};
+use crate::server::context::{
+    resolve_workspace, HandlerContext, RunningAITaskEntry, SharedAppState, TaskBroadcastEvent,
+};
 use crate::server::git;
 use crate::server::protocol::{AIGitCommit, ClientMessage, GitBranchInfo, ServerMessage};
 use crate::server::ws::send_message;
@@ -313,15 +315,26 @@ pub async fn try_handle_git_ai_commit(
         project, workspace, ai_agent_type
     );
 
-    tokio::spawn(async move {
+    let running_ai_tasks = ctx.running_ai_tasks.clone();
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let child_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let child_pid_clone = child_pid.clone();
+    let task_id_clone = task_id.clone();
+    let running_ai_tasks_cleanup = running_ai_tasks.clone();
+    let project_for_registry = project.clone();
+    let workspace_for_registry = workspace.clone();
+
+    let join_handle = tokio::spawn(async move {
         let root_clone = root.clone();
         let agent_clone = ai_agent_type.clone();
+        let pid_for_blocking = child_pid_clone.clone();
 
         // 带超时执行 AI 代理
         let result = tokio::time::timeout(
             AI_AGENT_TIMEOUT,
             tokio::task::spawn_blocking(move || {
-                handle_ai_commit_internal(&root_clone, &agent_clone)
+                handle_ai_commit_internal(&root_clone, &agent_clone, Some(&pid_for_blocking))
             }),
         )
         .await;
@@ -387,13 +400,32 @@ pub async fn try_handle_git_ai_commit(
             origin_conn_id,
             message: msg,
         });
+        // 从注册表移除
+        running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
     });
+
+    // 注册到 AI 任务注册表
+    running_ai_tasks.lock().await.insert(
+        task_id.clone(),
+        RunningAITaskEntry {
+            task_id,
+            project: project_for_registry,
+            workspace: workspace_for_registry,
+            operation_type: "ai_commit".to_string(),
+            child_pid,
+            join_handle,
+        },
+    );
 
     Ok(true)
 }
 
 /// 内部函数：执行 AI 智能提交逻辑（委托式：AI 代理执行 git 操作，我们解析结果）
-fn handle_ai_commit_internal(workspace_root: &Path, ai_agent: &str) -> Result<AIGitCommitOutput, String> {
+fn handle_ai_commit_internal(
+    workspace_root: &Path,
+    ai_agent: &str,
+    pid_holder: Option<&std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
+) -> Result<AIGitCommitOutput, String> {
     // 检查是否为 git 仓库
     if git::utils::get_git_repo_root(workspace_root).is_none() {
         return Err("Not a git repository".to_string());
@@ -410,7 +442,7 @@ fn handle_ai_commit_internal(workspace_root: &Path, ai_agent: &str) -> Result<AI
     // 构建提示词 → 交给 AI 执行 → 解析结果
     let prompt = build_ai_commit_prompt();
     let agent_args = build_ai_agent_command(ai_agent, &prompt)?;
-    let ai_output = execute_ai_agent(workspace_root, &agent_args)?;
+    let ai_output = execute_ai_agent(workspace_root, &agent_args, pid_holder)?;
     let ai_result = parse_ai_commit_result(&ai_output)?;
 
     Ok(AIGitCommitOutput {
@@ -510,18 +542,35 @@ pub fn build_ai_agent_command(agent: &str, prompt: &str) -> Result<Vec<String>, 
     }
 }
 
-/// 执行 AI 代理
-pub fn execute_ai_agent(workspace_root: &Path, args: &[String]) -> Result<String, String> {
+/// 执行 AI 代理（支持可选 PID 捕获，用于取消任务）
+pub fn execute_ai_agent(
+    workspace_root: &Path,
+    args: &[String],
+    pid_holder: Option<&std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
+) -> Result<String, String> {
     use std::process::Command;
 
     info!("Executing AI agent: {} (cwd: {})", args[0], workspace_root.display());
 
-    let output = Command::new("/usr/bin/env")
+    let child = Command::new("/usr/bin/env")
         .args(args)
         .current_dir(workspace_root)
         .envs(build_extended_env())
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to execute AI agent '{}': {}", args[0], e))?;
+
+    // 捕获 PID 供取消使用
+    if let Some(holder) = pid_holder {
+        if let Ok(mut guard) = holder.lock() {
+            *guard = Some(child.id());
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for AI agent '{}': {}", args[0], e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -765,4 +814,68 @@ fn extract_balanced_json(text: &str) -> Option<String> {
 struct AIGitCommitOutput {
     message: String,
     commits: Vec<AIGitCommit>,
+}
+
+/// 取消 AI 任务（按 project + workspace + operation_type 查找）
+pub async fn handle_cancel_ai_task(
+    project: &str,
+    workspace: &str,
+    operation_type: &str,
+    socket: &mut WebSocket,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    let mut registry = ctx.running_ai_tasks.lock().await;
+
+    // 按 project + workspace + operation_type 查找
+    let task_id = registry
+        .iter()
+        .find(|(_, entry)| {
+            entry.project == project
+                && entry.workspace == workspace
+                && entry.operation_type == operation_type
+        })
+        .map(|(id, _)| id.clone());
+
+    let Some(task_id) = task_id else {
+        info!(
+            "CancelAITask: no matching task found (project={}, workspace={}, op={})",
+            project, workspace, operation_type
+        );
+        return Ok(true);
+    };
+
+    if let Some(entry) = registry.remove(&task_id) {
+        // 终止子进程
+        if let Ok(guard) = entry.child_pid.lock() {
+            if let Some(pid) = *guard {
+                info!("Killing AI task child process: pid={}", pid);
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
+            }
+        }
+        // 取消 tokio 任务
+        entry.join_handle.abort();
+
+        info!(
+            "AI task cancelled: project={}, workspace={}, op={}",
+            project, workspace, operation_type
+        );
+
+        // 发送确认给发起者
+        let msg = ServerMessage::AITaskCancelled {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            operation_type: operation_type.to_string(),
+        };
+        send_message(socket, &msg).await?;
+
+        // 广播给其他连接
+        let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
+            origin_conn_id: ctx.conn_meta.conn_id.clone(),
+            message: msg,
+        });
+    }
+
+    Ok(true)
 }

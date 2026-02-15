@@ -39,6 +39,19 @@ pub struct RunningCommandEntry {
 /// 正在运行的项目命令注册表（task_id → 命令条目）
 pub type SharedRunningCommands = Arc<Mutex<HashMap<String, RunningCommandEntry>>>;
 
+/// 正在运行的 AI 任务条目
+pub struct RunningAITaskEntry {
+    pub task_id: String,
+    pub project: String,
+    pub workspace: String,
+    pub operation_type: String, // "ai_commit" | "ai_merge"
+    pub child_pid: Arc<std::sync::Mutex<Option<u32>>>,
+    pub join_handle: tokio::task::JoinHandle<()>,
+}
+
+/// AI 任务注册表（task_id → 条目）
+pub type SharedRunningAITasks = Arc<Mutex<HashMap<String, RunningAITaskEntry>>>;
+
 /// 任务广播事件 — 用于跨连接同步后台任务状态
 #[derive(Clone, Debug)]
 pub struct TaskBroadcastEvent {
@@ -81,6 +94,7 @@ pub struct HandlerContext {
     pub subscribed_terms: Arc<Mutex<HashMap<String, TermSubscription>>>,
     pub agg_tx: mpsc::Sender<(String, Vec<u8>)>,
     pub running_commands: SharedRunningCommands,
+    pub running_ai_tasks: SharedRunningAITasks,
     pub cmd_output_tx: mpsc::Sender<ServerMessage>,
     pub task_broadcast_tx: TaskBroadcastTx,
     pub lsp_supervisor: LspSupervisor,
