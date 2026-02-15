@@ -84,6 +84,12 @@ pub enum ClientMessage {
         cols: Option<u16>,
         #[serde(default)]
         rows: Option<u16>,
+        /// 客户端自定义展示名称（如命令名），用于重连恢复
+        #[serde(default)]
+        name: Option<String>,
+        /// 客户端自定义图标标识，用于重连恢复
+        #[serde(default)]
+        icon: Option<String>,
     },
     TermList,
     TermClose {
@@ -373,6 +379,11 @@ pub enum ClientMessage {
         term_id: String,
     },
 
+    // v1.38: Terminal detach — 仅取消当前 WS 连接的输出订阅，不关闭 PTY（移动端页面切换用）
+    TermDetach {
+        term_id: String,
+    },
+
     // v1.28: Terminal output flow control — 背压 ACK
     TermOutputAck {
         term_id: String,
@@ -497,6 +508,10 @@ pub enum ServerMessage {
         workspace: String,
         cwd: String,
         shell: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
     },
     TermList {
         items: Vec<TerminalInfo>,
@@ -849,6 +864,10 @@ pub enum ServerMessage {
         shell: String,
         #[serde(with = "serde_bytes")]
         scrollback: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
     },
 
     // v1.32: 远程终端订阅变更通知（推送给本地连接）
@@ -952,6 +971,10 @@ pub struct TerminalInfo {
     pub status: String, // "running" or "exited"
     #[serde(default)]
     pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remote_subscribers: Vec<RemoteSubscriberDetail>,
 }

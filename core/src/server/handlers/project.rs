@@ -121,6 +121,8 @@ pub async fn handle_project_message(
                             ctx.scrollback_tx.clone(),
                             None,
                             None,
+                            None,
+                            None,
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };

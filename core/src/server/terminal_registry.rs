@@ -65,6 +65,10 @@ pub struct TerminalEntry {
     pub cwd: PathBuf,
     pub shell: String,
     pub status: TerminalStatus,
+    /// 客户端自定义展示名称（如命令名）
+    pub name: Option<String>,
+    /// 客户端自定义图标标识
+    pub icon: Option<String>,
     /// 多订阅者广播通道（term_id, data）
     pub output_tx: broadcast::Sender<(String, Vec<u8>)>,
     pub scrollback: ScrollbackBuffer,
@@ -101,6 +105,8 @@ impl TerminalRegistry {
         scrollback_tx: mpsc::Sender<(String, Vec<u8>)>,
         initial_cols: Option<u16>,
         initial_rows: Option<u16>,
+        name: Option<String>,
+        icon: Option<String>,
     ) -> Result<(String, String), String> {
         let term_id = Uuid::new_v4().to_string();
         let cwd_path = cwd.unwrap_or_else(|| {
@@ -193,6 +199,8 @@ impl TerminalRegistry {
             cwd: cwd_path,
             shell: shell_name.clone(),
             status: TerminalStatus::Running,
+            name,
+            icon,
             output_tx,
             scrollback: ScrollbackBuffer::new(DEFAULT_SCROLLBACK_CAPACITY),
         };
@@ -293,6 +301,8 @@ impl TerminalRegistry {
                     }
                 },
                 shell: e.shell.clone(),
+                name: e.name.clone(),
+                icon: e.icon.clone(),
                 remote_subscribers: Vec::new(),
             })
             .collect()
@@ -302,13 +312,15 @@ impl TerminalRegistry {
     pub fn get_info(
         &self,
         term_id: &str,
-    ) -> Option<(String, String, String, String)> {
+    ) -> Option<(String, String, String, String, Option<String>, Option<String>)> {
         self.terminals.get(term_id).map(|e| {
             (
                 e.project.clone(),
                 e.workspace.clone(),
                 e.cwd.to_string_lossy().to_string(),
                 e.shell.clone(),
+                e.name.clone(),
+                e.icon.clone(),
             )
         })
     }

@@ -88,6 +88,8 @@ pub async fn handle_terminal_message(
                     ctx.scrollback_tx.clone(),
                     None,
                     None,
+                    None,
+                    None,
                 )
                 .map_err(|e| format!("Spawn error: {}", e))?
             };
@@ -158,7 +160,7 @@ pub async fn handle_terminal_message(
         }
 
         // v1.2: Multi-workspace extension
-        ClientMessage::TermCreate { project, workspace, cols, rows } => {
+        ClientMessage::TermCreate { project, workspace, cols, rows, name, icon } => {
             info!(
                 project = %project,
                 workspace = %workspace,
@@ -182,6 +184,8 @@ pub async fn handle_terminal_message(
                             ctx.scrollback_tx.clone(),
                             *cols,
                             *rows,
+                            name.clone(),
+                            icon.clone(),
                         )
                         .map_err(|e| format!("Spawn error: {}", e))?
                     };
@@ -233,6 +237,8 @@ pub async fn handle_terminal_message(
                             workspace: workspace.clone(),
                             cwd: ws_ctx.root_path.to_string_lossy().to_string(),
                             shell: shell_name,
+                            name: name.clone(),
+                            icon: icon.clone(),
                         },
                     )
                     .await?;
@@ -338,7 +344,7 @@ pub async fn handle_terminal_message(
             info!(term_id = %term_id, "TermAttach request received");
 
             let reg = ctx.terminal_registry.lock().await;
-            if let Some((project, workspace, cwd, shell)) =
+            if let Some((project, workspace, cwd, shell, name, icon)) =
                 reg.get_info(term_id)
             {
                 let scrollback =
@@ -373,6 +379,8 @@ pub async fn handle_terminal_message(
                         cwd,
                         shell,
                         scrollback,
+                        name,
+                        icon,
                     },
                 )
                 .await?;
@@ -390,6 +398,13 @@ pub async fn handle_terminal_message(
                 )
                 .await?;
             }
+            Ok(true)
+        }
+
+        // v1.38: Terminal detach — 仅取消本连接的输出订阅，不关闭 PTY
+        ClientMessage::TermDetach { term_id } => {
+            info!(term_id = %term_id, "TermDetach request received");
+            unsubscribe_terminal(term_id, &ctx.subscribed_terms).await;
             Ok(true)
         }
 

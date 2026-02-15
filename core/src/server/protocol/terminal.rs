@@ -25,6 +25,10 @@ pub enum TerminalRequest {
     TermCreate {
         project: String,
         workspace: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        icon: Option<String>,
     },
     TermList,
     TermClose {
@@ -34,6 +38,10 @@ pub enum TerminalRequest {
         term_id: String,
     },
     TermAttach {
+        term_id: String,
+    },
+    /// 仅取消当前 WS 连接的输出订阅，不关闭 PTY（移动端页面切换用）
+    TermDetach {
         term_id: String,
     },
     TermOutputAck {
@@ -60,6 +68,10 @@ pub enum TerminalResponse {
         workspace: String,
         cwd: String,
         shell: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
     },
     TermList {
         items: Vec<super::TerminalInfo>,
@@ -75,6 +87,10 @@ pub enum TerminalResponse {
         shell: String,
         #[serde(with = "serde_bytes")]
         scrollback: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
     },
     Output {
         #[serde(with = "serde_bytes")]
