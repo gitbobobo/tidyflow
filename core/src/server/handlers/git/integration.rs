@@ -6,6 +6,7 @@ use tracing::{info, warn, error};
 use crate::server::context::{
     resolve_project, resolve_workspace, resolve_workspace_branch, HandlerContext,
     RunningAITaskEntry, SharedAppState, TaskBroadcastEvent,
+    TaskHistoryEntry, push_task_history, update_task_history,
 };
 use crate::server::git;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -695,6 +696,8 @@ async fn try_handle_git_ai_merge(
     let running_ai_tasks_cleanup = running_ai_tasks.clone();
     let project_for_registry = project.clone();
     let workspace_for_registry = workspace.clone();
+    let task_history = ctx.task_history.clone();
+    let task_id_for_history = task_id.clone();
 
     let join_handle = tokio::spawn(async move {
         let pid_for_blocking = child_pid_clone.clone();
@@ -772,8 +775,13 @@ async fn try_handle_git_ai_merge(
         // 广播给其他连接
         let _ = task_broadcast_tx.send(TaskBroadcastEvent {
             origin_conn_id,
-            message: msg,
+            message: msg.clone(),
         });
+        // 更新任务历史
+        if let ServerMessage::GitAIMergeResult { success, ref message, .. } = msg {
+            let status = if success { "completed" } else { "failed" };
+            update_task_history(&task_history, &task_id_clone, status, Some(message.clone())).await;
+        }
         // 从注册表移除
         running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
     });
@@ -782,14 +790,28 @@ async fn try_handle_git_ai_merge(
     running_ai_tasks.lock().await.insert(
         task_id.clone(),
         RunningAITaskEntry {
-            task_id,
-            project: project_for_registry,
-            workspace: workspace_for_registry,
+            task_id: task_id.clone(),
+            project: project_for_registry.clone(),
+            workspace: workspace_for_registry.clone(),
             operation_type: "ai_merge".to_string(),
             child_pid,
             join_handle,
         },
     );
+
+    // 写入任务历史
+    push_task_history(&ctx.task_history, TaskHistoryEntry {
+        task_id: task_id_for_history,
+        project: project_for_registry,
+        workspace: workspace_for_registry,
+        task_type: "ai_merge".to_string(),
+        command_id: None,
+        title: "AI 合并".to_string(),
+        status: "running".to_string(),
+        message: None,
+        started_at: chrono::Utc::now().timestamp_millis(),
+        completed_at: None,
+    }).await;
 
     Ok(true)
 }
