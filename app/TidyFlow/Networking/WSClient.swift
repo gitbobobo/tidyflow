@@ -90,6 +90,8 @@ class WSClient: NSObject, ObservableObject {
     var onLspDiagnostics: ((LspDiagnosticsResult) -> Void)?
     var onLspStatus: ((LspStatusResult) -> Void)?
     var onRemoteTermChanged: (() -> Void)?
+    // v1.37: AI 任务取消确认
+    var onAITaskCancelled: ((AITaskCancelled) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

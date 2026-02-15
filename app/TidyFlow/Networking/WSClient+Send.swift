@@ -636,6 +636,18 @@ extension WSClient {
         ])
     }
 
+    // MARK: - v1.37: 取消 AI 任务
+
+    /// 取消正在运行的 AI 任务
+    func requestCancelAITask(project: String, workspace: String, operationType: String) {
+        send([
+            "type": "cancel_ai_task",
+            "project": project,
+            "workspace": workspace,
+            "operation_type": operationType
+        ])
+    }
+
     // MARK: - 日志上报
 
     /// 发送日志到 Rust Core 统一写入文件

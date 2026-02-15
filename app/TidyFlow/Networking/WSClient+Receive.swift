@@ -321,6 +321,11 @@ extension WSClient {
             TFLog.ws.info("Received remote_term_changed notification")
             onRemoteTermChanged?()
 
+        case "ai_task_cancelled":
+            if let result = AITaskCancelled.from(json: json) {
+                onAITaskCancelled?(result)
+            }
+
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
             onError?(errorMsg)

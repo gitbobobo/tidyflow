@@ -1217,3 +1217,21 @@ struct GitAIMergeResult {
         return GitAIMergeResult(project: project, workspace: workspace, success: success, message: message, conflicts: conflicts)
     }
 }
+
+// MARK: - v1.37: AI 任务取消确认
+
+/// AI 任务取消确认
+struct AITaskCancelled {
+    let project: String
+    let workspace: String
+    let operationType: String
+
+    static func from(json: [String: Any]) -> AITaskCancelled? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let operationType = json["operation_type"] as? String else {
+            return nil
+        }
+        return AITaskCancelled(project: project, workspace: workspace, operationType: operationType)
+    }
+}
