@@ -50,6 +50,9 @@ struct SwiftTermTerminalView: UIViewRepresentable {
         private var sawUserDrag: Bool = false
         private var userDismissedTopPadding: Bool = false
 
+        /// TUI 刷新防抖：用户滚离底部时锁定滚动位置，防止 SwiftTerm updateScroller 把视图拉回底部导致抖动
+        private var userScrolledAwayFromBottom: Bool = false
+
         override var contentOffset: CGPoint {
             didSet {
                 guard !isAdjustingOffset else { return }
@@ -57,12 +60,32 @@ struct SwiftTermTerminalView: UIViewRepresentable {
                 let interacting = isTracking || isDragging || isDecelerating
                 if interacting {
                     sawUserDrag = true
+                    // 用户交互时实时检测是否滚离底部
+                    let maxY = max(0, contentSize.height - bounds.height)
+                    userScrolledAwayFromBottom = maxY > 0 && contentOffset.y < maxY - 2
                 } else if sawUserDrag {
-                    // 用户一次拖拽结束后，如果停在接近 0 的位置，视为“用户主动把内容滑进安全区”，后续不再自动纠正回 -topPadding。
+                    // 用户一次拖拽结束后，如果停在接近 0 的位置，视为"用户主动把内容滑进安全区"，后续不再自动纠正回 -topPadding。
                     if isContentNonScrollable() && contentOffset.y >= -0.5 {
                         userDismissedTopPadding = true
                     }
+                    // 拖拽结束时再次检测是否在底部
+                    let maxY = max(0, contentSize.height - bounds.height)
+                    userScrolledAwayFromBottom = maxY > 0 && contentOffset.y < maxY - 2
                     sawUserDrag = false
+                } else if userScrolledAwayFromBottom {
+                    // 非用户交互的 offset 变化（SwiftTerm updateScroller 触发）
+                    // 用户已滚离底部，阻止被拉回底部
+                    let maxY = max(0, contentSize.height - bounds.height)
+                    if maxY <= 0 {
+                        // 内容不足一屏，无需锁定
+                        userScrolledAwayFromBottom = false
+                    } else if contentOffset.y > oldValue.y && contentOffset.y >= maxY - 2 {
+                        let clampedY = min(oldValue.y, maxY)
+                        isAdjustingOffset = true
+                        setContentOffset(CGPoint(x: contentOffset.x, y: clampedY), animated: false)
+                        isAdjustingOffset = false
+                        return
+                    }
                 }
 
                 enforceInitialTopPaddingIfNeeded()
