@@ -28,6 +28,9 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 拆分 Swift 大文件时，除移动源码外还必须同步更新 `app/TidyFlow.xcodeproj/project.pbxproj` 的 `PBXFileReference`、`PBXBuildFile`、`PBXGroup` 和 `PBXSourcesBuildPhase`，否则新文件不会参与编译。
 - 拆分 Rust 超长 handler 时，优先保持对外入口函数签名不变，在目录模块内按能力域拆 `try_handle` 子模块并由 `mod.rs` 串行分发，先做“零行为变化”重构再谈逻辑优化。
 - OpenCode 的 `--format json` 输出是事件流，最终结果应从最后一个 `type=text` 事件的 `part.text` 提取，而不是取最后一条事件（通常是 `step_finish`）。
+- 流式聊天若过程中插入“工具调用/思考过程”消息，`done` 事件必须定位并收敛到正在流式的那条回复气泡；不要简单更新“最后一条 assistant 消息”，否则会覆盖工具消息并导致加载状态不收敛。
+- 对接 OpenCode SSE 时，`message.part.updated` 只有 `messageID` 不含 role，必须结合 `message.updated` 的 `role` 做过滤；否则会把 user 消息的 part 当成 assistant 文本转发，造成“用户消息在回复中重复显示”。
+- OpenCode 新版流式增量可能通过 `message.part.delta` 下发，而非在 `message.part.updated.properties.delta` 里；需要先从 `message.part.updated.part.type` 建立 `partID -> type(text/reasoning/...)` 映射，再把 `message.part.delta` 路由为增量输出。
 - Git 面板展示分支领先/落后时，应复用 `git_status` 返回并基于项目 `default_branch` 做本地分支比较，避免硬编码 `main` 或依赖远端 `fetch` 导致慢/不稳定。
 - 多项目共存时，工作空间名（如 `"default"`）不具备全局唯一性；需要关联项目的场景必须显式传递 `projectName`，禁止通过遍历 `projects` 按工作空间名反查项目（会命中第一个匹配项而非实际所属项目）。
 - 跨分支入口触发但实际写入默认分支的操作（如 AI 合并到默认分支），其后台阻塞任务归属应绑定默认工作空间，避免错误地落在来源分支队列。
