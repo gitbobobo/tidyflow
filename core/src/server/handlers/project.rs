@@ -5,9 +5,9 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::server::context::{resolve_workspace, HandlerContext, RunningCommandEntry, TaskBroadcastEvent};
+use crate::server::context::{resolve_workspace, HandlerContext, RunningCommandEntry, TaskBroadcastEvent, TaskHistoryEntry, push_task_history, update_task_history};
 use crate::server::protocol::{
-    ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, WorkspaceInfo,
+    ClientMessage, ProjectCommandInfo, ProjectInfo, ServerMessage, TaskSnapshotEntry, WorkspaceInfo,
 };
 use crate::server::ws::{send_message, subscribe_terminal};
 use crate::workspace::project::ProjectManager;
@@ -412,7 +412,7 @@ pub async fn handle_project_message(
             info!("RunProjectCommand request: project={}, workspace={}, command_id={}", project, workspace, command_id);
 
             // 查找命令和工作目录
-            let (command_text, cwd) = {
+            let (command_text, command_name, cwd) = {
                 let state = ctx.app_state.read().await;
                 match state.get_project(project) {
                     Some(p) => {
@@ -423,7 +423,7 @@ pub async fn handle_project_message(
                         };
 
                         match (p.commands.iter().find(|c| c.id == *command_id), ws_root) {
-                            (Some(cmd), Some(cwd)) => (cmd.command.clone(), cwd),
+                            (Some(cmd), Some(cwd)) => (cmd.command.clone(), cmd.name.clone(), cwd),
                             _ => {
                                 drop(state);
                                 send_message(
@@ -513,10 +513,25 @@ pub async fn handle_project_message(
                 },
             );
 
+            // 写入任务历史
+            push_task_history(&ctx.task_history, TaskHistoryEntry {
+                task_id: task_id.clone(),
+                project: project.clone(),
+                workspace: workspace.clone(),
+                task_type: "project_command".to_string(),
+                command_id: Some(command_id.clone()),
+                title: command_name,
+                status: "running".to_string(),
+                message: None,
+                started_at: chrono::Utc::now().timestamp_millis(),
+                completed_at: None,
+            }).await;
+
             let tx = ctx.cmd_output_tx.clone();
             let rc = ctx.running_commands.clone();
             let broadcast_tx = ctx.task_broadcast_tx.clone();
             let origin_conn_id = ctx.conn_meta.conn_id.clone();
+            let task_history = ctx.task_history.clone();
             let p = project.clone();
             let w = workspace.clone();
             let c = command_id.clone();
@@ -590,6 +605,7 @@ pub async fn handle_project_message(
                 let exit_status = match wait_result {
                     Some(Ok(status)) => status,
                     Some(Err(e)) => {
+                        update_task_history(&task_history, &tid, "failed", Some(format!("执行失败: {}", e))).await;
                         let msg = ServerMessage::ProjectCommandCompleted {
                             project: p,
                             workspace: w,
@@ -636,11 +652,13 @@ pub async fn handle_project_message(
                         project: p,
                         workspace: w,
                         command_id: c,
-                        task_id: tid,
+                        task_id: tid.clone(),
                         ok,
-                        message: Some(message),
+                        message: Some(message.clone()),
                     },
                 });
+                let status = if ok { "completed" } else { "failed" };
+                update_task_history(&task_history, &tid, status, Some(message)).await;
             });
 
             Ok(true)
@@ -727,14 +745,35 @@ pub async fn handle_project_message(
                 project: project.clone(),
                 workspace: workspace.clone(),
                 command_id: command_id.clone(),
-                task_id: cancelled_task_id,
+                task_id: cancelled_task_id.clone(),
             };
             send_message(socket, &cancelled_msg).await?;
             let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
                 origin_conn_id: ctx.conn_meta.conn_id.clone(),
                 message: cancelled_msg,
             });
+            update_task_history(&ctx.task_history, &cancelled_task_id, "cancelled", Some("已取消".to_string())).await;
 
+            Ok(true)
+        }
+
+        // v1.40: 查询任务历史（iOS 重连恢复）
+        ClientMessage::ListTasks => {
+            let history = ctx.task_history.lock().await;
+            let tasks: Vec<TaskSnapshotEntry> = history.iter().map(|e| TaskSnapshotEntry {
+                task_id: e.task_id.clone(),
+                project: e.project.clone(),
+                workspace: e.workspace.clone(),
+                task_type: e.task_type.clone(),
+                command_id: e.command_id.clone(),
+                title: e.title.clone(),
+                status: e.status.clone(),
+                message: e.message.clone(),
+                started_at: e.started_at,
+                completed_at: e.completed_at,
+            }).collect();
+            drop(history);
+            send_message(socket, &ServerMessage::TasksSnapshot { tasks }).await?;
             Ok(true)
         }
 
