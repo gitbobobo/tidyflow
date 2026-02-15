@@ -182,6 +182,12 @@ struct WorkspaceDetailView: View {
     private var moreActionsMenu: some View {
         Menu {
             Button {
+                appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
+            } label: {
+                Label("AI 聊天", systemImage: "bubble.left.and.bubble.right")
+            }
+
+            Button {
                 appState.runAICommit(project: project, workspace: workspace)
             } label: {
                 Label("一键提交", systemImage: "sparkles")
