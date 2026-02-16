@@ -14,10 +14,10 @@ struct MessageListView: View {
 
     /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
     private var tailChangeToken: String {
-        guard let last = messages.last else { return "0" }
+        guard let last = displayMessages.last else { return "0" }
         let lastPart = last.parts.last
         return [
-            "\(messages.count)",
+            "\(displayMessages.count)",
             last.id,
             last.isStreaming ? "1" : "0",
             "\(last.parts.count)",
@@ -26,11 +26,26 @@ struct MessageListView: View {
         ].joined(separator: "|")
     }
 
+    /// 过滤掉“无可见内容且非流式”的消息，避免空消息把相邻回复撑开。
+    private var displayMessages: [AIChatMessage] {
+        messages.filter { message in
+            if message.isStreaming { return true }
+            return message.parts.contains { part in
+                switch part.kind {
+                case .tool:
+                    return true
+                case .text, .reasoning:
+                    return !(part.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                }
+            }
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    ForEach(messages) { message in
+                    ForEach(displayMessages) { message in
                         MessageBubble(message: message)
                             .id(message.id)
                     }
