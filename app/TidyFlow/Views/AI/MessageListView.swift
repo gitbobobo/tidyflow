@@ -2,6 +2,29 @@ import SwiftUI
 
 struct MessageListView: View {
     let messages: [AIChatMessage]
+    @State private var viewportHeight: CGFloat = 0
+    @State private var bottomAnchorMaxY: CGFloat = 0
+    @State private var isNearBottom: Bool = true
+    @State private var shouldAutoScroll: Bool = true
+    @State private var isUserDragging: Bool = false
+
+    private let scrollSpaceName = "ai_message_scroll_space"
+    private let bottomAnchorId = "ai_message_bottom_anchor"
+    private let bottomTolerance: CGFloat = 36
+
+    /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
+    private var tailChangeToken: String {
+        guard let last = messages.last else { return "0" }
+        let lastPart = last.parts.last
+        return [
+            "\(messages.count)",
+            last.id,
+            last.isStreaming ? "1" : "0",
+            "\(last.parts.count)",
+            lastPart?.id ?? "",
+            "\(lastPart?.text?.count ?? 0)"
+        ].joined(separator: "|")
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -11,17 +34,100 @@ struct MessageListView: View {
                         MessageBubble(message: message)
                             .id(message.id)
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(bottomAnchorId)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: MessageListBottomAnchorKey.self,
+                                    value: geo.frame(in: .named(scrollSpaceName)).maxY
+                                )
+                            }
+                        )
                 }
                 .padding()
             }
-            .onChange(of: messages.count) {
-                if let lastId = messages.last?.id {
-                    withAnimation {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
+            .coordinateSpace(name: scrollSpaceName)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: MessageListViewportHeightKey.self, value: geo.size.height)
                 }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { _ in
+                        isUserDragging = true
+                    }
+                    .onEnded { _ in
+                        isUserDragging = false
+                        if isNearBottom {
+                            shouldAutoScroll = true
+                        } else {
+                            shouldAutoScroll = false
+                        }
+                    }
+            )
+            .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
+                viewportHeight = newHeight
+                refreshBottomState()
+            }
+            .onPreferenceChange(MessageListBottomAnchorKey.self) { newBottom in
+                bottomAnchorMaxY = newBottom
+                refreshBottomState()
+            }
+            .onAppear {
+                scrollToBottom(proxy: proxy, animated: false)
+            }
+            .onChange(of: tailChangeToken) {
+                guard shouldAutoScroll else { return }
+                scrollToBottom(proxy: proxy, animated: true)
             }
         }
+    }
+
+    private func refreshBottomState() {
+        guard viewportHeight > 0 else { return }
+        let distanceToBottom = max(0, bottomAnchorMaxY - viewportHeight)
+        let nearBottomNow = distanceToBottom <= bottomTolerance
+        isNearBottom = nearBottomNow
+
+        // 只有用户主动拖拽离开底部时才关闭自动跟随，避免流式增量误判。
+        if nearBottomNow {
+            shouldAutoScroll = true
+        } else if isUserDragging {
+            shouldAutoScroll = false
+        }
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        let action = {
+            proxy.scrollTo(bottomAnchorId, anchor: .bottom)
+        }
+        if animated {
+            withAnimation {
+                action()
+            }
+        } else {
+            action()
+        }
+    }
+}
+
+private struct MessageListViewportHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct MessageListBottomAnchorKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
