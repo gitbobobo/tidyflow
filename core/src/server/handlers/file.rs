@@ -189,7 +189,11 @@ pub async fn handle_file_message(
         }
 
         // v1.4: File index for Quick Open
-        ClientMessage::FileIndex { project, workspace } => {
+        ClientMessage::FileIndex {
+            project,
+            workspace,
+            query,
+        } => {
             let ws_ctx = match resolve_workspace(app_state, project, workspace).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
@@ -199,11 +203,21 @@ pub async fn handle_file_message(
             };
 
             let root = ws_ctx.root_path;
+            let normalized_query = query
+                .as_deref()
+                .map(str::trim)
+                .filter(|q| !q.is_empty())
+                .map(|q| q.to_lowercase());
             // Run indexing in blocking task to avoid blocking async runtime
             let result = tokio::task::spawn_blocking(move || file_index::index_files(&root)).await;
 
             match result {
-                Ok(Ok(index_result)) => {
+                Ok(Ok(mut index_result)) => {
+                    if let Some(q) = normalized_query.as_ref() {
+                        index_result
+                            .items
+                            .retain(|item| item.to_lowercase().contains(q));
+                    }
                     send_message(
                         socket,
                         &ServerMessage::FileIndexResult {
