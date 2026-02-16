@@ -13,6 +13,10 @@ struct AITabView: View {
     @StateObject private var autocomplete = AutocompleteState()
     /// 光标在输入框内的位置（用于定位弹出层）
     @State private var cursorRectInInput: CGRect = .zero
+    /// 输入框光标 UTF16 位置（用于基于光标触发自动补全）
+    @State private var inputCursorLocation: Int = 0
+    /// 是否处于 IME 组合态（组合态中不刷新自动补全，避免和中文输入法冲突）
+    @State private var inputIsComposing: Bool = false
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -211,6 +215,10 @@ struct AITabView: View {
             onSelectAutocomplete: { item in
                 handleAutocompleteSelect(item)
             },
+            onInputContextChange: { cursorLocation, isComposing in
+                inputCursorLocation = cursorLocation
+                inputIsComposing = isComposing
+            },
             cursorRectInInput: $cursorRectInInput
         )
         .background(controlBackgroundColor)
@@ -221,10 +229,12 @@ struct AITabView: View {
             alignment: .top
         )
         .onChange(of: inputText) { _, newText in
-            refreshAutocomplete(text: newText)
+            if !inputIsComposing {
+                refreshAutocomplete(text: newText)
+            }
 
             // 首次触发 @ 时，若文件索引缓存为空则拉取
-            if newText.contains("@") {
+            if newText.contains("@") || newText.contains("＠") {
                 if let ws = appState.selectedWorkspaceKey {
                     let cache = fileCache.fileIndexCache[ws]
                     if cache == nil || cache!.items.isEmpty {
@@ -235,6 +245,21 @@ struct AITabView: View {
         }
         .onChange(of: fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items.count) { _, _ in
             // 文件索引加载完成后，重新触发自动补全（解决首次 @ 时索引为空的问题）
+            if !inputIsComposing {
+                refreshAutocomplete(text: inputText)
+            }
+        }
+        .onChange(of: inputCursorLocation) { _, _ in
+            if !inputIsComposing {
+                refreshAutocomplete(text: inputText)
+            }
+        }
+        .onChange(of: inputIsComposing) { _, composing in
+            if composing {
+                autocomplete.reset()
+                return
+            }
+            // 结束组合后，基于最终已上屏文本刷新补全
             refreshAutocomplete(text: inputText)
         }
     }
@@ -396,16 +421,21 @@ struct AITabView: View {
             )
         }
         let fileItems = fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items ?? []
-        updateAutocomplete(text: text, autocomplete: autocomplete, slashCommands: slashItems, fileItems: fileItems)
+        updateAutocomplete(
+            text: text,
+            cursorLocation: inputCursorLocation,
+            autocomplete: autocomplete,
+            slashCommands: slashItems,
+            fileItems: fileItems
+        )
     }
 
     private func handleAutocompleteSelect(_ item: AutocompleteItem) {
         switch autocomplete.mode {
         case .fileRef:
-            // 替换 @query 为 @filepath（带尾部空格）
-            if let triggerLoc = autocomplete.triggerLocation {
-                let prefix = String(inputText.prefix(triggerLoc))
-                inputText = prefix + "@\(item.value) "
+            // 仅替换当前光标所在 token 的 @query，保留前后文本
+            if let replaceRange = autocomplete.replaceRange {
+                replaceInputText(in: replaceRange, with: "@\(item.value) ")
             } else {
                 inputText += "@\(item.value) "
             }
@@ -435,7 +465,11 @@ struct AITabView: View {
                 }
             } else {
                 // agent 类型命令：作为消息发送给 AI
-                inputText = "/\(item.value)"
+                if let replaceRange = autocomplete.replaceRange {
+                    replaceInputText(in: replaceRange, with: "/\(item.value)")
+                } else {
+                    inputText = "/\(item.value)"
+                }
                 autocomplete.reset()
                 sendMessage()
             }
@@ -443,6 +477,14 @@ struct AITabView: View {
         case .none:
             break
         }
+    }
+
+    private func replaceInputText(in nsRange: NSRange, with replacement: String) {
+        guard let range = Range(nsRange, in: inputText) else {
+            inputText += replacement
+            return
+        }
+        inputText.replaceSubrange(range, with: replacement)
     }
 
     private func slashCommandIcon(_ name: String) -> String {

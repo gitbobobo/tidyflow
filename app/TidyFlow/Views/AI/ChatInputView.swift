@@ -4,6 +4,13 @@ import AppKit
 
 // MARK: - 支持 IME 的聊天输入框（NSTextView 包装）
 
+@inline(__always)
+private func imeDebugLog(_ message: String) {
+    #if DEBUG
+    TFLog.log(TFLog.app, category: "ime", level: "DEBUG", "[ChatInputView] \(message)")
+    #endif
+}
+
 struct ChatTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var contentHeight: CGFloat
@@ -17,6 +24,8 @@ struct ChatTextView: NSViewRepresentable {
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Bool)?
     var onTab: (() -> Bool)?
+    /// 输入上下文变化（光标 UTF16 位置, 是否处于 IME 组合态）
+    var onInputContextChange: ((Int, Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -45,15 +54,26 @@ struct ChatTextView: NSViewRepresentable {
         textView.onEnter = { [weak textView] in
             guard let tv = textView else { return }
             // IME 组合态中，不拦截 Enter
-            if tv.hasMarkedText() { return }
+            let composing = tv.hasMarkedText() || tv.isIMEComposing
+            imeDebugLog("onEnter callback -> hasMarkedText=\(tv.hasMarkedText()) isIMEComposing=\(tv.isIMEComposing)")
+            if composing {
+                imeDebugLog("onEnter ignored because composing=true")
+                return
+            }
             if context.coordinator.parent.isEnterEnabled() {
+                imeDebugLog("onEnter forwarded to ChatInputView")
                 context.coordinator.parent.onEnter()
+            } else {
+                imeDebugLog("onEnter blocked by isEnterEnabled=false")
             }
         }
         textView.onArrowUp = { context.coordinator.parent.onArrowUp?() ?? false }
         textView.onArrowDown = { context.coordinator.parent.onArrowDown?() ?? false }
         textView.onEscape = { context.coordinator.parent.onEscape?() ?? false }
         textView.onTab = { context.coordinator.parent.onTab?() ?? false }
+        textView.onCompositionStateChange = { [weak textView] in
+            context.coordinator.handleCompositionStateChange(textView)
+        }
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
@@ -61,6 +81,7 @@ struct ChatTextView: NSViewRepresentable {
         // 初始高度
         DispatchQueue.main.async {
             context.coordinator.updateHeight()
+            context.coordinator.reportInputContext()
         }
         return scrollView
     }
@@ -69,12 +90,16 @@ struct ChatTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
         if textView.string != text {
+            let composing = textView.hasMarkedText()
+            // IME 组合期间避免程序化回写文本，防止打断候选状态
+            if composing { return }
             textView.string = text
             // 程序化设置文本后，光标移到末尾
             let endPos = (text as NSString).length
             textView.setSelectedRange(NSRange(location: endPos, length: 0))
             context.coordinator.updateHeight()
             context.coordinator.updateCursorRect()
+            context.coordinator.reportInputContext()
         }
         textView.font = font
     }
@@ -89,13 +114,20 @@ struct ChatTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
+            reportInputContext(textView)
+            let composing = textView.hasMarkedText()
+            // 组合期间不向外同步文本，避免 SwiftUI 回写影响 IME
+            if !composing {
+                parent.text = textView.string
+            }
             updateHeight()
             updateCursorRect()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             updateCursorRect()
+            guard let textView = notification.object as? NSTextView else { return }
+            reportInputContext(textView)
         }
 
         func updateHeight() {
@@ -138,6 +170,25 @@ struct ChatTextView: NSViewRepresentable {
                 }
             }
         }
+
+        func reportInputContext(_ target: NSTextView? = nil) {
+            guard let textView = target ?? textView else { return }
+            let totalLength = (textView.string as NSString).length
+            let selected = textView.selectedRange().location
+            let location = selected == NSNotFound ? totalLength : min(max(selected, 0), totalLength)
+            // 对外只上报系统 marked text 状态，避免输入法未回调 unmarkText 时长期卡在 composing=true
+            let isComposing = textView.hasMarkedText()
+            parent.onInputContextChange?(location, isComposing)
+        }
+
+        func handleCompositionStateChange(_ target: NSTextView? = nil) {
+            guard let textView = target ?? textView else { return }
+            reportInputContext(textView)
+            let composing = textView.hasMarkedText()
+            if !composing, parent.text != textView.string {
+                parent.text = textView.string
+            }
+        }
     }
 }
 
@@ -148,10 +199,61 @@ private class IMEAwareTextView: NSTextView {
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Bool)?
     var onTab: (() -> Bool)?
+    var onCompositionStateChange: (() -> Void)?
+    private(set) var isIMEComposing: Bool = false
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let markedText: String
+        if let plain = string as? String {
+            markedText = plain
+        } else if let attr = string as? NSAttributedString {
+            markedText = attr.string
+        } else {
+            markedText = String(describing: string)
+        }
+        isIMEComposing = true
+        imeDebugLog("setMarkedText text=\(markedText.debugDescription) selectedRange=\(selectedRange) replacementRange=\(replacementRange)")
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onCompositionStateChange?()
+    }
+
+    override func unmarkText() {
+        imeDebugLog("unmarkText before super hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
+        super.unmarkText()
+        isIMEComposing = false
+        imeDebugLog("unmarkText after super hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
+        onCompositionStateChange?()
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(insertNewline(_:))
+            || selector == #selector(insertTab(_:))
+            || selector == #selector(cancelOperation(_:)) {
+            imeDebugLog("doCommand selector=\(NSStringFromSelector(selector)) hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
+        }
+        // 仅在“确实存在 marked text”时屏蔽换行，避免无 marked text 时 Enter 被完全吞掉
+        if selector == #selector(insertNewline(_:)) {
+            if hasMarkedText() {
+                imeDebugLog("doCommand blocked insertNewline due to hasMarkedText=true")
+                return
+            }
+            // 某些输入法不会稳定回调 unmarkText，这里在无 marked text 的回车点兜底清理组合态
+            if isIMEComposing {
+                imeDebugLog("doCommand insertNewline clears stale isIMEComposing flag")
+                isIMEComposing = false
+                onCompositionStateChange?()
+            }
+        }
+        super.doCommand(by: selector)
+    }
 
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || hasMarkedText() || isIMEComposing {
+            imeDebugLog("keyDown keyCode=\(event.keyCode) chars=\((event.characters ?? "").debugDescription) charsIgnoringModifiers=\((event.charactersIgnoringModifiers ?? "").debugDescription) hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
+        }
         // IME 组合态，全部交给系统处理
-        if hasMarkedText() {
+        if hasMarkedText() || isIMEComposing {
+            imeDebugLog("keyDown forwarded to super due to composing")
             super.keyDown(with: event)
             return
         }
@@ -161,6 +263,7 @@ private class IMEAwareTextView: NSTextView {
         switch event.keyCode {
         case 36: // Return
             if !isShift {
+                imeDebugLog("keyDown return -> trigger onEnter")
                 onEnter?()
                 return
             }
@@ -174,6 +277,9 @@ private class IMEAwareTextView: NSTextView {
             if onTab?() == true { return }
         default:
             break
+        }
+        if event.keyCode == 36 {
+            imeDebugLog("keyDown return fell through to super")
         }
         super.keyDown(with: event)
     }
@@ -196,6 +302,8 @@ struct ChatInputView: View {
     // 自动补全
     var autocomplete: AutocompleteState?
     var onSelectAutocomplete: ((AutocompleteItem) -> Void)?
+    /// 输入上下文变化（光标 UTF16 位置, 是否处于 IME 组合态）
+    var onInputContextChange: ((Int, Bool) -> Void)?
     /// 光标位置（外部读取用于定位弹出层）
     @Binding var cursorRectInInput: CGRect
 
@@ -284,13 +392,18 @@ struct ChatInputView: View {
                 cursorRect: $cursorRect,
                 font: .systemFont(ofSize: 13),
                 onEnter: {
+                    imeDebugLog("ChatInputView.onEnter start text=\(text.debugDescription) canSend=\(canSend) isStreaming=\(isStreaming) autocompleteVisible=\(autocomplete?.isVisible == true)")
                     // 弹出层可见时，Enter 选择当前项
                     if let ac = autocomplete, ac.isVisible, let item = ac.selectedItem {
+                        imeDebugLog("ChatInputView.onEnter select autocomplete item=\(item.value)")
                         onSelectAutocomplete?(item)
                         return
                     }
                     if canSend && !isStreaming {
+                        imeDebugLog("ChatInputView.onEnter call onSend")
                         onSend()
+                    } else {
+                        imeDebugLog("ChatInputView.onEnter ignored canSend=\(canSend) isStreaming=\(isStreaming)")
                     }
                 },
                 isEnterEnabled: { [canSend, isStreaming] in
@@ -304,7 +417,8 @@ struct ChatInputView: View {
                     guard let ac = autocomplete, ac.isVisible, let item = ac.selectedItem else { return false }
                     onSelectAutocomplete?(item)
                     return true
-                }
+                },
+                onInputContextChange: onInputContextChange
             )
             .frame(height: min(max(textContentHeight, 28), 80))
             #else
@@ -508,6 +622,7 @@ struct ChatInputView: View {
             selectedAgent: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
+            onInputContextChange: nil,
             cursorRectInInput: .constant(.zero)
         )
 
@@ -523,6 +638,7 @@ struct ChatInputView: View {
             selectedAgent: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
+            onInputContextChange: nil,
             cursorRectInInput: .constant(.zero)
         )
     }
