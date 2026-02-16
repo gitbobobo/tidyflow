@@ -68,6 +68,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - `AITabView` 等在 `switch` 分支中创建的子视图，切换工作空间时可能在同一 SwiftUI 更新周期被移除，导致 `onChange` 不触发而 `appState` 上的全局状态残留。必须在 `onDisappear` 保存快照（用 `previousSnapshotKey` 而非 `currentSnapshotKey`，因为后者已指向新空间），并在 `onAppear` 恢复当前工作空间的快照或清空，不能仅依赖 `onChange`。
 - 聊天输入框实现 `@` 文件引用和 `/` 斜杠命令自动补全时，应以“光标所在 token”做触发与替换范围，且在 `hasMarkedText` 组合态暂停补全并兼容全角 `＠`/`／`，避免中文输入法候选期误触发与整段文本被覆盖。
 - WebSocket `handle_client_message` 内不要同步阻塞长生命周期流（如 AI 流式回复）；应改为后台 task 并通过 `cmd_output_tx` 回传事件，否则同连接的 `ai_chat_abort` 等控制消息无法及时处理，会出现“前端已停止但代理仍在执行”。
+- 单 Target 多平台工程若通过 `EXCLUDED_SOURCE_FILE_NAMES` 做按 SDK 排除，macOS 专用视图仍建议做文件级 `#if os(macOS)` 包裹，并在改动后执行一次 `xcodebuild -sdk iphonesimulator` 校验，避免排除名单漂移导致 iOS 编译回归。
 
 ## Build Commands
 
