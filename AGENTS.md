@@ -29,6 +29,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 拆分 Rust 超长 handler 时，优先保持对外入口函数签名不变，在目录模块内按能力域拆 `try_handle` 子模块并由 `mod.rs` 串行分发，先做“零行为变化”重构再谈逻辑优化。
 - OpenCode 的 `--format json` 输出是事件流，最终结果应从最后一个 `type=text` 事件的 `part.text` 提取，而不是取最后一条事件（通常是 `step_finish`）。
 - 流式聊天若过程中插入“工具调用/思考过程”消息，`done` 事件必须定位并收敛到正在流式的那条回复气泡；不要简单更新“最后一条 assistant 消息”，否则会覆盖工具消息并导致加载状态不收敛。
+- 同一轮用户消息若触发多条 assistant 回复，流式 loading 必须与“当前增量对应的 message_id”一一绑定并保持互斥；收到新 message/part 增量时要及时清理旧消息的 `isStreaming`。
 - 对接 OpenCode SSE 时，`message.part.updated` 只有 `messageID` 不含 role，必须结合 `message.updated` 的 `role` 做过滤；否则会把 user 消息的 part 当成 assistant 文本转发，造成“用户消息在回复中重复显示”。
 - OpenCode 新版流式增量可能通过 `message.part.delta` 下发，而非在 `message.part.updated.properties.delta` 里；需要先从 `message.part.updated.part.type` 建立 `partID -> type(text/reasoning/...)` 映射，再把 `message.part.delta` 路由为增量输出。
 - OpenCode Desktop 的多路径会话通常通过请求头 `x-opencode-directory` 路由（而不是多开 `opencode serve`）；事件流使用 `/global/event` 单连接按 `directory` 分流；释放目录实例资源优先调用 `POST /instance/dispose`（同样依赖 `x-opencode-directory`）。

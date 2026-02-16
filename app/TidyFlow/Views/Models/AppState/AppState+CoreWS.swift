@@ -566,7 +566,8 @@ extension AppState {
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             guard ev.role == "assistant" else { return }
 
-            self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
             self.recomputeAIIsStreaming()
         }
 
@@ -578,7 +579,7 @@ extension AppState {
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiUpsertPart(msgIdx: msgIdx, part: ev.part)
-            self.aiChatMessages[msgIdx].isStreaming = true
+            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
             self.recomputeAIIsStreaming()
         }
 
@@ -590,7 +591,7 @@ extension AppState {
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiAppendDelta(msgIdx: msgIdx, partId: ev.partId, partType: ev.partType, field: ev.field, delta: ev.delta)
-            self.aiChatMessages[msgIdx].isStreaming = true
+            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
             self.recomputeAIIsStreaming()
         }
 
@@ -601,12 +602,7 @@ extension AppState {
             guard self.aiCurrentSessionId == ev.sessionId else { return }
 
             self.aiIsStreaming = false
-            // 结束所有正在流式的 assistant 消息
-            for i in self.aiChatMessages.indices {
-                if self.aiChatMessages[i].role == .assistant {
-                    self.aiChatMessages[i].isStreaming = false
-                }
-            }
+            self.aiClearAssistantStreaming()
             // 清理纯占位消息
             if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty }) {
                 self.aiChatMessages.remove(at: idx)
@@ -621,11 +617,7 @@ extension AppState {
             guard self.aiCurrentSessionId == ev.sessionId else { return }
 
             self.aiIsStreaming = false
-            for i in self.aiChatMessages.indices {
-                if self.aiChatMessages[i].role == .assistant {
-                    self.aiChatMessages[i].isStreaming = false
-                }
-            }
+            self.aiClearAssistantStreaming()
             // 清理纯占位消息
             if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty }) {
                 self.aiChatMessages.remove(at: idx)
@@ -878,5 +870,20 @@ extension AppState {
         aiChatMessages[msgIdx].parts.append(p)
         let partIdx = aiChatMessages[msgIdx].parts.count - 1
         aiPartIndexByPartId[partId] = (msgIdx, partIdx)
+    }
+
+    /// 仅允许一条 assistant 消息处于流式态，避免多个气泡同时显示 loading。
+    private func aiMarkOnlyStreamingAssistant(at msgIdx: Int) {
+        for i in aiChatMessages.indices {
+            guard aiChatMessages[i].role == .assistant else { continue }
+            aiChatMessages[i].isStreaming = (i == msgIdx)
+        }
+    }
+
+    private func aiClearAssistantStreaming() {
+        for i in aiChatMessages.indices {
+            guard aiChatMessages[i].role == .assistant else { continue }
+            aiChatMessages[i].isStreaming = false
+        }
     }
 }

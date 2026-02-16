@@ -270,14 +270,13 @@ struct AITabView: View {
         }
         appState.aiIsStreaming = false
 
-        // 立即停止“加载中”展示，避免等待服务端 done 才收敛
-        if let idx = appState.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
-            var prev = appState.aiChatMessages[idx]
-            prev.isStreaming = false
-            if prev.parts.isEmpty {
+        // 立即停止所有“加载中”展示，避免等待服务端 done 才收敛
+        for idx in appState.aiChatMessages.indices.reversed() {
+            guard appState.aiChatMessages[idx].role == .assistant,
+                  appState.aiChatMessages[idx].isStreaming else { continue }
+            appState.aiChatMessages[idx].isStreaming = false
+            if appState.aiChatMessages[idx].parts.isEmpty {
                 appState.aiChatMessages.remove(at: idx)
-            } else {
-                appState.aiChatMessages[idx] = prev
             }
         }
     }
