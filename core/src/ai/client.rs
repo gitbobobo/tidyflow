@@ -209,6 +209,9 @@ impl OpenCodeClient {
         session_id: &str,
         message: &str,
         file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<super::AiImagePart>>,
+        model: Option<super::AiModelSelection>,
+        agent: Option<String>,
     ) -> Result<(), OpenCodeError> {
         let url = format!("{}/session/{}/prompt_async", self.base_url, session_id);
 
@@ -234,7 +237,32 @@ impl OpenCodeClient {
             }
         }
 
-        let body = serde_json::json!({ "parts": parts });
+        // 图片附件转为 OpenCode FilePart（data URL 格式）
+        if let Some(ref images) = image_parts {
+            for img in images {
+                parts.push(serde_json::json!({
+                    "type": "file",
+                    "url": format!("data:{};base64,{}", img.mime, img.data),
+                    "filename": img.filename,
+                    "mime": img.mime,
+                }));
+            }
+        }
+
+        let mut body = serde_json::json!({ "parts": parts });
+
+        // 模型选择
+        if let Some(ref m) = model {
+            body["model"] = serde_json::json!({
+                "providerID": m.provider_id,
+                "modelID": m.model_id,
+            });
+        }
+
+        // Agent 选择
+        if let Some(ref a) = agent {
+            body["agent"] = serde_json::json!(a);
+        }
 
         let response = self
             .with_directory(self.client.post(&url), directory)
@@ -423,6 +451,110 @@ impl OpenCodeClient {
             Err(OpenCodeError::ServerError { status, message })
         }
     }
+
+    /// 获取 provider 列表（GET /provider）
+    /// 优先返回 connected 列表（已配置 API Key 的），回退到 all
+    pub async fn list_providers(
+        &self,
+        directory: &str,
+    ) -> Result<Vec<ProviderResponse>, OpenCodeError> {
+        let url = format!("{}/provider", self.base_url);
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let body = response.text().await?;
+            if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(&body) {
+                // 提取 connected ID 列表（若存在）
+                let connected_ids: Option<std::collections::HashSet<String>> = wrapper
+                    .get("connected")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    });
+
+                // 从 all 数组解析完整 provider 对象
+                let all_providers: Vec<ProviderResponse> = wrapper
+                    .get("all")
+                    .and_then(|v| v.as_array())
+                    .or_else(|| wrapper.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // 若有 connected 列表则过滤，否则返回全部
+                if let Some(ids) = connected_ids {
+                    return Ok(all_providers
+                        .into_iter()
+                        .filter(|p| ids.contains(&p.id))
+                        .collect());
+                }
+                return Ok(all_providers);
+            }
+            Ok(vec![])
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    /// 获取 agent 列表（GET /agent）
+    pub async fn list_agents(
+        &self,
+        directory: &str,
+    ) -> Result<Vec<AgentResponse>, OpenCodeError> {
+        let url = format!("{}/agent", self.base_url);
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let body = response.text().await?;
+            // 兼容数组或 { agents: [...] } 或 Record<name, agent>
+            if let Ok(agents) = serde_json::from_str::<Vec<AgentResponse>>(&body) {
+                return Ok(agents);
+            }
+            if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(arr) = wrapper.get("agents").and_then(|v| v.as_array()) {
+                    let agents: Vec<AgentResponse> = arr
+                        .iter()
+                        .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                        .collect();
+                    return Ok(agents);
+                }
+                if let Some(obj) = wrapper.as_object() {
+                    let agents: Vec<AgentResponse> = obj
+                        .iter()
+                        .filter_map(|(key, v)| {
+                            let mut agent: AgentResponse =
+                                serde_json::from_value(v.clone()).ok()?;
+                            if agent.name.is_empty() {
+                                agent.name = key.clone();
+                            }
+                            Some(agent)
+                        })
+                        .collect();
+                    if !agents.is_empty() {
+                        return Ok(agents);
+                    }
+                }
+            }
+            Ok(vec![])
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -430,6 +562,72 @@ pub struct GlobalBusEventEnvelope {
     #[serde(default)]
     pub directory: Option<String>,
     pub payload: BusEvent,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderResponse {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// models 可能是数组或 Record<id, model>
+    #[serde(default)]
+    pub models: serde_json::Value,
+}
+
+impl ProviderResponse {
+    /// 将 models（可能是 dict 或 array）统一转为 Vec
+    pub fn models_vec(&self) -> Vec<ProviderModelResponse> {
+        if let Some(obj) = self.models.as_object() {
+            obj.values()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect()
+        } else if let Some(arr) = self.models.as_array() {
+            arr.iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderModelResponse {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, rename = "providerID")]
+    pub provider_id: String,
+    /// 仅展示 active 模型
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub hidden: Option<bool>,
+    /// agent 默认模型 { providerID, modelID }
+    #[serde(default)]
+    pub model: Option<AgentDefaultModel>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentDefaultModel {
+    #[serde(default, rename = "providerID")]
+    pub provider_id: String,
+    #[serde(default, rename = "modelID")]
+    pub model_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -573,7 +771,7 @@ impl tokio_stream::Stream for SseJsonStream {
 // ============================================================================
 
 use super::event_hub::OpenCodeEventHub;
-use super::{AiAgent, AiEvent, AiEventStream, AiMessage, AiPart, AiSession, OpenCodeManager};
+use super::{AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo, AiModelSelection, AiPart, AiProviderInfo, AiSession, OpenCodeManager};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex as StdMutex};
@@ -655,6 +853,9 @@ impl AiAgent for OpenCodeAgent {
         session_id: &str,
         message: &str,
         file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
     ) -> Result<AiEventStream, String> {
         // 会话隔离：防止跨工作空间误用 session_id
         self.verify_session_directory(directory, session_id).await?;
@@ -666,7 +867,7 @@ impl AiAgent for OpenCodeAgent {
 
         // 2. 异步发送消息（立即返回）
         client
-            .send_message_async(directory, session_id, message, file_refs)
+            .send_message_async(directory, session_id, message, file_refs, image_parts, model, agent)
             .await
             .map_err(|e| format!("Failed to send message: {}", e))?;
 
@@ -1025,6 +1226,56 @@ impl AiAgent for OpenCodeAgent {
             .await
             .map_err(|e| format!("Failed to dispose instance: {}", e))?;
         Ok(())
+    }
+
+    async fn list_providers(&self, directory: &str) -> Result<Vec<AiProviderInfo>, String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let providers = client
+            .list_providers(directory)
+            .await
+            .map_err(|e| format!("Failed to list providers: {}", e))?;
+        Ok(providers
+            .into_iter()
+            .map(|p| {
+                let pid = p.id.clone();
+                AiProviderInfo {
+                    id: p.id.clone(),
+                    name: if p.name.is_empty() { p.id.clone() } else { p.name.clone() },
+                    models: p
+                        .models_vec()
+                        .into_iter()
+                        .filter(|m| m.status.as_deref() != Some("disabled"))
+                        .map(|m| AiModelInfo {
+                            id: m.id.clone(),
+                            name: if m.name.is_empty() { m.id.clone() } else { m.name },
+                            provider_id: if m.provider_id.is_empty() { pid.clone() } else { m.provider_id },
+                        })
+                        .collect(),
+                }
+            })
+            .filter(|p: &AiProviderInfo| !p.models.is_empty())
+            .collect())
+    }
+
+    async fn list_agents(&self, directory: &str) -> Result<Vec<AiAgentInfo>, String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let agents = client
+            .list_agents(directory)
+            .await
+            .map_err(|e| format!("Failed to list agents: {}", e))?;
+        Ok(agents
+            .into_iter()
+            // 排除 hidden agent（compaction/title/summary 等内部 agent）
+            .filter(|a| !a.hidden.unwrap_or(false))
+            .map(|a| AiAgentInfo {
+                name: a.name,
+                description: a.description,
+                mode: a.mode,
+                color: a.color,
+                default_provider_id: a.model.as_ref().map(|m| m.provider_id.clone()),
+                default_model_id: a.model.as_ref().map(|m| m.model_id.clone()),
+            })
+            .collect())
     }
 }
 

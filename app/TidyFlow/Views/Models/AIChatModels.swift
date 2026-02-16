@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 
 enum AIChatRole: String {
     case user
@@ -64,4 +67,59 @@ struct AISessionInfo: Identifiable {
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
     }
+}
+
+// MARK: - 图片附件
+
+struct ImageAttachment: Identifiable {
+    let id: String
+    let filename: String
+    let data: Data
+    #if os(macOS)
+    let thumbnail: NSImage
+    #endif
+    let mime: String
+
+    init(filename: String, data: Data, mime: String) {
+        self.id = UUID().uuidString
+        self.filename = filename
+        self.data = data
+        self.mime = mime
+        #if os(macOS)
+        self.thumbnail = NSImage(data: data) ?? NSImage()
+        #endif
+    }
+}
+
+// MARK: - Provider / 模型
+
+struct AIProviderInfo: Identifiable {
+    let id: String
+    let name: String
+    let models: [AIModelInfo]
+}
+
+struct AIModelInfo: Identifiable {
+    let id: String
+    let name: String
+    let providerID: String
+}
+
+struct AIModelSelection: Equatable {
+    let providerID: String
+    let modelID: String
+}
+
+// MARK: - Agent
+
+struct AIAgentInfo: Identifiable {
+    var id: String { name }
+    let name: String
+    let description: String?
+    let mode: String?
+    let color: String?
+    /// agent 默认 provider ID
+    let defaultProviderID: String?
+    /// agent 默认 model ID
+    let defaultModelID: String?
 }

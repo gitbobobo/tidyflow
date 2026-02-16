@@ -114,6 +114,12 @@ class AppState: ObservableObject {
     @Published var aiIsStreaming: Bool = false
     @Published var aiSessions: [AISessionInfo] = []
 
+    // AI Provider / Model / Agent 状态
+    @Published var aiProviders: [AIProviderInfo] = []
+    @Published var aiSelectedModel: AIModelSelection?
+    @Published var aiAgents: [AIAgentInfo] = []
+    @Published var aiSelectedAgent: String?
+
     // AI Chat 索引（用于按 messageId/partId 稳定更新，不依赖数组顺序）
     var aiMessageIndexByMessageId: [String: Int] = [:]
     var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
@@ -274,6 +280,15 @@ class AppState: ObservableObject {
 
         // Start Core process first (WS will connect when Core is ready)
         startCoreIfNeeded()
+    }
+
+    /// 根据 agent 的默认模型自动设置 aiSelectedModel
+    func applyAgentDefaultModel(_ agent: AIAgentInfo?) {
+        guard let agent,
+              let providerID = agent.defaultProviderID,
+              let modelID = agent.defaultModelID,
+              !providerID.isEmpty, !modelID.isEmpty else { return }
+        aiSelectedModel = AIModelSelection(providerID: providerID, modelID: modelID)
     }
 
 }

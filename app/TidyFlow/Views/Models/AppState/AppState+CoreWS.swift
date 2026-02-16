@@ -633,6 +633,46 @@ extension AppState {
             self.recomputeAIIsStreaming()
         }
 
+        wsClient.onAIProviderList = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+
+            self.aiProviders = ev.providers.map { p in
+                AIProviderInfo(
+                    id: p.id,
+                    name: p.name,
+                    models: p.models.map { m in
+                        AIModelInfo(id: m.id, name: m.name, providerID: m.providerID.isEmpty ? p.id : m.providerID)
+                    }
+                )
+            }
+        }
+
+        wsClient.onAIAgentList = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+
+            self.aiAgents = ev.agents.map { a in
+                AIAgentInfo(
+                    name: a.name,
+                    description: a.description,
+                    mode: a.mode,
+                    color: a.color,
+                    defaultProviderID: a.defaultProviderID,
+                    defaultModelID: a.defaultModelID
+                )
+            }
+            // 默认选中第一个 primary/all agent，并自动选择其默认模型
+            if self.aiSelectedAgent == nil {
+                let firstAgent = self.aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" })
+                    ?? self.aiAgents.first
+                self.aiSelectedAgent = firstAgent?.name
+                self.applyAgentDefaultModel(firstAgent)
+            }
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {

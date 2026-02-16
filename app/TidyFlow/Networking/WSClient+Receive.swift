@@ -367,6 +367,16 @@ extension WSClient {
                 onAIChatError?(ev)
             }
 
+        case "ai_provider_list":
+            if let ev = AIProviderListResult.from(json: json) {
+                onAIProviderList?(ev)
+            }
+
+        case "ai_agent_list":
+            if let ev = AIAgentListResult.from(json: json) {
+                onAIAgentList?(ev)
+            }
+
         case "clipboard_image_set":
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String

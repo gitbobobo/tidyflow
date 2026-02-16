@@ -463,6 +463,12 @@ pub enum ClientMessage {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         file_refs: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        image_parts: Option<Vec<ai::ImagePart>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<ai::ModelSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
     },
     #[serde(rename = "ai_chat_abort")]
     AIChatAbort {
@@ -488,6 +494,18 @@ pub enum ClientMessage {
         project_name: String,
         workspace_name: String,
         session_id: String,
+    },
+
+    // vNext: AI Provider/Agent 列表
+    #[serde(rename = "ai_provider_list")]
+    AIProviderList {
+        project_name: String,
+        workspace_name: String,
+    },
+    #[serde(rename = "ai_agent_list")]
+    AIAgentList {
+        project_name: String,
+        workspace_name: String,
     },
 
     // v1.40: 查询任务历史（iOS 重连恢复）
@@ -1058,6 +1076,18 @@ pub enum ServerMessage {
         workspace_name: String,
         session_id: String,
         messages: Vec<ai::MessageInfo>,
+    },
+    #[serde(rename = "ai_provider_list")]
+    AIProviderListResult {
+        project_name: String,
+        workspace_name: String,
+        providers: Vec<ai::ProviderInfo>,
+    },
+    #[serde(rename = "ai_agent_list")]
+    AIAgentListResult {
+        project_name: String,
+        workspace_name: String,
+        agents: Vec<ai::AgentInfo>,
     },
 }
 

@@ -41,6 +41,56 @@ pub struct MessageInfo {
     pub parts: Vec<PartInfo>,
 }
 
+/// AI Provider 信息（模型列表按 provider 分组）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub id: String,
+    pub name: String,
+    pub models: Vec<ModelInfo>,
+}
+
+/// AI 模型信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub provider_id: String,
+}
+
+/// AI Agent 信息（动态获取的 agent 列表）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// "primary" | "subagent" | "all"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// agent 默认 provider ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_provider_id: Option<String>,
+    /// agent 默认 model ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_model_id: Option<String>,
+}
+
+/// 图片附件（base64 编码）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImagePart {
+    pub filename: String,
+    pub mime: String,
+    pub data: String,
+}
+
+/// 模型选择
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSelection {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

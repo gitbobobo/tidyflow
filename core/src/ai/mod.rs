@@ -74,6 +74,50 @@ pub struct AiMessage {
     pub parts: Vec<AiPart>,
 }
 
+/// AI 图片附件（base64 编码）
+#[derive(Debug, Clone)]
+pub struct AiImagePart {
+    pub filename: String,
+    pub mime: String,
+    pub data: String,
+}
+
+/// AI 模型选择
+#[derive(Debug, Clone)]
+pub struct AiModelSelection {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+/// AI Provider 信息（通用模型）
+#[derive(Debug, Clone)]
+pub struct AiProviderInfo {
+    pub id: String,
+    pub name: String,
+    pub models: Vec<AiModelInfo>,
+}
+
+/// AI 模型信息（通用模型）
+#[derive(Debug, Clone)]
+pub struct AiModelInfo {
+    pub id: String,
+    pub name: String,
+    pub provider_id: String,
+}
+
+/// AI Agent 信息（通用模型）
+#[derive(Debug, Clone)]
+pub struct AiAgentInfo {
+    pub name: String,
+    pub description: Option<String>,
+    pub mode: Option<String>,
+    pub color: Option<String>,
+    /// agent 默认 provider ID
+    pub default_provider_id: Option<String>,
+    /// agent 默认 model ID
+    pub default_model_id: Option<String>,
+}
+
 /// AI 事件流类型别名
 pub type AiEventStream = Pin<Box<dyn Stream<Item = Result<AiEvent, String>> + Send>>;
 
@@ -103,6 +147,9 @@ pub trait AiAgent: Send + Sync {
         session_id: &str,
         message: &str,
         file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
     ) -> Result<AiEventStream, String>;
 
     /// 列出会话
@@ -124,4 +171,14 @@ pub trait AiAgent: Send + Sync {
 
     /// 释放某个 directory 的 instance 资源（节省占用）
     async fn dispose_instance(&self, directory: &str) -> Result<(), String>;
+
+    /// 获取 provider/模型列表（默认返回空）
+    async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {
+        Ok(vec![])
+    }
+
+    /// 获取 agent 列表（默认返回空）
+    async fn list_agents(&self, _directory: &str) -> Result<Vec<AiAgentInfo>, String> {
+        Ok(vec![])
+    }
 }

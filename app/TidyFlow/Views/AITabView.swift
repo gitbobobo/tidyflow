@@ -4,7 +4,7 @@ struct AITabView: View {
     @EnvironmentObject var appState: AppState
 
     @State private var inputText: String = ""
-    @State private var selectedFiles: [String] = []
+    @State private var imageAttachments: [ImageAttachment] = []
     @State private var showSessionList = false
 
     private var controlBackgroundColor: Color {
@@ -79,14 +79,16 @@ struct AITabView: View {
                     workspaceName: ws,
                     sessionId: newSessionId,
                     message: pending.text,
-                    fileRefs: pending.files
+                    imageParts: pending.imageParts,
+                    model: pending.model,
+                    agent: pending.agent
                 )
             }
         }
     }
 
     /// 等待会话创建后发送的消息
-    @State private var pendingSendMessage: (text: String, files: [String]?)? = nil
+    @State private var pendingSendMessage: (text: String, imageParts: [[String: String]]?, model: [String: String]?, agent: String?)? = nil
 
     private var toolbar: some View {
         HStack {
@@ -157,7 +159,7 @@ struct AITabView: View {
     private var inputArea: some View {
         ChatInputView(
             text: $inputText,
-            selectedFiles: $selectedFiles,
+            imageAttachments: $imageAttachments,
             isStreaming: appState.aiIsStreaming,
             onSend: {
                 sendMessage()
@@ -165,9 +167,10 @@ struct AITabView: View {
             onStop: {
                 stopStreaming()
             },
-            onFileSelect: {
-                showFilePicker()
-            }
+            providers: appState.aiProviders,
+            selectedModel: $appState.aiSelectedModel,
+            agents: appState.aiAgents,
+            selectedAgent: $appState.aiSelectedAgent
         )
         .background(controlBackgroundColor)
         .overlay(
@@ -184,6 +187,9 @@ struct AITabView: View {
             return
         }
         appState.wsClient.requestAISessionList(projectName: appState.selectedProjectName, workspaceName: ws)
+        // 同时加载 provider/agent 列表
+        appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws)
+        appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws)
     }
 
     private func loadSession(_ session: AISessionInfo) {
@@ -212,7 +218,7 @@ struct AITabView: View {
 
     private func createNewSession() {
         inputText = ""
-        selectedFiles = []
+        imageAttachments = []
         appState.aiChatMessages = []
         appState.aiCurrentSessionId = nil
         appState.aiIsStreaming = false
@@ -220,11 +226,29 @@ struct AITabView: View {
 
     private func sendMessage() {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
-        guard !inputText.isEmpty || !selectedFiles.isEmpty else { return }
+        guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty else { return }
 
         let text = inputText
-        let files = selectedFiles.isEmpty ? nil : selectedFiles
+        let images = imageAttachments
         inputText = ""
+        imageAttachments = []
+
+        // 构建图片 parts（base64）
+        let imageParts: [[String: String]]? = images.isEmpty ? nil : images.map { img in
+            [
+                "filename": img.filename,
+                "mime": img.mime,
+                "data": img.data.base64EncodedString()
+            ]
+        }
+
+        // 模型选择
+        let model: [String: String]? = appState.aiSelectedModel.map {
+            ["provider_id": $0.providerID, "model_id": $0.modelID]
+        }
+
+        // Agent 选择
+        let agentName = appState.aiSelectedAgent
 
         // 添加用户消息到 UI
         let userMessage = AIChatMessage(
@@ -235,7 +259,7 @@ struct AITabView: View {
         appState.aiChatMessages.append(userMessage)
         appState.aiIsStreaming = true
 
-        // 预先插入一个“回复气泡占位”，首包到达后由 message_updated 绑定 messageId
+        // 预先插入一个"回复气泡占位"，首包到达后由 message_updated 绑定 messageId
         appState.aiChatMessages.append(AIChatMessage(role: .assistant, parts: [], isStreaming: true))
 
         if let sessionId = appState.aiCurrentSessionId {
@@ -245,11 +269,13 @@ struct AITabView: View {
                 workspaceName: ws,
                 sessionId: sessionId,
                 message: text,
-                fileRefs: files
+                imageParts: imageParts,
+                model: model,
+                agent: agentName
             )
         } else {
             // 无会话，先创建再发送
-            pendingSendMessage = (text, files)
+            pendingSendMessage = (text, imageParts, model, agentName)
             appState.wsClient.requestAIChatStart(
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,
@@ -280,8 +306,6 @@ struct AITabView: View {
             }
         }
     }
-
-    private func showFilePicker() {}
 }
 
 struct AITabView_Previews: PreviewProvider {

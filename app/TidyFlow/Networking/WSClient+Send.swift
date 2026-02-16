@@ -712,7 +712,16 @@ extension WSClient {
     }
 
     /// 发送 AI 聊天消息
-    func requestAIChatSend(projectName: String, workspaceName: String, sessionId: String, message: String, fileRefs: [String]? = nil) {
+    func requestAIChatSend(
+        projectName: String,
+        workspaceName: String,
+        sessionId: String,
+        message: String,
+        fileRefs: [String]? = nil,
+        imageParts: [[String: String]]? = nil,
+        model: [String: String]? = nil,
+        agent: String? = nil
+    ) {
         var msg: [String: Any] = [
             "type": "ai_chat_send",
             "project_name": projectName,
@@ -722,6 +731,15 @@ extension WSClient {
         ]
         if let fileRefs, !fileRefs.isEmpty {
             msg["file_refs"] = fileRefs
+        }
+        if let imageParts, !imageParts.isEmpty {
+            msg["image_parts"] = imageParts
+        }
+        if let model {
+            msg["model"] = model
+        }
+        if let agent {
+            msg["agent"] = agent
         }
         send(msg)
     }
@@ -764,6 +782,24 @@ extension WSClient {
             "project_name": projectName,
             "workspace_name": workspaceName,
             "session_id": sessionId
+        ])
+    }
+
+    /// 获取 AI Provider/模型列表
+    func requestAIProviderList(projectName: String, workspaceName: String) {
+        send([
+            "type": "ai_provider_list",
+            "project_name": projectName,
+            "workspace_name": workspaceName
+        ])
+    }
+
+    /// 获取 AI Agent 列表
+    func requestAIAgentList(projectName: String, workspaceName: String) {
+        send([
+            "type": "ai_agent_list",
+            "project_name": projectName,
+            "workspace_name": workspaceName
         ])
     }
 }

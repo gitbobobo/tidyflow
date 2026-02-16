@@ -139,6 +139,12 @@ pub async fn handle_ai_message(
     if try_handle_ai_session_delete(client_msg, app_state, ai_state).await? {
         return Ok(true);
     }
+    if try_handle_ai_provider_list(client_msg, socket, app_state, ai_state).await? {
+        return Ok(true);
+    }
+    if try_handle_ai_agent_list(client_msg, socket, app_state, ai_state).await? {
+        return Ok(true);
+    }
     Ok(false)
 }
 
@@ -201,6 +207,9 @@ async fn try_handle_ai_chat_send(
         session_id,
         message,
         file_refs,
+        image_parts,
+        model,
+        agent: agent_name,
     } = msg
     else {
         return Ok(false);
@@ -218,8 +227,24 @@ async fn try_handle_ai_chat_send(
         message.len()
     );
 
+    // 将协议层 ImagePart/ModelSelection 转为 AI 层类型
+    let ai_image_parts = image_parts.as_ref().map(|parts| {
+        parts
+            .iter()
+            .map(|p| crate::ai::AiImagePart {
+                filename: p.filename.clone(),
+                mime: p.mime.clone(),
+                data: p.data.clone(),
+            })
+            .collect()
+    });
+    let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
+        provider_id: m.provider_id.clone(),
+        model_id: m.model_id.clone(),
+    });
+
     let mut stream = match agent
-        .send_message(&directory, session_id, message, file_refs.clone())
+        .send_message(&directory, session_id, message, file_refs.clone(), ai_image_parts, ai_model, agent_name.clone())
         .await
     {
         Ok(stream) => stream,
@@ -540,6 +565,111 @@ async fn try_handle_ai_session_delete(
     }
 
     let _ = agent.delete_session(&directory, session_id).await;
+
+    Ok(true)
+}
+
+async fn try_handle_ai_provider_list(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AIProviderList {
+        project_name,
+        workspace_name,
+    } = msg
+    else {
+        return Ok(false);
+    };
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state).await?;
+    ensure_maintenance(ai_state, agent.clone()).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+    }
+
+    let providers = agent.list_providers(&directory).await?;
+    let providers: Vec<_> = providers
+        .into_iter()
+        .map(|p| crate::server::protocol::ai::ProviderInfo {
+            id: p.id.clone(),
+            name: p.name,
+            models: p
+                .models
+                .into_iter()
+                .map(|m| crate::server::protocol::ai::ModelInfo {
+                    id: m.id,
+                    name: m.name,
+                    provider_id: m.provider_id,
+                })
+                .collect(),
+        })
+        .collect();
+
+    send_message(
+        socket,
+        &crate::server::protocol::ServerMessage::AIProviderListResult {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            providers,
+        },
+    )
+    .await?;
+
+    Ok(true)
+}
+
+async fn try_handle_ai_agent_list(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AIAgentList {
+        project_name,
+        workspace_name,
+    } = msg
+    else {
+        return Ok(false);
+    };
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state).await?;
+    ensure_maintenance(ai_state, agent.clone()).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+    }
+
+    let agents = agent.list_agents(&directory).await?;
+    // 返回 primary 和 all 模式的 agent，subagent/hidden 等不展示
+    let agents: Vec<_> = agents
+        .into_iter()
+        .filter(|a| matches!(a.mode.as_deref(), Some("primary") | Some("all")))
+        .map(|a| crate::server::protocol::ai::AgentInfo {
+            name: a.name,
+            description: a.description,
+            mode: a.mode,
+            color: a.color,
+            default_provider_id: a.default_provider_id,
+            default_model_id: a.default_model_id,
+        })
+        .collect();
+
+    send_message(
+        socket,
+        &crate::server::protocol::ServerMessage::AIAgentListResult {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            agents,
+        },
+    )
+    .await?;
 
     Ok(true)
 }

@@ -216,3 +216,78 @@ private func parseInt64(_ any: Any?) -> Int64 {
         return 0
     }
 }
+
+// MARK: - Provider / Agent 列表
+
+struct AIProviderListResult {
+    let projectName: String
+    let workspaceName: String
+    let providers: [AIProtocolProviderInfo]
+
+    static func from(json: [String: Any]) -> AIProviderListResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String else { return nil }
+        let items = (json["providers"] as? [[String: Any]] ?? []).compactMap { AIProtocolProviderInfo.from(json: $0) }
+        return AIProviderListResult(projectName: projectName, workspaceName: workspaceName, providers: items)
+    }
+}
+
+struct AIProtocolProviderInfo {
+    let id: String
+    let name: String
+    let models: [AIProtocolModelInfo]
+
+    static func from(json: [String: Any]) -> AIProtocolProviderInfo? {
+        guard let id = json["id"] as? String else { return nil }
+        let name = json["name"] as? String ?? id
+        let models = (json["models"] as? [[String: Any]] ?? []).compactMap { AIProtocolModelInfo.from(json: $0) }
+        return AIProtocolProviderInfo(id: id, name: name, models: models)
+    }
+}
+
+struct AIProtocolModelInfo {
+    let id: String
+    let name: String
+    let providerID: String
+
+    static func from(json: [String: Any]) -> AIProtocolModelInfo? {
+        guard let id = json["id"] as? String else { return nil }
+        let name = json["name"] as? String ?? id
+        let providerID = json["provider_id"] as? String ?? ""
+        return AIProtocolModelInfo(id: id, name: name, providerID: providerID)
+    }
+}
+
+struct AIAgentListResult {
+    let projectName: String
+    let workspaceName: String
+    let agents: [AIProtocolAgentInfo]
+
+    static func from(json: [String: Any]) -> AIAgentListResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String else { return nil }
+        let items = (json["agents"] as? [[String: Any]] ?? []).compactMap { AIProtocolAgentInfo.from(json: $0) }
+        return AIAgentListResult(projectName: projectName, workspaceName: workspaceName, agents: items)
+    }
+}
+
+struct AIProtocolAgentInfo {
+    let name: String
+    let description: String?
+    let mode: String?
+    let color: String?
+    let defaultProviderID: String?
+    let defaultModelID: String?
+
+    static func from(json: [String: Any]) -> AIProtocolAgentInfo? {
+        guard let name = json["name"] as? String else { return nil }
+        return AIProtocolAgentInfo(
+            name: name,
+            description: json["description"] as? String,
+            mode: json["mode"] as? String,
+            color: json["color"] as? String,
+            defaultProviderID: json["default_provider_id"] as? String,
+            defaultModelID: json["default_model_id"] as? String
+        )
+    }
+}
