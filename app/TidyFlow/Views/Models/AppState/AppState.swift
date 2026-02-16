@@ -119,6 +119,7 @@ class AppState: ObservableObject {
     @Published var aiSelectedModel: AIModelSelection?
     @Published var aiAgents: [AIAgentInfo] = []
     @Published var aiSelectedAgent: String?
+    @Published var aiSlashCommands: [AISlashCommandInfo] = []
 
     // AI Chat 索引（用于按 messageId/partId 稳定更新，不依赖数组顺序）
     var aiMessageIndexByMessageId: [String: Int] = [:]

@@ -91,6 +91,17 @@ pub struct ModelSelection {
     pub model_id: String,
 }
 
+/// AI 斜杠命令信息（由后端动态返回）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlashCommandInfo {
+    /// 命令名（不含 `/` 前缀），如 "clear"
+    pub name: String,
+    /// 命令描述
+    pub description: String,
+    /// 命令执行方式："client"（前端本地执行）| "agent"（发送给 AI 代理）
+    pub action: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

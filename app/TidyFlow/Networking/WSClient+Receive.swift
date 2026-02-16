@@ -377,6 +377,11 @@ extension WSClient {
                 onAIAgentList?(ev)
             }
 
+        case "ai_slash_commands":
+            if let ev = AISlashCommandsResult.from(json: json) {
+                onAISlashCommands?(ev)
+            }
+
         case "clipboard_image_set":
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String

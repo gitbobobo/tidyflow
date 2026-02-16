@@ -134,3 +134,15 @@ struct AIAgentInfo: Identifiable {
     /// agent 默认 model ID
     let defaultModelID: String?
 }
+
+// MARK: - 斜杠命令（从后端获取）
+
+struct AISlashCommandInfo: Identifiable {
+    var id: String { name }
+    /// 命令名（不含 / 前缀）
+    let name: String
+    /// 命令描述
+    let description: String
+    /// 执行方式："client"（前端本地执行）| "agent"（发送给 AI 代理）
+    let action: String
+}

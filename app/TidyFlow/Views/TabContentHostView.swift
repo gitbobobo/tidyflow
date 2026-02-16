@@ -53,6 +53,7 @@ struct TabContentHostView: View {
                     // AI Chat Tab (Native SwiftUI)
                     AITabView()
                         .environmentObject(appState)
+                        .environmentObject(appState.fileCache)
                         .onAppear { webViewVisible = false }
                 }
 

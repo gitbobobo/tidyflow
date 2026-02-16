@@ -145,6 +145,9 @@ pub async fn handle_ai_message(
     if try_handle_ai_agent_list(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
+    if try_handle_ai_slash_commands(client_msg, socket, app_state).await? {
+        return Ok(true);
+    }
     Ok(false)
 }
 
@@ -667,6 +670,61 @@ async fn try_handle_ai_agent_list(
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
             agents,
+        },
+    )
+    .await?;
+
+    Ok(true)
+}
+
+/// 返回 AI 聊天可用的斜杠命令列表
+/// 命令分为 client（前端本地执行）和 agent（发送给 AI 代理）两类
+async fn try_handle_ai_slash_commands(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+) -> Result<bool, String> {
+    let ClientMessage::AISlashCommands {
+        project_name,
+        workspace_name,
+    } = msg
+    else {
+        return Ok(false);
+    };
+
+    // 验证工作空间存在
+    let _directory = resolve_directory(app_state, project_name, workspace_name).await?;
+
+    use crate::server::protocol::ai::SlashCommandInfo;
+    let commands = vec![
+        SlashCommandInfo {
+            name: "clear".to_string(),
+            description: "清空当前对话".to_string(),
+            action: "client".to_string(),
+        },
+        SlashCommandInfo {
+            name: "new".to_string(),
+            description: "新建会话".to_string(),
+            action: "client".to_string(),
+        },
+        SlashCommandInfo {
+            name: "compact".to_string(),
+            description: "压缩上下文（减少 token 用量）".to_string(),
+            action: "agent".to_string(),
+        },
+        SlashCommandInfo {
+            name: "help".to_string(),
+            description: "显示可用命令".to_string(),
+            action: "client".to_string(),
+        },
+    ];
+
+    send_message(
+        socket,
+        &crate::server::protocol::ServerMessage::AISlashCommandsResult {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            commands,
         },
     )
     .await?;

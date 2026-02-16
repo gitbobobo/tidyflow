@@ -673,6 +673,15 @@ extension AppState {
             }
         }
 
+        wsClient.onAISlashCommands = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            self.aiSlashCommands = ev.commands.map { cmd in
+                AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
+            }
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -860,9 +869,13 @@ extension AppState {
     /// 确保某个 assistant message 存在，返回其数组索引。
     @discardableResult
     private func aiEnsureAssistantMessage(messageId: String) -> Int {
-        if let idx = aiMessageIndexByMessageId[messageId] {
+        if let idx = aiMessageIndexByMessageId[messageId],
+           idx < aiChatMessages.count,
+           aiChatMessages[idx].messageId == messageId {
             return idx
         }
+        // 缓存失效，清除旧映射
+        aiMessageIndexByMessageId.removeValue(forKey: messageId)
 
         // 优先复用本地占位气泡（AITabView 发送时插入）
         if let idx = aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
@@ -879,15 +892,19 @@ extension AppState {
     }
 
     private func aiUpsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
+        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
         let kind = AIChatPartKind(rawValue: part.partType) ?? .text
 
-        if let existing = aiPartIndexByPartId[part.id], existing.msgIdx == msgIdx {
+        if let existing = aiPartIndexByPartId[part.id], existing.msgIdx == msgIdx,
+           existing.partIdx >= 0, existing.partIdx < aiChatMessages[msgIdx].parts.count {
             // 更新同一个 part
             aiChatMessages[msgIdx].parts[existing.partIdx].text = part.text
             aiChatMessages[msgIdx].parts[existing.partIdx].toolName = part.toolName
             aiChatMessages[msgIdx].parts[existing.partIdx].toolState = part.toolState
             return
         }
+        // 缓存失效或新 part，清除旧映射后追加
+        aiPartIndexByPartId.removeValue(forKey: part.id)
 
         let p = AIChatPart(id: part.id, kind: kind, text: part.text, toolName: part.toolName, toolState: part.toolState)
         aiChatMessages[msgIdx].parts.append(p)
@@ -898,8 +915,10 @@ extension AppState {
     private func aiAppendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
         // 当前只消费 field=text；其它字段忽略（避免污染）
         guard field == "text" else { return }
+        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
 
-        if let existing = aiPartIndexByPartId[partId], existing.msgIdx == msgIdx {
+        if let existing = aiPartIndexByPartId[partId], existing.msgIdx == msgIdx,
+           existing.partIdx >= 0, existing.partIdx < aiChatMessages[msgIdx].parts.count {
             let current = aiChatMessages[msgIdx].parts[existing.partIdx].text ?? ""
             aiChatMessages[msgIdx].parts[existing.partIdx].text = current + delta
             return

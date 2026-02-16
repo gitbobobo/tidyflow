@@ -802,4 +802,13 @@ extension WSClient {
             "workspace_name": workspaceName
         ])
     }
+
+    /// 获取 AI 斜杠命令列表
+    func requestAISlashCommands(projectName: String, workspaceName: String) {
+        send([
+            "type": "ai_slash_commands",
+            "project_name": projectName,
+            "workspace_name": workspaceName
+        ])
+    }
 }

@@ -109,6 +109,7 @@ class WSClient: NSObject, ObservableObject {
     var onAIChatError: ((AIChatErrorV2) -> Void)?
     var onAIProviderList: ((AIProviderListResult) -> Void)?
     var onAIAgentList: ((AIAgentListResult) -> Void)?
+    var onAISlashCommands: ((AISlashCommandsResult) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

@@ -2,12 +2,17 @@ import SwiftUI
 
 struct AITabView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var fileCache: FileCacheState
 
     @State private var inputText: String = ""
     @State private var imageAttachments: [ImageAttachment] = []
     @State private var showSessionList = false
     /// 记录上一次所在的工作空间 key，用于切换时保存快照
     @State private var previousSnapshotKey: String?
+    /// 自动补全状态
+    @StateObject private var autocomplete = AutocompleteState()
+    /// 光标在输入框内的位置（用于定位弹出层）
+    @State private var cursorRectInInput: CGRect = .zero
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -53,6 +58,25 @@ struct AITabView: View {
             VStack(spacing: 0) {
                 toolbar
                 messageArea
+                    .overlay {
+                        // 弹出层可见时，点击消息区域关闭
+                        if autocomplete.isVisible {
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onTapGesture { autocomplete.reset() }
+                        }
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        // 自动补全弹出层：底边对齐消息区域底部（即输入区域顶部）
+                        if autocomplete.isVisible {
+                            AutocompletePopupView(autocomplete: autocomplete) { item in
+                                handleAutocompleteSelect(item)
+                            }
+                            .frame(width: 320)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .offset(x: 12, y: -6)
+                        }
+                    }
                 inputArea
             }
         }
@@ -90,6 +114,7 @@ struct AITabView: View {
                     workspaceName: ws,
                     sessionId: newSessionId,
                     message: pending.text,
+                    fileRefs: pending.fileRefs,
                     imageParts: pending.imageParts,
                     model: pending.model,
                     agent: pending.agent
@@ -99,7 +124,7 @@ struct AITabView: View {
     }
 
     /// 等待会话创建后发送的消息（含发起时的工作空间信息，防止跨空间误发）
-    @State private var pendingSendMessage: (projectName: String, workspaceName: String, text: String, imageParts: [[String: String]]?, model: [String: String]?, agent: String?)? = nil
+    @State private var pendingSendMessage: (projectName: String, workspaceName: String, text: String, imageParts: [[String: String]]?, model: [String: String]?, agent: String?, fileRefs: [String]?)? = nil
 
     private var toolbar: some View {
         HStack {
@@ -181,7 +206,12 @@ struct AITabView: View {
             providers: appState.aiProviders,
             selectedModel: $appState.aiSelectedModel,
             agents: appState.aiAgents,
-            selectedAgent: $appState.aiSelectedAgent
+            selectedAgent: $appState.aiSelectedAgent,
+            autocomplete: autocomplete,
+            onSelectAutocomplete: { item in
+                handleAutocompleteSelect(item)
+            },
+            cursorRectInInput: $cursorRectInInput
         )
         .background(controlBackgroundColor)
         .overlay(
@@ -190,6 +220,23 @@ struct AITabView: View {
                 .foregroundColor(separatorColor),
             alignment: .top
         )
+        .onChange(of: inputText) { _, newText in
+            refreshAutocomplete(text: newText)
+
+            // 首次触发 @ 时，若文件索引缓存为空则拉取
+            if newText.contains("@") {
+                if let ws = appState.selectedWorkspaceKey {
+                    let cache = fileCache.fileIndexCache[ws]
+                    if cache == nil || cache!.items.isEmpty {
+                        appState.fetchFileIndex(workspaceKey: ws)
+                    }
+                }
+            }
+        }
+        .onChange(of: fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items.count) { _, _ in
+            // 文件索引加载完成后，重新触发自动补全（解决首次 @ 时索引为空的问题）
+            refreshAutocomplete(text: inputText)
+        }
     }
 
     /// 生成当前工作空间的快照 key
@@ -295,9 +342,10 @@ struct AITabView: View {
             return
         }
         appState.wsClient.requestAISessionList(projectName: appState.selectedProjectName, workspaceName: ws)
-        // 同时加载 provider/agent 列表
+        // 同时加载 provider/agent/斜杠命令 列表
         appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws)
         appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws)
+        appState.wsClient.requestAISlashCommands(projectName: appState.selectedProjectName, workspaceName: ws)
     }
 
     private func loadSession(_ session: AISessionInfo) {
@@ -328,9 +376,83 @@ struct AITabView: View {
         inputText = ""
         imageAttachments = []
         pendingSendMessage = nil
+        autocomplete.reset()
         appState.aiChatMessages = []
         appState.aiCurrentSessionId = nil
         appState.aiIsStreaming = false
+    }
+
+    // MARK: - 自动补全处理
+
+    private func refreshAutocomplete(text: String) {
+        let slashItems = appState.aiSlashCommands.map { cmd in
+            AutocompleteItem(
+                id: "cmd_\(cmd.name)",
+                title: cmd.name,
+                subtitle: cmd.description,
+                icon: slashCommandIcon(cmd.name),
+                value: cmd.name,
+                action: cmd.action
+            )
+        }
+        let fileItems = fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items ?? []
+        updateAutocomplete(text: text, autocomplete: autocomplete, slashCommands: slashItems, fileItems: fileItems)
+    }
+
+    private func handleAutocompleteSelect(_ item: AutocompleteItem) {
+        switch autocomplete.mode {
+        case .fileRef:
+            // 替换 @query 为 @filepath（带尾部空格）
+            if let triggerLoc = autocomplete.triggerLocation {
+                let prefix = String(inputText.prefix(triggerLoc))
+                inputText = prefix + "@\(item.value) "
+            } else {
+                inputText += "@\(item.value) "
+            }
+            autocomplete.reset()
+
+        case .slashCommand:
+            let action = item.action ?? "client"
+            if action == "client" {
+                // 客户端本地执行
+                switch item.value {
+                case "clear", "new":
+                    createNewSession()
+                case "help":
+                    // 显示帮助：将可用命令列表作为提示插入
+                    let helpText = appState.aiSlashCommands.map { "/\($0.name) — \($0.description)" }.joined(separator: "\n")
+                    inputText = ""
+                    autocomplete.reset()
+                    let helpMessage = AIChatMessage(
+                        role: .assistant,
+                        parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "可用命令：\n\(helpText)", toolName: nil, toolState: nil)],
+                        isStreaming: false
+                    )
+                    appState.aiChatMessages.append(helpMessage)
+                default:
+                    inputText = ""
+                    autocomplete.reset()
+                }
+            } else {
+                // agent 类型命令：作为消息发送给 AI
+                inputText = "/\(item.value)"
+                autocomplete.reset()
+                sendMessage()
+            }
+
+        case .none:
+            break
+        }
+    }
+
+    private func slashCommandIcon(_ name: String) -> String {
+        switch name {
+        case "clear": return "trash"
+        case "new": return "square.and.pencil"
+        case "compact": return "arrow.down.right.and.arrow.up.left"
+        case "help": return "questionmark.circle"
+        default: return "command"
+        }
     }
 
     /// 恢复快照后，若有选中会话则重新拉取消息（弥补切走期间丢失的增量）
@@ -353,6 +475,11 @@ struct AITabView: View {
         let images = imageAttachments
         inputText = ""
         imageAttachments = []
+        autocomplete.reset()
+
+        // 提取 @文件引用
+        let fileRefs = extractFileRefs(from: text)
+        let fileRefsParam: [String]? = fileRefs.isEmpty ? nil : fileRefs
 
         // 构建图片 parts（base64）
         let imageParts: [[String: String]]? = images.isEmpty ? nil : images.map { img in
@@ -390,13 +517,14 @@ struct AITabView: View {
                 workspaceName: ws,
                 sessionId: sessionId,
                 message: text,
+                fileRefs: fileRefsParam,
                 imageParts: imageParts,
                 model: model,
                 agent: agentName
             )
         } else {
             // 无会话，先创建再发送
-            pendingSendMessage = (appState.selectedProjectName, ws, text, imageParts, model, agentName)
+            pendingSendMessage = (appState.selectedProjectName, ws, text, imageParts, model, agentName, fileRefsParam)
             appState.wsClient.requestAIChatStart(
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,
@@ -433,5 +561,6 @@ struct AITabView_Previews: PreviewProvider {
     static var previews: some View {
         AITabView()
             .environmentObject(AppState())
+            .environmentObject(FileCacheState())
     }
 }

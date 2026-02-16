@@ -52,6 +52,8 @@
 		AIC00007 /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00005 /* SessionListView.swift */; };
 		AIC00008 /* ChatInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00006 /* ChatInputView.swift */; };
 		AIC0000A /* ToolCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00009 /* ToolCardView.swift */; };
+		AIC0000C /* AutocompleteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0000B /* AutocompleteState.swift */; };
+		AIC0000E /* AutocompletePopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0000D /* AutocompletePopupView.swift */; };
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
@@ -194,6 +196,8 @@
 		AIC00005 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/SessionListView.swift"; sourceTree = "<group>"; };
 		AIC00006 /* ChatInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ChatInputView.swift"; sourceTree = "<group>"; };
 		AIC00009 /* ToolCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ToolCardView.swift"; sourceTree = "<group>"; };
+		AIC0000B /* AutocompleteState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AutocompleteState.swift"; sourceTree = "<group>"; };
+		AIC0000D /* AutocompletePopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AutocompletePopupView.swift"; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
@@ -317,6 +321,8 @@
 				AIC00005 /* SessionListView.swift */,
 				AIC00006 /* ChatInputView.swift */,
 				AIC00009 /* ToolCardView.swift */,
+				AIC0000B /* AutocompleteState.swift */,
+				AIC0000D /* AutocompletePopupView.swift */,
 				B3A00013 /* TabStripView.swift */,
 				TST00012 /* ToastOverlayView.swift */,
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
@@ -690,6 +696,8 @@
 				AIC00007 /* SessionListView.swift in Sources */,
 				AIC00008 /* ChatInputView.swift in Sources */,
 				AIC0000A /* ToolCardView.swift in Sources */,
+				AIC0000C /* AutocompleteState.swift in Sources */,
+				AIC0000E /* AutocompletePopupView.swift in Sources */,
 				B3A00008 /* NativeGitPanelView.swift in Sources */,
 				SPL00006 /* FloatingPanelController.swift in Sources */,
 				SPL00007 /* GitPanelSections.swift in Sources */,

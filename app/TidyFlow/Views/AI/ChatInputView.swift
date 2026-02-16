@@ -7,9 +7,16 @@ import AppKit
 struct ChatTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var contentHeight: CGFloat
+    /// 光标相对于 ScrollView 的位置（用于定位弹出层）
+    @Binding var cursorRect: CGRect
     var font: NSFont = .systemFont(ofSize: 13)
     var onEnter: () -> Void
     var isEnterEnabled: () -> Bool
+    /// 自动补全键盘拦截（返回 true 表示已消费）
+    var onArrowUp: (() -> Bool)?
+    var onArrowDown: (() -> Bool)?
+    var onEscape: (() -> Bool)?
+    var onTab: (() -> Bool)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -43,6 +50,10 @@ struct ChatTextView: NSViewRepresentable {
                 context.coordinator.parent.onEnter()
             }
         }
+        textView.onArrowUp = { context.coordinator.parent.onArrowUp?() ?? false }
+        textView.onArrowDown = { context.coordinator.parent.onArrowDown?() ?? false }
+        textView.onEscape = { context.coordinator.parent.onEscape?() ?? false }
+        textView.onTab = { context.coordinator.parent.onTab?() ?? false }
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
@@ -58,10 +69,12 @@ struct ChatTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
         if textView.string != text {
-            let selectedRanges = textView.selectedRanges
             textView.string = text
-            textView.selectedRanges = selectedRanges
+            // 程序化设置文本后，光标移到末尾
+            let endPos = (text as NSString).length
+            textView.setSelectedRange(NSRange(location: endPos, length: 0))
             context.coordinator.updateHeight()
+            context.coordinator.updateCursorRect()
         }
         textView.font = font
     }
@@ -78,6 +91,11 @@ struct ChatTextView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
             updateHeight()
+            updateCursorRect()
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            updateCursorRect()
         }
 
         func updateHeight() {
@@ -92,25 +110,70 @@ struct ChatTextView: NSViewRepresentable {
                 self.parent.contentHeight = newHeight
             }
         }
+
+        func updateCursorRect() {
+            guard let textView = textView,
+                  !textView.string.isEmpty,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+            layoutManager.ensureLayout(for: textContainer)
+            let insertionPoint = textView.selectedRange().location
+            guard insertionPoint != NSNotFound else { return }
+            let charIndex = min(insertionPoint, textView.string.count - 1)
+            let numberOfGlyphs = layoutManager.numberOfGlyphs
+            guard numberOfGlyphs > 0 else { return }
+            let glyphIndex = min(layoutManager.glyphIndexForCharacter(at: charIndex), numberOfGlyphs - 1)
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            let location = layoutManager.location(forGlyphAt: glyphIndex)
+            let inset = textView.textContainerInset
+            let padding = textView.textContainer?.lineFragmentPadding ?? 0
+            // 光标在 textView 坐标系中的位置
+            let cursorX = lineRect.origin.x + location.x + inset.width + padding
+            let cursorY = lineRect.origin.y + inset.height
+            // 转换到 scrollView 坐标系
+            if let scrollView = textView.enclosingScrollView {
+                let pointInScroll = textView.convert(CGPoint(x: cursorX, y: cursorY), to: scrollView)
+                DispatchQueue.main.async {
+                    self.parent.cursorRect = CGRect(x: pointInScroll.x, y: pointInScroll.y, width: 1, height: lineRect.height)
+                }
+            }
+        }
     }
 }
 
 /// 自定义 NSTextView，在 keyDown 层拦截 Enter 并兼容 IME
 private class IMEAwareTextView: NSTextView {
     var onEnter: (() -> Void)?
+    var onArrowUp: (() -> Bool)?
+    var onArrowDown: (() -> Bool)?
+    var onEscape: (() -> Bool)?
+    var onTab: (() -> Bool)?
 
     override func keyDown(with event: NSEvent) {
-        let isReturn = event.keyCode == 36 // Return
+        // IME 组合态，全部交给系统处理
+        if hasMarkedText() {
+            super.keyDown(with: event)
+            return
+        }
+
         let isShift = event.modifierFlags.contains(.shift)
 
-        if isReturn && !isShift {
-            if hasMarkedText() {
-                // IME 组合态，交给系统处理
-                super.keyDown(with: event)
-            } else {
+        switch event.keyCode {
+        case 36: // Return
+            if !isShift {
                 onEnter?()
+                return
             }
-            return
+        case 126: // Arrow Up
+            if onArrowUp?() == true { return }
+        case 125: // Arrow Down
+            if onArrowDown?() == true { return }
+        case 53: // Escape
+            if onEscape?() == true { return }
+        case 48: // Tab
+            if onTab?() == true { return }
+        default:
+            break
         }
         super.keyDown(with: event)
     }
@@ -130,8 +193,16 @@ struct ChatInputView: View {
     var agents: [AIAgentInfo]
     @Binding var selectedAgent: String?
 
+    // 自动补全
+    var autocomplete: AutocompleteState?
+    var onSelectAutocomplete: ((AutocompleteItem) -> Void)?
+    /// 光标位置（外部读取用于定位弹出层）
+    @Binding var cursorRectInInput: CGRect
+
     @FocusState private var isFocused: Bool
     @State private var textContentHeight: CGFloat = 28
+    /// 光标在输入框内的位置（由 NSTextView 上报）
+    @State private var cursorRect: CGRect = .zero
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
@@ -151,6 +222,9 @@ struct ChatInputView: View {
             toolbar
         }
         .padding(12)
+        .onChange(of: cursorRect) { _, newRect in
+            cursorRectInInput = newRect
+        }
     }
 
     // MARK: - 图片预览行
@@ -195,7 +269,7 @@ struct ChatInputView: View {
     private var inputEditor: some View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
-                Text("输入消息...")
+                Text("输入消息...  @ 引用文件  / 斜杠命令")
                     .foregroundColor(.secondary.opacity(0.6))
                     .font(.system(size: 13))
                     .padding(.horizontal, 5)
@@ -207,14 +281,29 @@ struct ChatInputView: View {
             ChatTextView(
                 text: $text,
                 contentHeight: $textContentHeight,
+                cursorRect: $cursorRect,
                 font: .systemFont(ofSize: 13),
                 onEnter: {
+                    // 弹出层可见时，Enter 选择当前项
+                    if let ac = autocomplete, ac.isVisible, let item = ac.selectedItem {
+                        onSelectAutocomplete?(item)
+                        return
+                    }
                     if canSend && !isStreaming {
                         onSend()
                     }
                 },
                 isEnterEnabled: { [canSend, isStreaming] in
+                    if let ac = autocomplete, ac.isVisible { return true }
                     return canSend && !isStreaming
+                },
+                onArrowUp: { autocomplete?.isVisible == true ? { autocomplete?.moveUp(); return true }() : false },
+                onArrowDown: { autocomplete?.isVisible == true ? { autocomplete?.moveDown(); return true }() : false },
+                onEscape: { autocomplete?.isVisible == true ? { autocomplete?.reset(); return true }() : false },
+                onTab: {
+                    guard let ac = autocomplete, ac.isVisible, let item = ac.selectedItem else { return false }
+                    onSelectAutocomplete?(item)
+                    return true
                 }
             )
             .frame(height: min(max(textContentHeight, 28), 80))
@@ -416,7 +505,10 @@ struct ChatInputView: View {
             providers: [],
             selectedModel: .constant(nil),
             agents: [],
-            selectedAgent: .constant(nil)
+            selectedAgent: .constant(nil),
+            autocomplete: nil,
+            onSelectAutocomplete: nil,
+            cursorRectInInput: .constant(.zero)
         )
 
         ChatInputView(
@@ -428,7 +520,10 @@ struct ChatInputView: View {
             providers: [],
             selectedModel: .constant(nil),
             agents: [],
-            selectedAgent: .constant(nil)
+            selectedAgent: .constant(nil),
+            autocomplete: nil,
+            onSelectAutocomplete: nil,
+            cursorRectInInput: .constant(.zero)
         )
     }
     .padding()

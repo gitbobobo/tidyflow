@@ -508,6 +508,13 @@ pub enum ClientMessage {
         workspace_name: String,
     },
 
+    // vNext: AI 斜杠命令列表
+    #[serde(rename = "ai_slash_commands")]
+    AISlashCommands {
+        project_name: String,
+        workspace_name: String,
+    },
+
     // v1.40: 查询任务历史（iOS 重连恢复）
     ListTasks,
 }
@@ -1088,6 +1095,12 @@ pub enum ServerMessage {
         project_name: String,
         workspace_name: String,
         agents: Vec<ai::AgentInfo>,
+    },
+    #[serde(rename = "ai_slash_commands")]
+    AISlashCommandsResult {
+        project_name: String,
+        workspace_name: String,
+        commands: Vec<ai::SlashCommandInfo>,
     },
 }
 

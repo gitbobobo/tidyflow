@@ -291,3 +291,31 @@ struct AIProtocolAgentInfo {
         )
     }
 }
+
+// MARK: - 斜杠命令列表
+
+struct AISlashCommandsResult {
+    let projectName: String
+    let workspaceName: String
+    let commands: [AIProtocolSlashCommand]
+
+    static func from(json: [String: Any]) -> AISlashCommandsResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String else { return nil }
+        let items = (json["commands"] as? [[String: Any]] ?? []).compactMap { AIProtocolSlashCommand.from(json: $0) }
+        return AISlashCommandsResult(projectName: projectName, workspaceName: workspaceName, commands: items)
+    }
+}
+
+struct AIProtocolSlashCommand {
+    let name: String
+    let description: String
+    let action: String
+
+    static func from(json: [String: Any]) -> AIProtocolSlashCommand? {
+        guard let name = json["name"] as? String else { return nil }
+        let description = json["description"] as? String ?? ""
+        let action = json["action"] as? String ?? "client"
+        return AIProtocolSlashCommand(name: name, description: description, action: action)
+    }
+}
