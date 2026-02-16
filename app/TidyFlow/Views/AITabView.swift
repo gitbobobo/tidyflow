@@ -105,30 +105,48 @@ struct AITabView: View {
         }
         .onChange(of: appState.aiCurrentSessionId) { _, newSessionId in
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
-            if let newSessionId, let pending = pendingSendMessage {
+            if let newSessionId, let pending = pendingSendRequest {
                 guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
                       pending.projectName == appState.selectedProjectName,
                       pending.workspaceName == ws else {
-                    pendingSendMessage = nil
+                    pendingSendRequest = nil
                     return
                 }
-                pendingSendMessage = nil
-                appState.wsClient.requestAIChatSend(
-                    projectName: appState.selectedProjectName,
-                    workspaceName: ws,
+                pendingSendRequest = nil
+                sendPendingRequest(
+                    pending.kind,
                     sessionId: newSessionId,
-                    message: pending.text,
-                    fileRefs: pending.fileRefs,
-                    imageParts: pending.imageParts,
-                    model: pending.model,
-                    agent: pending.agent
+                    projectName: appState.selectedProjectName,
+                    workspaceName: ws
                 )
             }
         }
     }
 
-    /// 等待会话创建后发送的消息（含发起时的工作空间信息，防止跨空间误发）
-    @State private var pendingSendMessage: (projectName: String, workspaceName: String, text: String, imageParts: [[String: String]]?, model: [String: String]?, agent: String?, fileRefs: [String]?)? = nil
+    /// 等待会话创建后的发送请求（含发起时工作空间，防止跨空间误发）
+    private enum PendingAIRequestKind {
+        case message(
+            text: String,
+            imageParts: [[String: String]]?,
+            model: [String: String]?,
+            agent: String?,
+            fileRefs: [String]?
+        )
+        case command(
+            command: String,
+            arguments: String,
+            imageParts: [[String: String]]?,
+            model: [String: String]?,
+            agent: String?,
+            fileRefs: [String]?
+        )
+    }
+
+    @State private var pendingSendRequest: (
+        projectName: String,
+        workspaceName: String,
+        kind: PendingAIRequestKind
+    )? = nil
 
     private var toolbar: some View {
         HStack {
@@ -328,7 +346,7 @@ struct AITabView: View {
     /// 切换项目/工作空间时保存旧快照、恢复新快照
     private func resetAIContext() {
         // 清除待发消息，避免跨工作空间误发
-        pendingSendMessage = nil
+        pendingSendRequest = nil
 
         // 保存旧工作空间快照
         if let oldKey = previousSnapshotKey {
@@ -400,7 +418,7 @@ struct AITabView: View {
     private func createNewSession() {
         inputText = ""
         imageAttachments = []
-        pendingSendMessage = nil
+        pendingSendRequest = nil
         autocomplete.reset()
         appState.aiChatMessages = []
         appState.aiCurrentSessionId = nil
@@ -442,37 +460,13 @@ struct AITabView: View {
             autocomplete.reset()
 
         case .slashCommand:
-            let action = item.action ?? "client"
-            if action == "client" {
-                // 客户端本地执行
-                switch item.value {
-                case "clear", "new":
-                    createNewSession()
-                case "help":
-                    // 显示帮助：将可用命令列表作为提示插入
-                    let helpText = appState.aiSlashCommands.map { "/\($0.name) — \($0.description)" }.joined(separator: "\n")
-                    inputText = ""
-                    autocomplete.reset()
-                    let helpMessage = AIChatMessage(
-                        role: .assistant,
-                        parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "可用命令：\n\(helpText)", toolName: nil, toolState: nil)],
-                        isStreaming: false
-                    )
-                    appState.aiChatMessages.append(helpMessage)
-                default:
-                    inputText = ""
-                    autocomplete.reset()
-                }
+            // 2a：选中命令仅插入文本，不在此处执行；真正执行统一由 Enter 触发
+            if let replaceRange = autocomplete.replaceRange {
+                replaceInputText(in: replaceRange, with: "/\(item.value) ")
             } else {
-                // agent 类型命令：作为消息发送给 AI
-                if let replaceRange = autocomplete.replaceRange {
-                    replaceInputText(in: replaceRange, with: "/\(item.value)")
-                } else {
-                    inputText = "/\(item.value)"
-                }
-                autocomplete.reset()
-                sendMessage()
+                inputText = "/\(item.value) "
             }
+            autocomplete.reset()
 
         case .none:
             break
@@ -489,10 +483,7 @@ struct AITabView: View {
 
     private func slashCommandIcon(_ name: String) -> String {
         switch name {
-        case "clear": return "trash"
         case "new": return "square.and.pencil"
-        case "compact": return "arrow.down.right.and.arrow.up.left"
-        case "help": return "questionmark.circle"
         default: return "command"
         }
     }
@@ -509,6 +500,53 @@ struct AITabView: View {
         )
     }
 
+    private func sendPendingRequest(
+        _ kind: PendingAIRequestKind,
+        sessionId: String,
+        projectName: String,
+        workspaceName: String
+    ) {
+        switch kind {
+        case let .message(text, imageParts, model, agent, fileRefs):
+            appState.wsClient.requestAIChatSend(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                sessionId: sessionId,
+                message: text,
+                fileRefs: fileRefs,
+                imageParts: imageParts,
+                model: model,
+                agent: agent
+            )
+        case let .command(command, arguments, imageParts, model, agent, fileRefs):
+            appState.wsClient.requestAIChatCommand(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                sessionId: sessionId,
+                command: command,
+                arguments: arguments,
+                fileRefs: fileRefs,
+                imageParts: imageParts,
+                model: model,
+                agent: agent
+            )
+        }
+    }
+
+    private func parseSlashCommand(from text: String) -> (name: String, arguments: String)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, first == "/" || first == "／" else { return nil }
+        let body = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return nil }
+
+        if let separator = body.firstIndex(where: { $0.isWhitespace }) {
+            let name = String(body[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let arguments = String(body[separator...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (name, arguments)
+        }
+        return (body, "")
+    }
+
     private func sendMessage() {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty else { return }
@@ -518,6 +556,39 @@ struct AITabView: View {
         inputText = ""
         imageAttachments = []
         autocomplete.reset()
+
+        let slashCommand = parseSlashCommand(from: text)
+        let slashAction: String? = {
+            guard let slashCommand else { return nil }
+            return appState.aiSlashCommands.first(where: {
+                $0.name.caseInsensitiveCompare(slashCommand.name) == .orderedSame
+            })?.action
+        }()
+        if let slashCommand {
+            let resolvedAction = slashAction ?? (slashCommand.name.caseInsensitiveCompare("new") == .orderedSame ? "client" : "agent")
+            if resolvedAction == "client" {
+                switch slashCommand.name.lowercased() {
+                case "new":
+                    createNewSession()
+                default:
+                    // 当前仅支持 /new；未知 client 命令直接提示，避免误路由到 agent。
+                    appState.aiChatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            parts: [AIChatPart(
+                                id: UUID().uuidString,
+                                kind: .text,
+                                text: "暂不支持本地命令：/\(slashCommand.name)",
+                                toolName: nil,
+                                toolState: nil
+                            )],
+                            isStreaming: false
+                        )
+                    )
+                }
+                return
+            }
+        }
 
         // 提取 @文件引用
         let fileRefs = extractFileRefs(from: text)
@@ -554,19 +625,58 @@ struct AITabView: View {
 
         if let sessionId = appState.aiCurrentSessionId {
             // 已有会话，直接发送
-            appState.wsClient.requestAIChatSend(
-                projectName: appState.selectedProjectName,
-                workspaceName: ws,
-                sessionId: sessionId,
-                message: text,
-                fileRefs: fileRefsParam,
-                imageParts: imageParts,
-                model: model,
-                agent: agentName
-            )
+            if let slash = slashCommand {
+                appState.wsClient.requestAIChatCommand(
+                    projectName: appState.selectedProjectName,
+                    workspaceName: ws,
+                    sessionId: sessionId,
+                    command: slash.name,
+                    arguments: slash.arguments,
+                    fileRefs: fileRefsParam,
+                    imageParts: imageParts,
+                    model: model,
+                    agent: agentName
+                )
+            } else {
+                appState.wsClient.requestAIChatSend(
+                    projectName: appState.selectedProjectName,
+                    workspaceName: ws,
+                    sessionId: sessionId,
+                    message: text,
+                    fileRefs: fileRefsParam,
+                    imageParts: imageParts,
+                    model: model,
+                    agent: agentName
+                )
+            }
         } else {
             // 无会话，先创建再发送
-            pendingSendMessage = (appState.selectedProjectName, ws, text, imageParts, model, agentName, fileRefsParam)
+            if let slash = slashCommand {
+                pendingSendRequest = (
+                    appState.selectedProjectName,
+                    ws,
+                    .command(
+                        command: slash.name,
+                        arguments: slash.arguments,
+                        imageParts: imageParts,
+                        model: model,
+                        agent: agentName,
+                        fileRefs: fileRefsParam
+                    )
+                )
+            } else {
+                pendingSendRequest = (
+                    appState.selectedProjectName,
+                    ws,
+                    .message(
+                        text: text,
+                        imageParts: imageParts,
+                        model: model,
+                        agent: agentName,
+                        fileRefs: fileRefsParam
+                    )
+                )
+            }
             appState.wsClient.requestAIChatStart(
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,

@@ -127,6 +127,9 @@ pub async fn handle_ai_message(
     if try_handle_ai_chat_send(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
+    if try_handle_ai_chat_command(client_msg, socket, app_state, ai_state).await? {
+        return Ok(true);
+    }
     if try_handle_ai_chat_abort(client_msg, app_state, ai_state).await? {
         return Ok(true);
     }
@@ -145,7 +148,7 @@ pub async fn handle_ai_message(
     if try_handle_ai_agent_list(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
-    if try_handle_ai_slash_commands(client_msg, socket, app_state).await? {
+    if try_handle_ai_slash_commands(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
     Ok(false)
@@ -180,7 +183,8 @@ async fn try_handle_ai_chat_start(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     send_message(
@@ -247,7 +251,15 @@ async fn try_handle_ai_chat_send(
     });
 
     let mut stream = match agent
-        .send_message(&directory, session_id, message, file_refs.clone(), ai_image_parts, ai_model, agent_name.clone())
+        .send_message(
+            &directory,
+            session_id,
+            message,
+            file_refs.clone(),
+            ai_image_parts,
+            ai_model,
+            agent_name.clone(),
+        )
         .await
     {
         Ok(stream) => stream,
@@ -275,8 +287,12 @@ async fn try_handle_ai_chat_send(
     {
         let mut ai = ai_state.lock().await;
         ai.active_streams.insert(abort_key.clone(), abort_tx);
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
-        let active = ai.directory_active_streams.entry(directory.clone()).or_insert(0);
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
+        let active = ai
+            .directory_active_streams
+            .entry(directory.clone())
+            .or_insert(0);
         *active += 1;
     }
 
@@ -378,9 +394,222 @@ async fn try_handle_ai_chat_send(
     {
         let mut ai = ai_state.lock().await;
         ai.active_streams.remove(&abort_key);
-        let active = ai.directory_active_streams.entry(directory.clone()).or_insert(0);
+        let active = ai
+            .directory_active_streams
+            .entry(directory.clone())
+            .or_insert(0);
         *active = active.saturating_sub(1);
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
+    }
+
+    if aborted {
+        return Ok(true);
+    }
+
+    Ok(true)
+}
+
+async fn try_handle_ai_chat_command(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AIChatCommand {
+        project_name,
+        workspace_name,
+        session_id,
+        command,
+        arguments,
+        file_refs,
+        image_parts,
+        model,
+        agent: agent_name,
+    } = msg
+    else {
+        return Ok(false);
+    };
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state).await?;
+    ensure_maintenance(ai_state, agent.clone()).await;
+
+    info!(
+        "AIChatCommand: project={}, workspace={}, session_id={}, command={}, arguments_len={}",
+        project_name,
+        workspace_name,
+        session_id,
+        command,
+        arguments.len()
+    );
+
+    let ai_image_parts = image_parts.as_ref().map(|parts| {
+        parts
+            .iter()
+            .map(|p| crate::ai::AiImagePart {
+                filename: p.filename.clone(),
+                mime: p.mime.clone(),
+                data: p.data.clone(),
+            })
+            .collect()
+    });
+    let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
+        provider_id: m.provider_id.clone(),
+        model_id: m.model_id.clone(),
+    });
+
+    let mut stream = match agent
+        .send_command(
+            &directory,
+            session_id,
+            command,
+            arguments,
+            file_refs.clone(),
+            ai_image_parts,
+            ai_model,
+            agent_name.clone(),
+        )
+        .await
+    {
+        Ok(stream) => stream,
+        Err(e) => {
+            warn!(
+                "AIChatCommand: send_command failed, project={}, workspace={}, session_id={}, command={}, error={}",
+                project_name, workspace_name, session_id, command, e
+            );
+            send_message(
+                socket,
+                &crate::server::protocol::ServerMessage::AIChatErrorV2 {
+                    project_name: project_name.clone(),
+                    workspace_name: workspace_name.clone(),
+                    session_id: session_id.clone(),
+                    error: e,
+                },
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+
+    let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
+    let abort_key = stream_key(&directory, session_id);
+    {
+        let mut ai = ai_state.lock().await;
+        ai.active_streams.insert(abort_key.clone(), abort_tx);
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
+        let active = ai
+            .directory_active_streams
+            .entry(directory.clone())
+            .or_insert(0);
+        *active += 1;
+    }
+
+    let mut aborted = false;
+    loop {
+        tokio::select! {
+            _ = abort_rx.recv() => {
+                aborted = true;
+                let _ = agent.abort_session(&directory, session_id).await;
+                send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
+                    project_name: project_name.clone(),
+                    workspace_name: workspace_name.clone(),
+                    session_id: session_id.clone(),
+                }).await?;
+                break;
+            }
+            event = stream.next() => {
+                match event {
+                    Some(Ok(ai_event)) => {
+                        match ai_event {
+                            AiEvent::MessageUpdated { message_id, role } => {
+                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatMessageUpdated {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                    message_id,
+                                    role,
+                                }).await?;
+                            }
+                            AiEvent::PartUpdated { message_id, part } => {
+                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatPartUpdated {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                    message_id,
+                                    part: crate::server::protocol::ai::PartInfo {
+                                        id: part.id,
+                                        part_type: part.part_type,
+                                        text: part.text,
+                                        tool_name: part.tool_name,
+                                        tool_state: part.tool_state,
+                                    }
+                                }).await?;
+                            }
+                            AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
+                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatPartDelta {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                    message_id,
+                                    part_id,
+                                    part_type,
+                                    field,
+                                    delta,
+                                }).await?;
+                            }
+                            AiEvent::Error { message } => {
+                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatErrorV2 {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                    error: message,
+                                }).await?;
+                                break;
+                            }
+                            AiEvent::Done => {
+                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                }).await?;
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(e)) => {
+                        send_message(socket, &crate::server::protocol::ServerMessage::AIChatErrorV2 {
+                            project_name: project_name.clone(),
+                            workspace_name: workspace_name.clone(),
+                            session_id: session_id.clone(),
+                            error: e,
+                        }).await?;
+                        break;
+                    }
+                    None => {
+                        send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
+                            project_name: project_name.clone(),
+                            workspace_name: workspace_name.clone(),
+                            session_id: session_id.clone(),
+                        }).await?;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        let mut ai = ai_state.lock().await;
+        ai.active_streams.remove(&abort_key);
+        let active = ai
+            .directory_active_streams
+            .entry(directory.clone())
+            .or_insert(0);
+        *active = active.saturating_sub(1);
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     if aborted {
@@ -409,7 +638,8 @@ async fn try_handle_ai_chat_abort(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     let abort_tx = {
@@ -448,7 +678,8 @@ async fn try_handle_ai_session_list(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     let sessions = agent.list_sessions(&directory).await?;
@@ -498,7 +729,8 @@ async fn try_handle_ai_session_messages(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     let messages = agent
@@ -557,7 +789,8 @@ async fn try_handle_ai_session_delete(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     // 先清理本地 active stream
@@ -592,7 +825,8 @@ async fn try_handle_ai_provider_list(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     let providers = agent.list_providers(&directory).await?;
@@ -646,7 +880,8 @@ async fn try_handle_ai_agent_list(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms.insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
     }
 
     let agents = agent.list_agents(&directory).await?;
@@ -683,6 +918,7 @@ async fn try_handle_ai_slash_commands(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
+    ai_state: &SharedAIState,
 ) -> Result<bool, String> {
     let ClientMessage::AISlashCommands {
         project_name,
@@ -692,32 +928,38 @@ async fn try_handle_ai_slash_commands(
         return Ok(false);
     };
 
-    // 验证工作空间存在
-    let _directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    // 验证工作空间存在，并作为 /command 的目录路由依据
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
 
     use crate::server::protocol::ai::SlashCommandInfo;
-    let commands = vec![
-        SlashCommandInfo {
-            name: "clear".to_string(),
-            description: "清空当前对话".to_string(),
-            action: "client".to_string(),
-        },
-        SlashCommandInfo {
-            name: "new".to_string(),
-            description: "新建会话".to_string(),
-            action: "client".to_string(),
-        },
-        SlashCommandInfo {
-            name: "compact".to_string(),
-            description: "压缩上下文（减少 token 用量）".to_string(),
-            action: "agent".to_string(),
-        },
-        SlashCommandInfo {
-            name: "help".to_string(),
-            description: "显示可用命令".to_string(),
-            action: "client".to_string(),
-        },
-    ];
+    use std::collections::BTreeMap;
+
+    // 内置兜底命令：按当前产品约定，仅保留 /new 本地命令。
+    let mut command_map: BTreeMap<String, SlashCommandInfo> = BTreeMap::new();
+    for cmd in [SlashCommandInfo {
+        name: "new".to_string(),
+        description: "新建会话".to_string(),
+        action: "client".to_string(),
+    }] {
+        command_map.insert(cmd.name.clone(), cmd);
+    }
+
+    // 动态命令来源：OpenCode /command（与 CLI 实际可用命令保持一致）
+    if let Ok(agent) = ensure_agent(ai_state).await {
+        ensure_maintenance(ai_state, agent.clone()).await;
+        if let Ok(dynamic_commands) = agent.list_slash_commands(&directory).await {
+            for cmd in dynamic_commands {
+                let info = SlashCommandInfo {
+                    name: cmd.name,
+                    description: cmd.description,
+                    action: cmd.action,
+                };
+                command_map.insert(info.name.clone(), info);
+            }
+        }
+    }
+
+    let commands: Vec<SlashCommandInfo> = command_map.into_values().collect();
 
     send_message(
         socket,

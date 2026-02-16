@@ -25,10 +25,7 @@ pub enum AiEvent {
     /// message.updated：用于建立 message_id -> role 映射，以及创建消息壳
     MessageUpdated { message_id: String, role: String },
     /// message.part.updated：全量 part（text/reasoning/tool）
-    PartUpdated {
-        message_id: String,
-        part: AiPart,
-    },
+    PartUpdated { message_id: String, part: AiPart },
     /// message.part.delta：按 part_id 的增量更新（通常 field=text）
     PartDelta {
         message_id: String,
@@ -118,6 +115,17 @@ pub struct AiAgentInfo {
     pub default_model_id: Option<String>,
 }
 
+/// AI 斜杠命令（用于输入框自动补全）
+#[derive(Debug, Clone)]
+pub struct AiSlashCommand {
+    /// 命令名（不含 `/`）
+    pub name: String,
+    /// 命令描述
+    pub description: String,
+    /// 执行方式："client" | "agent"
+    pub action: String,
+}
+
 /// AI 事件流类型别名
 pub type AiEventStream = Pin<Box<dyn Stream<Item = Result<AiEvent, String>> + Send>>;
 
@@ -152,6 +160,37 @@ pub trait AiAgent: Send + Sync {
         agent: Option<String>,
     ) -> Result<AiEventStream, String>;
 
+    /// 发送斜杠命令（默认回退为普通文本消息）
+    async fn send_command(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        arguments: &str,
+        file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
+    ) -> Result<AiEventStream, String> {
+        let command = command.trim();
+        let arguments = arguments.trim();
+        let message = if arguments.is_empty() {
+            format!("/{}", command)
+        } else {
+            format!("/{} {}", command, arguments)
+        };
+        self.send_message(
+            directory,
+            session_id,
+            &message,
+            file_refs,
+            image_parts,
+            model,
+            agent,
+        )
+        .await
+    }
+
     /// 列出会话
     async fn list_sessions(&self, directory: &str) -> Result<Vec<AiSession>, String>;
 
@@ -179,6 +218,11 @@ pub trait AiAgent: Send + Sync {
 
     /// 获取 agent 列表（默认返回空）
     async fn list_agents(&self, _directory: &str) -> Result<Vec<AiAgentInfo>, String> {
+        Ok(vec![])
+    }
+
+    /// 获取斜杠命令列表（默认返回空）
+    async fn list_slash_commands(&self, _directory: &str) -> Result<Vec<AiSlashCommand>, String> {
         Ok(vec![])
     }
 }

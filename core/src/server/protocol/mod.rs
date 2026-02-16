@@ -470,6 +470,22 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
     },
+    #[serde(rename = "ai_chat_command")]
+    AIChatCommand {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
+        command: String,
+        arguments: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_refs: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        image_parts: Option<Vec<ai::ImagePart>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<ai::ModelSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+    },
     #[serde(rename = "ai_chat_abort")]
     AIChatAbort {
         project_name: String,

@@ -122,4 +122,3 @@ mod tests {
         assert_eq!(parsed.id, "s1");
     }
 }
-

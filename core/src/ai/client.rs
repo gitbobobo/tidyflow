@@ -279,6 +279,84 @@ impl OpenCodeClient {
         }
     }
 
+    /// 异步发送斜杠命令（POST /session/{id}/command，立即返回）
+    pub async fn send_command_async(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        arguments: &str,
+        file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<super::AiImagePart>>,
+        model: Option<super::AiModelSelection>,
+        agent: Option<String>,
+    ) -> Result<(), OpenCodeError> {
+        let url = format!("{}/session/{}/command", self.base_url, session_id);
+
+        let mut body = serde_json::json!({
+            "command": command,
+            "arguments": arguments,
+        });
+
+        let mut parts: Vec<serde_json::Value> = Vec::new();
+
+        if let Some(ref refs) = file_refs {
+            for r in refs {
+                let abs = if r.starts_with('/') {
+                    r.to_string()
+                } else {
+                    format!("{}/{}", directory.trim_end_matches('/'), r)
+                };
+                parts.push(serde_json::json!({
+                    "type": "file",
+                    "url": format!("file://{}", abs),
+                    "filename": r,
+                    "mime": "text/plain",
+                }));
+            }
+        }
+
+        if let Some(ref images) = image_parts {
+            for img in images {
+                parts.push(serde_json::json!({
+                    "type": "file",
+                    "url": format!("data:{};base64,{}", img.mime, img.data),
+                    "filename": img.filename,
+                    "mime": img.mime,
+                }));
+            }
+        }
+
+        if !parts.is_empty() {
+            body["parts"] = serde_json::Value::Array(parts);
+        }
+
+        if let Some(ref m) = model {
+            body["model"] = serde_json::json!({
+                "providerID": m.provider_id,
+                "modelID": m.model_id,
+            });
+        }
+
+        if let Some(ref a) = agent {
+            body["agent"] = serde_json::json!(a);
+        }
+
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if status == 204 || response.status().is_success() {
+            Ok(())
+        } else {
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
     /// 订阅全局 SSE 事件流（GET /global/event）
     pub async fn subscribe_global_events(
         &self,
@@ -507,10 +585,7 @@ impl OpenCodeClient {
     }
 
     /// 获取 agent 列表（GET /agent）
-    pub async fn list_agents(
-        &self,
-        directory: &str,
-    ) -> Result<Vec<AgentResponse>, OpenCodeError> {
+    pub async fn list_agents(&self, directory: &str) -> Result<Vec<AgentResponse>, OpenCodeError> {
         let url = format!("{}/agent", self.base_url);
         let response = self
             .with_directory(self.client.get(&url), directory)
@@ -549,6 +624,31 @@ impl OpenCodeClient {
                 }
             }
             Ok(vec![])
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    /// 获取命令列表（GET /command）
+    pub async fn list_commands(
+        &self,
+        directory: &str,
+    ) -> Result<Vec<CommandResponse>, OpenCodeError> {
+        let url = format!("{}/command", self.base_url);
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let body = response.text().await?;
+            // OpenCode 返回数组格式；解析失败时降级为空，避免影响聊天主链路。
+            match serde_json::from_str::<Vec<CommandResponse>>(&body) {
+                Ok(items) => Ok(items),
+                Err(_) => Ok(vec![]),
+            }
         } else {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
@@ -620,6 +720,16 @@ pub struct AgentResponse {
     /// agent 默认模型 { providerID, modelID }
     #[serde(default)]
     pub model: Option<AgentDefaultModel>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommandResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -771,7 +881,10 @@ impl tokio_stream::Stream for SseJsonStream {
 // ============================================================================
 
 use super::event_hub::OpenCodeEventHub;
-use super::{AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo, AiModelSelection, AiPart, AiProviderInfo, AiSession, OpenCodeManager};
+use super::{
+    AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
+    AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSlashCommand, OpenCodeManager,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex as StdMutex};
@@ -791,7 +904,11 @@ impl OpenCodeAgent {
         Self { manager, hub }
     }
 
-    async fn verify_session_directory(&self, directory: &str, session_id: &str) -> Result<(), String> {
+    async fn verify_session_directory(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<(), String> {
         let client = OpenCodeClient::from_manager(&self.manager);
         let session = client
             .get_session(session_id)
@@ -867,7 +984,15 @@ impl AiAgent for OpenCodeAgent {
 
         // 2. 异步发送消息（立即返回）
         client
-            .send_message_async(directory, session_id, message, file_refs, image_parts, model, agent)
+            .send_message_async(
+                directory,
+                session_id,
+                message,
+                file_refs,
+                image_parts,
+                model,
+                agent,
+            )
             .await
             .map_err(|e| format!("Failed to send message: {}", e))?;
 
@@ -900,238 +1025,523 @@ impl AiAgent for OpenCodeAgent {
                     }
                     let bus_event = hub_event.event;
                     match bus_event.event_type.as_str() {
-                    // message.updated：记录 messageID -> role 映射
-                    "message.updated" => {
-                        let props = &bus_event.properties;
-                        let info = props.get("info")?;
-                        let info_session = info.get("sessionID").and_then(|v| v.as_str())?;
-                        if info_session != session_id {
-                            return None;
-                        }
-                        let message_id = info.get("id").and_then(|v| v.as_str())?.to_string();
-                        let role = info
-                            .get("role")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        if !message_id.is_empty() && !role.is_empty() {
-                            if let Ok(mut map) = message_roles.lock() {
-                                map.insert(message_id, role);
-                            }
-                        }
-                        // 只对 assistant 转发，用户消息不需要展示（UI 已本地插入）
-                        let role = info
-                            .get("role")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if role == "assistant" {
-                            Some(Ok(AiEvent::MessageUpdated {
-                                message_id: info.get("id")?.as_str()?.to_string(),
-                                role: role.to_string(),
-                            }))
-                        } else {
-                            None
-                        }
-                    }
-
-                    // part 全量：message.part.updated
-                    "message.part.updated" => {
-                        let props = &bus_event.properties;
-                        let part = props.get("part")?;
-                        let part_session = part.get("sessionID").and_then(|v| v.as_str())?;
-                        if part_session != session_id {
-                            return None;
-                        }
-                        let message_id =
-                            part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
-                        let part_id = part.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-                        let role = if !message_id.is_empty() {
-                            message_roles
-                                .lock()
-                                .ok()
-                                .and_then(|m| m.get(message_id).cloned())
-                        } else {
-                            None
-                        };
-
-                        // 已知是 user 的 message：一律不转发到 AIChatText，避免重复显示
-                        if let Some(ref r) = role {
-                            if r == "user" {
+                        // message.updated：记录 messageID -> role 映射
+                        "message.updated" => {
+                            let props = &bus_event.properties;
+                            let info = props.get("info")?;
+                            let info_session = info.get("sessionID").and_then(|v| v.as_str())?;
+                            if info_session != session_id {
                                 return None;
                             }
-                        }
-
-                        let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-                        // 记录 partID -> type，用于后续 message.part.delta
-                        if !part_id.is_empty() && !part_type.is_empty() {
-                            if let Ok(mut map) = part_types.lock() {
-                                map.insert(part_id.to_string(), part_type.to_string());
-                            }
-                        }
-
-                        let part_id = part_id.to_string();
-                        let part_type_s = part_type.to_string();
-                        let message_id_s = message_id.to_string();
-
-                        let tool_name = part
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .or_else(|| part.get("tool").and_then(|v| v.as_str()))
-                            .map(|s| s.to_string());
-
-                        let text = part
-                            .get("text")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-
-                        // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
-                        if role.is_none()
-                            && part_type == "text"
-                            && !user_message.is_empty()
-                            && text
-                                .as_deref()
+                            let message_id = info.get("id").and_then(|v| v.as_str())?.to_string();
+                            let role = info
+                                .get("role")
+                                .and_then(|v| v.as_str())
                                 .unwrap_or("")
-                                .trim()
-                                == user_message.trim()
-                        {
-                            return None;
-                        }
-
-                        let tool_state = part.get("state").cloned();
-
-                        Some(Ok(AiEvent::PartUpdated {
-                            message_id: message_id_s,
-                            part: AiPart {
-                                id: part_id,
-                                part_type: part_type_s,
-                                text,
-                                tool_name,
-                                tool_state,
-                            },
-                        }))
-                    }
-                    // OpenCode 新版：message.part.delta 承载真正的流式增量（按 partID 分发）
-                    "message.part.delta" => {
-                        let props = &bus_event.properties;
-                        let delta_session = props.get("sessionID").and_then(|v| v.as_str())?;
-                        if delta_session != session_id {
-                            return None;
-                        }
-                        let message_id = props
-                            .get("messageID")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let part_id = props.get("partID").and_then(|v| v.as_str()).unwrap_or("");
-                        let field = props.get("field").and_then(|v| v.as_str()).unwrap_or("");
-                        let delta = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                        if delta.is_empty() || field != "text" {
-                            return None;
-                        }
-
-                        let role = if !message_id.is_empty() {
-                            message_roles
-                                .lock()
-                                .ok()
-                                .and_then(|m| m.get(message_id).cloned())
-                        } else {
-                            None
-                        };
-                        if let Some(ref r) = role {
-                            if r == "user" {
-                                return None;
+                                .to_string();
+                            if !message_id.is_empty() && !role.is_empty() {
+                                if let Ok(mut map) = message_roles.lock() {
+                                    map.insert(message_id, role);
+                                }
+                            }
+                            // 只对 assistant 转发，用户消息不需要展示（UI 已本地插入）
+                            let role = info.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                            if role == "assistant" {
+                                Some(Ok(AiEvent::MessageUpdated {
+                                    message_id: info.get("id")?.as_str()?.to_string(),
+                                    role: role.to_string(),
+                                }))
+                            } else {
+                                None
                             }
                         }
 
-                        let part_type = if !part_id.is_empty() {
-                            part_types.lock().ok().and_then(|m| m.get(part_id).cloned())
-                        } else {
-                            None
-                        };
+                        // part 全量：message.part.updated
+                        "message.part.updated" => {
+                            let props = &bus_event.properties;
+                            let part = props.get("part")?;
+                            let part_session = part.get("sessionID").and_then(|v| v.as_str())?;
+                            if part_session != session_id {
+                                return None;
+                            }
+                            let message_id =
+                                part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
+                            let part_id = part.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
-                        let part_type_s = part_type.clone().unwrap_or_else(|| "text".to_string());
-                        if role.is_none() && !user_message.is_empty() && delta.trim() == user_message.trim() {
-                            return None;
+                            let role = if !message_id.is_empty() {
+                                message_roles
+                                    .lock()
+                                    .ok()
+                                    .and_then(|m| m.get(message_id).cloned())
+                            } else {
+                                None
+                            };
+
+                            // 已知是 user 的 message：一律不转发到 AIChatText，避免重复显示
+                            if let Some(ref r) = role {
+                                if r == "user" {
+                                    return None;
+                                }
+                            }
+
+                            let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                            // 记录 partID -> type，用于后续 message.part.delta
+                            if !part_id.is_empty() && !part_type.is_empty() {
+                                if let Ok(mut map) = part_types.lock() {
+                                    map.insert(part_id.to_string(), part_type.to_string());
+                                }
+                            }
+
+                            let part_id = part_id.to_string();
+                            let part_type_s = part_type.to_string();
+                            let message_id_s = message_id.to_string();
+
+                            let tool_name = part
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| part.get("tool").and_then(|v| v.as_str()))
+                                .map(|s| s.to_string());
+
+                            let text = part
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+
+                            // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
+                            if role.is_none()
+                                && part_type == "text"
+                                && !user_message.is_empty()
+                                && text.as_deref().unwrap_or("").trim() == user_message.trim()
+                            {
+                                return None;
+                            }
+
+                            let tool_state = part.get("state").cloned();
+
+                            Some(Ok(AiEvent::PartUpdated {
+                                message_id: message_id_s,
+                                part: AiPart {
+                                    id: part_id,
+                                    part_type: part_type_s,
+                                    text,
+                                    tool_name,
+                                    tool_state,
+                                },
+                            }))
                         }
-                        Some(Ok(AiEvent::PartDelta {
-                            message_id: message_id.to_string(),
-                            part_id: part_id.to_string(),
-                            part_type: part_type_s,
-                            field: field.to_string(),
-                            delta: delta.to_string(),
-                        }))
-                    }
-                    // 会话状态变为 idle 表示处理完成
-                    "session.idle" => {
-                        let props = &bus_event.properties;
-                        let idle_session = props
-                            .get("sessionID")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if idle_session == session_id {
-                            Some(Ok(AiEvent::Done))
-                        } else {
-                            None
+                        // OpenCode 新版：message.part.delta 承载真正的流式增量（按 partID 分发）
+                        "message.part.delta" => {
+                            let props = &bus_event.properties;
+                            let delta_session = props.get("sessionID").and_then(|v| v.as_str())?;
+                            if delta_session != session_id {
+                                return None;
+                            }
+                            let message_id = props
+                                .get("messageID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let part_id =
+                                props.get("partID").and_then(|v| v.as_str()).unwrap_or("");
+                            let field = props.get("field").and_then(|v| v.as_str()).unwrap_or("");
+                            let delta = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                            if delta.is_empty() || field != "text" {
+                                return None;
+                            }
+
+                            let role = if !message_id.is_empty() {
+                                message_roles
+                                    .lock()
+                                    .ok()
+                                    .and_then(|m| m.get(message_id).cloned())
+                            } else {
+                                None
+                            };
+                            if let Some(ref r) = role {
+                                if r == "user" {
+                                    return None;
+                                }
+                            }
+
+                            let part_type = if !part_id.is_empty() {
+                                part_types.lock().ok().and_then(|m| m.get(part_id).cloned())
+                            } else {
+                                None
+                            };
+
+                            let part_type_s =
+                                part_type.clone().unwrap_or_else(|| "text".to_string());
+                            if role.is_none()
+                                && !user_message.is_empty()
+                                && delta.trim() == user_message.trim()
+                            {
+                                return None;
+                            }
+                            Some(Ok(AiEvent::PartDelta {
+                                message_id: message_id.to_string(),
+                                part_id: part_id.to_string(),
+                                part_type: part_type_s,
+                                field: field.to_string(),
+                                delta: delta.to_string(),
+                            }))
                         }
-                    }
-                    "session.status" => {
-                        let props = &bus_event.properties;
-                        // session.status 的 properties 可能直接包含 sessionID
-                        // 也可能是 Record<sessionID, status>
-                        let matches_session = props.get(&session_id).is_some()
-                            || props
+                        // 会话状态变为 idle 表示处理完成
+                        "session.idle" => {
+                            let props = &bus_event.properties;
+                            let idle_session = props
                                 .get("sessionID")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s == session_id)
-                                .unwrap_or(false);
-                        if !matches_session {
-                            return None;
+                                .unwrap_or("");
+                            if idle_session == session_id {
+                                Some(Ok(AiEvent::Done))
+                            } else {
+                                None
+                            }
                         }
-                        let is_idle = props
-                            .get(&session_id)
-                            .and_then(|v| v.get("type"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s == "idle")
-                            .unwrap_or(false)
-                            || props
-                                .get("status")
+                        "session.status" => {
+                            let props = &bus_event.properties;
+                            // session.status 的 properties 可能直接包含 sessionID
+                            // 也可能是 Record<sessionID, status>
+                            let matches_session = props.get(&session_id).is_some()
+                                || props
+                                    .get("sessionID")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == session_id)
+                                    .unwrap_or(false);
+                            if !matches_session {
+                                return None;
+                            }
+                            let is_idle = props
+                                .get(&session_id)
                                 .and_then(|v| v.get("type"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s == "idle")
                                 .unwrap_or(false)
-                            || props
-                                .get("type")
+                                || props
+                                    .get("status")
+                                    .and_then(|v| v.get("type"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == "idle")
+                                    .unwrap_or(false)
+                                || props
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == "idle")
+                                    .unwrap_or(false);
+                            if is_idle {
+                                Some(Ok(AiEvent::Done))
+                            } else {
+                                None
+                            }
+                        }
+                        // 会话错误
+                        "session.error" => {
+                            let props = &bus_event.properties;
+                            let err_session = props
+                                .get("sessionID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if err_session != session_id {
+                                return None;
+                            }
+                            let message = props
+                                .get("error")
+                                .and_then(|v| v.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error")
+                                .to_string();
+                            Some(Ok(AiEvent::Error { message }))
+                        }
+                        // 心跳和连接事件忽略
+                        "server.heartbeat" | "server.connected" => None,
+                        _ => None,
+                    }
+                }
+                Err(e) => Some(Err(e.to_string())),
+            }
+        });
+
+        Ok(Box::pin(mapped))
+    }
+
+    async fn send_command(
+        &self,
+        directory: &str,
+        session_id: &str,
+        command: &str,
+        arguments: &str,
+        file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
+    ) -> Result<AiEventStream, String> {
+        self.verify_session_directory(directory, session_id).await?;
+
+        let client = OpenCodeClient::from_manager(&self.manager);
+
+        // 1. 先订阅 Hub，避免丢首包
+        let rx = self.hub.subscribe();
+
+        // 2. 触发 command 请求
+        client
+            .send_command_async(
+                directory,
+                session_id,
+                command,
+                arguments,
+                file_refs,
+                image_parts,
+                model,
+                agent,
+            )
+            .await
+            .map_err(|e| format!("Failed to send command: {}", e))?;
+
+        // 3. 与 send_message 使用同一套事件映射逻辑（避免行为分叉）
+        let session_id = session_id.to_string();
+        let directory = directory.to_string();
+        let user_message = if arguments.trim().is_empty() {
+            format!("/{}", command.trim())
+        } else {
+            format!("/{} {}", command.trim(), arguments.trim())
+        };
+        let message_roles: StdArc<StdMutex<HashMap<String, String>>> =
+            StdArc::new(StdMutex::new(HashMap::new()));
+        let part_types: StdArc<StdMutex<HashMap<String, String>>> =
+            StdArc::new(StdMutex::new(HashMap::new()));
+
+        let stream = tokio_stream::wrappers::BroadcastStream::new(rx);
+        let mapped = tokio_stream::StreamExt::filter_map(stream, move |result| {
+            let message_roles = message_roles.clone();
+            let part_types = part_types.clone();
+            let session_id = session_id.clone();
+            let directory = directory.clone();
+            let user_message = user_message.clone();
+
+            match result {
+                Ok(hub_event) => {
+                    if hub_event.directory.as_deref() != Some(directory.as_str()) {
+                        return None;
+                    }
+                    let bus_event = hub_event.event;
+                    match bus_event.event_type.as_str() {
+                        "message.updated" => {
+                            let props = &bus_event.properties;
+                            let info = props.get("info")?;
+                            let info_session = info.get("sessionID").and_then(|v| v.as_str())?;
+                            if info_session != session_id {
+                                return None;
+                            }
+                            let message_id = info.get("id").and_then(|v| v.as_str())?.to_string();
+                            let role = info
+                                .get("role")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if !message_id.is_empty() && !role.is_empty() {
+                                if let Ok(mut map) = message_roles.lock() {
+                                    map.insert(message_id, role);
+                                }
+                            }
+                            let role = info.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                            if role == "assistant" {
+                                Some(Ok(AiEvent::MessageUpdated {
+                                    message_id: info.get("id")?.as_str()?.to_string(),
+                                    role: role.to_string(),
+                                }))
+                            } else {
+                                None
+                            }
+                        }
+                        "message.part.updated" => {
+                            let props = &bus_event.properties;
+                            let part = props.get("part")?;
+                            let part_session = part.get("sessionID").and_then(|v| v.as_str())?;
+                            if part_session != session_id {
+                                return None;
+                            }
+                            let message_id =
+                                part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
+                            let part_id = part.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+                            let role = if !message_id.is_empty() {
+                                message_roles
+                                    .lock()
+                                    .ok()
+                                    .and_then(|m| m.get(message_id).cloned())
+                            } else {
+                                None
+                            };
+
+                            if let Some(ref r) = role {
+                                if r == "user" {
+                                    return None;
+                                }
+                            }
+
+                            let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                            if !part_id.is_empty() && !part_type.is_empty() {
+                                if let Ok(mut map) = part_types.lock() {
+                                    map.insert(part_id.to_string(), part_type.to_string());
+                                }
+                            }
+
+                            let part_id = part_id.to_string();
+                            let part_type_s = part_type.to_string();
+                            let message_id_s = message_id.to_string();
+
+                            let tool_name = part
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| part.get("tool").and_then(|v| v.as_str()))
+                                .map(|s| s.to_string());
+
+                            let text = part
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+
+                            if role.is_none()
+                                && part_type == "text"
+                                && !user_message.is_empty()
+                                && text.as_deref().unwrap_or("").trim() == user_message.trim()
+                            {
+                                return None;
+                            }
+
+                            let tool_state = part.get("state").cloned();
+
+                            Some(Ok(AiEvent::PartUpdated {
+                                message_id: message_id_s,
+                                part: AiPart {
+                                    id: part_id,
+                                    part_type: part_type_s,
+                                    text,
+                                    tool_name,
+                                    tool_state,
+                                },
+                            }))
+                        }
+                        "message.part.delta" => {
+                            let props = &bus_event.properties;
+                            let delta_session = props.get("sessionID").and_then(|v| v.as_str())?;
+                            if delta_session != session_id {
+                                return None;
+                            }
+                            let message_id = props
+                                .get("messageID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let part_id =
+                                props.get("partID").and_then(|v| v.as_str()).unwrap_or("");
+                            let field = props.get("field").and_then(|v| v.as_str()).unwrap_or("");
+                            let delta = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                            if delta.is_empty() || field != "text" {
+                                return None;
+                            }
+
+                            let role = if !message_id.is_empty() {
+                                message_roles
+                                    .lock()
+                                    .ok()
+                                    .and_then(|m| m.get(message_id).cloned())
+                            } else {
+                                None
+                            };
+                            if let Some(ref r) = role {
+                                if r == "user" {
+                                    return None;
+                                }
+                            }
+
+                            let part_type = if !part_id.is_empty() {
+                                part_types.lock().ok().and_then(|m| m.get(part_id).cloned())
+                            } else {
+                                None
+                            };
+
+                            let part_type_s =
+                                part_type.clone().unwrap_or_else(|| "text".to_string());
+                            if role.is_none()
+                                && !user_message.is_empty()
+                                && delta.trim() == user_message.trim()
+                            {
+                                return None;
+                            }
+                            Some(Ok(AiEvent::PartDelta {
+                                message_id: message_id.to_string(),
+                                part_id: part_id.to_string(),
+                                part_type: part_type_s,
+                                field: field.to_string(),
+                                delta: delta.to_string(),
+                            }))
+                        }
+                        "session.idle" => {
+                            let props = &bus_event.properties;
+                            let idle_session = props
+                                .get("sessionID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if idle_session == session_id {
+                                Some(Ok(AiEvent::Done))
+                            } else {
+                                None
+                            }
+                        }
+                        "session.status" => {
+                            let props = &bus_event.properties;
+                            let matches_session = props.get(&session_id).is_some()
+                                || props
+                                    .get("sessionID")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == session_id)
+                                    .unwrap_or(false);
+                            if !matches_session {
+                                return None;
+                            }
+                            let is_idle = props
+                                .get(&session_id)
+                                .and_then(|v| v.get("type"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s == "idle")
-                                .unwrap_or(false);
-                        if is_idle {
-                            Some(Ok(AiEvent::Done))
-                        } else {
-                            None
+                                .unwrap_or(false)
+                                || props
+                                    .get("status")
+                                    .and_then(|v| v.get("type"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == "idle")
+                                    .unwrap_or(false)
+                                || props
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s == "idle")
+                                    .unwrap_or(false);
+                            if is_idle {
+                                Some(Ok(AiEvent::Done))
+                            } else {
+                                None
+                            }
                         }
-                    }
-                    // 会话错误
-                    "session.error" => {
-                        let props = &bus_event.properties;
-                        let err_session = props
-                            .get("sessionID")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if err_session != session_id {
-                            return None;
+                        "session.error" => {
+                            let props = &bus_event.properties;
+                            let err_session = props
+                                .get("sessionID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if err_session != session_id {
+                                return None;
+                            }
+                            let message = props
+                                .get("error")
+                                .and_then(|v| v.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error")
+                                .to_string();
+                            Some(Ok(AiEvent::Error { message }))
                         }
-                        let message = props
-                            .get("error")
-                            .and_then(|v| v.get("message"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown error")
-                            .to_string();
-                        Some(Ok(AiEvent::Error { message }))
-                    }
-                    // 心跳和连接事件忽略
-                    "server.heartbeat" | "server.connected" => None,
-                    _ => None,
+                        "server.heartbeat" | "server.connected" => None,
+                        _ => None,
                     }
                 }
                 Err(e) => Some(Err(e.to_string())),
@@ -1240,15 +1650,27 @@ impl AiAgent for OpenCodeAgent {
                 let pid = p.id.clone();
                 AiProviderInfo {
                     id: p.id.clone(),
-                    name: if p.name.is_empty() { p.id.clone() } else { p.name.clone() },
+                    name: if p.name.is_empty() {
+                        p.id.clone()
+                    } else {
+                        p.name.clone()
+                    },
                     models: p
                         .models_vec()
                         .into_iter()
                         .filter(|m| m.status.as_deref() != Some("disabled"))
                         .map(|m| AiModelInfo {
                             id: m.id.clone(),
-                            name: if m.name.is_empty() { m.id.clone() } else { m.name },
-                            provider_id: if m.provider_id.is_empty() { pid.clone() } else { m.provider_id },
+                            name: if m.name.is_empty() {
+                                m.id.clone()
+                            } else {
+                                m.name
+                            },
+                            provider_id: if m.provider_id.is_empty() {
+                                pid.clone()
+                            } else {
+                                m.provider_id
+                            },
                         })
                         .collect(),
                 }
@@ -1274,6 +1696,29 @@ impl AiAgent for OpenCodeAgent {
                 color: a.color,
                 default_provider_id: a.model.as_ref().map(|m| m.provider_id.clone()),
                 default_model_id: a.model.as_ref().map(|m| m.model_id.clone()),
+            })
+            .collect())
+    }
+
+    async fn list_slash_commands(&self, directory: &str) -> Result<Vec<AiSlashCommand>, String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let commands = client
+            .list_commands(directory)
+            .await
+            .map_err(|e| format!("Failed to list commands: {}", e))?;
+
+        Ok(commands
+            .into_iter()
+            .filter(|c| !c.name.trim().is_empty())
+            .map(|c| {
+                let _source = c.source;
+                AiSlashCommand {
+                    name: c.name,
+                    description: c.description.unwrap_or_default(),
+                    // OpenCode /command 返回的是可在会话内执行的命令，
+                    // 前端按 agent 命令处理（写入 `/xxx` 后发送）。
+                    action: "agent".to_string(),
+                }
             })
             .collect())
     }

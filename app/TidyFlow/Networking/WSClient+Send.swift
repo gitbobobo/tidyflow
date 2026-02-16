@@ -744,6 +744,41 @@ extension WSClient {
         send(msg)
     }
 
+    /// 发送 AI 斜杠命令（OpenCode session.command）
+    func requestAIChatCommand(
+        projectName: String,
+        workspaceName: String,
+        sessionId: String,
+        command: String,
+        arguments: String,
+        fileRefs: [String]? = nil,
+        imageParts: [[String: String]]? = nil,
+        model: [String: String]? = nil,
+        agent: String? = nil
+    ) {
+        var msg: [String: Any] = [
+            "type": "ai_chat_command",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "session_id": sessionId,
+            "command": command,
+            "arguments": arguments
+        ]
+        if let fileRefs, !fileRefs.isEmpty {
+            msg["file_refs"] = fileRefs
+        }
+        if let imageParts, !imageParts.isEmpty {
+            msg["image_parts"] = imageParts
+        }
+        if let model {
+            msg["model"] = model
+        }
+        if let agent {
+            msg["agent"] = agent
+        }
+        send(msg)
+    }
+
     /// 终止正在进行的 AI 聊天
     func requestAIChatAbort(projectName: String, workspaceName: String, sessionId: String) {
         send([
