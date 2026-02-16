@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 struct SessionListView: View {
@@ -88,3 +89,4 @@ struct SessionRow: View {
     )
     .frame(width: 250, height: 400)
 }
+#endif

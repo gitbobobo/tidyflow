@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 struct AITabView: View {
@@ -725,3 +726,4 @@ struct AITabView_Previews: PreviewProvider {
             .environmentObject(FileCacheState())
     }
 }
+#endif
