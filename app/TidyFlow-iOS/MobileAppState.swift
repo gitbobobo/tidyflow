@@ -953,6 +953,23 @@ final class MobileAppState: ObservableObject {
         wsClient.requestFileIndex(project: aiActiveProject, workspace: aiActiveWorkspace)
     }
 
+    /// 按关键词远端查询文件索引（用于引用弹窗搜索）
+    func searchAIFileReferences(query: String) {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        let key = aiContextKey(project: aiActiveProject, workspace: aiActiveWorkspace)
+        var cache = aiFileIndexCache[key] ?? FileIndexCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        aiFileIndexCache[key] = cache
+
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        wsClient.requestFileIndex(
+            project: aiActiveProject,
+            workspace: aiActiveWorkspace,
+            query: normalized.isEmpty ? nil : normalized
+        )
+    }
+
     private func reloadCurrentAISessionIfNeeded() {
         guard let sessionId = aiCurrentSessionId,
               !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }

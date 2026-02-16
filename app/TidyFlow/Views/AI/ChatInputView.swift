@@ -331,113 +331,49 @@ private class IMEAwareTextView: NSTextView {
 #endif
 
 #if os(iOS)
-/// iOS 输入框包装：支持光标/组合态上报与 Enter 发送
-private struct IOSChatTextView: UIViewRepresentable {
+/// Sheet 内自动聚焦搜索框——绕过 @FocusState 与 UITextView 的 firstResponder 竞争
+private struct IOSAutoFocusTextField: UIViewRepresentable {
     @Binding var text: String
-    @Binding var contentHeight: CGFloat
-    @Binding var cursorRect: CGRect
-    var onEnter: () -> Void
-    var isEnterEnabled: () -> Bool
-    var onInputContextChange: ((Int, Bool) -> Void)?
+    var placeholder: String
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
-        textView.delegate = context.coordinator
-        textView.backgroundColor = .clear
-        textView.font = .systemFont(ofSize: 13)
-        textView.isScrollEnabled = true
-        textView.showsVerticalScrollIndicator = true
-        textView.textContainerInset = UIEdgeInsets(top: 5, left: 0, bottom: 5, right: 0)
-        textView.textContainer.lineFragmentPadding = 4
-        textView.returnKeyType = .default
-        DispatchQueue.main.async {
-            context.coordinator.updateHeight(textView)
-            context.coordinator.reportInputContext(textView)
-            context.coordinator.updateCursorRect(textView)
-        }
-        return textView
-    }
-
-    func updateUIView(_ textView: UITextView, context: Context) {
-        context.coordinator.parent = self
-        if textView.text != text {
-            // 组合态中避免程序化回写，防止打断中文输入法
-            if textView.markedTextRange != nil {
-                return
-            }
-            textView.text = text
-            let end = (text as NSString).length
-            textView.selectedRange = NSRange(location: end, length: 0)
-            context.coordinator.updateHeight(textView)
-            context.coordinator.reportInputContext(textView)
-            context.coordinator.updateCursorRect(textView)
-        }
-    }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: IOSChatTextView
-
-        init(_ parent: IOSChatTextView) {
-            self.parent = parent
-        }
-
-        func textViewDidChange(_ textView: UITextView) {
-            reportInputContext(textView)
-            // 组合态期间不向外同步，避免 SwiftUI 回写影响候选态
-            if textView.markedTextRange == nil {
-                parent.text = textView.text
-            }
-            updateHeight(textView)
-            updateCursorRect(textView)
-        }
-
-        func textViewDidChangeSelection(_ textView: UITextView) {
-            reportInputContext(textView)
-            updateCursorRect(textView)
-        }
-
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText replacement: String
-        ) -> Bool {
-            // iOS 聊天输入框回车仅用于换行，不触发发送。
-            if replacement == "\n" { return true }
-            return true
-        }
-
-        func updateHeight(_ textView: UITextView) {
-            let fitting = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
-            DispatchQueue.main.async {
-                self.parent.contentHeight = fitting.height
-            }
-        }
-
-        func reportInputContext(_ textView: UITextView) {
-            let total = (textView.text as NSString).length
-            let location = min(max(textView.selectedRange.location, 0), total)
-            let isComposing = textView.markedTextRange != nil
-            parent.onInputContextChange?(location, isComposing)
-        }
-
-        func updateCursorRect(_ textView: UITextView) {
-            guard let selectedRange = textView.selectedTextRange else {
-                DispatchQueue.main.async {
-                    self.parent.cursorRect = .zero
+    func makeUIView(context: Context) -> UITextField {
+        let tf = UITextField()
+        tf.placeholder = placeholder
+        tf.autocapitalizationType = .none
+        tf.autocorrectionType = .no
+        tf.font = .systemFont(ofSize: 16)
+        tf.clearButtonMode = .whileEditing
+        tf.returnKeyType = .search
+        tf.addTarget(context.coordinator,
+                     action: #selector(Coordinator.textChanged(_:)),
+                     for: .editingChanged)
+        // 多次重试覆盖 sheet 弹出动画周期
+        for delay in [0.35, 0.6, 0.9] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if tf.window != nil && !tf.isFirstResponder {
+                    tf.becomeFirstResponder()
                 }
-                return
             }
-            let caret = textView.caretRect(for: selectedRange.end)
-            DispatchQueue.main.async {
-                self.parent.cursorRect = caret
-            }
+        }
+        return tf
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if uiView.text != text { uiView.text = text }
+    }
+
+    final class Coordinator: NSObject {
+        var parent: IOSAutoFocusTextField
+        init(_ parent: IOSAutoFocusTextField) { self.parent = parent }
+        @objc func textChanged(_ tf: UITextField) {
+            parent.text = tf.text ?? ""
         }
     }
 }
+
 #endif
 
 struct ChatInputView: View {
@@ -458,15 +394,35 @@ struct ChatInputView: View {
     // 自动补全
     var autocomplete: AutocompleteState?
     var onSelectAutocomplete: ((AutocompleteItem) -> Void)?
+    /// iOS 输入辅助：命令列表
+    var slashCommands: [AISlashCommandInfo] = []
+    /// iOS 输入辅助：引用列表（文件路径）
+    var fileReferenceItems: [String] = []
+    /// iOS 输入辅助：打开引用列表前按需拉取索引
+    var onRequestFileReferences: (() -> Void)?
+    /// iOS 输入辅助：引用搜索词变化时触发实时查询
+    var onSearchFileReferences: ((String) -> Void)?
     /// 输入上下文变化（光标 UTF16 位置, 是否处于 IME 组合态）
     var onInputContextChange: ((Int, Bool) -> Void)?
     /// 光标位置（外部读取用于定位弹出层）
     @Binding var cursorRectInInput: CGRect
 
-    @FocusState private var isFocused: Bool
     @State private var textContentHeight: CGFloat = 28
     /// 光标在输入框内的位置（由 NSTextView 上报）
     @State private var cursorRect: CGRect = .zero
+    #if os(iOS)
+    private enum IOSInputPanelSheet: String, Identifiable {
+        case commands
+        case references
+        var id: String { rawValue }
+    }
+
+    @FocusState private var isIOSInputFocused: Bool
+    @State private var showIOSInputPanel: Bool = false
+    @State private var iOSInputPanelSheet: IOSInputPanelSheet?
+    @State private var commandSearchText: String = ""
+    @State private var referenceSearchText: String = ""
+    #endif
     #if os(iOS) && canImport(PhotosUI)
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     #endif
@@ -526,7 +482,7 @@ struct ChatInputView: View {
             iOSSelectorRow
 
             HStack(alignment: .center, spacing: 10) {
-                imageUploadButton
+                iOSInputModeToggleButton
 
                 inputEditor
                     .frame(maxWidth: .infinity)
@@ -544,8 +500,25 @@ struct ChatInputView: View {
 
                 sendOrStopButton
             }
+
+            if showIOSInputPanel {
+                iOSInputPanelGrid
+            }
         }
         .padding(.bottom, 8)
+        .onChange(of: isIOSInputFocused) { _, focused in
+            if focused {
+                showIOSInputPanel = false
+            }
+        }
+        .sheet(item: $iOSInputPanelSheet) { item in
+            switch item {
+            case .commands:
+                iOSCommandPickerSheet
+            case .references:
+                iOSReferencePickerSheet
+            }
+        }
     }
 
     @ViewBuilder
@@ -556,6 +529,276 @@ struct ChatInputView: View {
                 modelButton
                 Spacer(minLength: 0)
             }
+        }
+    }
+
+    private var iOSInputModeToggleButton: some View {
+        Button(action: toggleIOSInputPanel) {
+            Image(systemName: "plus")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 36, height: 36)
+                .background(showIOSInputPanel ? Color.accentColor : Color.white.opacity(0.18))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var iOSInputPanelGrid: some View {
+        let columns: [GridItem] = [
+            GridItem(.flexible(), spacing: 8),
+            GridItem(.flexible(), spacing: 8),
+            GridItem(.flexible(), spacing: 8)
+        ]
+        return LazyVGrid(columns: columns, spacing: 8) {
+            iOSImagePanelButton
+
+            Button(action: {
+                commandSearchText = ""
+                openIOSInputSheet(.commands)
+            }) {
+                iOSInputPanelTile(
+                    title: "命令",
+                    systemImage: "command",
+                    tint: .orange
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button(action: {
+                referenceSearchText = ""
+                onRequestFileReferences?()
+                openIOSInputSheet(.references)
+            }) {
+                iOSInputPanelTile(
+                    title: "引用",
+                    systemImage: "at",
+                    tint: .green
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var iOSImagePanelButton: some View {
+        #if canImport(PhotosUI)
+        PhotosPicker(
+            selection: $selectedPhotoItems,
+            maxSelectionCount: 6,
+            matching: .images
+        ) {
+            iOSInputPanelTile(
+                title: "图片",
+                systemImage: "photo",
+                tint: .blue
+            )
+        }
+        .onChange(of: selectedPhotoItems) { _, items in
+            handleSelectedPhotoItems(items)
+        }
+        #else
+        Button(action: pickImage) {
+            iOSInputPanelTile(
+                title: "图片",
+                systemImage: "photo",
+                tint: .blue
+            )
+        }
+        .buttonStyle(.plain)
+        #endif
+    }
+
+    private func iOSInputPanelTile(
+        title: String,
+        systemImage: String,
+        tint: Color
+    ) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(tint)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 72)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    private var filteredSlashCommandsForIOS: [AISlashCommandInfo] {
+        let query = commandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return slashCommands }
+        return slashCommands.filter { command in
+            command.name.localizedCaseInsensitiveContains(query)
+                || command.description.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var filteredFileReferencesForIOS: [String] {
+        let query = referenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return fileReferenceItems }
+        return fileReferenceItems.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    private var iOSCommandPickerSheet: some View {
+        NavigationStack {
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    IOSAutoFocusTextField(text: $commandSearchText, placeholder: "搜索命令")
+                        .frame(height: 22)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(UIColor.secondarySystemBackground))
+                )
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+
+                List(filteredSlashCommandsForIOS, id: \.id) { command in
+                    Button(action: {
+                        insertSlashCommandAtInputStart(command.name)
+                        iOSInputPanelSheet = nil
+                    }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: slashCommandIcon(command.name))
+                                .frame(width: 18)
+                                .foregroundColor(.accentColor)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("/\(command.name)")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.primary)
+                                if !command.description.isEmpty {
+                                    Text(command.description)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("命令")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        iOSInputPanelSheet = nil
+                    }) {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("关闭")
+                }
+            }
+        }
+    }
+
+    private var iOSReferencePickerSheet: some View {
+        NavigationStack {
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    IOSAutoFocusTextField(text: $referenceSearchText, placeholder: "搜索引用")
+                        .frame(height: 22)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(UIColor.secondarySystemBackground))
+                )
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+
+                List(filteredFileReferencesForIOS, id: \.self) { path in
+                    Button(action: {
+                        appendFileReferenceToInput(path)
+                        iOSInputPanelSheet = nil
+                    }) {
+                        Text(path)
+                            .font(.system(size: 13))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .foregroundColor(.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("引用")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        iOSInputPanelSheet = nil
+                    }) {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("关闭")
+                }
+            }
+            .onAppear {
+                onSearchFileReferences?(referenceSearchText)
+            }
+            .onChange(of: referenceSearchText) { _, query in
+                onSearchFileReferences?(query)
+            }
+        }
+    }
+
+    private func openIOSInputSheet(_ sheet: IOSInputPanelSheet) {
+        // 先让主输入框失焦，sheet 内的 IOSAutoFocusTextField 会通过 UIKit
+        // becomeFirstResponder() 自动接管键盘，无需 dismissIOSKeyboard()。
+        isIOSInputFocused = false
+        showIOSInputPanel = false
+        iOSInputPanelSheet = sheet
+    }
+
+    private func toggleIOSInputPanel() {
+        if showIOSInputPanel {
+            showIOSInputPanel = false
+            isIOSInputFocused = true
+        } else {
+            showIOSInputPanel = true
+            isIOSInputFocused = false
+        }
+    }
+
+    private func insertSlashCommandAtInputStart(_ commandName: String) {
+        let prefix = "/\(commandName)"
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            text = "\(prefix) "
+            return
+        }
+        text = "\(prefix) \(text)"
+    }
+
+    private func appendFileReferenceToInput(_ path: String) {
+        let token = "@\(path)"
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            text = "\(token) "
+            return
+        }
+        if text.hasSuffix(" ") || text.hasSuffix("\n") {
+            text += "\(token) "
+        } else {
+            text += " \(token) "
         }
     }
     #endif
@@ -619,7 +862,13 @@ struct ChatInputView: View {
     private var inputEditor: some View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty {
-                Text("输入消息...  @ 引用文件  / 斜杠命令")
+                Group {
+                    #if os(iOS)
+                    Text("输入消息...")
+                    #else
+                    Text("输入消息...  @ 引用文件  / 斜杠命令")
+                    #endif
+                }
                     .foregroundColor(.secondary.opacity(0.6))
                     .font(.system(size: 13))
                     .padding(.horizontal, 5)
@@ -664,26 +913,10 @@ struct ChatInputView: View {
             )
             .frame(height: min(max(textContentHeight, 28), 80))
             #else
-            IOSChatTextView(
-                text: $text,
-                contentHeight: $textContentHeight,
-                cursorRect: $cursorRect,
-                onEnter: {
-                    if let ac = autocomplete, ac.isVisible, let item = ac.selectedItem {
-                        onSelectAutocomplete?(item)
-                        return
-                    }
-                    if canSend && !isStreaming {
-                        onSend()
-                    }
-                },
-                isEnterEnabled: { [canSend, isStreaming] in
-                    if let ac = autocomplete, ac.isVisible { return true }
-                    return canSend && !isStreaming
-                },
-                onInputContextChange: onInputContextChange
-            )
-            .frame(height: min(max(textContentHeight, 32), 160))
+            TextField("", text: $text, axis: .vertical)
+                .font(.system(size: 13))
+                .lineLimit(1...6)
+                .focused($isIOSInputFocused)
             #endif
         }
     }
@@ -799,6 +1032,15 @@ struct ChatInputView: View {
             }
         }
         return sel.modelID
+    }
+
+    private func slashCommandIcon(_ name: String) -> String {
+        switch name {
+        case "new":
+            return "square.and.pencil"
+        default:
+            return "command"
+        }
     }
 
     // MARK: - 图片上传按钮
