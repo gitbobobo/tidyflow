@@ -34,12 +34,16 @@ extension WSClient {
         }
     }
 
-    func requestFileIndex(project: String, workspace: String) {
-        send([
+    func requestFileIndex(project: String, workspace: String, query: String? = nil) {
+        var msg: [String: Any] = [
             "type": "file_index",
             "project": project,
             "workspace": workspace
-        ])
+        ]
+        if let query {
+            msg["query"] = query
+        }
+        send(msg)
     }
 
     /// 请求文件列表（目录浏览）
