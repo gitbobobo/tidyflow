@@ -112,6 +112,8 @@ class AppState: ObservableObject {
     @Published var aiCurrentSessionId: String?
     @Published var aiChatMessages: [AIChatMessage] = []
     @Published var aiIsStreaming: Bool = false
+    /// 用户已请求停止、等待服务端 done/error 收敛的会话 ID。
+    @Published var aiAbortPendingSessionId: String?
     @Published var aiSessions: [AISessionInfo] = []
 
     // AI Provider / Model / Agent 状态

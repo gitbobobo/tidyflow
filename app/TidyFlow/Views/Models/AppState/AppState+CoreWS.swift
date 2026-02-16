@@ -565,6 +565,8 @@ extension AppState {
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             guard ev.role == "assistant" else { return }
+            // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
+            if self.aiAbortPendingSessionId == ev.sessionId { return }
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiMarkOnlyStreamingAssistant(at: msgIdx)
@@ -576,6 +578,8 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
+            // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
+            if self.aiAbortPendingSessionId == ev.sessionId { return }
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiUpsertPart(msgIdx: msgIdx, part: ev.part)
@@ -588,6 +592,8 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
+            // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
+            if self.aiAbortPendingSessionId == ev.sessionId { return }
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiAppendDelta(msgIdx: msgIdx, partId: ev.partId, partType: ev.partType, field: ev.field, delta: ev.delta)
@@ -600,6 +606,9 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId {
+                self.aiAbortPendingSessionId = nil
+            }
 
             self.aiIsStreaming = false
             self.aiClearAssistantStreaming()
@@ -615,6 +624,9 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId {
+                self.aiAbortPendingSessionId = nil
+            }
 
             self.aiIsStreaming = false
             self.aiClearAssistantStreaming()

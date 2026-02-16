@@ -300,6 +300,7 @@ async fn try_handle_ai_chat_send(
     loop {
         tokio::select! {
             _ = abort_rx.recv() => {
+                info!("AIChatSend: abort signal received, session_id={}", session_id);
                 aborted = true;
                 let _ = agent.abort_session(&directory, session_id).await;
                 send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
@@ -510,6 +511,7 @@ async fn try_handle_ai_chat_command(
     loop {
         tokio::select! {
             _ = abort_rx.recv() => {
+                info!("AIChatCommand: abort signal received, session_id={}", session_id);
                 aborted = true;
                 let _ = agent.abort_session(&directory, session_id).await;
                 send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
@@ -635,6 +637,10 @@ async fn try_handle_ai_chat_abort(
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
     let key = stream_key(&directory, session_id);
+    info!(
+        "AIChatAbort: project={}, workspace={}, session_id={}, key={}",
+        project_name, workspace_name, session_id, key
+    );
 
     {
         let mut ai = ai_state.lock().await;
@@ -647,11 +653,15 @@ async fn try_handle_ai_chat_abort(
         ai.active_streams.get(&key).cloned()
     };
     if let Some(tx) = abort_tx {
+        info!("AIChatAbort: found active stream sender, sending abort signal");
         let _ = tx.send(()).await;
+    } else {
+        info!("AIChatAbort: no active stream sender found for key");
     }
 
     // best-effort：触发后端 abort（不影响本地 done 收敛）
     if let Ok(agent) = ensure_agent(ai_state).await {
+        info!("AIChatAbort: calling agent.abort_session");
         let _ = agent.abort_session(&directory, session_id).await;
     }
 

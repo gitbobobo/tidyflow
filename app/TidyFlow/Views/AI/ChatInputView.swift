@@ -201,6 +201,8 @@ private class IMEAwareTextView: NSTextView {
     var onTab: (() -> Bool)?
     var onCompositionStateChange: (() -> Void)?
     private(set) var isIMEComposing: Bool = false
+    /// 防止同一次 Return 事件被 keyDown/doCommand 重复处理
+    private var didHandleReturnInKeyDown: Bool = false
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         let markedText: String
@@ -228,11 +230,20 @@ private class IMEAwareTextView: NSTextView {
     override func doCommand(by selector: Selector) {
         if selector == #selector(insertNewline(_:))
             || selector == #selector(insertTab(_:))
+            || selector == #selector(moveUp(_:))
+            || selector == #selector(moveDown(_:))
             || selector == #selector(cancelOperation(_:)) {
             imeDebugLog("doCommand selector=\(NSStringFromSelector(selector)) hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
         }
-        // 仅在“确实存在 marked text”时屏蔽换行，避免无 marked text 时 Enter 被完全吞掉
+
+        // 某些输入法路径不会走 keyDown，兜底在 doCommand 里处理 Enter。
         if selector == #selector(insertNewline(_:)) {
+            // keyDown 已处理本次 Return，直接消费避免重复。
+            if didHandleReturnInKeyDown {
+                didHandleReturnInKeyDown = false
+                imeDebugLog("doCommand ignored insertNewline because keyDown already handled")
+                return
+            }
             if hasMarkedText() {
                 imeDebugLog("doCommand blocked insertNewline due to hasMarkedText=true")
                 return
@@ -243,11 +254,37 @@ private class IMEAwareTextView: NSTextView {
                 isIMEComposing = false
                 onCompositionStateChange?()
             }
+
+            // 仅处理普通 Enter；Shift+Enter 继续走默认换行行为。
+            let isShift = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+            if !isShift {
+                imeDebugLog("doCommand insertNewline fallback -> trigger onEnter")
+                onEnter?()
+                return
+            }
         }
+
+        if hasMarkedText() || isIMEComposing {
+            super.doCommand(by: selector)
+            return
+        }
+
+        if selector == #selector(moveUp(_:)) {
+            if onArrowUp?() == true { return }
+        } else if selector == #selector(moveDown(_:)) {
+            if onArrowDown?() == true { return }
+        } else if selector == #selector(cancelOperation(_:)) {
+            if onEscape?() == true { return }
+        } else if selector == #selector(insertTab(_:)) {
+            if onTab?() == true { return }
+        }
+
         super.doCommand(by: selector)
     }
 
     override func keyDown(with event: NSEvent) {
+        // 每次按键先清理，避免旧 Return 状态污染后续事件。
+        didHandleReturnInKeyDown = false
         if event.keyCode == 36 || hasMarkedText() || isIMEComposing {
             imeDebugLog("keyDown keyCode=\(event.keyCode) chars=\((event.characters ?? "").debugDescription) charsIgnoringModifiers=\((event.charactersIgnoringModifiers ?? "").debugDescription) hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
         }
@@ -263,6 +300,7 @@ private class IMEAwareTextView: NSTextView {
         switch event.keyCode {
         case 36: // Return
             if !isShift {
+                didHandleReturnInKeyDown = true
                 imeDebugLog("keyDown return -> trigger onEnter")
                 onEnter?()
                 return
@@ -290,6 +328,8 @@ struct ChatInputView: View {
     @Binding var text: String
     @Binding var imageAttachments: [ImageAttachment]
     var isStreaming: Bool
+    /// 仅当已有 sessionId 时允许点击停止，避免会话创建竞态下误触。
+    var canStopStreaming: Bool = true
     var onSend: () -> Void
     var onStop: () -> Void
 
@@ -590,10 +630,11 @@ struct ChatInputView: View {
                 Button(action: onStop) {
                     Image(systemName: "stop.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundColor(.red)
+                        .foregroundColor(canStopStreaming ? .red : .gray)
                 }
                 .buttonStyle(.plain)
-                .help("停止生成")
+                .disabled(!canStopStreaming)
+                .help(canStopStreaming ? "停止生成" : "会话创建中，暂不可停止")
             } else {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up.circle.fill")

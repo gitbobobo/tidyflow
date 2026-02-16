@@ -104,8 +104,10 @@ struct AITabView: View {
             resetAIContext()
         }
         .onChange(of: appState.aiCurrentSessionId) { _, newSessionId in
+            guard let newSessionId else { return }
+
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
-            if let newSessionId, let pending = pendingSendRequest {
+            if let pending = pendingSendRequest {
                 guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
                       pending.projectName == appState.selectedProjectName,
                       pending.workspaceName == ws else {
@@ -218,7 +220,8 @@ struct AITabView: View {
         ChatInputView(
             text: $inputText,
             imageAttachments: $imageAttachments,
-            isStreaming: appState.aiIsStreaming,
+            isStreaming: appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil,
+            canStopStreaming: appState.aiCurrentSessionId != nil && appState.aiAbortPendingSessionId == nil,
             onSend: {
                 sendMessage()
             },
@@ -347,6 +350,7 @@ struct AITabView: View {
     private func resetAIContext() {
         // 清除待发消息，避免跨工作空间误发
         pendingSendRequest = nil
+        appState.aiAbortPendingSessionId = nil
 
         // 保存旧工作空间快照
         if let oldKey = previousSnapshotKey {
@@ -419,6 +423,7 @@ struct AITabView: View {
         inputText = ""
         imageAttachments = []
         pendingSendRequest = nil
+        appState.aiAbortPendingSessionId = nil
         autocomplete.reset()
         appState.aiChatMessages = []
         appState.aiCurrentSessionId = nil
@@ -548,6 +553,10 @@ struct AITabView: View {
     }
 
     private func sendMessage() {
+        // 上一次停止请求尚未收敛时，不允许发新消息，避免同会话事件串扰。
+        if appState.aiAbortPendingSessionId != nil {
+            return
+        }
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty else { return }
 
@@ -686,15 +695,15 @@ struct AITabView: View {
     }
 
     private func stopStreaming() {
-        if let sessionId = appState.aiCurrentSessionId {
-            if let ws = appState.selectedWorkspaceKey, !ws.isEmpty {
-                appState.wsClient.requestAIChatAbort(
-                    projectName: appState.selectedProjectName,
-                    workspaceName: ws,
-                    sessionId: sessionId
-                )
-            }
-        }
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
+              let sessionId = appState.aiCurrentSessionId else { return }
+        appState.aiAbortPendingSessionId = sessionId
+        TFLog.app.info("AI Stop requested: session_id=\(sessionId, privacy: .public)")
+        appState.wsClient.requestAIChatAbort(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            sessionId: sessionId
+        )
         appState.aiIsStreaming = false
 
         // 立即停止所有“加载中”展示，避免等待服务端 done 才收敛
