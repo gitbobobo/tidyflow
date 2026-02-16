@@ -1,4 +1,10 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
+#endif
 #if os(macOS)
 import AppKit
 
@@ -324,6 +330,105 @@ private class IMEAwareTextView: NSTextView {
 }
 #endif
 
+#if os(iOS)
+/// iOS 输入框包装：支持光标/组合态上报与 Enter 发送
+private struct IOSChatTextView: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var contentHeight: CGFloat
+    var onEnter: () -> Void
+    var isEnterEnabled: () -> Bool
+    var onInputContextChange: ((Int, Bool) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = .systemFont(ofSize: 13)
+        textView.isScrollEnabled = true
+        textView.showsVerticalScrollIndicator = true
+        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.textContainer.lineFragmentPadding = 4
+        textView.returnKeyType = .send
+        DispatchQueue.main.async {
+            context.coordinator.updateHeight(textView)
+            context.coordinator.reportInputContext(textView)
+        }
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if textView.text != text {
+            // 组合态中避免程序化回写，防止打断中文输入法
+            if textView.markedTextRange != nil {
+                return
+            }
+            textView.text = text
+            let end = (text as NSString).length
+            textView.selectedRange = NSRange(location: end, length: 0)
+            context.coordinator.updateHeight(textView)
+            context.coordinator.reportInputContext(textView)
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: IOSChatTextView
+
+        init(_ parent: IOSChatTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            reportInputContext(textView)
+            // 组合态期间不向外同步，避免 SwiftUI 回写影响候选态
+            if textView.markedTextRange == nil {
+                parent.text = textView.text
+            }
+            updateHeight(textView)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            reportInputContext(textView)
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText replacement: String
+        ) -> Bool {
+            guard replacement == "\n" else { return true }
+            // 组合态中让系统处理回车确认候选，不做发送
+            if textView.markedTextRange != nil {
+                return true
+            }
+            if parent.isEnterEnabled() {
+                parent.onEnter()
+                return false
+            }
+            return true
+        }
+
+        func updateHeight(_ textView: UITextView) {
+            let fitting = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
+            DispatchQueue.main.async {
+                self.parent.contentHeight = fitting.height
+            }
+        }
+
+        func reportInputContext(_ textView: UITextView) {
+            let total = (textView.text as NSString).length
+            let location = min(max(textView.selectedRange.location, 0), total)
+            let isComposing = textView.markedTextRange != nil
+            parent.onInputContextChange?(location, isComposing)
+        }
+    }
+}
+#endif
+
 struct ChatInputView: View {
     @Binding var text: String
     @Binding var imageAttachments: [ImageAttachment]
@@ -351,6 +456,9 @@ struct ChatInputView: View {
     @State private var textContentHeight: CGFloat = 28
     /// 光标在输入框内的位置（由 NSTextView 上报）
     @State private var cursorRect: CGRect = .zero
+    #if os(iOS) && canImport(PhotosUI)
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    #endif
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
@@ -397,6 +505,23 @@ struct ChatInputView: View {
                 .frame(width: 60, height: 60)
                 .cornerRadius(8)
                 .clipped()
+            #else
+            if let image = UIImage(data: attachment.data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 60, height: 60)
+                    .cornerRadius(8)
+                    .clipped()
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(width: 60, height: 60)
+                    .overlay(
+                        Image(systemName: "photo")
+                            .foregroundColor(.secondary)
+                    )
+            }
             #endif
 
             Button(action: {
@@ -462,11 +587,25 @@ struct ChatInputView: View {
             )
             .frame(height: min(max(textContentHeight, 28), 80))
             #else
-            TextEditor(text: $text)
-                .font(.system(size: 13))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 36, maxHeight: 160)
-                .fixedSize(horizontal: false, vertical: true)
+            IOSChatTextView(
+                text: $text,
+                contentHeight: $textContentHeight,
+                onEnter: {
+                    if let ac = autocomplete, ac.isVisible, let item = ac.selectedItem {
+                        onSelectAutocomplete?(item)
+                        return
+                    }
+                    if canSend && !isStreaming {
+                        onSend()
+                    }
+                },
+                isEnterEnabled: { [canSend, isStreaming] in
+                    if let ac = autocomplete, ac.isVisible { return true }
+                    return canSend && !isStreaming
+                },
+                onInputContextChange: onInputContextChange
+            )
+            .frame(height: min(max(textContentHeight, 36), 160))
             #endif
         }
     }
@@ -581,14 +720,51 @@ struct ChatInputView: View {
 
     // MARK: - 图片上传按钮
 
+    @ViewBuilder
     private var imageUploadButton: some View {
+        #if os(iOS) && canImport(PhotosUI)
+        PhotosPicker(
+            selection: $selectedPhotoItems,
+            maxSelectionCount: 6,
+            matching: .images
+        ) {
+            Image(systemName: "photo")
+                .font(.system(size: 14))
+                .foregroundColor(.primary)
+        }
+        .onChange(of: selectedPhotoItems) { _, items in
+            handleSelectedPhotoItems(items)
+        }
+        #else
         Button(action: pickImage) {
             Image(systemName: "photo")
                 .font(.system(size: 14))
         }
         .buttonStyle(.plain)
         .help("上传图片")
+        #endif
     }
+
+    #if os(iOS) && canImport(PhotosUI)
+    private func handleSelectedPhotoItems(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        Task {
+            for item in items {
+                guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+                let fileInfo = detectImageFileInfo(data: data)
+                let suffix = UUID().uuidString.prefix(8)
+                let filename = "image_\(suffix).\(fileInfo.ext)"
+                let attachment = ImageAttachment(filename: filename, data: data, mime: fileInfo.mime)
+                await MainActor.run {
+                    imageAttachments.append(attachment)
+                }
+            }
+            await MainActor.run {
+                selectedPhotoItems = []
+            }
+        }
+    }
+    #endif
 
     private func pickImage() {
         #if os(macOS)
@@ -620,6 +796,26 @@ struct ChatInputView: View {
             }
         }
         #endif
+    }
+
+    /// 根据文件头推断图片 MIME 与扩展名
+    private func detectImageFileInfo(data: Data) -> (mime: String, ext: String) {
+        let bytes = [UInt8](data.prefix(16))
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            return ("image/png", "png")
+        }
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return ("image/jpeg", "jpg")
+        }
+        if bytes.starts(with: [0x47, 0x49, 0x46, 0x38]) {
+            return ("image/gif", "gif")
+        }
+        if bytes.count >= 12,
+           bytes[0] == 0x52, bytes[1] == 0x49, bytes[2] == 0x46, bytes[3] == 0x46,
+           bytes[8] == 0x57, bytes[9] == 0x45, bytes[10] == 0x42, bytes[11] == 0x50 {
+            return ("image/webp", "webp")
+        }
+        return ("image/jpeg", "jpg")
     }
 
     // MARK: - 发送/停止按钮
