@@ -326,40 +326,46 @@ extension WSClient {
                 onAITaskCancelled?(result)
             }
 
-        // v1.41: AI Chat 响应
+        // AI Chat（结构化 message/part 流）
         case "ai_session_started":
-            let sessionId = json["session_id"] as? String ?? ""
-            let title = json["title"] as? String ?? ""
-            onAISessionStarted?(sessionId, title)
-
-        case "ai_chat_text":
-            let sessionId = json["session_id"] as? String ?? ""
-            let text = json["text"] as? String ?? ""
-            let delta = json["delta"] as? String
-            let done = json["done"] as? Bool ?? false
-            onAIChatText?(sessionId, text, delta, done)
-
-        case "ai_chat_thinking":
-            let sessionId = json["session_id"] as? String ?? ""
-            let text = json["text"] as? String ?? ""
-            let delta = json["delta"] as? String
-            let done = json["done"] as? Bool ?? false
-            onAIChatThinking?(sessionId, text, delta, done)
-
-        case "ai_chat_tool":
-            let sessionId = json["session_id"] as? String ?? ""
-            let tool = json["tool"] as? String ?? ""
-            let input = json["input"] as? [String: Any] ?? [:]
-            onAIChatTool?(sessionId, tool, input)
-
-        case "ai_chat_error":
-            let sessionId = json["session_id"] as? String ?? ""
-            let error = json["error"] as? String ?? "Unknown error"
-            onAIChatError?(sessionId, error)
+            if let ev = AISessionStartedV2.from(json: json) {
+                onAISessionStarted?(ev)
+            }
 
         case "ai_session_list":
-            let sessions = json["sessions"] as? [[String: Any]] ?? []
-            onAISessionList?(sessions)
+            if let ev = AISessionListV2.from(json: json) {
+                onAISessionList?(ev)
+            }
+
+        case "ai_session_messages":
+            if let ev = AISessionMessagesV2.from(json: json) {
+                onAISessionMessages?(ev)
+            }
+
+        case "ai_chat_message_updated":
+            if let ev = AIChatMessageUpdatedV2.from(json: json) {
+                onAIChatMessageUpdated?(ev)
+            }
+
+        case "ai_chat_part_updated":
+            if let ev = AIChatPartUpdatedV2.from(json: json) {
+                onAIChatPartUpdated?(ev)
+            }
+
+        case "ai_chat_part_delta":
+            if let ev = AIChatPartDeltaV2.from(json: json) {
+                onAIChatPartDelta?(ev)
+            }
+
+        case "ai_chat_done":
+            if let ev = AIChatDoneV2.from(json: json) {
+                onAIChatDone?(ev)
+            }
+
+        case "ai_chat_error":
+            if let ev = AIChatErrorV2.from(json: json) {
+                onAIChatError?(ev)
+            }
 
         case "clipboard_image_set":
             let ok = json["ok"] as? Bool ?? false

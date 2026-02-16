@@ -208,40 +208,44 @@ extension AppState {
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
+                    let appState = self
                     await MainActor.run {
-                        self?.mobilePairCodeLoading = false
-                        self?.mobilePairCodeError = "settings.mobile.error.invalidResponse".localized
+                        appState?.mobilePairCodeLoading = false
+                        appState?.mobilePairCodeError = "settings.mobile.error.invalidResponse".localized
                     }
                     return
                 }
 
                 if (200..<300).contains(httpResponse.statusCode) {
                     let decoded = try JSONDecoder().decode(PairStartHTTPResponse.self, from: data)
+                    let appState = self
                     await MainActor.run {
-                        self?.mobilePairCodeLoading = false
-                        self?.mobilePairCode = decoded.pairCode
-                        self?.mobilePairCodeExpiresAt = decoded.expiresAt
-                        self?.mobilePairCodeError = nil
+                        appState?.mobilePairCodeLoading = false
+                        appState?.mobilePairCode = decoded.pairCode
+                        appState?.mobilePairCodeExpiresAt = decoded.expiresAt
+                        appState?.mobilePairCodeError = nil
                     }
                     return
                 }
 
                 let serverError = try? JSONDecoder().decode(PairErrorHTTPResponse.self, from: data)
+                let appState = self
                 await MainActor.run {
-                    self?.mobilePairCodeLoading = false
+                    appState?.mobilePairCodeLoading = false
                     if let serverError {
-                        self?.mobilePairCodeError = "\(serverError.error): \(serverError.message)"
+                        appState?.mobilePairCodeError = "\(serverError.error): \(serverError.message)"
                     } else {
-                        self?.mobilePairCodeError = String(
+                        appState?.mobilePairCodeError = String(
                             format: "settings.mobile.error.httpStatus".localized,
                             httpResponse.statusCode
                         )
                     }
                 }
             } catch {
+                let appState = self
                 await MainActor.run {
-                    self?.mobilePairCodeLoading = false
-                    self?.mobilePairCodeError = String(
+                    appState?.mobilePairCodeLoading = false
+                    appState?.mobilePairCodeError = String(
                         format: "settings.mobile.error.general".localized,
                         error.localizedDescription
                     )
@@ -457,7 +461,7 @@ extension AppState {
         }
 
         // 项目命令回调
-        wsClient.onProjectCommandsSaved = { [weak self] project, ok, message in
+        wsClient.onProjectCommandsSaved = { project, ok, message in
             if !ok {
                 TFLog.app.warning("项目命令保存失败: \(message ?? "未知错误", privacy: .public)")
             }
@@ -506,198 +510,135 @@ extension AppState {
             self?.handleGitAIMergeResult(result)
         }
 
-        // v1.41: AI Chat 回调
-        wsClient.onAISessionStarted = { [weak self] sessionId, title in
-            self?.aiCurrentSessionId = sessionId
-            // 添加到会话列表
-            let session = SessionInfo(
-                id: sessionId,
-                title: title,
-                updatedAt: Int64(Date().timeIntervalSince1970 * 1000)
+        // AI Chat（结构化 message/part 流）
+        wsClient.onAISessionStarted = { [weak self] ev in
+            guard let self else { return }
+            // 仅处理当前选中的 workspace
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+
+            self.aiCurrentSessionId = ev.sessionId
+            let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
+            let session = AISessionInfo(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                id: ev.sessionId,
+                title: ev.title,
+                updatedAt: updatedAt
             )
-            if !(self?.aiSessions.contains(where: { $0.id == sessionId }) ?? false) {
-                self?.aiSessions.insert(session, at: 0)
-            }
+            self.aiSessions.removeAll { $0.id == session.id }
+            self.aiSessions.insert(session, at: 0)
         }
 
-        wsClient.onAIChatText = { [weak self] sessionId, text, delta, done in
+        wsClient.onAISessionList = { [weak self] ev in
             guard let self else { return }
-            // 只渲染当前会话的消息；但 done 到达时至少要收敛 loading 状态
-            guard self.aiCurrentSessionId == sessionId else {
-                if done { self.recomputeAIIsStreaming() }
-                return
-            }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
-            if done {
-                // 流式结束：必须更新“正在流式的那条回复”，避免工具消息插队导致最后一条不是回复文本，从而一直显示加载中
-                if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming }) {
-                    let prev = self.aiChatMessages[idx]
-                    let contentEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let thinkingEmpty = (prev.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let toolEmpty = (prev.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    if contentEmpty && thinkingEmpty && toolEmpty {
-                        self.aiChatMessages.remove(at: idx)
-                    } else {
-                        self.aiChatMessages[idx] = ChatMessage(
-                            id: prev.id,
-                            role: .assistant,
-                            kind: .text,
-                            content: text,
-                            thinking: prev.thinking,
-                            toolTrace: prev.toolTrace,
-                            isStreaming: false,
-                            timestamp: prev.timestamp
-                        )
-                    }
-                } else if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text }) {
-                    let prev = self.aiChatMessages[idx]
-                    let contentEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let thinkingEmpty = (prev.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let toolEmpty = (prev.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    if contentEmpty && thinkingEmpty && toolEmpty {
-                        self.aiChatMessages.remove(at: idx)
-                    } else {
-                        self.aiChatMessages[idx] = ChatMessage(
-                            id: prev.id,
-                            role: .assistant,
-                            kind: .text,
-                            content: text,
-                            thinking: prev.thinking,
-                            toolTrace: prev.toolTrace,
-                            isStreaming: false,
-                            timestamp: prev.timestamp
-                        )
-                    }
-                } else {
-                    self.aiChatMessages.append(ChatMessage(role: .assistant, kind: .text, content: text))
-                }
-                self.aiIsStreaming = false
-                self.recomputeAIIsStreaming()
-                return
+            let sessions = ev.sessions.map {
+                AISessionInfo(projectName: $0.projectName, workspaceName: $0.workspaceName, id: $0.id, title: $0.title, updatedAt: $0.updatedAt)
             }
-
-            // 流式增量：优先更新已存在的“流式回复气泡”，否则创建新的回复气泡
-            if (delta?.isEmpty == false) || !text.isEmpty {
-                if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming }) {
-                    let prev = self.aiChatMessages[idx]
-                    self.aiChatMessages[idx] = ChatMessage(
-                        id: prev.id,
-                        role: .assistant,
-                        kind: .text,
-                        content: text,
-                        thinking: prev.thinking,
-                        toolTrace: prev.toolTrace,
-                        isStreaming: true,
-                        timestamp: prev.timestamp
-                    )
-                } else {
-                    self.aiChatMessages.append(
-                        ChatMessage(role: .assistant, kind: .text, content: text, isStreaming: true)
-                    )
-                }
-            }
-
-            self.recomputeAIIsStreaming()
+            self.aiSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
         }
 
-        wsClient.onAIChatThinking = { [weak self] sessionId, text, _, done in
+        wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
-            guard self.aiCurrentSessionId == sessionId else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
 
-            // 思考过程永远挂在当前回复气泡上；如果没有回复气泡，创建一个占位气泡
-            if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming })
-                ?? self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text }) {
-                let prev = self.aiChatMessages[idx]
-                self.aiChatMessages[idx] = ChatMessage(
-                    id: prev.id,
-                    role: .assistant,
-                    kind: .text,
-                    content: prev.content,
-                    thinking: text,
-                    toolTrace: prev.toolTrace,
-                    // thinking 的 done 不代表整条回复结束；以 ai_chat_text 的 done 为准
-                    isStreaming: prev.isStreaming,
-                    timestamp: prev.timestamp
-                )
-            } else {
-                self.aiChatMessages.append(
-                    ChatMessage(role: .assistant, kind: .text, content: "", thinking: text, isStreaming: self.aiIsStreaming)
-                )
-            }
-
-            self.recomputeAIIsStreaming()
-        }
-
-        wsClient.onAIChatError = { [weak self] sessionId, error in
-            guard let self else { return }
-            guard self.aiCurrentSessionId == sessionId else { return }
-
-            // 结束流式状态，避免 UI 继续显示“加载中”
-            if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming }) {
-                let prev = self.aiChatMessages[idx]
-                let contentEmpty = prev.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let thinkingEmpty = (prev.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let toolEmpty = (prev.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                if contentEmpty && thinkingEmpty && toolEmpty {
-                    // 纯占位气泡：错误时直接移除，避免出现空白消息
-                    self.aiChatMessages.remove(at: idx)
-                } else {
-                    self.aiChatMessages[idx] = ChatMessage(
-                        id: prev.id,
-                        role: .assistant,
-                        kind: .text,
-                        content: prev.content,
-                        thinking: prev.thinking,
-                        toolTrace: prev.toolTrace,
-                        isStreaming: false,
-                        timestamp: prev.timestamp
-                    )
+            self.aiChatMessages = ev.messages.compactMap { m in
+                let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
+                let parts: [AIChatPart] = m.parts.compactMap { p in
+                    let kind = AIChatPartKind(rawValue: p.partType) ?? .text
+                    return AIChatPart(id: p.id, kind: kind, text: p.text, toolName: p.toolName, toolState: p.toolState)
                 }
+                return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
             }
-
-            self.aiChatMessages.append(ChatMessage(role: .assistant, kind: .text, content: "⚠️ \(error)"))
+            self.rebuildAIIndexes()
             self.aiIsStreaming = false
-            self.recomputeAIIsStreaming()
         }
 
-        wsClient.onAIChatTool = { [weak self] sessionId, tool, input in
+        wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
-            guard self.aiCurrentSessionId == sessionId else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            guard ev.role == "assistant" else { return }
 
-            let thinkingChunk = self.formatToolThinking(tool: tool, input: input)
-
-            // 将工具调用信息挂在“回复气泡”的思考过程中；如果还没有回复气泡，先创建占位气泡
-            if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming })
-                ?? self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text }) {
-                let prev = self.aiChatMessages[idx]
-                let updatedTrace = self.mergeThinking(prev.toolTrace, Optional(thinkingChunk))
-                self.aiChatMessages[idx] = ChatMessage(
-                    id: prev.id,
-                    role: .assistant,
-                    kind: .text,
-                    content: prev.content,
-                    thinking: prev.thinking,
-                    toolTrace: updatedTrace,
-                    isStreaming: prev.isStreaming,
-                    timestamp: prev.timestamp
-                )
-            } else {
-                self.aiChatMessages.append(
-                    ChatMessage(role: .assistant, kind: .text, content: "", toolTrace: thinkingChunk, isStreaming: self.aiIsStreaming)
-                )
-            }
-
+            self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.recomputeAIIsStreaming()
         }
 
-        wsClient.onAISessionList = { [weak self] sessionsData in
-            let sessions = sessionsData.compactMap { dict -> SessionInfo? in
-                guard let id = dict["id"] as? String,
-                      let title = dict["title"] as? String else { return nil }
-                let updatedAt = dict["updated_at"] as? Int64 ?? 0
-                return SessionInfo(id: id, title: title, updatedAt: updatedAt)
+        wsClient.onAIChatPartUpdated = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+
+            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            self.aiUpsertPart(msgIdx: msgIdx, part: ev.part)
+            self.aiChatMessages[msgIdx].isStreaming = true
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatPartDelta = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+
+            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            self.aiAppendDelta(msgIdx: msgIdx, partId: ev.partId, partType: ev.partType, field: ev.field, delta: ev.delta)
+            self.aiChatMessages[msgIdx].isStreaming = true
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatDone = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+
+            self.aiIsStreaming = false
+            // 结束所有正在流式的 assistant 消息
+            for i in self.aiChatMessages.indices {
+                if self.aiChatMessages[i].role == .assistant {
+                    self.aiChatMessages[i].isStreaming = false
+                }
             }
-            self?.aiSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
+            // 清理纯占位消息
+            if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty }) {
+                self.aiChatMessages.remove(at: idx)
+            }
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatError = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+
+            self.aiIsStreaming = false
+            for i in self.aiChatMessages.indices {
+                if self.aiChatMessages[i].role == .assistant {
+                    self.aiChatMessages[i].isStreaming = false
+                }
+            }
+            // 清理纯占位消息
+            if let idx = self.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty }) {
+                self.aiChatMessages.remove(at: idx)
+            }
+            self.aiChatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: "⚠️ \(ev.error)", toolName: nil, toolState: nil)],
+                    isStreaming: false
+                )
+            )
+            self.rebuildAIIndexes()
+            self.recomputeAIIsStreaming()
         }
 
         wsClient.onError = { [weak self] errorMsg in
@@ -864,30 +805,78 @@ extension AppState {
     /// 不能只靠单点事件置位/清零，否则容易出现回复已结束但 UI 仍显示加载中的情况。
     private func recomputeAIIsStreaming() {
         aiIsStreaming = aiChatMessages.contains { m in
-            m.role == .assistant && m.kind == .text && m.isStreaming
+            m.role == .assistant && m.isStreaming
         }
     }
 
-    // MARK: - AI Chat 思考过程处理
+    // MARK: - AI Chat Index Helpers
 
-    private func mergeThinking(_ a: String?, _ b: String?) -> String? {
-        let left = (a ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let right = (b ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if left.isEmpty { return right.isEmpty ? nil : right }
-        if right.isEmpty { return left }
-        return left + "\n\n" + right
-    }
+    private func rebuildAIIndexes() {
+        aiMessageIndexByMessageId = [:]
+        aiPartIndexByPartId = [:]
 
-    private func formatToolThinking(tool: String, input: [String: Any]) -> String {
-        if let pretty = prettyJSONString(input) {
-            return "🔧 \(tool)\n\(pretty)"
+        for (i, msg) in aiChatMessages.enumerated() {
+            if let mid = msg.messageId {
+                aiMessageIndexByMessageId[mid] = i
+            }
+            for (j, p) in msg.parts.enumerated() {
+                aiPartIndexByPartId[p.id] = (i, j)
+            }
         }
-        return "🔧 \(tool)"
     }
 
-    private func prettyJSONString(_ obj: Any) -> String? {
-        guard JSONSerialization.isValidJSONObject(obj) else { return nil }
-        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return nil }
-        return String(data: data, encoding: .utf8)
+    /// 确保某个 assistant message 存在，返回其数组索引。
+    @discardableResult
+    private func aiEnsureAssistantMessage(messageId: String) -> Int {
+        if let idx = aiMessageIndexByMessageId[messageId] {
+            return idx
+        }
+
+        // 优先复用本地占位气泡（AITabView 发送时插入）
+        if let idx = aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
+            aiChatMessages[idx].messageId = messageId
+            aiMessageIndexByMessageId[messageId] = idx
+            return idx
+        }
+
+        let msg = AIChatMessage(messageId: messageId, role: .assistant, parts: [], isStreaming: true)
+        aiChatMessages.append(msg)
+        let idx = aiChatMessages.count - 1
+        aiMessageIndexByMessageId[messageId] = idx
+        return idx
+    }
+
+    private func aiUpsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
+        let kind = AIChatPartKind(rawValue: part.partType) ?? .text
+
+        if let existing = aiPartIndexByPartId[part.id], existing.msgIdx == msgIdx {
+            // 更新同一个 part
+            aiChatMessages[msgIdx].parts[existing.partIdx].text = part.text
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolName = part.toolName
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolState = part.toolState
+            return
+        }
+
+        let p = AIChatPart(id: part.id, kind: kind, text: part.text, toolName: part.toolName, toolState: part.toolState)
+        aiChatMessages[msgIdx].parts.append(p)
+        let partIdx = aiChatMessages[msgIdx].parts.count - 1
+        aiPartIndexByPartId[part.id] = (msgIdx, partIdx)
+    }
+
+    private func aiAppendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
+        // 当前只消费 field=text；其它字段忽略（避免污染）
+        guard field == "text" else { return }
+
+        if let existing = aiPartIndexByPartId[partId], existing.msgIdx == msgIdx {
+            let current = aiChatMessages[msgIdx].parts[existing.partIdx].text ?? ""
+            aiChatMessages[msgIdx].parts[existing.partIdx].text = current + delta
+            return
+        }
+
+        let kind = AIChatPartKind(rawValue: partType) ?? .text
+        let p = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil, toolState: nil)
+        aiChatMessages[msgIdx].parts.append(p)
+        let partIdx = aiChatMessages[msgIdx].parts.count - 1
+        aiPartIndexByPartId[partId] = (msgIdx, partIdx)
     }
 }

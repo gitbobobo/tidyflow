@@ -129,7 +129,11 @@ impl OpenCodeManager {
     }
 
     pub async fn check_health(&self) -> Result<(), String> {
-        let health_url = format!("{}/health", self.base_url);
+        // OpenCode 新版建议使用 /global/health；老版本可能仍有 /health。
+        let health_urls = [
+            format!("{}/global/health", self.base_url),
+            format!("{}/health", self.base_url),
+        ];
         let client = reqwest::Client::new();
 
         for attempt in 1..=MAX_HEALTH_CHECK_ATTEMPTS {
@@ -138,22 +142,25 @@ impl OpenCodeManager {
                 attempt, MAX_HEALTH_CHECK_ATTEMPTS
             );
 
-            match client
-                .get(&health_url)
-                .timeout(Duration::from_millis(500))
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    info!("Health check passed on attempt {}", attempt);
-                    return Ok(());
+            let mut ok = false;
+            for url in health_urls.iter() {
+                match client
+                    .get(url)
+                    .timeout(Duration::from_millis(500))
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => {
+                        ok = true;
+                        break;
+                    }
+                    Ok(response) => debug!("Health check returned status: {}", response.status()),
+                    Err(e) => debug!("Health check failed: {}", e),
                 }
-                Ok(response) => {
-                    debug!("Health check returned status: {}", response.status());
-                }
-                Err(e) => {
-                    debug!("Health check failed: {}", e);
-                }
+            }
+            if ok {
+                info!("Health check passed on attempt {}", attempt);
+                return Ok(());
             }
 
             if attempt < MAX_HEALTH_CHECK_ATTEMPTS {
@@ -169,6 +176,20 @@ impl OpenCodeManager {
             "Health check timed out after {}ms",
             HEALTH_CHECK_TIMEOUT_MS
         ))
+    }
+
+    /// 确保 server 正在运行：先 health check，失败才 spawn。
+    pub async fn ensure_server_running(&self) -> Result<String, String> {
+        if self.check_health().await.is_ok() {
+            return Ok(self.base_url.clone());
+        }
+
+        // 若已有 child，但不健康，先停再起
+        if self.is_running().await {
+            let _ = self.stop_server().await;
+        }
+
+        self.start_server().await
     }
 
     pub async fn stop_server(&self) -> Result<(), String> {

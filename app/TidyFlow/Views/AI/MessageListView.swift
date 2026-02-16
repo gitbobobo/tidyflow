@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct MessageListView: View {
-    let messages: [ChatMessage]
-    
+    let messages: [AIChatMessage]
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -26,14 +26,10 @@ struct MessageListView: View {
 }
 
 private struct MessageBubble: View {
-    let message: ChatMessage
+    let message: AIChatMessage
 
-    @State private var isMetaExpanded: Bool = false
+    private var isUser: Bool { message.role == .user }
 
-    private var isUser: Bool {
-        message.role == .user
-    }
-    
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if isUser {
@@ -47,87 +43,61 @@ private struct MessageBubble: View {
                     .clipShape(Circle())
                     .padding(.top, 4)
             }
-            
+
             VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
                 bubble
             }
-            
+
             if !isUser {
                 Spacer(minLength: 32)
-            }
-        }
-        .onAppear {
-            // 流式期间默认展开，做到“思考过程实时展示”
-            if message.isStreaming && shouldShowMetaDisclosure {
-                isMetaExpanded = true
-            }
-        }
-        .onChange(of: message.isStreaming) { isStreaming in
-            // 回复结束后收起，避免占据太多空间
-            if isStreaming {
-                if shouldShowMetaDisclosure { isMetaExpanded = true }
-            } else {
-                isMetaExpanded = false
-            }
-        }
-        .onChange(of: message.thinking) { _ in
-            if message.isStreaming && shouldShowMetaDisclosure {
-                isMetaExpanded = true
-            }
-        }
-        .onChange(of: message.toolTrace) { _ in
-            if message.isStreaming && shouldShowMetaDisclosure {
-                isMetaExpanded = true
             }
         }
     }
 
     @ViewBuilder
     private var bubble: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !message.content.isEmpty {
-                if isUser {
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .font(.system(size: 13))
-                        .foregroundColor(.white)
+        VStack(alignment: .leading, spacing: 10) {
+            if message.parts.isEmpty {
+                if message.isStreaming {
+                    TypingIndicator()
                 } else {
-                    // 流式期间做“打字机”渲染，避免一次性大段文字跳变的生硬感
-                    TypewriterText(text: message.content, isStreaming: message.isStreaming)
-                        .textSelection(.enabled)
-                        .font(.system(size: 13))
-                        .foregroundColor(.primary)
+                    EmptyView()
                 }
-            } else if message.isStreaming {
-                // 没有文本但仍在生成时，也要有“消息气泡”
-                TypingIndicator()
-            }
-
-            if !isUser, shouldShowMetaDisclosure {
-                DisclosureGroup("思考过程", isExpanded: $isMetaExpanded) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let thinking = message.thinking, !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            TypewriterText(text: thinking, isStreaming: message.isStreaming)
+            } else {
+                ForEach(message.parts) { part in
+                    switch part.kind {
+                    case .text:
+                        if let text = part.text, !text.isEmpty {
+                            if isUser {
+                                Text(text)
+                                    .textSelection(.enabled)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white)
+                            } else {
+                                TypewriterText(text: text, isStreaming: message.isStreaming)
+                                    .textSelection(.enabled)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.primary)
+                            }
+                        }
+                    case .reasoning:
+                        if let text = part.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            TypewriterText(text: text, isStreaming: message.isStreaming)
                                 .textSelection(.enabled)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-
-                        if let toolTrace = message.toolTrace, !toolTrace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            TypewriterText(text: toolTrace, isStreaming: message.isStreaming)
-                                .textSelection(.enabled)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                    case .tool:
+                        ToolCardView(
+                            name: part.toolName ?? "unknown",
+                            state: part.toolState
+                        )
                     }
-                    .padding(.top, 2)
                 }
-                .disclosureGroupStyle(.automatic)
             }
 
-            if message.isStreaming && !message.content.isEmpty {
+            if message.isStreaming && !isUser && !message.parts.isEmpty {
                 TypingIndicator()
             }
         }
@@ -139,38 +109,24 @@ private struct MessageBubble: View {
                 .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
         )
         .cornerRadius(12)
-        .frame(maxWidth: 520, alignment: isUser ? .trailing : .leading)
+        .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)
     }
-    
+
     private var bubbleBackgroundColor: Color {
         if isUser {
             return Color.blue
         } else {
-            // 回复消息使用更明显的气泡底色，避免与背景融在一起
             return Color.secondary.opacity(0.10)
         }
     }
 
     private var bubbleBorderColor: Color {
-        if isUser {
-            return Color.clear
-        }
+        if isUser { return .clear }
         return Color.secondary.opacity(0.12)
-    }
-
-    private var shouldShowMetaDisclosure: Bool {
-        if isUser { return false }
-        let thinkingEmpty = (message.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let toolEmpty = (message.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return !(thinkingEmpty && toolEmpty)
     }
 }
 
 /// 打字机效果：把“目标文本”平滑地增量渲染到 UI 上。
-///
-/// 说明：
-/// - 后端/网络可能一次推送较长的增量片段，直接替换整段 Text 会产生明显跳变。
-/// - 这里把差异部分拆成小 chunk 按节拍追加，视觉上更接近自然的流式输出。
 private struct TypewriterText: View {
     let text: String
     let isStreaming: Bool
@@ -184,10 +140,6 @@ private struct TypewriterText: View {
             .onAppear {
                 target = text
                 if isStreaming {
-                    // 流式开始：从当前已显示内容继续追加（避免列表重用导致清空）
-                    if displayed.isEmpty, !text.isEmpty {
-                        displayed = "" // 让后续逐步 append
-                    }
                     startIfNeeded()
                 } else {
                     displayed = text
@@ -197,7 +149,7 @@ private struct TypewriterText: View {
                 task?.cancel()
                 task = nil
             }
-            .onChange(of: text) { newValue in
+            .onChange(of: text) { _, newValue in
                 target = newValue
                 if !isStreaming {
                     displayed = newValue
@@ -205,11 +157,10 @@ private struct TypewriterText: View {
                     startIfNeeded()
                 }
             }
-            .onChange(of: isStreaming) { streaming in
+            .onChange(of: isStreaming) { _, streaming in
                 if streaming {
                     startIfNeeded()
                 } else {
-                    // 结束时直接收敛到最终文本并停止任务
                     task?.cancel()
                     task = nil
                     displayed = target
@@ -220,7 +171,6 @@ private struct TypewriterText: View {
     private func startIfNeeded() {
         guard task == nil else { return }
         task = Task { @MainActor in
-            // 30ms 一帧，按 backlog 动态调整速度
             let tickNs: UInt64 = 30_000_000
             while !Task.isCancelled {
                 if displayed == target {
@@ -229,7 +179,6 @@ private struct TypewriterText: View {
                     continue
                 }
 
-                // 若 target 发生回退/重写（非前缀），直接同步，避免卡死
                 if !target.hasPrefix(displayed) {
                     displayed = target
                     try? await Task.sleep(nanoseconds: tickNs)
@@ -260,42 +209,26 @@ private struct TypewriterText: View {
 }
 
 private struct TypingIndicator: View {
-    @State private var offset: CGFloat = 0
+    @State private var phase: CGFloat = 0
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3) { index in
-                Circle()
-                    .fill(Color.secondary)
-                    .frame(width: 6, height: 6)
-                    .opacity(0.5)
-                    .scaleEffect(index == Int(offset) ? 1.2 : 1.0)
-            }
+        HStack(spacing: 6) {
+            dot(0)
+            dot(1)
+            dot(2)
         }
+        .padding(.top, 2)
         .onAppear {
-            withAnimation(Animation.easeInOut(duration: 0.5).repeatForever()) {
-                offset = 2
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                phase = 1
             }
         }
     }
-}
 
-struct MessageListView_Previews: PreviewProvider {
-    static var previews: some View {
-        let messages = [
-            ChatMessage(role: .user, content: "Hello AI"),
-            ChatMessage(role: .assistant, content: "Hello! How can I help you today?"),
-            ChatMessage(role: .user, content: "Write some code"),
-            ChatMessage(
-                role: .assistant,
-                content: "Sure, here is some code:\n```swift\nprint(\"Hello\")\n```",
-                thinking: "模型推理中...\n下一步调用工具读取文件。",
-                toolTrace: "🔧 read_file\n{\n  \"path\": \"src/main.swift\"\n}",
-                isStreaming: true
-            )
-        ]
-        
-        return MessageListView(messages: messages)
-            .frame(width: 400, height: 600)
+    private func dot(_ index: Int) -> some View {
+        Circle()
+            .fill(Color.secondary.opacity(0.55))
+            .frame(width: 6, height: 6)
+            .scaleEffect(phase == 0 ? 1 : (index == 1 ? 1.25 : 1.1))
     }
 }

@@ -31,6 +31,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 流式聊天若过程中插入“工具调用/思考过程”消息，`done` 事件必须定位并收敛到正在流式的那条回复气泡；不要简单更新“最后一条 assistant 消息”，否则会覆盖工具消息并导致加载状态不收敛。
 - 对接 OpenCode SSE 时，`message.part.updated` 只有 `messageID` 不含 role，必须结合 `message.updated` 的 `role` 做过滤；否则会把 user 消息的 part 当成 assistant 文本转发，造成“用户消息在回复中重复显示”。
 - OpenCode 新版流式增量可能通过 `message.part.delta` 下发，而非在 `message.part.updated.properties.delta` 里；需要先从 `message.part.updated.part.type` 建立 `partID -> type(text/reasoning/...)` 映射，再把 `message.part.delta` 路由为增量输出。
+- OpenCode Desktop 的多路径会话通常通过请求头 `x-opencode-directory` 路由（而不是多开 `opencode serve`）；事件流使用 `/global/event` 单连接按 `directory` 分流；释放目录实例资源优先调用 `POST /instance/dispose`（同样依赖 `x-opencode-directory`）。
+- 对接 OpenCode 的 `GET /session` 时不要假设服务端会按 `x-opencode-directory` 过滤会话列表；实际返回往往是“全局会话数组”，需要客户端/中间层基于 session 的 `directory` 字段自行过滤，才能做到按工作空间隔离。
 - Git 面板展示分支领先/落后时，应复用 `git_status` 返回并基于项目 `default_branch` 做本地分支比较，避免硬编码 `main` 或依赖远端 `fetch` 导致慢/不稳定。
 - 多项目共存时，工作空间名（如 `"default"`）不具备全局唯一性；需要关联项目的场景必须显式传递 `projectName`，禁止通过遍历 `projects` 按工作空间名反查项目（会命中第一个匹配项而非实际所属项目）。
 - 跨分支入口触发但实际写入默认分支的操作（如 AI 合并到默认分支），其后台阻塞任务归属应绑定默认工作空间，避免错误地落在来源分支队列。

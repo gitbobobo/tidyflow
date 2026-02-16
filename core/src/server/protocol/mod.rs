@@ -447,16 +447,18 @@ pub enum ClientMessage {
         image_data: Vec<u8>,
     },
 
-    // v1.41: AI Chat
+    // vNext: AI Chat（单 serve + x-opencode-directory 路由，结构化 message/part 流）
     #[serde(rename = "ai_chat_start")]
     AIChatStart {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        project_name: Option<String>,
+        project_name: String,
+        workspace_name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
     },
     #[serde(rename = "ai_chat_send")]
     AIChatSend {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -464,15 +466,27 @@ pub enum ClientMessage {
     },
     #[serde(rename = "ai_chat_abort")]
     AIChatAbort {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
     },
     #[serde(rename = "ai_session_list")]
     AISessionList {
+        project_name: String,
+        workspace_name: String,
+    },
+    #[serde(rename = "ai_session_messages")]
+    AISessionMessages {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        project_name: Option<String>,
+        limit: Option<u32>,
     },
     #[serde(rename = "ai_session_delete")]
     AISessionDelete {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
     },
 
@@ -983,44 +997,67 @@ pub enum ServerMessage {
         tasks: Vec<TaskSnapshotEntry>,
     },
 
-    // v1.41: AI Chat 响应
-    #[serde(rename = "ai_chat_text")]
-    AIChatText {
+    // vNext: AI Chat（结构化事件流，无兼容）
+    #[serde(rename = "ai_chat_message_updated")]
+    AIChatMessageUpdated {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        delta: Option<String>,
-        done: bool,
+        message_id: String,
+        role: String,
     },
-    #[serde(rename = "ai_chat_thinking")]
-    AIChatThinking {
+    #[serde(rename = "ai_chat_part_updated")]
+    AIChatPartUpdated {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        delta: Option<String>,
-        done: bool,
+        message_id: String,
+        part: ai::PartInfo,
     },
-    #[serde(rename = "ai_chat_tool")]
-    AIChatTool {
+    #[serde(rename = "ai_chat_part_delta")]
+    AIChatPartDelta {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
-        tool: String,
-        input: serde_json::Value,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output: Option<serde_json::Value>,
+        message_id: String,
+        part_id: String,
+        part_type: String,
+        field: String,
+        delta: String,
+    },
+    #[serde(rename = "ai_chat_done")]
+    AIChatDone {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
     },
     #[serde(rename = "ai_chat_error")]
-    AIChatError {
+    AIChatErrorV2 {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
         error: String,
     },
     #[serde(rename = "ai_session_started")]
-    AISessionStarted {
+    AISessionStartedV2 {
+        project_name: String,
+        workspace_name: String,
         session_id: String,
         title: String,
+        updated_at: i64,
     },
     #[serde(rename = "ai_session_list")]
-    AISessionList {
+    AISessionListV2 {
+        project_name: String,
+        workspace_name: String,
         sessions: Vec<ai::SessionInfo>,
+    },
+    #[serde(rename = "ai_session_messages")]
+    AISessionMessages {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
+        messages: Vec<ai::MessageInfo>,
     },
 }
 

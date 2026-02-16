@@ -698,20 +698,25 @@ extension WSClient {
 
     // MARK: - 任务历史
 
-    // MARK: - v1.41: AI Chat
+    // MARK: - AI Chat（结构化 message/part 流）
 
     /// 开始新的 AI 聊天会话
-    func requestAIChatStart(projectName: String? = nil, title: String? = nil) {
-        var msg: [String: Any] = ["type": "ai_chat_start"]
-        if let projectName { msg["project_name"] = projectName }
+    func requestAIChatStart(projectName: String, workspaceName: String, title: String? = nil) {
+        var msg: [String: Any] = [
+            "type": "ai_chat_start",
+            "project_name": projectName,
+            "workspace_name": workspaceName
+        ]
         if let title { msg["title"] = title }
         send(msg)
     }
 
     /// 发送 AI 聊天消息
-    func requestAIChatSend(sessionId: String, message: String, fileRefs: [String]? = nil) {
+    func requestAIChatSend(projectName: String, workspaceName: String, sessionId: String, message: String, fileRefs: [String]? = nil) {
         var msg: [String: Any] = [
             "type": "ai_chat_send",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
             "session_id": sessionId,
             "message": message
         ]
@@ -722,24 +727,42 @@ extension WSClient {
     }
 
     /// 终止正在进行的 AI 聊天
-    func requestAIChatAbort(sessionId: String) {
+    func requestAIChatAbort(projectName: String, workspaceName: String, sessionId: String) {
         send([
             "type": "ai_chat_abort",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
             "session_id": sessionId
         ])
     }
 
     /// 获取 AI 会话列表
-    func requestAISessionList(projectName: String? = nil) {
-        var msg: [String: Any] = ["type": "ai_session_list"]
-        if let projectName { msg["project_name"] = projectName }
+    func requestAISessionList(projectName: String, workspaceName: String) {
+        send([
+            "type": "ai_session_list",
+            "project_name": projectName,
+            "workspace_name": workspaceName
+        ])
+    }
+
+    /// 获取 AI 会话历史消息
+    func requestAISessionMessages(projectName: String, workspaceName: String, sessionId: String, limit: Int? = nil) {
+        var msg: [String: Any] = [
+            "type": "ai_session_messages",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "session_id": sessionId
+        ]
+        if let limit { msg["limit"] = limit }
         send(msg)
     }
 
     /// 删除 AI 会话
-    func requestAISessionDelete(sessionId: String) {
+    func requestAISessionDelete(projectName: String, workspaceName: String, sessionId: String) {
         send([
             "type": "ai_session_delete",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
             "session_id": sessionId
         ])
     }

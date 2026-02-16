@@ -30,7 +30,7 @@ struct ChatInputView: View {
                     .font(.system(size: 13))
                     .lineLimit(1...5)
                     .focused($isFocused)
-                    .onChange(of: text) { newValue in
+                    .onChange(of: text) { _, newValue in
                         checkForAtTrigger(newValue)
                     }
 

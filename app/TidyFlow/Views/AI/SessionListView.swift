@@ -2,10 +2,10 @@ import SwiftUI
 
 struct SessionListView: View {
     @EnvironmentObject var appState: AppState
-    @Binding var sessions: [SessionInfo]
+    @Binding var sessions: [AISessionInfo]
     @Binding var currentSessionId: String?
-    var onSelect: (SessionInfo) -> Void
-    var onDelete: (SessionInfo) -> Void
+    var onSelect: (AISessionInfo) -> Void
+    var onDelete: (AISessionInfo) -> Void
     var onCreateNew: () -> Void
 
     var body: some View {
@@ -45,7 +45,7 @@ struct SessionListView: View {
 }
 
 struct SessionRow: View {
-    let session: SessionInfo
+    let session: AISessionInfo
     let isSelected: Bool
 
     var body: some View {
@@ -78,8 +78,8 @@ struct SessionRow: View {
 #Preview {
     SessionListView(
         sessions: .constant([
-            SessionInfo(id: "1", title: "Test Session 1", updatedAt: Int64(Date().timeIntervalSince1970 * 1000)),
-            SessionInfo(id: "2", title: "Test Session 2", updatedAt: Int64(Date().timeIntervalSince1970 * 1000) - 3600000)
+            AISessionInfo(projectName: "p", workspaceName: "w", id: "1", title: "Test Session 1", updatedAt: Int64(Date().timeIntervalSince1970 * 1000)),
+            AISessionInfo(projectName: "p", workspaceName: "w", id: "2", title: "Test Session 2", updatedAt: Int64(Date().timeIntervalSince1970 * 1000) - 3600000)
         ]),
         currentSessionId: .constant("1"),
         onSelect: { _ in },

@@ -60,11 +60,23 @@ struct AITabView: View {
         .onAppear {
             loadSessions()
         }
-        .onChange(of: appState.aiCurrentSessionId) { newSessionId in
+        .onChange(of: appState.selectedWorkspaceKey) { _, _ in
+            // 切换工作空间时清空 AI 会话上下文，避免串台
+            appState.aiCurrentSessionId = nil
+            appState.aiChatMessages = []
+            appState.aiIsStreaming = false
+            appState.aiMessageIndexByMessageId = [:]
+            appState.aiPartIndexByPartId = [:]
+            loadSessions()
+        }
+        .onChange(of: appState.aiCurrentSessionId) { _, newSessionId in
             // 会话创建完成后，发送待发消息
             if let newSessionId, let pending = pendingSendMessage {
+                guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
                 pendingSendMessage = nil
                 appState.wsClient.requestAIChatSend(
+                    projectName: appState.selectedProjectName,
+                    workspaceName: ws,
                     sessionId: newSessionId,
                     message: pending.text,
                     fileRefs: pending.files
@@ -167,17 +179,30 @@ struct AITabView: View {
     }
 
     private func loadSessions() {
-        appState.wsClient.requestAISessionList()
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else {
+            appState.aiSessions = []
+            return
+        }
+        appState.wsClient.requestAISessionList(projectName: appState.selectedProjectName, workspaceName: ws)
     }
 
-    private func loadSession(_ session: SessionInfo) {
+    private func loadSession(_ session: AISessionInfo) {
         appState.aiCurrentSessionId = session.id
-        // TODO: 加载历史消息
         appState.aiChatMessages = []
+        appState.wsClient.requestAISessionMessages(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            sessionId: session.id,
+            limit: 200
+        )
     }
 
-    private func deleteSession(_ session: SessionInfo) {
-        appState.wsClient.requestAISessionDelete(sessionId: session.id)
+    private func deleteSession(_ session: AISessionInfo) {
+        appState.wsClient.requestAISessionDelete(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            sessionId: session.id
+        )
         appState.aiSessions.removeAll { $0.id == session.id }
         if appState.aiCurrentSessionId == session.id {
             appState.aiCurrentSessionId = nil
@@ -194,6 +219,7 @@ struct AITabView: View {
     }
 
     private func sendMessage() {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
         guard !inputText.isEmpty || !selectedFiles.isEmpty else { return }
 
         let text = inputText
@@ -201,16 +227,22 @@ struct AITabView: View {
         inputText = ""
 
         // 添加用户消息到 UI
-        let userMessage = ChatMessage(role: .user, content: text)
+        let userMessage = AIChatMessage(
+            role: .user,
+            parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: text, toolName: nil, toolState: nil)],
+            isStreaming: false
+        )
         appState.aiChatMessages.append(userMessage)
         appState.aiIsStreaming = true
 
-        // 预先插入一个“回复气泡占位”，避免工具调用插队或首包延迟导致 UI 没有回复气泡
-        appState.aiChatMessages.append(ChatMessage(role: .assistant, kind: .text, content: "", isStreaming: true))
+        // 预先插入一个“回复气泡占位”，首包到达后由 message_updated 绑定 messageId
+        appState.aiChatMessages.append(AIChatMessage(role: .assistant, parts: [], isStreaming: true))
 
         if let sessionId = appState.aiCurrentSessionId {
             // 已有会话，直接发送
             appState.wsClient.requestAIChatSend(
+                projectName: appState.selectedProjectName,
+                workspaceName: ws,
                 sessionId: sessionId,
                 message: text,
                 fileRefs: files
@@ -220,6 +252,7 @@ struct AITabView: View {
             pendingSendMessage = (text, files)
             appState.wsClient.requestAIChatStart(
                 projectName: appState.selectedProjectName,
+                workspaceName: ws,
                 title: String(text.prefix(50))
             )
         }
@@ -227,29 +260,24 @@ struct AITabView: View {
 
     private func stopStreaming() {
         if let sessionId = appState.aiCurrentSessionId {
-            appState.wsClient.requestAIChatAbort(sessionId: sessionId)
+            if let ws = appState.selectedWorkspaceKey, !ws.isEmpty {
+                appState.wsClient.requestAIChatAbort(
+                    projectName: appState.selectedProjectName,
+                    workspaceName: ws,
+                    sessionId: sessionId
+                )
+            }
         }
         appState.aiIsStreaming = false
 
         // 立即停止“加载中”展示，避免等待服务端 done 才收敛
-        if let idx = appState.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.kind == .text && $0.isStreaming }) {
-            let prev = appState.aiChatMessages[idx]
-            let contentEmpty = prev.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let thinkingEmpty = (prev.thinking ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let toolEmpty = (prev.toolTrace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            if contentEmpty && thinkingEmpty && toolEmpty {
+        if let idx = appState.aiChatMessages.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
+            var prev = appState.aiChatMessages[idx]
+            prev.isStreaming = false
+            if prev.parts.isEmpty {
                 appState.aiChatMessages.remove(at: idx)
             } else {
-                appState.aiChatMessages[idx] = ChatMessage(
-                    id: prev.id,
-                    role: .assistant,
-                    kind: .text,
-                    content: prev.content,
-                    thinking: prev.thinking,
-                    toolTrace: prev.toolTrace,
-                    isStreaming: false,
-                    timestamp: prev.timestamp
-                )
+                appState.aiChatMessages[idx] = prev
             }
         }
     }

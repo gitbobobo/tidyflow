@@ -108,11 +108,15 @@ class AppState: ObservableObject {
     var aiCommitContinuations: [String: (AICommitResult) -> Void] = [:]
     var aiMergeContinuations: [String: (AIMergeResult) -> Void] = [:]
 
-    // v1.41: AI Chat 状态
+    // AI Chat 状态（结构化 message/part 流）
     @Published var aiCurrentSessionId: String?
-    @Published var aiChatMessages: [ChatMessage] = []
+    @Published var aiChatMessages: [AIChatMessage] = []
     @Published var aiIsStreaming: Bool = false
-    @Published var aiSessions: [SessionInfo] = []
+    @Published var aiSessions: [AISessionInfo] = []
+
+    // AI Chat 索引（用于按 messageId/partId 稳定更新，不依赖数组顺序）
+    var aiMessageIndexByMessageId: [String: Int] = [:]
+    var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]

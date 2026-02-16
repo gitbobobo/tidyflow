@@ -1,50 +1,55 @@
 import Foundation
 
-enum MessageRole: String, Codable {
+enum AIChatRole: String {
     case user
     case assistant
 }
 
-/// 聊天消息类型：用于区分“正式回复”和“思考/工具过程”等展示风格
-enum ChatMessageKind: String, Codable {
+enum AIChatPartKind: String {
     case text
-    case thinking
+    case reasoning
+    case tool
 }
 
-struct ChatMessage: Identifiable, Codable {
+struct AIChatPart: Identifiable {
     let id: String
-    let role: MessageRole
-    let kind: ChatMessageKind
-    let content: String
-    /// 可选：思考过程（工具调用、推理片段等），用于折叠展示
-    let thinking: String?
-    /// 可选：工具调用追踪（独立于 thinking，避免被推理流覆盖）
-    let toolTrace: String?
-    let isStreaming: Bool
+    let kind: AIChatPartKind
+    var text: String?
+    var toolName: String?
+    var toolState: [String: Any]?
+}
+
+/// 一条消息对应一个 OpenCode message（message_id），内部包含多个 part
+struct AIChatMessage: Identifiable {
+    /// SwiftUI 稳定 id（本地生成）
+    let id: String
+    /// OpenCode messageID（服务端下发）；本地占位消息可为 nil
+    var messageId: String?
+    let role: AIChatRole
+    var parts: [AIChatPart]
+    var isStreaming: Bool
     let timestamp: Date
 
     init(
         id: String = UUID().uuidString,
-        role: MessageRole,
-        kind: ChatMessageKind = .text,
-        content: String,
-        thinking: String? = nil,
-        toolTrace: String? = nil,
+        messageId: String? = nil,
+        role: AIChatRole,
+        parts: [AIChatPart] = [],
         isStreaming: Bool = false,
         timestamp: Date = Date()
     ) {
         self.id = id
+        self.messageId = messageId
         self.role = role
-        self.kind = kind
-        self.content = content
-        self.thinking = thinking
-        self.toolTrace = toolTrace
+        self.parts = parts
         self.isStreaming = isStreaming
         self.timestamp = timestamp
     }
 }
 
-struct SessionInfo: Identifiable, Codable {
+struct AISessionInfo: Identifiable {
+    let projectName: String
+    let workspaceName: String
     let id: String
     let title: String
     let updatedAt: Int64

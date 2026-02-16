@@ -6,15 +6,16 @@ mod tests {
     #[test]
     fn test_ai_state_new() {
         let state = AIState::new();
-        assert!(state.agents.is_empty());
-        assert!(state.sessions.is_empty());
         assert!(state.active_streams.is_empty());
+        assert!(state.directory_last_used_ms.is_empty());
+        assert!(state.directory_active_streams.is_empty());
+        assert!(state.agent.is_none());
     }
 
     #[test]
     fn test_ai_state_default() {
         let state = AIState::default();
-        assert!(state.agents.is_empty());
+        assert!(state.agent.is_none());
     }
 
     #[test]

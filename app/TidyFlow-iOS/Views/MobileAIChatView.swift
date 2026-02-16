@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct MobileAIChatView: View {
-    @State private var messages: [ChatMessage] = []
+    @State private var messages: [AIChatMessage] = []
     @State private var inputText: String = ""
     @State private var isStreaming = false
     @State private var showSessionList = false
-    @State private var sessions: [SessionInfo] = []
+    @State private var sessions: [AISessionInfo] = []
     @State private var currentSessionId: String?
 
     private var systemBackgroundColor: Color {
@@ -172,7 +172,7 @@ struct MobileAIChatView: View {
 
     private func loadSessions() {}
 
-    private func loadSession(_ session: SessionInfo) {
+    private func loadSession(_ session: AISessionInfo) {
         currentSessionId = session.id
     }
 
@@ -185,7 +185,11 @@ struct MobileAIChatView: View {
     private func sendMessage() {
         guard !inputText.isEmpty else { return }
 
-        let userMessage = ChatMessage(role: .user, content: inputText)
+        let userMessage = AIChatMessage(
+            role: .user,
+            parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: inputText, toolName: nil, toolState: nil)],
+            isStreaming: false
+        )
         messages.append(userMessage)
 
         isStreaming = true
@@ -198,7 +202,7 @@ struct MobileAIChatView: View {
 }
 
 struct MobileMessageBubble: View {
-    let message: ChatMessage
+    let message: AIChatMessage
 
     var body: some View {
         HStack {
@@ -221,7 +225,7 @@ struct MobileMessageBubble: View {
                     }
                     .foregroundColor(.accentColor)
                 } else {
-                    Text(message.content)
+                    Text(displayText)
                         .font(.body)
                 }
             }
@@ -239,5 +243,13 @@ struct MobileMessageBubble: View {
                 Spacer(minLength: 50)
             }
         }
+    }
+
+    private var displayText: String {
+        let parts = message.parts.compactMap { p -> String? in
+            guard p.kind == .text || p.kind == .reasoning else { return nil }
+            return p.text
+        }
+        return parts.joined(separator: "\n\n")
     }
 }

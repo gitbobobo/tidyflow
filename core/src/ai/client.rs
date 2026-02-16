@@ -4,6 +4,84 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio_stream::Stream;
 
+fn hex_upper(n: u8) -> char {
+    match n {
+        0..=9 => (b'0' + n) as char,
+        10..=15 => (b'A' + (n - 10)) as char,
+        _ => '0',
+    }
+}
+
+// 与 JS encodeURIComponent 对齐：
+// - 保留：A-Z a-z 0-9 - _ . ! ~ * ' ( )
+// - 其他 byte（含 UTF-8 非 ASCII）全部按 %XX（大写）编码
+fn encode_uri_component_like_js(input: &str) -> String {
+    let bytes = input.as_bytes();
+    // 常见路径基本都会含 `/`，这里直接按最坏情况预估（%XX 会变长 3 倍）。
+    let mut out = String::with_capacity(bytes.len().saturating_mul(3));
+    for &b in bytes {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => out.push(b as char),
+            _ => {
+                out.push('%');
+                out.push(hex_upper(b >> 4));
+                out.push(hex_upper(b & 0x0F));
+            }
+        }
+    }
+    out
+}
+
+fn from_hex(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+// 仅用于把服务端可能回传的已编码 directory 解码成原始路径，便于与本地 worktree_path 对齐。
+// 解码失败时返回 None，调用方应回退使用原字符串。
+fn percent_decode_to_utf8(input: &str) -> Option<String> {
+    if !input.as_bytes().contains(&b'%') {
+        return None;
+    }
+
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let hi = from_hex(bytes[i + 1])?;
+            let lo = from_hex(bytes[i + 2])?;
+            out.push((hi << 4) | lo);
+            i += 3;
+            continue;
+        }
+        out.push(b);
+        i += 1;
+    }
+
+    String::from_utf8(out).ok()
+}
+
 #[derive(Debug, Error)]
 pub enum OpenCodeError {
     #[error("HTTP error: {0}")]
@@ -17,11 +95,37 @@ pub enum OpenCodeError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTime {
+    #[serde(default)]
+    pub created: i64,
+    #[serde(default)]
+    pub updated: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionResponse {
     pub id: String,
     pub title: String,
-    #[serde(rename = "updatedAt", default)]
+    /// OpenCode 新版会把目录放在 session 上，用于区分不同工作目录的会话。
+    #[serde(default)]
+    pub directory: Option<String>,
+    /// 新版时间字段：{ time: { created, updated } }
+    #[serde(default)]
+    pub time: Option<SessionTime>,
+    /// 旧版兼容字段（若存在则使用）；新版通常不返回 updatedAt。
+    #[serde(default, alias = "updatedAt", alias = "updated_at")]
     pub updated_at: i64,
+}
+
+impl SessionResponse {
+    fn effective_updated_at(&self) -> i64 {
+        if let Some(t) = &self.time {
+            if t.updated > 0 {
+                return t.updated;
+            }
+        }
+        self.updated_at
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,13 +164,32 @@ impl OpenCodeClient {
         Self::new(manager.get_base_url())
     }
 
-    pub async fn create_session(&self, title: &str) -> Result<SessionResponse, OpenCodeError> {
+    fn with_directory(
+        &self,
+        builder: reqwest::RequestBuilder,
+        directory: &str,
+    ) -> reqwest::RequestBuilder {
+        // OpenCode Desktop 会把路径通过 encodeURIComponent 写入 header；
+        // 这里保持一致，避免包含中文/空格等字符时 header 无法构造，或服务端路由不一致。
+        let encoded = encode_uri_component_like_js(directory);
+        builder.header("x-opencode-directory", encoded)
+    }
+
+    pub async fn create_session(
+        &self,
+        directory: &str,
+        title: &str,
+    ) -> Result<SessionResponse, OpenCodeError> {
         let url = format!("{}/session", self.base_url);
         let request = CreateSessionRequest {
             title: title.to_string(),
         };
 
-        let response = self.client.post(&url).json(&request).send().await?;
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .json(&request)
+            .send()
+            .await?;
 
         if response.status().is_success() {
             let session: SessionResponse = response.json().await?;
@@ -79,9 +202,10 @@ impl OpenCodeClient {
     }
 
     /// 异步发送消息（POST prompt_async，立即返回 204）
-    /// 实际响应通过 SSE `/event` 端点流式获取
+    /// 实际响应通过 SSE `/global/event` 端点流式获取
     pub async fn send_message_async(
         &self,
+        directory: &str,
         session_id: &str,
         message: &str,
         file_refs: Option<Vec<String>>,
@@ -95,9 +219,15 @@ impl OpenCodeClient {
 
         if let Some(ref refs) = file_refs {
             for r in refs {
+                // 尽量使用绝对路径，避免后端对相对路径的解释不一致。
+                let abs = if r.starts_with('/') {
+                    r.to_string()
+                } else {
+                    format!("{}/{}", directory.trim_end_matches('/'), r)
+                };
                 parts.push(serde_json::json!({
                     "type": "file",
-                    "url": format!("file://{}", r),
+                    "url": format!("file://{}", abs),
                     "filename": r,
                     "mime": "text/plain",
                 }));
@@ -106,7 +236,11 @@ impl OpenCodeClient {
 
         let body = serde_json::json!({ "parts": parts });
 
-        let response = self.client.post(&url).json(&body).send().await?;
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .json(&body)
+            .send()
+            .await?;
 
         let status = response.status().as_u16();
         if status == 204 || response.status().is_success() {
@@ -117,11 +251,12 @@ impl OpenCodeClient {
         }
     }
 
-    /// 订阅 SSE 事件流（GET /event）
-    pub async fn subscribe_events(
+    /// 订阅全局 SSE 事件流（GET /global/event）
+    pub async fn subscribe_global_events(
         &self,
-    ) -> Result<impl Stream<Item = Result<BusEvent, OpenCodeError>>, OpenCodeError> {
-        let url = format!("{}/event", self.base_url);
+    ) -> Result<impl Stream<Item = Result<GlobalBusEventEnvelope, OpenCodeError>>, OpenCodeError>
+    {
+        let url = format!("{}/global/event", self.base_url);
 
         let response = self.client.get(&url).send().await?;
 
@@ -131,14 +266,47 @@ impl OpenCodeClient {
             return Err(OpenCodeError::ServerError { status, message });
         }
 
-        let stream = SseStream::new(response.bytes_stream());
-        Ok(stream)
+        let stream = SseJsonStream::new(response.bytes_stream());
+        let mapped = tokio_stream::StreamExt::filter_map(stream, move |item| match item {
+            Ok(v) => {
+                // 全局事件常见格式：{ directory, payload:{type,properties} }
+                // 也可能直接返回 payload（此时 directory 可能在顶层或 properties 内）
+                let directory_raw = v
+                    .get("directory")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        v.get("properties")
+                            .and_then(|p| p.get("directory"))
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string())
+                    });
+                let directory = directory_raw
+                    .as_deref()
+                    .and_then(percent_decode_to_utf8)
+                    .or(directory_raw);
+
+                let payload_value = v.get("payload").cloned().unwrap_or(v);
+                match serde_json::from_value::<BusEvent>(payload_value) {
+                    Ok(payload) => Some(Ok(GlobalBusEventEnvelope { directory, payload })),
+                    Err(e) => Some(Err(OpenCodeError::JsonError(e))),
+                }
+            }
+            Err(e) => Some(Err(e)),
+        });
+        Ok(mapped)
     }
 
-    pub async fn list_sessions(&self) -> Result<Vec<SessionResponse>, OpenCodeError> {
+    pub async fn list_sessions(
+        &self,
+        directory: &str,
+    ) -> Result<Vec<SessionResponse>, OpenCodeError> {
         let url = format!("{}/session", self.base_url);
 
-        let response = self.client.get(&url).send().await?;
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
 
         if response.status().is_success() {
             // OpenCode 返回数组格式，兼容两种：直接数组 或 {sessions: [...]}
@@ -160,10 +328,32 @@ impl OpenCodeClient {
         }
     }
 
-    pub async fn delete_session(&self, session_id: &str) -> Result<(), OpenCodeError> {
+    pub async fn get_session(&self, session_id: &str) -> Result<SessionResponse, OpenCodeError> {
         let url = format!("{}/session/{}", self.base_url, session_id);
 
-        let response = self.client.delete(&url).send().await?;
+        let response = self.client.get(&url).send().await?;
+
+        if response.status().is_success() {
+            let session: SessionResponse = response.json().await?;
+            Ok(session)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    pub async fn delete_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<(), OpenCodeError> {
+        let url = format!("{}/session/{}", self.base_url, session_id);
+
+        let response = self
+            .with_directory(self.client.delete(&url), directory)
+            .send()
+            .await?;
 
         if response.status().as_u16() == 204 || response.status().is_success() {
             Ok(())
@@ -173,21 +363,117 @@ impl OpenCodeClient {
             Err(OpenCodeError::ServerError { status, message })
         }
     }
+
+    pub async fn abort_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<(), OpenCodeError> {
+        let url = format!("{}/session/{}/abort", self.base_url, session_id);
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    pub async fn dispose_instance(&self, directory: &str) -> Result<(), OpenCodeError> {
+        let url = format!("{}/instance/dispose", self.base_url);
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    pub async fn list_messages(
+        &self,
+        directory: &str,
+        session_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<MessageEnvelope>, OpenCodeError> {
+        let mut url = format!("{}/session/{}/message", self.base_url, session_id);
+        if let Some(l) = limit {
+            url = format!("{}?limit={}", url, l);
+        }
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let body = response.text().await?;
+            let messages: Vec<MessageEnvelope> = serde_json::from_str(&body)?;
+            Ok(messages)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GlobalBusEventEnvelope {
+    #[serde(default)]
+    pub directory: Option<String>,
+    pub payload: BusEvent,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageEnvelope {
+    pub info: MessageInfo,
+    #[serde(default)]
+    pub parts: Vec<PartEnvelope>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageInfo {
+    pub id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(rename = "createdAt", default)]
+    pub created_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PartEnvelope {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub part_type: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub state: Option<serde_json::Value>,
 }
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-struct SseStream {
+struct SseJsonStream {
     buffer: String,
     inner: Pin<
         Box<dyn tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + Unpin>,
     >,
     /// 已解析但尚未 yield 的事件队列
-    pending: std::collections::VecDeque<Result<BusEvent, OpenCodeError>>,
+    pending: std::collections::VecDeque<Result<serde_json::Value, OpenCodeError>>,
 }
 
-impl SseStream {
+impl SseJsonStream {
     fn new(
         bytes: impl tokio_stream::Stream<Item = Result<bytes::Bytes, reqwest::Error>>
             + Send
@@ -223,11 +509,8 @@ impl SseStream {
                 continue;
             }
 
-            // 尝试解析为 BusEvent JSON
-            match serde_json::from_str::<BusEvent>(&data) {
-                Ok(event) => {
-                    self.pending.push_back(Ok(event));
-                }
+            match serde_json::from_str::<serde_json::Value>(&data) {
+                Ok(event) => self.pending.push_back(Ok(event)),
                 Err(e) => {
                     self.pending.push_back(Err(OpenCodeError::SseError(format!(
                         "Failed to parse SSE event: {} (data: {})",
@@ -240,8 +523,8 @@ impl SseStream {
     }
 }
 
-impl tokio_stream::Stream for SseStream {
-    type Item = Result<BusEvent, OpenCodeError>;
+impl tokio_stream::Stream for SseJsonStream {
+    type Item = Result<serde_json::Value, OpenCodeError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -286,10 +569,11 @@ impl tokio_stream::Stream for SseStream {
 }
 
 // ============================================================================
-// OpenCodeAgent: 实现通用 AiAgent trait
+// OpenCodeAgent: 实现通用 AiAgent trait（单 serve + directory 路由）
 // ============================================================================
 
-use super::{AiAgent, AiEvent, AiEventStream, AiSession, OpenCodeManager};
+use super::event_hub::OpenCodeEventHub;
+use super::{AiAgent, AiEvent, AiEventStream, AiMessage, AiPart, AiSession, OpenCodeManager};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc as StdArc, Mutex as StdMutex};
@@ -300,18 +584,50 @@ use std::sync::{Arc as StdArc, Mutex as StdMutex};
 /// 将 OpenCode 特有的 SSE 事件转换为通用 AiEvent。
 pub struct OpenCodeAgent {
     manager: Arc<OpenCodeManager>,
+    hub: Arc<OpenCodeEventHub>,
 }
 
 impl OpenCodeAgent {
     pub fn new(manager: Arc<OpenCodeManager>) -> Self {
-        Self { manager }
+        let hub = Arc::new(OpenCodeEventHub::new(manager.clone()));
+        Self { manager, hub }
+    }
+
+    async fn verify_session_directory(&self, directory: &str, session_id: &str) -> Result<(), String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let session = client
+            .get_session(session_id)
+            .await
+            .map_err(|e| format!("Failed to fetch session info: {}", e))?;
+
+        let expected = directory.trim_end_matches('/');
+        let actual = session
+            .directory
+            .as_deref()
+            .unwrap_or("")
+            .trim_end_matches('/');
+
+        if actual.is_empty() {
+            return Err(format!(
+                "Session '{}' missing directory; cannot verify workspace isolation",
+                session_id
+            ));
+        }
+        if actual != expected {
+            return Err(format!(
+                "Session '{}' does not belong to current workspace directory (expected='{}', actual='{}')",
+                session_id, expected, actual
+            ));
+        }
+        Ok(())
     }
 }
 
 #[async_trait]
 impl AiAgent for OpenCodeAgent {
     async fn start(&self) -> Result<(), String> {
-        self.manager.start_server().await?;
+        self.manager.ensure_server_running().await?;
+        self.hub.ensure_started().await?;
         Ok(())
     }
 
@@ -319,45 +635,48 @@ impl AiAgent for OpenCodeAgent {
         self.manager.stop_server().await
     }
 
-    async fn create_session(&self, title: &str) -> Result<AiSession, String> {
+    async fn create_session(&self, directory: &str, title: &str) -> Result<AiSession, String> {
         let client = OpenCodeClient::from_manager(&self.manager);
         let session = client
-            .create_session(title)
+            .create_session(directory, title)
             .await
             .map_err(|e| format!("Failed to create session: {}", e))?;
+        let updated_at = session.effective_updated_at();
         Ok(AiSession {
             id: session.id,
             title: session.title,
-            updated_at: session.updated_at,
+            updated_at,
         })
     }
 
     async fn send_message(
         &self,
+        directory: &str,
         session_id: &str,
         message: &str,
         file_refs: Option<Vec<String>>,
     ) -> Result<AiEventStream, String> {
+        // 会话隔离：防止跨工作空间误用 session_id
+        self.verify_session_directory(directory, session_id).await?;
+
         let client = OpenCodeClient::from_manager(&self.manager);
 
-        // 1. 先订阅 SSE 事件流
-        let sse_stream = client
-            .subscribe_events()
-            .await
-            .map_err(|e| format!("Failed to subscribe events: {}", e))?;
+        // 1. 先订阅 Hub（避免丢首包）
+        let rx = self.hub.subscribe();
 
         // 2. 异步发送消息（立即返回）
         client
-            .send_message_async(session_id, message, file_refs)
+            .send_message_async(directory, session_id, message, file_refs)
             .await
             .map_err(|e| format!("Failed to send message: {}", e))?;
 
-        // 3. 过滤 SSE 事件，只保留当前 session 的事件，映射为通用 AiEvent
+        // 3. 过滤全局事件流，只保留当前 directory + session 的事件，映射为通用 AiEvent
         //
-        // 注意：OpenCode 会通过 message.updated 事件告知 message role（user/assistant），
-        // message.part.updated 只有 messageID，不包含 role。若不做 role 过滤，
-        // 很容易把用户消息的 part 当成 assistant 文本转发，导致客户端“重复显示用户消息”。
+        // 注意：
+        // - message.updated 告知 message role（user/assistant）。
+        // - part.updated/delta 可能先于 message.updated 到达，因此需要 role 未知时的兜底过滤。
         let session_id = session_id.to_string();
+        let directory = directory.to_string();
         let user_message = message.to_string();
         let message_roles: StdArc<StdMutex<HashMap<String, String>>> =
             StdArc::new(StdMutex::new(HashMap::new()));
@@ -365,14 +684,21 @@ impl AiAgent for OpenCodeAgent {
         let part_types: StdArc<StdMutex<HashMap<String, String>>> =
             StdArc::new(StdMutex::new(HashMap::new()));
 
-        let mapped = tokio_stream::StreamExt::filter_map(sse_stream, move |result| {
+        let stream = tokio_stream::wrappers::BroadcastStream::new(rx);
+        let mapped = tokio_stream::StreamExt::filter_map(stream, move |result| {
             let message_roles = message_roles.clone();
             let part_types = part_types.clone();
             let session_id = session_id.clone();
+            let directory = directory.clone();
             let user_message = user_message.clone();
 
             match result {
-                Ok(bus_event) => match bus_event.event_type.as_str() {
+                Ok(hub_event) => {
+                    if hub_event.directory.as_deref() != Some(directory.as_str()) {
+                        return None;
+                    }
+                    let bus_event = hub_event.event;
+                    match bus_event.event_type.as_str() {
                     // message.updated：记录 messageID -> role 映射
                     "message.updated" => {
                         let props = &bus_event.properties;
@@ -392,10 +718,22 @@ impl AiAgent for OpenCodeAgent {
                                 map.insert(message_id, role);
                             }
                         }
-                        None
+                        // 只对 assistant 转发，用户消息不需要展示（UI 已本地插入）
+                        let role = info
+                            .get("role")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if role == "assistant" {
+                            Some(Ok(AiEvent::MessageUpdated {
+                                message_id: info.get("id")?.as_str()?.to_string(),
+                                role: role.to_string(),
+                            }))
+                        } else {
+                            None
+                        }
                     }
 
-                    // 文本增量：message.part.updated
+                    // part 全量：message.part.updated
                     "message.part.updated" => {
                         let props = &bus_event.properties;
                         let part = props.get("part")?;
@@ -432,68 +770,46 @@ impl AiAgent for OpenCodeAgent {
                             }
                         }
 
-                        match part_type {
-                            "text" => {
-                                // 优先使用 delta（增量），否则用完整 text
-                                let delta = props
-                                    .get("delta")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let text = delta
-                                    .or_else(|| {
-                                        part.get("text")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                    })
-                                    .unwrap_or_default();
-                                if text.is_empty() {
-                                    return None;
-                                }
+                        let part_id = part_id.to_string();
+                        let part_type_s = part_type.to_string();
+                        let message_id_s = message_id.to_string();
 
-                                // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
-                                if role.is_none()
-                                    && !user_message.is_empty()
-                                    && text.trim() == user_message.trim()
-                                {
-                                    return None;
-                                }
-                                Some(Ok(AiEvent::TextDelta { text }))
-                            }
-                            "reasoning" => {
-                                // 思考过程增量：进入可折叠区域，不污染最终回复文本
-                                let delta = props
-                                    .get("delta")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let text = delta
-                                    .or_else(|| {
-                                        part.get("text")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                    })
-                                    .unwrap_or_default();
-                                if text.is_empty() {
-                                    return None;
-                                }
-                                Some(Ok(AiEvent::ThinkingDelta { text }))
-                            }
-                            "tool" => {
-                                let tool = part
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| part.get("tool").and_then(|v| v.as_str()))
-                                    .unwrap_or("unknown")
-                                    .to_string();
-                                Some(Ok(AiEvent::ToolUse {
-                                    tool,
-                                    input: part
-                                        .get("state")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                }))
-                            }
-                            _ => None,
+                        let tool_name = part
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| part.get("tool").and_then(|v| v.as_str()))
+                            .map(|s| s.to_string());
+
+                        let text = part
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
+                        if role.is_none()
+                            && part_type == "text"
+                            && !user_message.is_empty()
+                            && text
+                                .as_deref()
+                                .unwrap_or("")
+                                .trim()
+                                == user_message.trim()
+                        {
+                            return None;
                         }
+
+                        let tool_state = part.get("state").cloned();
+
+                        Some(Ok(AiEvent::PartUpdated {
+                            message_id: message_id_s,
+                            part: AiPart {
+                                id: part_id,
+                                part_type: part_type_s,
+                                text,
+                                tool_name,
+                                tool_state,
+                            },
+                        }))
                     }
                     // OpenCode 新版：message.part.delta 承载真正的流式增量（按 partID 分发）
                     "message.part.delta" => {
@@ -533,28 +849,17 @@ impl AiAgent for OpenCodeAgent {
                             None
                         };
 
-                        match part_type.as_deref() {
-                            Some("reasoning") => Some(Ok(AiEvent::ThinkingDelta {
-                                text: delta.to_string(),
-                            })),
-                            Some("text") => {
-                                // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
-                                if role.is_none()
-                                    && !user_message.is_empty()
-                                    && delta.trim() == user_message.trim()
-                                {
-                                    return None;
-                                }
-                                Some(Ok(AiEvent::TextDelta {
-                                    text: delta.to_string(),
-                                }))
-                            }
-                            // 未知 part 类型：宁可当成 text（至少实现实时输出）
-                            None => Some(Ok(AiEvent::TextDelta {
-                                text: delta.to_string(),
-                            })),
-                            _ => None,
+                        let part_type_s = part_type.clone().unwrap_or_else(|| "text".to_string());
+                        if role.is_none() && !user_message.is_empty() && delta.trim() == user_message.trim() {
+                            return None;
                         }
+                        Some(Ok(AiEvent::PartDelta {
+                            message_id: message_id.to_string(),
+                            part_id: part_id.to_string(),
+                            part_type: part_type_s,
+                            field: field.to_string(),
+                            delta: delta.to_string(),
+                        }))
                     }
                     // 会话状态变为 idle 表示处理完成
                     "session.idle" => {
@@ -626,7 +931,8 @@ impl AiAgent for OpenCodeAgent {
                     // 心跳和连接事件忽略
                     "server.heartbeat" | "server.connected" => None,
                     _ => None,
-                },
+                    }
+                }
                 Err(e) => Some(Err(e.to_string())),
             }
         });
@@ -634,28 +940,90 @@ impl AiAgent for OpenCodeAgent {
         Ok(Box::pin(mapped))
     }
 
-    async fn list_sessions(&self) -> Result<Vec<AiSession>, String> {
+    async fn list_sessions(&self, directory: &str) -> Result<Vec<AiSession>, String> {
         let client = OpenCodeClient::from_manager(&self.manager);
         let sessions = client
-            .list_sessions()
+            .list_sessions(directory)
             .await
             .map_err(|e| format!("Failed to list sessions: {}", e))?;
+        let expected = directory.trim_end_matches('/');
         Ok(sessions
             .into_iter()
+            .filter(|s| {
+                s.directory
+                    .as_deref()
+                    .map(|d| d.trim_end_matches('/') == expected)
+                    .unwrap_or(false)
+            })
             .map(|s| AiSession {
+                updated_at: s.effective_updated_at(),
                 id: s.id,
                 title: s.title,
-                updated_at: s.updated_at,
             })
             .collect())
     }
 
-    async fn delete_session(&self, session_id: &str) -> Result<(), String> {
+    async fn delete_session(&self, directory: &str, session_id: &str) -> Result<(), String> {
+        self.verify_session_directory(directory, session_id).await?;
         let client = OpenCodeClient::from_manager(&self.manager);
         client
-            .delete_session(session_id)
+            .delete_session(directory, session_id)
             .await
             .map_err(|e| format!("Failed to delete session: {}", e))?;
+        Ok(())
+    }
+
+    async fn list_messages(
+        &self,
+        directory: &str,
+        session_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<AiMessage>, String> {
+        self.verify_session_directory(directory, session_id).await?;
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let raw = client
+            .list_messages(directory, session_id, limit)
+            .await
+            .map_err(|e| format!("Failed to list messages: {}", e))?;
+
+        let messages = raw
+            .into_iter()
+            .map(|m| AiMessage {
+                id: m.info.id,
+                role: m.info.role,
+                created_at: m.info.created_at,
+                parts: m
+                    .parts
+                    .into_iter()
+                    .map(|p| AiPart {
+                        id: p.id,
+                        part_type: p.part_type,
+                        text: p.text,
+                        tool_name: p.name,
+                        tool_state: p.state,
+                    })
+                    .collect(),
+            })
+            .collect();
+        Ok(messages)
+    }
+
+    async fn abort_session(&self, directory: &str, session_id: &str) -> Result<(), String> {
+        self.verify_session_directory(directory, session_id).await?;
+        let client = OpenCodeClient::from_manager(&self.manager);
+        client
+            .abort_session(directory, session_id)
+            .await
+            .map_err(|e| format!("Failed to abort session: {}", e))?;
+        Ok(())
+    }
+
+    async fn dispose_instance(&self, directory: &str) -> Result<(), String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        client
+            .dispose_instance(directory)
+            .await
+            .map_err(|e| format!("Failed to dispose instance: {}", e))?;
         Ok(())
     }
 }
@@ -672,11 +1040,12 @@ mod tests {
 
     #[test]
     fn test_session_response_serialization() {
-        let json = r#"{"id":"ses_123","title":"Test Session","updatedAt":1700000000000}"#;
+        let json = r#"{"id":"ses_123","title":"Test Session","directory":"/tmp/x","time":{"created":1700000000000,"updated":1700000001234}}"#;
         let session: SessionResponse = serde_json::from_str(json).unwrap();
         assert_eq!(session.id, "ses_123");
         assert_eq!(session.title, "Test Session");
-        assert_eq!(session.updated_at, 1700000000000);
+        assert_eq!(session.directory.as_deref(), Some("/tmp/x"));
+        assert_eq!(session.effective_updated_at(), 1700000001234);
     }
 
     #[test]
@@ -684,6 +1053,8 @@ mod tests {
         let session = SessionResponse {
             id: "ses_abc".to_string(),
             title: "My Session".to_string(),
+            directory: None,
+            time: None,
             updated_at: 1234567890,
         };
         let json = serde_json::to_string(&session).unwrap();
@@ -745,11 +1116,12 @@ mod tests {
 
     #[test]
     fn test_session_list_response() {
-        let json = r#"{"sessions":[{"id":"s1","title":"Session 1","updatedAt":1000},{"id":"s2","title":"Session 2","updatedAt":2000}]}"#;
+        let json = r#"{"sessions":[{"id":"s1","title":"Session 1","directory":"/a","time":{"created":1,"updated":1000}},{"id":"s2","title":"Session 2","directory":"/b","time":{"created":2,"updated":2000}}]}"#;
         let list: SessionListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(list.sessions.len(), 2);
         assert_eq!(list.sessions[0].id, "s1");
         assert_eq!(list.sessions[1].title, "Session 2");
+        assert_eq!(list.sessions[1].effective_updated_at(), 2000);
     }
 
     #[test]
