@@ -968,6 +968,8 @@
 					"WorkspaceTasksView.swift",
 					"MobileCommandIconView.swift",
 					"SavedConnection.swift",
+					"DisconnectBannerView.swift",
+					"MobileAIChatView.swift",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TidyFlow/Info.plist;
@@ -1094,6 +1096,8 @@
 					"WorkspaceTasksView.swift",
 					"MobileCommandIconView.swift",
 					"SavedConnection.swift",
+					"DisconnectBannerView.swift",
+					"MobileAIChatView.swift",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TidyFlow/Info.plist;
