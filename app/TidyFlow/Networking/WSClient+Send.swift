@@ -698,6 +698,13 @@ extension WSClient {
 
     // MARK: - 任务历史
 
+    /// 请求任务快照（用于移动端重连后恢复后台任务状态）
+    func requestListTasks() {
+        send([
+            "type": "list_tasks"
+        ])
+    }
+
     // MARK: - AI Chat（结构化 message/part 流）
 
     /// 开始新的 AI 聊天会话
