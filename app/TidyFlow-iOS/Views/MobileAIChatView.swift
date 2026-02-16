@@ -13,8 +13,10 @@ struct MobileAIChatView: View {
     @State private var cursorRectInInput: CGRect = .zero
     @State private var inputCursorLocation: Int = 0
     @State private var inputIsComposing: Bool = false
+    @State private var messageAreaWidth: CGFloat = 0
 
     private var aiContextKey: String { "\(project):\(workspace)" }
+    private let popupHorizontalInset: CGFloat = 12
 
     private var systemBackgroundColor: Color {
         #if os(iOS)
@@ -32,29 +34,54 @@ struct MobileAIChatView: View {
         #endif
     }
 
+    private var autocompletePopupWidth: CGFloat {
+        let available = max(messageAreaWidth - popupHorizontalInset * 2, 0)
+        guard available > 0 else { return 0 }
+        return min(320, available)
+    }
+
+    private var autocompletePopupOffsetX: CGFloat {
+        let popupWidth = autocompletePopupWidth
+        guard popupWidth > 0 else { return popupHorizontalInset }
+
+        let desired = cursorRectInInput.minX + 2
+        let maxOffset = max(popupHorizontalInset, messageAreaWidth - popupWidth - popupHorizontalInset)
+        return min(max(desired, popupHorizontalInset), maxOffset)
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            messageArea
-                .overlay {
-                    if autocomplete.isVisible {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture { autocomplete.reset() }
-                    }
-                }
-                .overlay(alignment: .bottomLeading) {
-                    if autocomplete.isVisible {
-                        AutocompletePopupView(autocomplete: autocomplete) { item in
-                            handleAutocompleteSelect(item)
+        messageArea
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear {
+                            messageAreaWidth = proxy.size.width
                         }
-                        .frame(maxWidth: 320)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
-                    }
+                        .onChange(of: proxy.size.width) { _, newValue in
+                            messageAreaWidth = newValue
+                        }
                 }
-            inputArea
-        }
+            )
+            .overlay {
+                if autocomplete.isVisible {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { autocomplete.reset() }
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if autocomplete.isVisible {
+                    AutocompletePopupView(autocomplete: autocomplete) { item in
+                        handleAutocompleteSelect(item)
+                    }
+                    .frame(width: autocompletePopupWidth > 0 ? autocompletePopupWidth : 280)
+                    .offset(x: autocompletePopupOffsetX, y: -6)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                inputArea
+            }
         .navigationTitle("AI 聊天")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -180,27 +207,6 @@ struct MobileAIChatView: View {
         }
     }
 
-    private var toolbar: some View {
-        HStack {
-            if appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil {
-                HStack(spacing: 4) {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text("生成中...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            Text(workspace == "default" ? project : "\(project) / \(workspace)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(systemBackgroundColor)
-    }
-
     private var messageArea: some View {
         ZStack {
             if appState.aiChatMessages.isEmpty {
@@ -214,7 +220,7 @@ struct MobileAIChatView: View {
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.8))
                 }
-                .padding(.top, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 MessageListView(messages: appState.aiChatMessages)
             }

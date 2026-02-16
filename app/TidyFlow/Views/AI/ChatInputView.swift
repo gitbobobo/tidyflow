@@ -335,6 +335,7 @@ private class IMEAwareTextView: NSTextView {
 private struct IOSChatTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var contentHeight: CGFloat
+    @Binding var cursorRect: CGRect
     var onEnter: () -> Void
     var isEnterEnabled: () -> Bool
     var onInputContextChange: ((Int, Bool) -> Void)?
@@ -350,12 +351,13 @@ private struct IOSChatTextView: UIViewRepresentable {
         textView.font = .systemFont(ofSize: 13)
         textView.isScrollEnabled = true
         textView.showsVerticalScrollIndicator = true
-        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.textContainerInset = UIEdgeInsets(top: 5, left: 0, bottom: 5, right: 0)
         textView.textContainer.lineFragmentPadding = 4
-        textView.returnKeyType = .send
+        textView.returnKeyType = .default
         DispatchQueue.main.async {
             context.coordinator.updateHeight(textView)
             context.coordinator.reportInputContext(textView)
+            context.coordinator.updateCursorRect(textView)
         }
         return textView
     }
@@ -372,6 +374,7 @@ private struct IOSChatTextView: UIViewRepresentable {
             textView.selectedRange = NSRange(location: end, length: 0)
             context.coordinator.updateHeight(textView)
             context.coordinator.reportInputContext(textView)
+            context.coordinator.updateCursorRect(textView)
         }
     }
 
@@ -389,10 +392,12 @@ private struct IOSChatTextView: UIViewRepresentable {
                 parent.text = textView.text
             }
             updateHeight(textView)
+            updateCursorRect(textView)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             reportInputContext(textView)
+            updateCursorRect(textView)
         }
 
         func textView(
@@ -400,15 +405,8 @@ private struct IOSChatTextView: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText replacement: String
         ) -> Bool {
-            guard replacement == "\n" else { return true }
-            // 组合态中让系统处理回车确认候选，不做发送
-            if textView.markedTextRange != nil {
-                return true
-            }
-            if parent.isEnterEnabled() {
-                parent.onEnter()
-                return false
-            }
+            // iOS 聊天输入框回车仅用于换行，不触发发送。
+            if replacement == "\n" { return true }
             return true
         }
 
@@ -424,6 +422,19 @@ private struct IOSChatTextView: UIViewRepresentable {
             let location = min(max(textView.selectedRange.location, 0), total)
             let isComposing = textView.markedTextRange != nil
             parent.onInputContextChange?(location, isComposing)
+        }
+
+        func updateCursorRect(_ textView: UITextView) {
+            guard let selectedRange = textView.selectedTextRange else {
+                DispatchQueue.main.async {
+                    self.parent.cursorRect = .zero
+                }
+                return
+            }
+            let caret = textView.caretRect(for: selectedRange.end)
+            DispatchQueue.main.async {
+                self.parent.cursorRect = caret
+            }
         }
     }
 }
@@ -464,6 +475,22 @@ struct ChatInputView: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
     }
 
+    private var inputEditorBackgroundColor: Color {
+        #if os(iOS)
+        return Color(UIColor.secondarySystemBackground)
+        #else
+        return Color.secondary.opacity(0.08)
+        #endif
+    }
+
+    private var inputEditorBorderColor: Color {
+        #if os(iOS)
+        return Color.white.opacity(0.15)
+        #else
+        return Color.secondary.opacity(0.2)
+        #endif
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // 图片缩略图预览行
@@ -471,17 +498,67 @@ struct ChatInputView: View {
                 imagePreviewRow
             }
 
+            #if os(iOS)
+            iOSInputSection
+            #else
             // 输入区域
             inputEditor
 
             // 工具栏
             toolbar
+            #endif
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        #if os(iOS)
+        .padding(.bottom, 0)
+        #else
+        .padding(.bottom, 12)
+        #endif
         .onChange(of: cursorRect) { _, newRect in
             cursorRectInInput = newRect
         }
     }
+
+    #if os(iOS)
+    private var iOSInputSection: some View {
+        VStack(spacing: 8) {
+            iOSSelectorRow
+
+            HStack(alignment: .center, spacing: 10) {
+                imageUploadButton
+
+                inputEditor
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 36)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(inputEditorBackgroundColor)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(inputEditorBorderColor, lineWidth: 0.5)
+                    )
+
+                sendOrStopButton
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var iOSSelectorRow: some View {
+        if !agents.isEmpty || !providers.isEmpty {
+            HStack(spacing: 8) {
+                agentButton
+                modelButton
+                Spacer(minLength: 0)
+            }
+        }
+    }
+    #endif
 
     // MARK: - 图片预览行
 
@@ -590,6 +667,7 @@ struct ChatInputView: View {
             IOSChatTextView(
                 text: $text,
                 contentHeight: $textContentHeight,
+                cursorRect: $cursorRect,
                 onEnter: {
                     if let ac = autocomplete, ac.isVisible, let item = ac.selectedItem {
                         onSelectAutocomplete?(item)
@@ -605,7 +683,7 @@ struct ChatInputView: View {
                 },
                 onInputContextChange: onInputContextChange
             )
-            .frame(height: min(max(textContentHeight, 36), 160))
+            .frame(height: min(max(textContentHeight, 32), 160))
             #endif
         }
     }
@@ -645,8 +723,10 @@ struct ChatInputView: View {
                         }) {
                             HStack {
                                 Text(agent.name)
+                                    .foregroundStyle(dropdownPrimaryTextColor)
                                 if let desc = agent.description, !desc.isEmpty {
                                     Text("— \(desc)")
+                                        .foregroundStyle(dropdownSecondaryTextColor)
                                 }
                             }
                         }
@@ -663,6 +743,7 @@ struct ChatInputView: View {
                     .padding(.vertical, 4)
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(6)
+                    .foregroundStyle(dropdownPrimaryTextColor)
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -683,6 +764,7 @@ struct ChatInputView: View {
                                     selectedModel = AIModelSelection(providerID: provider.id, modelID: model.id)
                                 }) {
                                     Text(model.name)
+                                        .foregroundStyle(dropdownPrimaryTextColor)
                                 }
                             }
                         }
@@ -701,6 +783,7 @@ struct ChatInputView: View {
                     .padding(.vertical, 4)
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(6)
+                    .foregroundStyle(dropdownPrimaryTextColor)
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -729,8 +812,11 @@ struct ChatInputView: View {
             matching: .images
         ) {
             Image(systemName: "photo")
-                .font(.system(size: 14))
-                .foregroundColor(.primary)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 36, height: 36)
+                .background(Color.white.opacity(0.18))
+                .clipShape(Circle())
         }
         .onChange(of: selectedPhotoItems) { _, items in
             handleSelectedPhotoItems(items)
@@ -818,24 +904,46 @@ struct ChatInputView: View {
         return ("image/jpeg", "jpg")
     }
 
+    private var dropdownPrimaryTextColor: Color {
+        #if os(iOS)
+        return .white
+        #else
+        return .primary
+        #endif
+    }
+
+    private var dropdownSecondaryTextColor: Color {
+        #if os(iOS)
+        return .white.opacity(0.72)
+        #else
+        return .secondary
+        #endif
+    }
+
     // MARK: - 发送/停止按钮
 
     private var sendOrStopButton: some View {
         Group {
             if isStreaming {
                 Button(action: onStop) {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(canStopStreaming ? .red : .gray)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(canStopStreaming ? .white : .white.opacity(0.72))
+                        .frame(width: 36, height: 36)
+                        .background(canStopStreaming ? Color.red : Color.gray.opacity(0.55))
+                        .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!canStopStreaming)
                 .help(canStopStreaming ? "停止生成" : "会话创建中，暂不可停止")
             } else {
                 Button(action: onSend) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(canSend ? .accentColor : .gray)
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(canSend ? .white : .white.opacity(0.72))
+                        .frame(width: 36, height: 36)
+                        .background(canSend ? Color.accentColor : Color.gray.opacity(0.55))
+                        .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)

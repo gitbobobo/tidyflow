@@ -67,6 +67,11 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - AI 聊天的 `pendingSendMessage`（等待会话创建后发送）等跨异步边界的临时状态，必须在工作空间切换时清除，并携带发起时的 `projectName/workspaceName` 做一致性校验；否则快照恢复触发 `aiCurrentSessionId` 变更时会把旧消息误发到新工作空间。切换回旧工作空间时应重新拉取当前会话消息，弥补切走期间被 guard 丢弃的流式增量。
 - `AITabView` 等在 `switch` 分支中创建的子视图，切换工作空间时可能在同一 SwiftUI 更新周期被移除，导致 `onChange` 不触发而 `appState` 上的全局状态残留。必须在 `onDisappear` 保存快照（用 `previousSnapshotKey` 而非 `currentSnapshotKey`，因为后者已指向新空间），并在 `onAppear` 恢复当前工作空间的快照或清空，不能仅依赖 `onChange`。
 - 聊天输入框实现 `@` 文件引用和 `/` 斜杠命令自动补全时，应以“光标所在 token”做触发与替换范围，且在 `hasMarkedText` 组合态暂停补全并兼容全角 `＠`/`／`，避免中文输入法候选期误触发与整段文本被覆盖。
+- iOS 聊天自动补全弹层定位不要写死偏移；应由 `UITextView.caretRect` 上报光标位置，并结合容器宽度做左右 clamp，避免弹层漂移到中间或超出屏幕。
+- iOS 聊天输入区采用底部吸附布局时，键盘顶部需保留小间距（如 `padding(.bottom, 8)`），并让左右按钮使用统一尺寸与 `HStack(.center)` 对齐，避免视觉偏小和垂直不齐。
+- 若产品定义 iOS 聊天“仅按钮发送”，应将 `UITextView.returnKeyType` 设为默认回车并在 `shouldChangeTextIn` 放行 `"\n"`，避免回车触发发送导致换行能力丢失。
+- iOS 圆形操作按钮若已有自定义 `Circle` 背景，图标应避免使用 `*.circle.fill` 这类自带圆底的 SF Symbol（如改用 `arrow.up`/`stop.fill`），否则会出现双层背景与内间距观感。
+- iOS 聊天输入框若默认态视觉偏高，可同时下调 `UITextView` 的最小高度 clamp（如 `36 -> 32`）与容器内边距（如 `vertical 4 -> 2`、`textContainerInset 6 -> 5`），比只改单一参数更容易保持垂直居中观感。
 - WebSocket `handle_client_message` 内不要同步阻塞长生命周期流（如 AI 流式回复）；应改为后台 task 并通过 `cmd_output_tx` 回传事件，否则同连接的 `ai_chat_abort` 等控制消息无法及时处理，会出现“前端已停止但代理仍在执行”。
 - 单 Target 多平台工程若通过 `EXCLUDED_SOURCE_FILE_NAMES` 做按 SDK 排除，macOS 专用视图仍建议做文件级 `#if os(macOS)` 包裹，并在改动后执行一次 `xcodebuild -sdk iphonesimulator` 校验，避免排除名单漂移导致 iOS 编译回归。
 
