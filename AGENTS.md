@@ -72,8 +72,10 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 若产品定义 iOS 聊天“仅按钮发送”，应将 `UITextView.returnKeyType` 设为默认回车并在 `shouldChangeTextIn` 放行 `"\n"`，避免回车触发发送导致换行能力丢失。
 - iOS 圆形操作按钮若已有自定义 `Circle` 背景，图标应避免使用 `*.circle.fill` 这类自带圆底的 SF Symbol（如改用 `arrow.up`/`stop.fill`），否则会出现双层背景与内间距观感。
 - iOS 聊天输入框若默认态视觉偏高，可同时下调 `UITextView` 的最小高度 clamp（如 `36 -> 32`）与容器内边距（如 `vertical 4 -> 2`、`textContainerInset 6 -> 5`），比只改单一参数更容易保持垂直居中观感。
+- iOS 聊天“命令/引用”sheet 的搜索框聚焦建议统一为“单一 `@FocusState` 枚举 + 统一打开入口 + 延迟重试”；弹窗前先让主输入框失焦并收起底部面板，避免多焦点状态竞争。
 - WebSocket `handle_client_message` 内不要同步阻塞长生命周期流（如 AI 流式回复）；应改为后台 task 并通过 `cmd_output_tx` 回传事件，否则同连接的 `ai_chat_abort` 等控制消息无法及时处理，会出现“前端已停止但代理仍在执行”。
 - 单 Target 多平台工程若通过 `EXCLUDED_SOURCE_FILE_NAMES` 做按 SDK 排除，macOS 专用视图仍建议做文件级 `#if os(macOS)` 包裹，并在改动后执行一次 `xcodebuild -sdk iphonesimulator` 校验，避免排除名单漂移导致 iOS 编译回归。
+- 需求包含“远端实时搜索”时，先核对现有协议是否支持 `query`；若仅有全量接口（如 `file_index`），应先做可选 `query` 的向后兼容扩展，再接入 UI 搜索，避免前端看似实时但实际只在本地过滤。
 
 ## Build Commands
 
