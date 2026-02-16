@@ -180,15 +180,18 @@ impl OpenCodeManager {
 
     /// 确保 server 正在运行：先 health check，失败才 spawn。
     pub async fn ensure_server_running(&self) -> Result<String, String> {
+        // 没有子进程在运行时直接启动，跳过无意义的 30 次 health check（否则首次启动要白等 ~33 秒）
+        if !self.is_running().await {
+            return self.start_server().await;
+        }
+
+        // 有子进程在运行，检查是否健康
         if self.check_health().await.is_ok() {
             return Ok(self.base_url.clone());
         }
 
-        // 若已有 child，但不健康，先停再起
-        if self.is_running().await {
-            let _ = self.stop_server().await;
-        }
-
+        // 不健康，先停再起
+        let _ = self.stop_server().await;
         self.start_server().await
     }
 
