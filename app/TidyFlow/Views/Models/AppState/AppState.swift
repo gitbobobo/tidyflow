@@ -124,6 +124,9 @@ class AppState: ObservableObject {
     var aiMessageIndexByMessageId: [String: Int] = [:]
     var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
 
+    // AI Chat 工作空间快照缓存（key: "projectName/workspaceName"）
+    var aiChatSnapshotCache: [String: AIChatSnapshot] = [:]
+
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
 

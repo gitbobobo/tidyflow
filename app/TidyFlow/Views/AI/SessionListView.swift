@@ -40,7 +40,7 @@ struct SessionListView: View {
             }
             .listStyle(.plain)
         }
-        .frame(minWidth: 200, idealWidth: 250)
+        .frame(idealWidth: 250)
     }
 }
 

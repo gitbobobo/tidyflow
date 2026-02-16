@@ -6,6 +6,8 @@ struct AITabView: View {
     @State private var inputText: String = ""
     @State private var imageAttachments: [ImageAttachment] = []
     @State private var showSessionList = false
+    /// 记录上一次所在的工作空间 key，用于切换时保存快照
+    @State private var previousSnapshotKey: String?
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -45,7 +47,7 @@ struct AITabView: View {
                         createNewSession()
                     }
                 )
-                .frame(minWidth: 180, idealWidth: 220, maxWidth: 300)
+                .frame(idealWidth: 220, maxWidth: 300)
             }
 
             VStack(spacing: 0) {
@@ -58,16 +60,14 @@ struct AITabView: View {
         .background(Color(NSColor.windowBackgroundColor))
         #endif
         .onAppear {
+            previousSnapshotKey = currentSnapshotKey
             loadSessions()
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
-            // 切换工作空间时清空 AI 会话上下文，避免串台
-            appState.aiCurrentSessionId = nil
-            appState.aiChatMessages = []
-            appState.aiIsStreaming = false
-            appState.aiMessageIndexByMessageId = [:]
-            appState.aiPartIndexByPartId = [:]
-            loadSessions()
+            resetAIContext()
+        }
+        .onChange(of: appState.selectedProjectName) { _, _ in
+            resetAIContext()
         }
         .onChange(of: appState.aiCurrentSessionId) { _, newSessionId in
             // 会话创建完成后，发送待发消息
@@ -179,6 +179,55 @@ struct AITabView: View {
                 .foregroundColor(separatorColor),
             alignment: .top
         )
+    }
+
+    /// 生成当前工作空间的快照 key
+    private var currentSnapshotKey: String? {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return nil }
+        return "\(appState.selectedProjectName)/\(ws)"
+    }
+
+    /// 保存当前 AI 聊天状态到快照缓存
+    private func saveSnapshot(forKey key: String) {
+        appState.aiChatSnapshotCache[key] = AIChatSnapshot(
+            currentSessionId: appState.aiCurrentSessionId,
+            messages: appState.aiChatMessages,
+            isStreaming: appState.aiIsStreaming,
+            sessions: appState.aiSessions,
+            messageIndexByMessageId: appState.aiMessageIndexByMessageId,
+            partIndexByPartId: appState.aiPartIndexByPartId
+        )
+    }
+
+    /// 切换项目/工作空间时保存旧快照、恢复新快照
+    private func resetAIContext() {
+        // 保存旧工作空间快照
+        if let oldKey = previousSnapshotKey {
+            saveSnapshot(forKey: oldKey)
+        }
+
+        let newKey = currentSnapshotKey
+        previousSnapshotKey = newKey
+
+        if let newKey, let snapshot = appState.aiChatSnapshotCache[newKey] {
+            // 恢复缓存的快照
+            appState.aiCurrentSessionId = snapshot.currentSessionId
+            appState.aiChatMessages = snapshot.messages
+            appState.aiIsStreaming = snapshot.isStreaming
+            appState.aiSessions = snapshot.sessions
+            appState.aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
+            appState.aiPartIndexByPartId = snapshot.partIndexByPartId
+        } else {
+            // 无缓存，清空并从服务端加载
+            appState.aiCurrentSessionId = nil
+            appState.aiChatMessages = []
+            appState.aiIsStreaming = false
+            appState.aiSessions = []
+            appState.aiMessageIndexByMessageId = [:]
+            appState.aiPartIndexByPartId = [:]
+        }
+        // 始终刷新会话列表（保持与服务端同步）
+        loadSessions()
     }
 
     private func loadSessions() {

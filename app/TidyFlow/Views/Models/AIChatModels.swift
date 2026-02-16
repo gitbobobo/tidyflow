@@ -69,6 +69,17 @@ struct AISessionInfo: Identifiable {
     }
 }
 
+// MARK: - 工作空间快照（切换时保留对话上下文）
+
+struct AIChatSnapshot {
+    var currentSessionId: String?
+    var messages: [AIChatMessage]
+    var isStreaming: Bool
+    var sessions: [AISessionInfo]
+    var messageIndexByMessageId: [String: Int]
+    var partIndexByPartId: [String: (msgIdx: Int, partIdx: Int)]
+}
+
 // MARK: - 图片附件
 
 struct ImageAttachment: Identifiable {
