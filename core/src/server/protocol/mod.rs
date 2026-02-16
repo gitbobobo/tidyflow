@@ -124,6 +124,8 @@ pub enum ClientMessage {
     FileIndex {
         project: String,
         workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
     },
 
     // v1.5: Git tools

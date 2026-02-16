@@ -27,6 +27,8 @@ pub enum FileRequest {
     FileIndex {
         project: String,
         workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
     },
     FileRename {
         project: String,
