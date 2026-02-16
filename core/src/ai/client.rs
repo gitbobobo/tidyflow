@@ -434,10 +434,21 @@ impl OpenCodeClient {
         }
     }
 
-    pub async fn get_session(&self, session_id: &str) -> Result<SessionResponse, OpenCodeError> {
-        let url = format!("{}/session/{}", self.base_url, session_id);
+    pub async fn get_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<SessionResponse, OpenCodeError> {
+        let encoded_dir = encode_uri_component_like_js(directory);
+        let url = format!(
+            "{}/session/{}?directory={}",
+            self.base_url, session_id, encoded_dir
+        );
 
-        let response = self.client.get(&url).send().await?;
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
 
         if response.status().is_success() {
             let session: SessionResponse = response.json().await?;
@@ -475,12 +486,38 @@ impl OpenCodeClient {
         directory: &str,
         session_id: &str,
     ) -> Result<(), OpenCodeError> {
-        let url = format!("{}/session/{}/abort", self.base_url, session_id);
+        let encoded_dir = encode_uri_component_like_js(directory);
+        let url = format!(
+            "{}/session/{}/abort?directory={}",
+            self.base_url, session_id, encoded_dir
+        );
         let response = self
             .with_directory(self.client.post(&url), directory)
             .send()
             .await?;
         if response.status().is_success() {
+            // OpenCode SDK 定义返回 200 + boolean；兼容旧版空响应。
+            let body = response.text().await.unwrap_or_default();
+            let trimmed = body.trim();
+            if trimmed.is_empty() {
+                return Ok(());
+            }
+            if let Ok(flag) = serde_json::from_str::<bool>(trimmed) {
+                if flag {
+                    return Ok(());
+                }
+                return Err(OpenCodeError::ServerError {
+                    status: 200,
+                    message: "Abort returned false".to_string(),
+                });
+            }
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if value.get("data").and_then(|v| v.as_bool()).unwrap_or(false)
+                    || value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
+                {
+                    return Ok(());
+                }
+            }
             Ok(())
         } else {
             let status = response.status().as_u16();
@@ -911,7 +948,7 @@ impl OpenCodeAgent {
     ) -> Result<(), String> {
         let client = OpenCodeClient::from_manager(&self.manager);
         let session = client
-            .get_session(session_id)
+            .get_session(directory, session_id)
             .await
             .map_err(|e| format!("Failed to fetch session info: {}", e))?;
 

@@ -1365,7 +1365,15 @@ async fn handle_client_message(
     }
 
     // AI 消息
-    if handlers::ai::handle_ai_message(&client_msg, socket, &ctx.app_state, &ctx.ai_state).await? {
+    if handlers::ai::handle_ai_message(
+        &client_msg,
+        socket,
+        &ctx.app_state,
+        &ctx.ai_state,
+        &ctx.cmd_output_tx,
+    )
+    .await?
+    {
         return Ok(());
     }
 

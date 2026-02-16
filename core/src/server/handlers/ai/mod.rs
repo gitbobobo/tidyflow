@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::ai::{AiAgent, AiEvent, OpenCodeAgent, OpenCodeManager};
 use crate::server::context::SharedAppState;
-use crate::server::protocol::ClientMessage;
+use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
 pub mod ai_state;
@@ -38,6 +38,26 @@ fn create_agent() -> Arc<dyn AiAgent> {
 
 fn stream_key(directory: &str, session_id: &str) -> String {
     format!("{}::{}", directory, session_id)
+}
+
+async fn emit_server_message(output_tx: &mpsc::Sender<ServerMessage>, msg: ServerMessage) -> bool {
+    if let Err(e) = output_tx.send(msg).await {
+        warn!("AI stream: failed to enqueue server message: {}", e);
+        return false;
+    }
+    true
+}
+
+async fn cleanup_stream_state(ai_state: &SharedAIState, abort_key: &str, directory: &str) {
+    let mut ai = ai_state.lock().await;
+    ai.active_streams.remove(abort_key);
+    let active = ai
+        .directory_active_streams
+        .entry(directory.to_string())
+        .or_insert(0);
+    *active = active.saturating_sub(1);
+    ai.directory_last_used_ms
+        .insert(directory.to_string(), now_ms());
 }
 
 async fn resolve_directory(
@@ -120,17 +140,18 @@ pub async fn handle_ai_message(
     socket: &mut WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
+    output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
     if try_handle_ai_chat_start(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
-    if try_handle_ai_chat_send(client_msg, socket, app_state, ai_state).await? {
+    if try_handle_ai_chat_send(client_msg, app_state, ai_state, output_tx).await? {
         return Ok(true);
     }
-    if try_handle_ai_chat_command(client_msg, socket, app_state, ai_state).await? {
+    if try_handle_ai_chat_command(client_msg, app_state, ai_state, output_tx).await? {
         return Ok(true);
     }
-    if try_handle_ai_chat_abort(client_msg, app_state, ai_state).await? {
+    if try_handle_ai_chat_abort(client_msg, app_state, ai_state, output_tx).await? {
         return Ok(true);
     }
     if try_handle_ai_session_list(client_msg, socket, app_state, ai_state).await? {
@@ -204,11 +225,11 @@ async fn try_handle_ai_chat_start(
 
 async fn try_handle_ai_chat_send(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
+    output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
-    let ClientMessage::AIChatSend {
+    let (
         project_name,
         workspace_name,
         session_id,
@@ -216,13 +237,31 @@ async fn try_handle_ai_chat_send(
         file_refs,
         image_parts,
         model,
-        agent: agent_name,
-    } = msg
-    else {
-        return Ok(false);
+        agent_name,
+    ) = match msg {
+        ClientMessage::AIChatSend {
+            project_name,
+            workspace_name,
+            session_id,
+            message,
+            file_refs,
+            image_parts,
+            model,
+            agent,
+        } => (
+            project_name.clone(),
+            workspace_name.clone(),
+            session_id.clone(),
+            message.clone(),
+            file_refs.clone(),
+            image_parts.clone(),
+            model.clone(),
+            agent.clone(),
+        ),
+        _ => return Ok(false),
     };
 
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
     let agent = ensure_agent(ai_state).await?;
     ensure_maintenance(ai_state, agent.clone()).await;
 
@@ -250,40 +289,8 @@ async fn try_handle_ai_chat_send(
         model_id: m.model_id.clone(),
     });
 
-    let mut stream = match agent
-        .send_message(
-            &directory,
-            session_id,
-            message,
-            file_refs.clone(),
-            ai_image_parts,
-            ai_model,
-            agent_name.clone(),
-        )
-        .await
-    {
-        Ok(stream) => stream,
-        Err(e) => {
-            warn!(
-                "AIChatSend: send_message failed, project={}, workspace={}, session_id={}, error={}",
-                project_name, workspace_name, session_id, e
-            );
-            send_message(
-                socket,
-                &crate::server::protocol::ServerMessage::AIChatErrorV2 {
-                    project_name: project_name.clone(),
-                    workspace_name: workspace_name.clone(),
-                    session_id: session_id.clone(),
-                    error: e,
-                },
-            )
-            .await?;
-            return Ok(true);
-        }
-    };
-
     let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
-    let abort_key = stream_key(&directory, session_id);
+    let abort_key = stream_key(&directory, &session_id);
     {
         let mut ai = ai_state.lock().await;
         ai.active_streams.insert(abort_key.clone(), abort_tx);
@@ -296,128 +303,189 @@ async fn try_handle_ai_chat_send(
         *active += 1;
     }
 
-    let mut aborted = false;
-    loop {
-        tokio::select! {
-            _ = abort_rx.recv() => {
-                info!("AIChatSend: abort signal received, session_id={}", session_id);
-                aborted = true;
-                let _ = agent.abort_session(&directory, session_id).await;
-                send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
-                    project_name: project_name.clone(),
-                    workspace_name: workspace_name.clone(),
-                    session_id: session_id.clone(),
-                }).await?;
-                break;
+    let output_tx = output_tx.clone();
+    let ai_state_cloned = ai_state.clone();
+    tokio::spawn(async move {
+        let mut stream = match agent
+            .send_message(
+                &directory,
+                &session_id,
+                &message,
+                file_refs.clone(),
+                ai_image_parts,
+                ai_model,
+                agent_name.clone(),
+            )
+            .await
+        {
+            Ok(stream) => stream,
+            Err(e) => {
+                warn!(
+                    "AIChatSend: send_message failed, project={}, workspace={}, session_id={}, error={}",
+                    project_name, workspace_name, session_id, e
+                );
+                let _ = emit_server_message(
+                    &output_tx,
+                    ServerMessage::AIChatErrorV2 {
+                        project_name: project_name.clone(),
+                        workspace_name: workspace_name.clone(),
+                        session_id: session_id.clone(),
+                        error: e,
+                    },
+                )
+                .await;
+                cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+                return;
             }
-            event = stream.next() => {
-                match event {
-                    Some(Ok(ai_event)) => {
-                        match ai_event {
-                            AiEvent::MessageUpdated { message_id, role } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatMessageUpdated {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    message_id,
-                                    role,
-                                }).await?;
-                            }
-                            AiEvent::PartUpdated { message_id, part } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatPartUpdated {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    message_id,
-                                    part: crate::server::protocol::ai::PartInfo {
-                                        id: part.id,
-                                        part_type: part.part_type,
-                                        text: part.text,
-                                        tool_name: part.tool_name,
-                                        tool_state: part.tool_state,
-                                    }
-                                }).await?;
-                            }
-                            AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatPartDelta {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    message_id,
-                                    part_id,
-                                    part_type,
-                                    field,
-                                    delta,
-                                }).await?;
-                            }
-                            AiEvent::Error { message } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatErrorV2 {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    error: message,
-                                }).await?;
-                                break;
-                            }
-                            AiEvent::Done => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                }).await?;
+        };
+
+        loop {
+            tokio::select! {
+                _ = abort_rx.recv() => {
+                    info!("AIChatSend: abort signal received, session_id={}", session_id);
+                    if let Err(e) = agent.abort_session(&directory, &session_id).await {
+                        warn!(
+                            "AIChatSend: abort_session failed, project={}, workspace={}, session_id={}, error={}",
+                            project_name, workspace_name, session_id, e
+                        );
+                    }
+                    let _ = emit_server_message(
+                        &output_tx,
+                        ServerMessage::AIChatDone {
+                            project_name: project_name.clone(),
+                            workspace_name: workspace_name.clone(),
+                            session_id: session_id.clone(),
+                        },
+                    )
+                    .await;
+                    break;
+                }
+                event = stream.next() => {
+                    match event {
+                        Some(Ok(ai_event)) => {
+                            let keep_running = match ai_event {
+                                AiEvent::MessageUpdated { message_id, role } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatMessageUpdated {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            message_id,
+                                            role,
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::PartUpdated { message_id, part } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatPartUpdated {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            message_id,
+                                            part: crate::server::protocol::ai::PartInfo {
+                                                id: part.id,
+                                                part_type: part.part_type,
+                                                text: part.text,
+                                                tool_name: part.tool_name,
+                                                tool_state: part.tool_state,
+                                            },
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatPartDelta {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            message_id,
+                                            part_id,
+                                            part_type,
+                                            field,
+                                            delta,
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::Error { message } => {
+                                    let _ = emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatErrorV2 {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            error: message,
+                                        },
+                                    )
+                                    .await;
+                                    false
+                                }
+                                AiEvent::Done => {
+                                    let _ = emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatDone {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                        },
+                                    )
+                                    .await;
+                                    false
+                                }
+                            };
+                            if !keep_running {
                                 break;
                             }
                         }
-                    }
-                    Some(Err(e)) => {
-                        send_message(socket, &crate::server::protocol::ServerMessage::AIChatErrorV2 {
-                            project_name: project_name.clone(),
-                            workspace_name: workspace_name.clone(),
-                            session_id: session_id.clone(),
-                            error: e,
-                        }).await?;
-                        break;
-                    }
-                    None => {
-                        // Hub 断开等情况下可能出现 None，确保收敛
-                        send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
-                            project_name: project_name.clone(),
-                            workspace_name: workspace_name.clone(),
-                            session_id: session_id.clone(),
-                        }).await?;
-                        break;
+                        Some(Err(e)) => {
+                            let _ = emit_server_message(
+                                &output_tx,
+                                ServerMessage::AIChatErrorV2 {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                    error: e,
+                                },
+                            )
+                            .await;
+                            break;
+                        }
+                        None => {
+                            // Hub 断开等情况下可能出现 None，确保收敛
+                            let _ = emit_server_message(
+                                &output_tx,
+                                ServerMessage::AIChatDone {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                },
+                            )
+                            .await;
+                            break;
+                        }
                     }
                 }
             }
         }
-    }
 
-    {
-        let mut ai = ai_state.lock().await;
-        ai.active_streams.remove(&abort_key);
-        let active = ai
-            .directory_active_streams
-            .entry(directory.clone())
-            .or_insert(0);
-        *active = active.saturating_sub(1);
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
-    }
-
-    if aborted {
-        return Ok(true);
-    }
+        cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+    });
 
     Ok(true)
 }
 
 async fn try_handle_ai_chat_command(
     msg: &ClientMessage,
-    socket: &mut WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
+    output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
-    let ClientMessage::AIChatCommand {
+    let (
         project_name,
         workspace_name,
         session_id,
@@ -426,13 +494,33 @@ async fn try_handle_ai_chat_command(
         file_refs,
         image_parts,
         model,
-        agent: agent_name,
-    } = msg
-    else {
-        return Ok(false);
+        agent_name,
+    ) = match msg {
+        ClientMessage::AIChatCommand {
+            project_name,
+            workspace_name,
+            session_id,
+            command,
+            arguments,
+            file_refs,
+            image_parts,
+            model,
+            agent,
+        } => (
+            project_name.clone(),
+            workspace_name.clone(),
+            session_id.clone(),
+            command.clone(),
+            arguments.clone(),
+            file_refs.clone(),
+            image_parts.clone(),
+            model.clone(),
+            agent.clone(),
+        ),
+        _ => return Ok(false),
     };
 
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
     let agent = ensure_agent(ai_state).await?;
     ensure_maintenance(ai_state, agent.clone()).await;
 
@@ -460,41 +548,8 @@ async fn try_handle_ai_chat_command(
         model_id: m.model_id.clone(),
     });
 
-    let mut stream = match agent
-        .send_command(
-            &directory,
-            session_id,
-            command,
-            arguments,
-            file_refs.clone(),
-            ai_image_parts,
-            ai_model,
-            agent_name.clone(),
-        )
-        .await
-    {
-        Ok(stream) => stream,
-        Err(e) => {
-            warn!(
-                "AIChatCommand: send_command failed, project={}, workspace={}, session_id={}, command={}, error={}",
-                project_name, workspace_name, session_id, command, e
-            );
-            send_message(
-                socket,
-                &crate::server::protocol::ServerMessage::AIChatErrorV2 {
-                    project_name: project_name.clone(),
-                    workspace_name: workspace_name.clone(),
-                    session_id: session_id.clone(),
-                    error: e,
-                },
-            )
-            .await?;
-            return Ok(true);
-        }
-    };
-
     let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
-    let abort_key = stream_key(&directory, session_id);
+    let abort_key = stream_key(&directory, &session_id);
     {
         let mut ai = ai_state.lock().await;
         ai.active_streams.insert(abort_key.clone(), abort_tx);
@@ -507,116 +562,178 @@ async fn try_handle_ai_chat_command(
         *active += 1;
     }
 
-    let mut aborted = false;
-    loop {
-        tokio::select! {
-            _ = abort_rx.recv() => {
-                info!("AIChatCommand: abort signal received, session_id={}", session_id);
-                aborted = true;
-                let _ = agent.abort_session(&directory, session_id).await;
-                send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
-                    project_name: project_name.clone(),
-                    workspace_name: workspace_name.clone(),
-                    session_id: session_id.clone(),
-                }).await?;
-                break;
+    let output_tx = output_tx.clone();
+    let ai_state_cloned = ai_state.clone();
+    tokio::spawn(async move {
+        let mut stream = match agent
+            .send_command(
+                &directory,
+                &session_id,
+                &command,
+                &arguments,
+                file_refs.clone(),
+                ai_image_parts,
+                ai_model,
+                agent_name.clone(),
+            )
+            .await
+        {
+            Ok(stream) => stream,
+            Err(e) => {
+                warn!(
+                    "AIChatCommand: send_command failed, project={}, workspace={}, session_id={}, command={}, error={}",
+                    project_name, workspace_name, session_id, command, e
+                );
+                let _ = emit_server_message(
+                    &output_tx,
+                    ServerMessage::AIChatErrorV2 {
+                        project_name: project_name.clone(),
+                        workspace_name: workspace_name.clone(),
+                        session_id: session_id.clone(),
+                        error: e,
+                    },
+                )
+                .await;
+                cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+                return;
             }
-            event = stream.next() => {
-                match event {
-                    Some(Ok(ai_event)) => {
-                        match ai_event {
-                            AiEvent::MessageUpdated { message_id, role } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatMessageUpdated {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    message_id,
-                                    role,
-                                }).await?;
-                            }
-                            AiEvent::PartUpdated { message_id, part } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatPartUpdated {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    message_id,
-                                    part: crate::server::protocol::ai::PartInfo {
-                                        id: part.id,
-                                        part_type: part.part_type,
-                                        text: part.text,
-                                        tool_name: part.tool_name,
-                                        tool_state: part.tool_state,
-                                    }
-                                }).await?;
-                            }
-                            AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatPartDelta {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    message_id,
-                                    part_id,
-                                    part_type,
-                                    field,
-                                    delta,
-                                }).await?;
-                            }
-                            AiEvent::Error { message } => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatErrorV2 {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                    error: message,
-                                }).await?;
-                                break;
-                            }
-                            AiEvent::Done => {
-                                send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
-                                    project_name: project_name.clone(),
-                                    workspace_name: workspace_name.clone(),
-                                    session_id: session_id.clone(),
-                                }).await?;
+        };
+
+        loop {
+            tokio::select! {
+                _ = abort_rx.recv() => {
+                    info!("AIChatCommand: abort signal received, session_id={}", session_id);
+                    if let Err(e) = agent.abort_session(&directory, &session_id).await {
+                        warn!(
+                            "AIChatCommand: abort_session failed, project={}, workspace={}, session_id={}, error={}",
+                            project_name, workspace_name, session_id, e
+                        );
+                    }
+                    let _ = emit_server_message(
+                        &output_tx,
+                        ServerMessage::AIChatDone {
+                            project_name: project_name.clone(),
+                            workspace_name: workspace_name.clone(),
+                            session_id: session_id.clone(),
+                        },
+                    )
+                    .await;
+                    break;
+                }
+                event = stream.next() => {
+                    match event {
+                        Some(Ok(ai_event)) => {
+                            let keep_running = match ai_event {
+                                AiEvent::MessageUpdated { message_id, role } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatMessageUpdated {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            message_id,
+                                            role,
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::PartUpdated { message_id, part } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatPartUpdated {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            message_id,
+                                            part: crate::server::protocol::ai::PartInfo {
+                                                id: part.id,
+                                                part_type: part.part_type,
+                                                text: part.text,
+                                                tool_name: part.tool_name,
+                                                tool_state: part.tool_state,
+                                            },
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatPartDelta {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            message_id,
+                                            part_id,
+                                            part_type,
+                                            field,
+                                            delta,
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::Error { message } => {
+                                    let _ = emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatErrorV2 {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            error: message,
+                                        },
+                                    )
+                                    .await;
+                                    false
+                                }
+                                AiEvent::Done => {
+                                    let _ = emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIChatDone {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                        },
+                                    )
+                                    .await;
+                                    false
+                                }
+                            };
+                            if !keep_running {
                                 break;
                             }
                         }
-                    }
-                    Some(Err(e)) => {
-                        send_message(socket, &crate::server::protocol::ServerMessage::AIChatErrorV2 {
-                            project_name: project_name.clone(),
-                            workspace_name: workspace_name.clone(),
-                            session_id: session_id.clone(),
-                            error: e,
-                        }).await?;
-                        break;
-                    }
-                    None => {
-                        send_message(socket, &crate::server::protocol::ServerMessage::AIChatDone {
-                            project_name: project_name.clone(),
-                            workspace_name: workspace_name.clone(),
-                            session_id: session_id.clone(),
-                        }).await?;
-                        break;
+                        Some(Err(e)) => {
+                            let _ = emit_server_message(
+                                &output_tx,
+                                ServerMessage::AIChatErrorV2 {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                    error: e,
+                                },
+                            )
+                            .await;
+                            break;
+                        }
+                        None => {
+                            let _ = emit_server_message(
+                                &output_tx,
+                                ServerMessage::AIChatDone {
+                                    project_name: project_name.clone(),
+                                    workspace_name: workspace_name.clone(),
+                                    session_id: session_id.clone(),
+                                },
+                            )
+                            .await;
+                            break;
+                        }
                     }
                 }
             }
         }
-    }
 
-    {
-        let mut ai = ai_state.lock().await;
-        ai.active_streams.remove(&abort_key);
-        let active = ai
-            .directory_active_streams
-            .entry(directory.clone())
-            .or_insert(0);
-        *active = active.saturating_sub(1);
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
-    }
-
-    if aborted {
-        return Ok(true);
-    }
+        cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+    });
 
     Ok(true)
 }
@@ -625,18 +742,23 @@ async fn try_handle_ai_chat_abort(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
+    output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
-    let ClientMessage::AIChatAbort {
-        project_name,
-        workspace_name,
-        session_id,
-    } = msg
-    else {
-        return Ok(false);
+    let (project_name, workspace_name, session_id) = match msg {
+        ClientMessage::AIChatAbort {
+            project_name,
+            workspace_name,
+            session_id,
+        } => (
+            project_name.clone(),
+            workspace_name.clone(),
+            session_id.clone(),
+        ),
+        _ => return Ok(false),
     };
 
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let key = stream_key(&directory, session_id);
+    let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
+    let key = stream_key(&directory, &session_id);
     info!(
         "AIChatAbort: project={}, workspace={}, session_id={}, key={}",
         project_name, workspace_name, session_id, key
@@ -652,17 +774,49 @@ async fn try_handle_ai_chat_abort(
         let ai = ai_state.lock().await;
         ai.active_streams.get(&key).cloned()
     };
+    let mut should_emit_done_now = false;
     if let Some(tx) = abort_tx {
         info!("AIChatAbort: found active stream sender, sending abort signal");
-        let _ = tx.send(()).await;
+        if tx.send(()).await.is_err() {
+            should_emit_done_now = true;
+        }
     } else {
         info!("AIChatAbort: no active stream sender found for key");
+        should_emit_done_now = true;
     }
 
-    // best-effort：触发后端 abort（不影响本地 done 收敛）
-    if let Ok(agent) = ensure_agent(ai_state).await {
-        info!("AIChatAbort: calling agent.abort_session");
-        let _ = agent.abort_session(&directory, session_id).await;
+    // best-effort：并发触发后端 abort，避免阻塞 WS 主循环。
+    let ai_state_cloned = ai_state.clone();
+    let directory_cloned = directory.clone();
+    let session_id_cloned = session_id.clone();
+    let project_name_cloned = project_name.clone();
+    let workspace_name_cloned = workspace_name.clone();
+    tokio::spawn(async move {
+        if let Ok(agent) = ensure_agent(&ai_state_cloned).await {
+            info!("AIChatAbort: calling agent.abort_session");
+            if let Err(e) = agent
+                .abort_session(&directory_cloned, &session_id_cloned)
+                .await
+            {
+                warn!(
+                    "AIChatAbort: abort_session failed, project={}, workspace={}, session_id={}, error={}",
+                    project_name_cloned, workspace_name_cloned, session_id_cloned, e
+                );
+            }
+        }
+    });
+
+    // 若没有可用流任务接收 abort 信号，主动下发 done 收敛前端状态。
+    if should_emit_done_now {
+        let _ = emit_server_message(
+            output_tx,
+            ServerMessage::AIChatDone {
+                project_name,
+                workspace_name,
+                session_id,
+            },
+        )
+        .await;
     }
 
     Ok(true)

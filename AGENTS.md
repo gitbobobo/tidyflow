@@ -67,6 +67,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - AI 聊天的 `pendingSendMessage`（等待会话创建后发送）等跨异步边界的临时状态，必须在工作空间切换时清除，并携带发起时的 `projectName/workspaceName` 做一致性校验；否则快照恢复触发 `aiCurrentSessionId` 变更时会把旧消息误发到新工作空间。切换回旧工作空间时应重新拉取当前会话消息，弥补切走期间被 guard 丢弃的流式增量。
 - `AITabView` 等在 `switch` 分支中创建的子视图，切换工作空间时可能在同一 SwiftUI 更新周期被移除，导致 `onChange` 不触发而 `appState` 上的全局状态残留。必须在 `onDisappear` 保存快照（用 `previousSnapshotKey` 而非 `currentSnapshotKey`，因为后者已指向新空间），并在 `onAppear` 恢复当前工作空间的快照或清空，不能仅依赖 `onChange`。
 - 聊天输入框实现 `@` 文件引用和 `/` 斜杠命令自动补全时，应以“光标所在 token”做触发与替换范围，且在 `hasMarkedText` 组合态暂停补全并兼容全角 `＠`/`／`，避免中文输入法候选期误触发与整段文本被覆盖。
+- WebSocket `handle_client_message` 内不要同步阻塞长生命周期流（如 AI 流式回复）；应改为后台 task 并通过 `cmd_output_tx` 回传事件，否则同连接的 `ai_chat_abort` 等控制消息无法及时处理，会出现“前端已停止但代理仍在执行”。
 
 ## Build Commands
 
