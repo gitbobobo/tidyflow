@@ -1,6 +1,120 @@
 import SwiftUI
 #if os(macOS)
 import AppKit
+
+// MARK: - 支持 IME 的聊天输入框（NSTextView 包装）
+
+struct ChatTextView: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var contentHeight: CGFloat
+    var font: NSFont = .systemFont(ofSize: 13)
+    var onEnter: () -> Void
+    var isEnterEnabled: () -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        let textView = IMEAwareTextView()
+        textView.delegate = context.coordinator
+        textView.font = font
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineFragmentPadding = 5
+        textView.onEnter = { [weak textView] in
+            guard let tv = textView else { return }
+            // IME 组合态中，不拦截 Enter
+            if tv.hasMarkedText() { return }
+            if context.coordinator.parent.isEnterEnabled() {
+                context.coordinator.parent.onEnter()
+            }
+        }
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+
+        // 初始高度
+        DispatchQueue.main.async {
+            context.coordinator.updateHeight()
+        }
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        context.coordinator.parent = self
+        if textView.string != text {
+            let selectedRanges = textView.selectedRanges
+            textView.string = text
+            textView.selectedRanges = selectedRanges
+            context.coordinator.updateHeight()
+        }
+        textView.font = font
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: ChatTextView
+        weak var textView: NSTextView?
+
+        init(_ parent: ChatTextView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+            updateHeight()
+        }
+
+        func updateHeight() {
+            guard let textView = textView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let inset = textView.textContainerInset
+            let newHeight = usedRect.height + inset.height * 2
+            DispatchQueue.main.async {
+                self.parent.contentHeight = newHeight
+            }
+        }
+    }
+}
+
+/// 自定义 NSTextView，在 keyDown 层拦截 Enter 并兼容 IME
+private class IMEAwareTextView: NSTextView {
+    var onEnter: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        let isReturn = event.keyCode == 36 // Return
+        let isShift = event.modifierFlags.contains(.shift)
+
+        if isReturn && !isShift {
+            if hasMarkedText() {
+                // IME 组合态，交给系统处理
+                super.keyDown(with: event)
+            } else {
+                onEnter?()
+            }
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
 #endif
 
 struct ChatInputView: View {
@@ -17,6 +131,7 @@ struct ChatInputView: View {
     @Binding var selectedAgent: String?
 
     @FocusState private var isFocused: Bool
+    @State private var textContentHeight: CGFloat = 28
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
@@ -88,24 +203,28 @@ struct ChatInputView: View {
                     .allowsHitTesting(false)
             }
 
+            #if os(macOS)
+            ChatTextView(
+                text: $text,
+                contentHeight: $textContentHeight,
+                font: .systemFont(ofSize: 13),
+                onEnter: {
+                    if canSend && !isStreaming {
+                        onSend()
+                    }
+                },
+                isEnterEnabled: { [canSend, isStreaming] in
+                    return canSend && !isStreaming
+                }
+            )
+            .frame(height: min(max(textContentHeight, 28), 80))
+            #else
             TextEditor(text: $text)
                 .font(.system(size: 13))
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 36, maxHeight: 160)
                 .fixedSize(horizontal: false, vertical: true)
-                .focused($isFocused)
-                .onKeyPress(keys: [.return], phases: .down) { keyPress in
-                    // Shift+Enter：插入换行（不拦截）
-                    if keyPress.modifiers.contains(.shift) {
-                        return .ignored
-                    }
-                    // 普通 Enter：发送
-                    if canSend && !isStreaming {
-                        onSend()
-                        return .handled
-                    }
-                    return .handled // 空内容也拦截，避免插入空行
-                }
+            #endif
         }
     }
 
