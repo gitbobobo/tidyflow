@@ -188,14 +188,15 @@ private struct MessageBubble: View {
                 ForEach(message.parts) { part in
                     switch part.kind {
                     case .text:
-                        if let text = part.text, !text.isEmpty {
+                        if let text = part.text,
+                           let normalizedText = normalizedDisplayText(text, keepOriginalForUser: isUser) {
                             if isUser {
-                                Text(text)
+                                Text(normalizedText)
                                     .textSelection(.enabled)
                                     .font(.system(size: 13))
                                     .foregroundColor(.white)
                             } else {
-                                TypewriterText(text: text, isStreaming: message.isStreaming)
+                                TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
                                     .textSelection(.enabled)
                                     .font(.system(size: 13))
                                     .foregroundColor(.primary)
@@ -244,6 +245,31 @@ private struct MessageBubble: View {
     private var bubbleBorderColor: Color {
         if isUser { return .clear }
         return Color.secondary.opacity(0.12)
+    }
+
+    /// 规范化文本显示，避免异常空白片段把消息间距撑开。
+    private func normalizedDisplayText(_ raw: String, keepOriginalForUser: Bool) -> String? {
+        // 用户消息尽量保留原始格式；仅过滤纯空白输入。
+        if keepOriginalForUser {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : raw
+        }
+
+        var text = raw.replacingOccurrences(of: "\r\n", with: "\n")
+        text = text.replacingOccurrences(of: "\r", with: "\n")
+
+        // 去掉首尾纯空白行，避免流式分片带来的大段空行。
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        // 连续 3 行以上空白压缩为最多 2 行，保留基本段落感。
+        text = text.replacingOccurrences(
+            of: #"\n{3,}"#,
+            with: "\n\n",
+            options: .regularExpression
+        )
+
+        return text
     }
 }
 
