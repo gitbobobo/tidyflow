@@ -124,6 +124,20 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
     @Published var commitAIAgent: String?
     @Published var mergeAIAgent: String?
+    // AI Chat 状态（iOS 端完整对齐 macOS）
+    @Published var aiActiveProject: String = ""
+    @Published var aiActiveWorkspace: String = ""
+    @Published var aiCurrentSessionId: String?
+    @Published var aiChatMessages: [AIChatMessage] = []
+    @Published var aiIsStreaming: Bool = false
+    @Published var aiAbortPendingSessionId: String?
+    @Published var aiSessions: [AISessionInfo] = []
+    @Published var aiProviders: [AIProviderInfo] = []
+    @Published var aiSelectedModel: AIModelSelection?
+    @Published var aiAgents: [AIAgentInfo] = []
+    @Published var aiSelectedAgent: String?
+    @Published var aiSlashCommands: [AISlashCommandInfo] = []
+    @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
 
     // 导航
     @Published var navigationPath = NavigationPath()
@@ -165,12 +179,43 @@ final class MobileAppState: ObservableObject {
     private var aiCommitPendingTaskIds: [String] = []
     /// AI 合并按 project 匹配
     private var aiMergePendingTaskIdByProject: [String: String] = [:]
+    /// AI Chat：message_id -> message 下标
+    private var aiMessageIndexByMessageId: [String: Int] = [:]
+    /// AI Chat：part_id -> (message 下标, part 下标)
+    private var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
+    /// AI Chat：按工作空间缓存快照，切换路由时恢复上下文
+    private var aiChatSnapshotCache: [String: AIChatSnapshot] = [:]
+    /// AI Chat：等待会话创建完成后的待发送请求（含上下文防串台）
+    private var aiPendingSendRequest: (
+        projectName: String,
+        workspaceName: String,
+        kind: PendingAIRequestKind
+    )?
     /// 项目命令 started/completed 路由（project|workspace|commandId -> taskId 队列）
     private var projectCommandPendingTaskIdsByKey: [String: [String]] = [:]
     /// 项目命令 remote task_id -> 本地 taskId
     private var projectCommandTaskIdByRemoteTaskId: [String: String] = [:]
     /// 当前详情页选中的项目名（兼容旧接口）
     private var selectedProjectName: String = ""
+
+    /// AI Chat 待发送请求类型
+    private enum PendingAIRequestKind {
+        case message(
+            text: String,
+            imageParts: [[String: String]]?,
+            model: [String: String]?,
+            agent: String?,
+            fileRefs: [String]?
+        )
+        case command(
+            command: String,
+            arguments: String,
+            imageParts: [[String: String]]?,
+            model: [String: String]?,
+            agent: String?,
+            fileRefs: [String]?
+        )
+    }
 
     private let wsClient = WSClient()
     /// 重连任务（指数退避）
@@ -638,6 +683,375 @@ final class MobileAppState: ObservableObject {
         projectCommandPendingTaskIdsByKey[routingKey] = queue
 
         wsClient.requestRunProjectCommand(project: project, workspace: workspace, commandId: command.id)
+    }
+
+    // MARK: - AI 聊天
+
+    /// 进入 AI 聊天页面：按 project/workspace 恢复上下文并刷新服务端会话数据
+    func openAIChat(project: String, workspace: String) {
+        let trimmedProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedWorkspace = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProject.isEmpty, !trimmedWorkspace.isEmpty else { return }
+
+        let contextChanged = aiActiveProject != trimmedProject || aiActiveWorkspace != trimmedWorkspace
+        if contextChanged {
+            saveCurrentAISnapshotIfNeeded()
+            aiPendingSendRequest = nil
+            aiAbortPendingSessionId = nil
+        }
+
+        aiActiveProject = trimmedProject
+        aiActiveWorkspace = trimmedWorkspace
+
+        if contextChanged {
+            restoreAISnapshot(project: trimmedProject, workspace: trimmedWorkspace)
+        } else if aiChatMessages.isEmpty {
+            // 同一上下文视图重建时，优先从快照恢复，避免页面闪空
+            restoreAISnapshot(project: trimmedProject, workspace: trimmedWorkspace)
+        }
+
+        requestAIContextResources()
+        reloadCurrentAISessionIfNeeded()
+    }
+
+    /// 离开 AI 聊天页面：仅保存快照，不主动清空上下文，便于返回时秒级恢复
+    func closeAIChat() {
+        saveCurrentAISnapshotIfNeeded()
+        aiPendingSendRequest = nil
+        aiAbortPendingSessionId = nil
+    }
+
+    /// 新建空会话（本地清空态）
+    func createNewAISession() {
+        aiPendingSendRequest = nil
+        aiAbortPendingSessionId = nil
+        aiCurrentSessionId = nil
+        aiChatMessages = []
+        aiIsStreaming = false
+        aiMessageIndexByMessageId = [:]
+        aiPartIndexByPartId = [:]
+    }
+
+    /// 拉取会话列表 + provider/agent/斜杠命令
+    func requestAIContextResources() {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
+        wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
+        wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
+        wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
+    }
+
+    /// 加载指定会话消息
+    func loadAISession(_ session: AISessionInfo) {
+        guard session.projectName == aiActiveProject,
+              session.workspaceName == aiActiveWorkspace else { return }
+        aiCurrentSessionId = session.id
+        aiChatMessages = []
+        aiIsStreaming = false
+        aiMessageIndexByMessageId = [:]
+        aiPartIndexByPartId = [:]
+        wsClient.requestAISessionMessages(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            sessionId: session.id,
+            limit: 200
+        )
+    }
+
+    /// 删除会话
+    func deleteAISession(_ session: AISessionInfo) {
+        wsClient.requestAISessionDelete(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            sessionId: session.id
+        )
+        aiSessions.removeAll { $0.id == session.id }
+        if aiCurrentSessionId == session.id {
+            aiCurrentSessionId = nil
+            aiChatMessages = []
+            aiIsStreaming = false
+            aiMessageIndexByMessageId = [:]
+            aiPartIndexByPartId = [:]
+        }
+    }
+
+    /// 发送消息；返回 true 表示已受理（包括本地命令）
+    @discardableResult
+    func sendAIMessage(text: String, imageAttachments: [ImageAttachment]) -> Bool {
+        // 上一次停止尚未收敛时，不允许发新消息，避免事件串扰。
+        if aiAbortPendingSessionId != nil {
+            return false
+        }
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return false }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !imageAttachments.isEmpty else { return false }
+
+        let slashCommand = parseSlashCommand(from: text)
+        let slashAction: String? = {
+            guard let slashCommand else { return nil }
+            return aiSlashCommands.first(where: {
+                $0.name.caseInsensitiveCompare(slashCommand.name) == .orderedSame
+            })?.action
+        }()
+
+        if let slashCommand {
+            let resolvedAction = slashAction ?? (
+                slashCommand.name.caseInsensitiveCompare("new") == .orderedSame ? "client" : "agent"
+            )
+            if resolvedAction == "client" {
+                switch slashCommand.name.lowercased() {
+                case "new":
+                    createNewAISession()
+                default:
+                    aiChatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            parts: [AIChatPart(
+                                id: UUID().uuidString,
+                                kind: .text,
+                                text: "暂不支持本地命令：/\(slashCommand.name)",
+                                toolName: nil,
+                                toolState: nil
+                            )],
+                            isStreaming: false
+                        )
+                    )
+                }
+                return true
+            }
+        }
+
+        let fileRefs = extractFileRefs(from: text)
+        let fileRefsParam: [String]? = fileRefs.isEmpty ? nil : fileRefs
+        let imageParts: [[String: String]]? = imageAttachments.isEmpty ? nil : imageAttachments.map { img in
+            [
+                "filename": img.filename,
+                "mime": img.mime,
+                "data": img.data.base64EncodedString()
+            ]
+        }
+        let model: [String: String]? = aiSelectedModel.map {
+            ["provider_id": $0.providerID, "model_id": $0.modelID]
+        }
+        let agentName = aiSelectedAgent
+
+        // 先渲染用户消息与 assistant 占位，确保发送后即时反馈
+        aiChatMessages.append(
+            AIChatMessage(
+                role: .user,
+                parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: text, toolName: nil, toolState: nil)],
+                isStreaming: false
+            )
+        )
+        aiChatMessages.append(AIChatMessage(role: .assistant, parts: [], isStreaming: true))
+        aiIsStreaming = true
+
+        if let sessionId = aiCurrentSessionId {
+            if let slash = slashCommand {
+                wsClient.requestAIChatCommand(
+                    projectName: aiActiveProject,
+                    workspaceName: aiActiveWorkspace,
+                    sessionId: sessionId,
+                    command: slash.name,
+                    arguments: slash.arguments,
+                    fileRefs: fileRefsParam,
+                    imageParts: imageParts,
+                    model: model,
+                    agent: agentName
+                )
+            } else {
+                wsClient.requestAIChatSend(
+                    projectName: aiActiveProject,
+                    workspaceName: aiActiveWorkspace,
+                    sessionId: sessionId,
+                    message: text,
+                    fileRefs: fileRefsParam,
+                    imageParts: imageParts,
+                    model: model,
+                    agent: agentName
+                )
+            }
+        } else {
+            if let slash = slashCommand {
+                aiPendingSendRequest = (
+                    aiActiveProject,
+                    aiActiveWorkspace,
+                    .command(
+                        command: slash.name,
+                        arguments: slash.arguments,
+                        imageParts: imageParts,
+                        model: model,
+                        agent: agentName,
+                        fileRefs: fileRefsParam
+                    )
+                )
+            } else {
+                aiPendingSendRequest = (
+                    aiActiveProject,
+                    aiActiveWorkspace,
+                    .message(
+                        text: text,
+                        imageParts: imageParts,
+                        model: model,
+                        agent: agentName,
+                        fileRefs: fileRefsParam
+                    )
+                )
+            }
+            wsClient.requestAIChatStart(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                title: String(text.prefix(50))
+            )
+        }
+
+        return true
+    }
+
+    /// 停止当前会话流式输出
+    func stopAIStreaming() {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty,
+              let sessionId = aiCurrentSessionId else { return }
+        aiAbortPendingSessionId = sessionId
+        wsClient.requestAIChatAbort(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            sessionId: sessionId
+        )
+        aiIsStreaming = false
+
+        // 立即收敛本地 loading，避免等待服务端 done 期间界面残留
+        for idx in aiChatMessages.indices.reversed() {
+            guard aiChatMessages[idx].role == .assistant,
+                  aiChatMessages[idx].isStreaming else { continue }
+            aiChatMessages[idx].isStreaming = false
+            if aiChatMessages[idx].parts.isEmpty {
+                aiChatMessages.remove(at: idx)
+            }
+        }
+    }
+
+    /// 当前上下文的文件索引（用于 @ 自动补全）
+    func aiCurrentFileItems() -> [String] {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return [] }
+        let key = aiContextKey(project: aiActiveProject, workspace: aiActiveWorkspace)
+        return aiFileIndexCache[key]?.items ?? []
+    }
+
+    /// 按需拉取文件索引；首次输入 @ 时调用
+    func fetchAIFileIndexIfNeeded(force: Bool = false) {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        let key = aiContextKey(project: aiActiveProject, workspace: aiActiveWorkspace)
+        if !force, let cache = aiFileIndexCache[key], !cache.items.isEmpty, !cache.isExpired {
+            return
+        }
+        var cache = aiFileIndexCache[key] ?? FileIndexCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        aiFileIndexCache[key] = cache
+        wsClient.requestFileIndex(project: aiActiveProject, workspace: aiActiveWorkspace)
+    }
+
+    private func reloadCurrentAISessionIfNeeded() {
+        guard let sessionId = aiCurrentSessionId,
+              !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        wsClient.requestAISessionMessages(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            sessionId: sessionId,
+            limit: 200
+        )
+    }
+
+    private func aiContextKey(project: String, workspace: String) -> String {
+        "\(project):\(workspace)"
+    }
+
+    private func saveCurrentAISnapshotIfNeeded() {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        let key = aiContextKey(project: aiActiveProject, workspace: aiActiveWorkspace)
+        aiChatSnapshotCache[key] = AIChatSnapshot(
+            currentSessionId: aiCurrentSessionId,
+            messages: aiChatMessages,
+            isStreaming: aiIsStreaming,
+            sessions: aiSessions,
+            messageIndexByMessageId: aiMessageIndexByMessageId,
+            partIndexByPartId: aiPartIndexByPartId
+        )
+    }
+
+    private func restoreAISnapshot(project: String, workspace: String) {
+        let key = aiContextKey(project: project, workspace: workspace)
+        if let snapshot = aiChatSnapshotCache[key] {
+            aiCurrentSessionId = snapshot.currentSessionId
+            aiChatMessages = snapshot.messages
+            aiIsStreaming = false
+            aiSessions = snapshot.sessions
+            aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
+            aiPartIndexByPartId = snapshot.partIndexByPartId
+            return
+        }
+        aiCurrentSessionId = nil
+        aiChatMessages = []
+        aiIsStreaming = false
+        aiSessions = []
+        aiMessageIndexByMessageId = [:]
+        aiPartIndexByPartId = [:]
+    }
+
+    private func parseSlashCommand(from text: String) -> (name: String, arguments: String)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, first == "/" || first == "／" else { return nil }
+        let body = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return nil }
+        if let separator = body.firstIndex(where: { $0.isWhitespace }) {
+            let name = String(body[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let arguments = String(body[separator...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (name, arguments)
+        }
+        return (body, "")
+    }
+
+    private func sendPendingAIRequest(
+        _ kind: PendingAIRequestKind,
+        sessionId: String,
+        projectName: String,
+        workspaceName: String
+    ) {
+        switch kind {
+        case let .message(text, imageParts, model, agent, fileRefs):
+            wsClient.requestAIChatSend(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                sessionId: sessionId,
+                message: text,
+                fileRefs: fileRefs,
+                imageParts: imageParts,
+                model: model,
+                agent: agent
+            )
+        case let .command(command, arguments, imageParts, model, agent, fileRefs):
+            wsClient.requestAIChatCommand(
+                projectName: projectName,
+                workspaceName: workspaceName,
+                sessionId: sessionId,
+                command: command,
+                arguments: arguments,
+                fileRefs: fileRefs,
+                imageParts: imageParts,
+                model: model,
+                agent: agent
+            )
+        }
+    }
+
+    private func applyAgentDefaultModel(_ agent: AIAgentInfo?) {
+        guard let agent,
+              let providerID = agent.defaultProviderID,
+              let modelID = agent.defaultModelID,
+              !providerID.isEmpty, !modelID.isEmpty else { return }
+        aiSelectedModel = AIModelSelection(providerID: providerID, modelID: modelID)
     }
 
     // MARK: - 终端视图绑定
@@ -1176,7 +1590,16 @@ final class MobileAppState: ObservableObject {
         }
 
         wsClient.onError = { [weak self] message in
-            self?.errorMessage = message
+            guard let self else { return }
+            self.errorMessage = message
+            if !self.aiActiveProject.isEmpty, !self.aiActiveWorkspace.isEmpty {
+                let key = self.aiContextKey(project: self.aiActiveProject, workspace: self.aiActiveWorkspace)
+                if var cache = self.aiFileIndexCache[key], cache.isLoading {
+                    cache.isLoading = false
+                    cache.error = message
+                    self.aiFileIndexCache[key] = cache
+                }
+            }
         }
 
         wsClient.onClipboardImageSet = { [weak self] ok, message in
@@ -1215,6 +1638,347 @@ final class MobileAppState: ObservableObject {
         wsClient.onTasksSnapshot = { [weak self] entries in
             guard let self else { return }
             self.restoreTasksFromSnapshot(entries)
+        }
+
+        // AI Chat: 文件索引（@ 自动补全）
+        wsClient.onFileIndexResult = { [weak self] result in
+            guard let self else { return }
+            let key = self.aiContextKey(project: result.project, workspace: result.workspace)
+            self.aiFileIndexCache[key] = FileIndexCache(
+                items: result.items,
+                truncated: result.truncated,
+                updatedAt: Date(),
+                isLoading: false,
+                error: nil
+            )
+        }
+
+        // AI Chat（结构化 message/part 流）
+        wsClient.onAISessionStarted = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+
+            self.aiCurrentSessionId = ev.sessionId
+            let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
+            let session = AISessionInfo(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                id: ev.sessionId,
+                title: ev.title,
+                updatedAt: updatedAt
+            )
+            self.aiSessions.removeAll { $0.id == session.id }
+            self.aiSessions.insert(session, at: 0)
+
+            if let pending = self.aiPendingSendRequest {
+                guard pending.projectName == ev.projectName,
+                      pending.workspaceName == ev.workspaceName else {
+                    self.aiPendingSendRequest = nil
+                    return
+                }
+                self.aiPendingSendRequest = nil
+                self.sendPendingAIRequest(
+                    pending.kind,
+                    sessionId: ev.sessionId,
+                    projectName: ev.projectName,
+                    workspaceName: ev.workspaceName
+                )
+            }
+        }
+
+        wsClient.onAISessionList = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            let sessions = ev.sessions.map {
+                AISessionInfo(
+                    projectName: $0.projectName,
+                    workspaceName: $0.workspaceName,
+                    id: $0.id,
+                    title: $0.title,
+                    updatedAt: $0.updatedAt
+                )
+            }
+            self.aiSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
+        }
+
+        wsClient.onAISessionMessages = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+
+            self.aiChatMessages = ev.messages.compactMap { m in
+                let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
+                let parts: [AIChatPart] = m.parts.compactMap { p in
+                    let kind = AIChatPartKind(rawValue: p.partType) ?? .text
+                    return AIChatPart(id: p.id, kind: kind, text: p.text, toolName: p.toolName, toolState: p.toolState)
+                }
+                return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
+            }
+            self.rebuildAIIndexes()
+            self.aiIsStreaming = false
+        }
+
+        wsClient.onAIChatMessageUpdated = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            guard ev.role == "assistant" else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatPartUpdated = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            self.aiUpsertPart(msgIdx: msgIdx, part: ev.part)
+            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatPartDelta = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+            self.aiAppendDelta(
+                msgIdx: msgIdx,
+                partId: ev.partId,
+                partType: ev.partType,
+                field: ev.field,
+                delta: ev.delta
+            )
+            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatDone = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId {
+                self.aiAbortPendingSessionId = nil
+            }
+            self.aiIsStreaming = false
+            self.aiClearAssistantStreaming()
+            if let idx = self.aiChatMessages.lastIndex(where: {
+                $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty
+            }) {
+                self.aiChatMessages.remove(at: idx)
+            }
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIChatError = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            if self.aiAbortPendingSessionId == ev.sessionId {
+                self.aiAbortPendingSessionId = nil
+            }
+            self.aiIsStreaming = false
+            self.aiClearAssistantStreaming()
+            if let idx = self.aiChatMessages.lastIndex(where: {
+                $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty
+            }) {
+                self.aiChatMessages.remove(at: idx)
+            }
+            self.aiChatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    parts: [AIChatPart(
+                        id: UUID().uuidString,
+                        kind: .text,
+                        text: "错误：\(ev.error)",
+                        toolName: nil,
+                        toolState: nil
+                    )],
+                    isStreaming: false
+                )
+            )
+            self.rebuildAIIndexes()
+            self.recomputeAIIsStreaming()
+        }
+
+        wsClient.onAIProviderList = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            self.aiProviders = ev.providers.map { p in
+                AIProviderInfo(
+                    id: p.id,
+                    name: p.name,
+                    models: p.models.map { m in
+                        AIModelInfo(
+                            id: m.id,
+                            name: m.name,
+                            providerID: m.providerID.isEmpty ? p.id : m.providerID
+                        )
+                    }
+                )
+            }
+        }
+
+        wsClient.onAIAgentList = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            self.aiAgents = ev.agents.map { a in
+                AIAgentInfo(
+                    name: a.name,
+                    description: a.description,
+                    mode: a.mode,
+                    color: a.color,
+                    defaultProviderID: a.defaultProviderID,
+                    defaultModelID: a.defaultModelID
+                )
+            }
+            if self.aiSelectedAgent == nil {
+                let first = self.aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" }) ?? self.aiAgents.first
+                self.aiSelectedAgent = first?.name
+                self.applyAgentDefaultModel(first)
+            }
+        }
+
+        wsClient.onAISlashCommands = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            self.aiSlashCommands = ev.commands.map {
+                AISlashCommandInfo(name: $0.name, description: $0.description, action: $0.action)
+            }
+        }
+    }
+
+    // MARK: - AI Chat 索引与流式状态
+
+    /// 以“是否存在正在流式的 assistant 消息”为准计算 loading 状态
+    private func recomputeAIIsStreaming() {
+        aiIsStreaming = aiChatMessages.contains { msg in
+            msg.role == .assistant && msg.isStreaming
+        }
+    }
+
+    private func rebuildAIIndexes() {
+        aiMessageIndexByMessageId = [:]
+        aiPartIndexByPartId = [:]
+        for (msgIdx, msg) in aiChatMessages.enumerated() {
+            if let mid = msg.messageId {
+                aiMessageIndexByMessageId[mid] = msgIdx
+            }
+            for (partIdx, part) in msg.parts.enumerated() {
+                aiPartIndexByPartId[part.id] = (msgIdx, partIdx)
+            }
+        }
+    }
+
+    /// 确保 assistant 消息存在；优先复用本地占位消息，避免流式时产生重复气泡
+    @discardableResult
+    private func aiEnsureAssistantMessage(messageId: String) -> Int {
+        if let idx = aiMessageIndexByMessageId[messageId],
+           idx < aiChatMessages.count,
+           aiChatMessages[idx].messageId == messageId {
+            return idx
+        }
+        aiMessageIndexByMessageId.removeValue(forKey: messageId)
+
+        if let idx = aiChatMessages.lastIndex(where: {
+            $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty
+        }) {
+            aiChatMessages[idx].messageId = messageId
+            aiMessageIndexByMessageId[messageId] = idx
+            return idx
+        }
+
+        let newMessage = AIChatMessage(messageId: messageId, role: .assistant, parts: [], isStreaming: true)
+        aiChatMessages.append(newMessage)
+        let idx = aiChatMessages.count - 1
+        aiMessageIndexByMessageId[messageId] = idx
+        return idx
+    }
+
+    private func aiUpsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
+        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
+        let kind = AIChatPartKind(rawValue: part.partType) ?? .text
+
+        if let existing = aiPartIndexByPartId[part.id],
+           existing.msgIdx == msgIdx,
+           existing.partIdx >= 0,
+           existing.partIdx < aiChatMessages[msgIdx].parts.count {
+            aiChatMessages[msgIdx].parts[existing.partIdx].text = part.text
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolName = part.toolName
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolState = part.toolState
+            return
+        }
+
+        aiPartIndexByPartId.removeValue(forKey: part.id)
+        let newPart = AIChatPart(
+            id: part.id,
+            kind: kind,
+            text: part.text,
+            toolName: part.toolName,
+            toolState: part.toolState
+        )
+        aiChatMessages[msgIdx].parts.append(newPart)
+        let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
+        aiPartIndexByPartId[part.id] = (msgIdx, newPartIdx)
+    }
+
+    private func aiAppendDelta(
+        msgIdx: Int,
+        partId: String,
+        partType: String,
+        field: String,
+        delta: String
+    ) {
+        // 当前仅消费 text 增量，避免未知字段污染 UI
+        guard field == "text" else { return }
+        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
+
+        if let existing = aiPartIndexByPartId[partId],
+           existing.msgIdx == msgIdx,
+           existing.partIdx >= 0,
+           existing.partIdx < aiChatMessages[msgIdx].parts.count {
+            let current = aiChatMessages[msgIdx].parts[existing.partIdx].text ?? ""
+            aiChatMessages[msgIdx].parts[existing.partIdx].text = current + delta
+            return
+        }
+
+        let kind = AIChatPartKind(rawValue: partType) ?? .text
+        let newPart = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil, toolState: nil)
+        aiChatMessages[msgIdx].parts.append(newPart)
+        let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
+        aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
+    }
+
+    /// 同一时刻只允许一个 assistant 气泡处于流式态
+    private func aiMarkOnlyStreamingAssistant(at msgIdx: Int) {
+        for idx in aiChatMessages.indices {
+            guard aiChatMessages[idx].role == .assistant else { continue }
+            aiChatMessages[idx].isStreaming = idx == msgIdx
+        }
+    }
+
+    private func aiClearAssistantStreaming() {
+        for idx in aiChatMessages.indices {
+            guard aiChatMessages[idx].role == .assistant else { continue }
+            aiChatMessages[idx].isStreaming = false
         }
     }
 

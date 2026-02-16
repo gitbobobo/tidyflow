@@ -1,12 +1,20 @@
 import SwiftUI
 
 struct MobileAIChatView: View {
-    @State private var messages: [AIChatMessage] = []
+    @EnvironmentObject var appState: MobileAppState
+
+    let project: String
+    let workspace: String
+
     @State private var inputText: String = ""
-    @State private var isStreaming = false
+    @State private var imageAttachments: [ImageAttachment] = []
     @State private var showSessionList = false
-    @State private var sessions: [AISessionInfo] = []
-    @State private var currentSessionId: String?
+    @StateObject private var autocomplete = AutocompleteState()
+    @State private var cursorRectInInput: CGRect = .zero
+    @State private var inputCursorLocation: Int = 0
+    @State private var inputIsComposing: Bool = false
+
+    private var aiContextKey: String { "\(project):\(workspace)" }
 
     private var systemBackgroundColor: Color {
         #if os(iOS)
@@ -27,10 +35,27 @@ struct MobileAIChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            messageList
+            messageArea
+                .overlay {
+                    if autocomplete.isVisible {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { autocomplete.reset() }
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if autocomplete.isVisible {
+                        AutocompletePopupView(autocomplete: autocomplete) { item in
+                            handleAutocompleteSelect(item)
+                        }
+                        .frame(maxWidth: 320)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                    }
+                }
             inputArea
         }
-        .navigationTitle("AI Chat")
+        .navigationTitle("AI 聊天")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -40,7 +65,14 @@ struct MobileAIChatView: View {
                 Button(action: {
                     showSessionList.toggle()
                 }) {
-                    Image(systemName: "list.bullet")
+                    Image(systemName: "sidebar.left")
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    createNewSession()
+                }) {
+                    Image(systemName: "square.and.pencil")
                 }
             }
             #else
@@ -55,7 +87,7 @@ struct MobileAIChatView: View {
         }
         .sheet(isPresented: $showSessionList) {
             NavigationStack {
-                List(sessions) { session in
+                List(appState.aiSessions) { session in
                     Button(action: {
                         loadSession(session)
                         showSessionList = false
@@ -69,21 +101,28 @@ struct MobileAIChatView: View {
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
-                            if session.id == currentSessionId {
+                            if session.id == appState.aiCurrentSessionId {
                                 Image(systemName: "checkmark")
                                     .foregroundColor(.accentColor)
                             }
                         }
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            appState.deleteAISession(session)
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
                 }
-                .navigationTitle("Sessions")
+                .navigationTitle("会话")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar {
                     #if os(iOS)
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Close") {
+                        Button("关闭") {
                             showSessionList = false
                         }
                     }
@@ -94,7 +133,7 @@ struct MobileAIChatView: View {
                     }
                     #else
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") {
+                        Button("关闭") {
                             showSessionList = false
                         }
                     }
@@ -108,21 +147,53 @@ struct MobileAIChatView: View {
             }
         }
         .onAppear {
-            loadSessions()
+            appState.openAIChat(project: project, workspace: workspace)
+        }
+        .onDisappear {
+            appState.closeAIChat()
+        }
+        .onChange(of: inputText) { _, newText in
+            if !inputIsComposing {
+                refreshAutocomplete(text: newText)
+            }
+            if (newText.contains("@") || newText.contains("＠")),
+               appState.aiCurrentFileItems().isEmpty {
+                appState.fetchAIFileIndexIfNeeded()
+            }
+        }
+        .onChange(of: appState.aiFileIndexCache[aiContextKey]?.items.count) { _, _ in
+            if !inputIsComposing {
+                refreshAutocomplete(text: inputText)
+            }
+        }
+        .onChange(of: inputCursorLocation) { _, _ in
+            if !inputIsComposing {
+                refreshAutocomplete(text: inputText)
+            }
+        }
+        .onChange(of: inputIsComposing) { _, composing in
+            if composing {
+                autocomplete.reset()
+                return
+            }
+            refreshAutocomplete(text: inputText)
         }
     }
 
     private var toolbar: some View {
         HStack {
-            if isStreaming {
+            if appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil {
                 HStack(spacing: 4) {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("Generating...")
+                    Text("生成中...")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
+            Text(workspace == "default" ? project : "\(project) / \(workspace)")
+                .font(.caption)
+                .foregroundColor(.secondary)
             Spacer()
         }
         .padding(.horizontal)
@@ -130,14 +201,23 @@ struct MobileAIChatView: View {
         .background(systemBackgroundColor)
     }
 
-    private var messageList: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(messages) { message in
-                    MobileMessageBubble(message: message)
+    private var messageArea: some View {
+        ZStack {
+            if appState.aiChatMessages.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 34))
+                        .foregroundColor(.secondary.opacity(0.6))
+                    Text("还没有消息")
+                        .foregroundColor(.secondary)
+                    Text("输入问题开始对话")
+                        .font(.caption)
+                        .foregroundColor(.secondary.opacity(0.8))
                 }
+                .padding(.top, 24)
+            } else {
+                MessageListView(messages: appState.aiChatMessages)
             }
-            .padding()
         }
         .background(systemGroupedBackgroundColor)
     }
@@ -145,111 +225,112 @@ struct MobileAIChatView: View {
     private var inputArea: some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 12) {
-                TextField("Message...", text: $inputText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...5)
-
-                if isStreaming {
-                    Button(action: stopStreaming) {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.red)
-                    }
-                } else {
-                    Button(action: sendMessage) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(inputText.isEmpty ? .gray : .accentColor)
-                    }
-                    .disabled(inputText.isEmpty)
-                }
-            }
-            .padding()
+            ChatInputView(
+                text: $inputText,
+                imageAttachments: $imageAttachments,
+                isStreaming: appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil,
+                canStopStreaming: appState.aiCurrentSessionId != nil && appState.aiAbortPendingSessionId == nil,
+                onSend: { sendMessage() },
+                onStop: { stopStreaming() },
+                providers: appState.aiProviders,
+                selectedModel: $appState.aiSelectedModel,
+                agents: appState.aiAgents,
+                selectedAgent: $appState.aiSelectedAgent,
+                autocomplete: autocomplete,
+                onSelectAutocomplete: { item in
+                    handleAutocompleteSelect(item)
+                },
+                onInputContextChange: { cursorLocation, isComposing in
+                    inputCursorLocation = cursorLocation
+                    inputIsComposing = isComposing
+                },
+                cursorRectInInput: $cursorRectInInput
+            )
         }
         .background(systemBackgroundColor)
     }
 
-    private func loadSessions() {}
-
     private func loadSession(_ session: AISessionInfo) {
-        currentSessionId = session.id
+        appState.loadAISession(session)
     }
 
     private func createNewSession() {
         inputText = ""
-        messages = []
-        currentSessionId = nil
+        imageAttachments = []
+        autocomplete.reset()
+        appState.createNewAISession()
     }
 
     private func sendMessage() {
-        guard !inputText.isEmpty else { return }
-
-        let userMessage = AIChatMessage(
-            role: .user,
-            parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: inputText, toolName: nil, toolState: nil)],
-            isStreaming: false
-        )
-        messages.append(userMessage)
-
-        isStreaming = true
+        let text = inputText
+        let images = imageAttachments
+        guard appState.sendAIMessage(text: text, imageAttachments: images) else { return }
         inputText = ""
+        imageAttachments = []
+        autocomplete.reset()
     }
 
     private func stopStreaming() {
-        isStreaming = false
+        appState.stopAIStreaming()
     }
-}
 
-struct MobileMessageBubble: View {
-    let message: AIChatMessage
+    // MARK: - 自动补全
 
-    var body: some View {
-        HStack {
-            if message.role == .user {
-                Spacer(minLength: 50)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                if message.isStreaming {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .frame(width: 6, height: 6)
-                            .opacity(0.5)
-                        Circle()
-                            .frame(width: 6, height: 6)
-                            .opacity(0.7)
-                        Circle()
-                            .frame(width: 6, height: 6)
-                            .opacity(1)
-                    }
-                    .foregroundColor(.accentColor)
-                } else {
-                    Text(displayText)
-                        .font(.body)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                message.role == .user
-                    ? Color.blue.opacity(0.15)
-                    : Color.gray.opacity(0.15)
+    private func refreshAutocomplete(text: String) {
+        let slashItems = appState.aiSlashCommands.map { cmd in
+            AutocompleteItem(
+                id: "cmd_\(cmd.name)",
+                title: cmd.name,
+                subtitle: cmd.description,
+                icon: slashCommandIcon(cmd.name),
+                value: cmd.name,
+                action: cmd.action
             )
-            .foregroundColor(.primary)
-            .cornerRadius(16)
+        }
+        updateAutocomplete(
+            text: text,
+            cursorLocation: inputCursorLocation,
+            autocomplete: autocomplete,
+            slashCommands: slashItems,
+            fileItems: appState.aiCurrentFileItems()
+        )
+    }
 
-            if message.role == .assistant {
-                Spacer(minLength: 50)
+    private func handleAutocompleteSelect(_ item: AutocompleteItem) {
+        switch autocomplete.mode {
+        case .fileRef:
+            if let replaceRange = autocomplete.replaceRange {
+                replaceInputText(in: replaceRange, with: "@\(item.value) ")
+            } else {
+                inputText += "@\(item.value) "
             }
+            autocomplete.reset()
+        case .slashCommand:
+            if let replaceRange = autocomplete.replaceRange {
+                replaceInputText(in: replaceRange, with: "/\(item.value) ")
+            } else {
+                inputText = "/\(item.value) "
+            }
+            autocomplete.reset()
+        case .none:
+            break
         }
     }
 
-    private var displayText: String {
-        let parts = message.parts.compactMap { p -> String? in
-            guard p.kind == .text || p.kind == .reasoning else { return nil }
-            return p.text
+    private func replaceInputText(in nsRange: NSRange, with replacement: String) {
+        guard let range = Range(nsRange, in: inputText) else {
+            inputText += replacement
+            return
         }
-        return parts.joined(separator: "\n\n")
+        inputText.replaceSubrange(range, with: replacement)
+    }
+
+    private func slashCommandIcon(_ name: String) -> String {
+        switch name {
+        case "new":
+            return "square.and.pencil"
+        default:
+            return "command"
+        }
     }
 }

@@ -44,8 +44,8 @@ struct TidyFlowiOSApp: App {
                                 )
                             case .terminalAttach(let project, let workspace, let termId):
                                 MobileTerminalView(project: project, workspace: workspace, termId: termId)
-                            case .aiChat:
-                                MobileAIChatView()
+                            case .aiChat(let project, let workspace):
+                                MobileAIChatView(project: project, workspace: workspace)
                             }
                         }
                 }
