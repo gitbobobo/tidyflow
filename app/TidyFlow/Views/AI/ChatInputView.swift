@@ -871,7 +871,7 @@ struct ChatInputView: View {
                 }
                     .foregroundColor(.secondary.opacity(0.6))
                     .font(.system(size: 13))
-                    .padding(.horizontal, 5)
+                    .padding(.horizontal, 9)
                     .padding(.vertical, 8)
                     .allowsHitTesting(false)
             }
@@ -917,6 +917,13 @@ struct ChatInputView: View {
                 .font(.system(size: 13))
                 .lineLimit(1...6)
                 .focused($isIOSInputFocused)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .onTapGesture {
+                    if !isIOSInputFocused {
+                        isIOSInputFocused = true
+                    }
+                }
             #endif
         }
     }
