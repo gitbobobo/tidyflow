@@ -17,10 +17,14 @@ struct SessionListView: View {
                 Spacer()
                 Button(action: onCreateNew) {
                     Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .medium))
                 }
                 .buttonStyle(.borderless)
             }
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
 
             List(sessions) { session in
                 SessionRow(
@@ -38,10 +42,14 @@ struct SessionListView: View {
                         Label("删除", systemImage: "trash")
                     }
                 }
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
-        .frame(idealWidth: 250)
+        .frame(idealWidth: 260)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
     }
 }
 
@@ -50,29 +58,32 @@ struct SessionRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(session.displayTitle)
-                    .font(.system(size: 14, weight: .medium))
-                    .lineLimit(1)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
 
                 Text(session.formattedDate)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
             if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(.accentColor)
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 6, height: 6)
             }
         }
         .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
-        .cornerRadius(6)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
     }
 }
 
@@ -87,6 +98,6 @@ struct SessionRow: View {
         onDelete: { _ in },
         onCreateNew: {}
     )
-    .frame(width: 250, height: 400)
+    .frame(width: 260, height: 400)
 }
 #endif

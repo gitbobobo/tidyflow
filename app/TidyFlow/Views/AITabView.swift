@@ -57,7 +57,7 @@ struct AITabView: View {
                         createNewSession()
                     }
                 )
-                .frame(minWidth: 180, idealWidth: 220, maxWidth: 260)
+                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
             }
 
             VStack(spacing: 0) {
