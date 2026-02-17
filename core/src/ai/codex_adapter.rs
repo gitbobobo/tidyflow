@@ -713,7 +713,13 @@ impl AiAgent for CodexAppServerAgent {
             Err(err) if Self::is_thread_not_found_error(&err) => {
                 self.client.thread_resume(directory, session_id).await?;
                 self.client
-                    .turn_start(session_id, input, model_id, model_provider, collaboration_mode)
+                    .turn_start(
+                        session_id,
+                        input,
+                        model_id,
+                        model_provider,
+                        collaboration_mode,
+                    )
                     .await?
             }
             Err(err) => return Err(err),
@@ -806,7 +812,12 @@ impl AiAgent for CodexAppServerAgent {
         let providers = self.list_providers(directory).await?;
         let default_model_id = providers
             .first()
-            .and_then(|p| p.models.iter().find(|m| m.id == "default").or_else(|| p.models.first()))
+            .and_then(|p| {
+                p.models
+                    .iter()
+                    .find(|m| m.id == "default")
+                    .or_else(|| p.models.first())
+            })
             .map(|m| m.id.clone());
 
         let agents = self.client.agent_list().await?;
@@ -875,11 +886,16 @@ impl AiAgent for CodexAppServerAgent {
                 serde_json::json!({ "answers": answer_map })
             }
             other => {
-                warn!("Unsupported Codex request method in reply_question: {}", other);
+                warn!(
+                    "Unsupported Codex request method in reply_question: {}",
+                    other
+                );
                 serde_json::json!({})
             }
         };
-        self.client.send_approval_response(pending.id, response).await
+        self.client
+            .send_approval_response(pending.id, response)
+            .await
     }
 
     async fn reject_question(&self, _directory: &str, request_id: &str) -> Result<(), String> {
@@ -898,6 +914,8 @@ impl AiAgent for CodexAppServerAgent {
             "item/tool/requestUserInput" => serde_json::json!({ "answers": {} }),
             _ => serde_json::json!({}),
         };
-        self.client.send_approval_response(pending.id, response).await
+        self.client
+            .send_approval_response(pending.id, response)
+            .await
     }
 }

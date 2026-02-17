@@ -43,7 +43,11 @@ impl CodexAppServerClient {
         self.manager.ensure_server_running().await
     }
 
-    pub async fn thread_start(&self, directory: &str, title: &str) -> Result<CodexThreadSummary, String> {
+    pub async fn thread_start(
+        &self,
+        directory: &str,
+        title: &str,
+    ) -> Result<CodexThreadSummary, String> {
         let result = self
             .manager
             .send_request(
@@ -110,7 +114,11 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    pub async fn thread_list(&self, directory: &str, limit: u32) -> Result<Vec<CodexThreadSummary>, String> {
+    pub async fn thread_list(
+        &self,
+        directory: &str,
+        limit: u32,
+    ) -> Result<Vec<CodexThreadSummary>, String> {
         let result = self
             .manager
             .send_request(
@@ -154,11 +162,7 @@ impl CodexAppServerClient {
         Ok(sessions)
     }
 
-    pub async fn thread_read(
-        &self,
-        thread_id: &str,
-        include_turns: bool,
-    ) -> Result<Value, String> {
+    pub async fn thread_read(&self, thread_id: &str, include_turns: bool) -> Result<Value, String> {
         self.manager
             .send_request(
                 "thread/read",
@@ -213,7 +217,10 @@ impl CodexAppServerClient {
             });
         }
 
-        let result = self.manager.send_request("turn/start", Some(params)).await?;
+        let result = self
+            .manager
+            .send_request("turn/start", Some(params))
+            .await?;
         let turn_id = result
             .get("turn")
             .and_then(|v| v.get("id"))

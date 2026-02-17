@@ -7,13 +7,16 @@ pub mod client;
 pub mod codex_adapter;
 pub mod codex_client;
 pub mod codex_manager;
+pub mod copilot_adapter;
+pub mod copilot_client;
 pub mod event_hub;
 pub mod manager;
 
-pub use codex_adapter::CodexAppServerAgent;
-pub use codex_manager::CodexAppServerManager;
 pub use client::OpenCodeAgent;
 pub use client::OpenCodeClient;
+pub use codex_adapter::CodexAppServerAgent;
+pub use codex_manager::CodexAppServerManager;
+pub use copilot_adapter::CopilotAcpAgent;
 pub use manager::OpenCodeManager;
 
 use async_trait::async_trait;

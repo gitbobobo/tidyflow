@@ -33,10 +33,46 @@ pub struct CodexAppServerManager {
     next_id: Arc<Mutex<u64>>,
     started: Arc<Mutex<bool>>,
     working_dir: PathBuf,
+    command: String,
+    command_args: Vec<String>,
+    display_name: String,
+    initialize_protocol_version: Option<u64>,
 }
 
 impl CodexAppServerManager {
     pub fn new(working_dir: PathBuf) -> Self {
+        Self::new_with_command(
+            working_dir,
+            "codex",
+            vec!["app-server".to_string()],
+            "Codex app-server",
+        )
+    }
+
+    pub fn new_with_command<S1, S2>(
+        working_dir: PathBuf,
+        command: S1,
+        command_args: Vec<String>,
+        display_name: S2,
+    ) -> Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+    {
+        Self::new_with_command_and_protocol(working_dir, command, command_args, display_name, None)
+    }
+
+    pub fn new_with_command_and_protocol<S1, S2>(
+        working_dir: PathBuf,
+        command: S1,
+        command_args: Vec<String>,
+        display_name: S2,
+        initialize_protocol_version: Option<u64>,
+    ) -> Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+    {
         let (notifications_tx, _) = broadcast::channel(2048);
         let (requests_tx, _) = broadcast::channel(256);
         Self {
@@ -48,6 +84,10 @@ impl CodexAppServerManager {
             next_id: Arc::new(Mutex::new(1)),
             started: Arc::new(Mutex::new(false)),
             working_dir,
+            command: command.into(),
+            command_args,
+            display_name: display_name.into(),
+            initialize_protocol_version,
         }
     }
 
@@ -73,29 +113,44 @@ impl CodexAppServerManager {
             return Ok(());
         }
 
-        let mut command = Command::new("codex");
+        let mut command = Command::new(&self.command);
         command
-            .arg("app-server")
+            .args(&self.command_args)
             .current_dir(&self.working_dir)
             .envs(Self::build_extended_env())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        info!("Starting Codex app-server (cwd: {})", self.working_dir.display());
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("Failed to spawn `codex app-server`: {}", e))?;
+        info!(
+            "Starting {} (cwd: {})",
+            self.display_name,
+            self.working_dir.display()
+        );
+        let mut child = command.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn `{}`: {}",
+                if self.command_args.is_empty() {
+                    self.command.clone()
+                } else {
+                    format!("{} {}", self.command, self.command_args.join(" "))
+                },
+                e
+            )
+        })?;
 
-        let stdin = child.stdin.take().ok_or("Codex app-server stdin unavailable")?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("{} stdin unavailable", self.display_name))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or("Codex app-server stdout unavailable")?;
+            .ok_or_else(|| format!("{} stdout unavailable", self.display_name))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or("Codex app-server stderr unavailable")?;
+            .ok_or_else(|| format!("{} stderr unavailable", self.display_name))?;
 
         *self.stdin.lock().await = Some(stdin);
         *process_lock = Some(child);
@@ -107,17 +162,18 @@ impl CodexAppServerManager {
         self.initialize_connection().await?;
         *self.started.lock().await = true;
 
-        info!("Codex app-server initialized");
+        info!("{} initialized", self.display_name);
         Ok(())
     }
 
     pub async fn stop_server(&self) -> Result<(), String> {
         *self.started.lock().await = false;
-        self.reject_all_pending("Codex app-server stopped").await;
+        self.reject_all_pending(&format!("{} stopped", self.display_name))
+            .await;
 
         if let Some(mut child) = self.process.lock().await.take() {
             if let Err(e) = child.start_kill() {
-                warn!("Failed to kill Codex app-server: {}", e);
+                warn!("Failed to kill {}: {}", self.display_name, e);
             }
             let _ = child.wait().await;
         }
@@ -163,10 +219,13 @@ impl CodexAppServerManager {
 
         match timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS), rx).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(format!("Codex request channel dropped: {}", method)),
+            Ok(Err(_)) => Err(format!(
+                "{} request channel dropped: {}",
+                self.display_name, method
+            )),
             Err(_) => {
                 self.pending.lock().await.remove(&id_key);
-                Err(format!("Codex request timeout: {}", method))
+                Err(format!("{} request timeout: {}", self.display_name, method))
             }
         }
     }
@@ -180,7 +239,11 @@ impl CodexAppServerManager {
         self.send_notification_raw(method, params).await
     }
 
-    async fn send_notification_raw(&self, method: &str, params: Option<Value>) -> Result<(), String> {
+    async fn send_notification_raw(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), String> {
         let payload = if let Some(params) = params {
             serde_json::json!({
                 "method": method,
@@ -208,6 +271,7 @@ impl CodexAppServerManager {
         let notifications_tx = self.notifications_tx.clone();
         let requests_tx = self.requests_tx.clone();
         let started = self.started.clone();
+        let display_name = self.display_name.clone();
 
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
@@ -219,7 +283,10 @@ impl CodexAppServerManager {
                 let value: Value = match serde_json::from_str(trimmed) {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!("Codex app-server stdout JSON parse failed: {}; raw={}", e, trimmed);
+                        warn!(
+                            "{} stdout JSON parse failed: {}; raw={}",
+                            display_name, e, trimmed
+                        );
                         continue;
                     }
                 };
@@ -229,16 +296,18 @@ impl CodexAppServerManager {
             *started.lock().await = false;
             let mut map = pending.lock().await;
             for (_, tx) in map.drain() {
-                let _ = tx.send(Err("Codex app-server stdout closed".to_string()));
+                let _ = tx.send(Err(format!("{} stdout closed", display_name)));
             }
         });
     }
 
     fn spawn_stderr_reader(&self, stderr: tokio::process::ChildStderr) {
+        let command = self.command.clone();
+        let display_name = self.display_name.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                debug!("[codex app-server stderr] {}", line);
+                debug!("[{} ({}) stderr] {}", display_name, command, line);
             }
         });
     }
@@ -253,10 +322,9 @@ impl CodexAppServerManager {
             return;
         };
 
-        if let (Some(id), Some(method)) = (
-            obj.get("id"),
-            obj.get("method").and_then(|m| m.as_str()),
-        ) {
+        if let (Some(id), Some(method)) =
+            (obj.get("id"), obj.get("method").and_then(|m| m.as_str()))
+        {
             let _ = requests_tx.send(CodexServerRequest {
                 id: id.clone(),
                 method: method.to_string(),
@@ -287,7 +355,7 @@ impl CodexAppServerManager {
                         .and_then(|m| m.as_str())
                         .unwrap_or("unknown error")
                         .to_string();
-                    let _ = tx.send(Err(format!("Codex app-server error: {}", message)));
+                    let _ = tx.send(Err(format!("App-server error: {}", message)));
                     return;
                 }
                 let _ = tx.send(Err("Malformed JSON-RPC response".to_string()));
@@ -296,20 +364,19 @@ impl CodexAppServerManager {
     }
 
     async fn initialize_connection(&self) -> Result<(), String> {
-        let _ = self
-            .send_request_raw(
-                "initialize",
-                Some(serde_json::json!({
-                    "clientInfo": {
-                        "name": "tidyflow",
-                        "version": env!("CARGO_PKG_VERSION")
-                    },
-                    "capabilities": {
-                        "experimentalApi": true
-                    }
-                })),
-            )
-            .await?;
+        let mut params = serde_json::json!({
+            "clientInfo": {
+                "name": "tidyflow",
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "capabilities": {
+                "experimentalApi": true
+            }
+        });
+        if let Some(version) = self.initialize_protocol_version {
+            params["protocolVersion"] = serde_json::json!(version);
+        }
+        let _ = self.send_request_raw("initialize", Some(params)).await?;
         self.send_notification_raw("initialized", None).await
     }
 
@@ -319,7 +386,7 @@ impl CodexAppServerManager {
         let mut stdin_lock = self.stdin.lock().await;
         let stdin = stdin_lock
             .as_mut()
-            .ok_or_else(|| "Codex app-server stdin is not ready".to_string())?;
+            .ok_or_else(|| format!("{} stdin is not ready", self.display_name))?;
         stdin
             .write_all(line.as_bytes())
             .await
