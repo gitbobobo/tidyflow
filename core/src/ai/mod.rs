@@ -50,8 +50,12 @@ pub struct AiPart {
     pub text: Option<String>,
     /// tool 名（若为 tool）
     pub tool_name: Option<String>,
+    /// tool 调用 ID（若为 tool）
+    pub tool_call_id: Option<String>,
     /// tool 的状态/state（JSON 透传）
     pub tool_state: Option<serde_json::Value>,
+    /// tool part 上的 metadata（JSON 透传）
+    pub tool_part_metadata: Option<serde_json::Value>,
 }
 
 /// AI 会话信息

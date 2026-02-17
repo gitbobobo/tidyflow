@@ -390,7 +390,9 @@ async fn try_handle_ai_chat_send(
                                                 part_type: part.part_type,
                                                 text: part.text,
                                                 tool_name: part.tool_name,
+                                                tool_call_id: part.tool_call_id,
                                                 tool_state: part.tool_state,
+                                                tool_part_metadata: part.tool_part_metadata,
                                             },
                                         },
                                     )
@@ -650,7 +652,9 @@ async fn try_handle_ai_chat_command(
                                                 part_type: part.part_type,
                                                 text: part.text,
                                                 tool_name: part.tool_name,
+                                                tool_call_id: part.tool_call_id,
                                                 tool_state: part.tool_state,
+                                                tool_part_metadata: part.tool_part_metadata,
                                             },
                                         },
                                     )
@@ -913,7 +917,9 @@ async fn try_handle_ai_session_messages(
                     part_type: p.part_type,
                     text: p.text,
                     tool_name: p.tool_name,
+                    tool_call_id: p.tool_call_id,
                     tool_state: p.tool_state,
+                    tool_part_metadata: p.tool_part_metadata,
                 })
                 .collect(),
         })

@@ -803,7 +803,13 @@ pub struct PartEnvelope {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(rename = "callID", default)]
+    pub call_id: Option<String>,
+    #[serde(default)]
     pub state: Option<serde_json::Value>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 use std::pin::Pin;
@@ -1139,6 +1145,10 @@ impl AiAgent for OpenCodeAgent {
                                 .and_then(|v| v.as_str())
                                 .or_else(|| part.get("tool").and_then(|v| v.as_str()))
                                 .map(|s| s.to_string());
+                            let tool_call_id = part
+                                .get("callID")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
 
                             let text = part
                                 .get("text")
@@ -1155,6 +1165,7 @@ impl AiAgent for OpenCodeAgent {
                             }
 
                             let tool_state = part.get("state").cloned();
+                            let tool_part_metadata = part.get("metadata").cloned();
 
                             Some(Ok(AiEvent::PartUpdated {
                                 message_id: message_id_s,
@@ -1163,7 +1174,9 @@ impl AiAgent for OpenCodeAgent {
                                     part_type: part_type_s,
                                     text,
                                     tool_name,
+                                    tool_call_id,
                                     tool_state,
+                                    tool_part_metadata,
                                 },
                             }))
                         }
@@ -1433,6 +1446,10 @@ impl AiAgent for OpenCodeAgent {
                                 .and_then(|v| v.as_str())
                                 .or_else(|| part.get("tool").and_then(|v| v.as_str()))
                                 .map(|s| s.to_string());
+                            let tool_call_id = part
+                                .get("callID")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
 
                             let text = part
                                 .get("text")
@@ -1448,6 +1465,7 @@ impl AiAgent for OpenCodeAgent {
                             }
 
                             let tool_state = part.get("state").cloned();
+                            let tool_part_metadata = part.get("metadata").cloned();
 
                             Some(Ok(AiEvent::PartUpdated {
                                 message_id: message_id_s,
@@ -1456,7 +1474,9 @@ impl AiAgent for OpenCodeAgent {
                                     part_type: part_type_s,
                                     text,
                                     tool_name,
+                                    tool_call_id,
                                     tool_state,
+                                    tool_part_metadata,
                                 },
                             }))
                         }
@@ -1647,8 +1667,10 @@ impl AiAgent for OpenCodeAgent {
                         id: p.id,
                         part_type: p.part_type,
                         text: p.text,
-                        tool_name: p.name,
+                        tool_name: p.name.or(p.tool),
+                        tool_call_id: p.call_id,
                         tool_state: p.state,
+                        tool_part_metadata: p.metadata,
                     })
                     .collect(),
             })
