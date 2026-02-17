@@ -24,6 +24,9 @@ pub type SharedAIState = Arc<Mutex<AIState>>;
 
 const IDLE_DISPOSE_TTL_MS: i64 = 15 * 60 * 1000;
 const MAINTENANCE_INTERVAL_SECS: u64 = 60;
+// 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
+// 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
+const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,6 +112,42 @@ async fn resolve_directory(
         .await
         .map_err(|e| e.to_string())?;
     Ok(ws.root_path.to_string_lossy().to_string())
+}
+
+fn ai_session_messages_encoded_len(
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+    messages: Vec<crate::server::protocol::ai::MessageInfo>,
+) -> Result<usize, String> {
+    let payload = crate::server::protocol::ServerMessage::AISessionMessages {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool: ai_tool.to_string(),
+        session_id: session_id.to_string(),
+        messages,
+    };
+    rmp_serde::to_vec_named(&payload)
+        .map(|buf| buf.len())
+        .map_err(|e| format!("encode ai_session_messages failed: {}", e))
+}
+
+fn ai_session_messages_stats(
+    messages: &[crate::server::protocol::ai::MessageInfo],
+) -> (usize, usize) {
+    let mut parts_count = 0usize;
+    let mut text_bytes = 0usize;
+    for message in messages {
+        parts_count += message.parts.len();
+        text_bytes += message
+            .parts
+            .iter()
+            .filter_map(|part| part.text.as_ref())
+            .map(|text| text.len())
+            .sum::<usize>();
+    }
+    (parts_count, text_bytes)
 }
 
 async fn ensure_agent(ai_state: &SharedAIState, tool: &str) -> Result<Arc<dyn AiAgent>, String> {
@@ -1195,7 +1234,28 @@ async fn try_handle_ai_session_list(
         ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
+    info!(
+        "AISessionList: project={}, workspace={}, ai_tool={}, directory={}",
+        project_name, workspace_name, ai_tool, directory
+    );
+
     let sessions = agent.list_sessions(&directory).await?;
+    if ai_tool == "opencode" {
+        if let Some(invalid) = sessions.iter().find(|s| !s.id.starts_with("ses")) {
+            warn!(
+                "AISessionList: opencode session id format unexpected, project={}, workspace={}, session_id={}, possible_cross_tool_mismatch=true",
+                project_name, workspace_name, invalid.id
+            );
+        }
+    }
+    info!(
+        "AISessionList: project={}, workspace={}, ai_tool={}, sessions_count={}",
+        project_name,
+        workspace_name,
+        ai_tool,
+        sessions.len()
+    );
+
     let sessions: Vec<_> = sessions
         .into_iter()
         .map(|s| crate::server::protocol::ai::SessionInfo {
@@ -1249,9 +1309,27 @@ async fn try_handle_ai_session_messages(
         ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
-    let messages = agent
+    info!(
+        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, limit={:?}, directory={}",
+        project_name, workspace_name, ai_tool, session_id, limit, directory
+    );
+    if ai_tool == "opencode" && !session_id.starts_with("ses") {
+        warn!(
+            "AISessionMessages: opencode session id format unexpected, project={}, workspace={}, session_id={}, possible_cross_tool_mismatch=true",
+            project_name, workspace_name, session_id
+        );
+    }
+
+    let mut messages: Vec<crate::server::protocol::ai::MessageInfo> = agent
         .list_messages(&directory, session_id, *limit)
-        .await?
+        .await
+        .map_err(|e| {
+            warn!(
+                "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, limit={:?}, error={}",
+                project_name, workspace_name, ai_tool, session_id, limit, e
+            );
+            e
+        })?
         .into_iter()
         .map(|m| crate::server::protocol::ai::MessageInfo {
             id: m.id,
@@ -1278,6 +1356,50 @@ async fn try_handle_ai_session_messages(
                 .collect(),
         })
         .collect();
+    let mut payload_bytes = ai_session_messages_encoded_len(
+        project_name,
+        workspace_name,
+        &ai_tool,
+        session_id,
+        messages.clone(),
+    )?;
+    let mut dropped_count = 0usize;
+    while payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES && messages.len() > 1 {
+        messages.remove(0);
+        dropped_count += 1;
+        payload_bytes = ai_session_messages_encoded_len(
+            project_name,
+            workspace_name,
+            &ai_tool,
+            session_id,
+            messages.clone(),
+        )?;
+    }
+    if dropped_count > 0 {
+        warn!(
+            "AISessionMessages payload truncated: project={}, workspace={}, ai_tool={}, session_id={}, dropped_count={}, remaining_count={}, payload_bytes={}, max_payload_bytes={}",
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            dropped_count,
+            messages.len(),
+            payload_bytes,
+            MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES
+        );
+    }
+    let (parts_count, text_bytes) = ai_session_messages_stats(&messages);
+    info!(
+        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}",
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        messages.len(),
+        parts_count,
+        text_bytes,
+        payload_bytes
+    );
 
     send_message(
         socket,
