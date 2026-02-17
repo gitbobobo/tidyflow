@@ -495,7 +495,7 @@ impl OpenCodeClient {
         &self,
         directory: &str,
     ) -> Result<Vec<SessionResponse>, OpenCodeError> {
-        let url = format!("{}/session", self.base_url);
+        let url = format!("{}/session?roots=true", self.base_url);
 
         let response = self
             .with_directory(self.client.get(&url), directory)
