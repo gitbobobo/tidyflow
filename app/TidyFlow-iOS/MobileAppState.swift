@@ -132,13 +132,22 @@ final class MobileAppState: ObservableObject {
     @Published var aiChatMessages: [AIChatMessage] = []
     @Published var aiIsStreaming: Bool = false
     @Published var aiAbortPendingSessionId: String?
-    @Published var aiSessions: [AISessionInfo] = []
+    @Published var aiSessions: [AISessionInfo] = [] {
+        didSet {
+            aiSessionsByTool[aiChatTool] = aiSessions
+            refreshMergedAISessions()
+        }
+    }
+    @Published var aiMergedSessions: [AISessionInfo] = []
     @Published var aiProviders: [AIProviderInfo] = []
     @Published var aiSelectedModel: AIModelSelection?
     @Published var aiAgents: [AIAgentInfo] = []
     @Published var aiSelectedAgent: String?
     @Published var aiSlashCommands: [AISlashCommandInfo] = []
     @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
+
+    // AI Chat：按工具分桶存储会话
+    private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
 
     // 导航
     @Published var navigationPath = NavigationPath()
@@ -771,7 +780,10 @@ final class MobileAppState: ObservableObject {
     /// 拉取会话列表 + provider/agent/斜杠命令
     func requestAIContextResources() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
-        wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
+        // 会话列表按工具分别拉取，再在客户端做跨工具融合排序
+        for tool in AIChatTool.allCases {
+            wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: tool)
+        }
         wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
         wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
         wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
@@ -781,15 +793,41 @@ final class MobileAppState: ObservableObject {
     func loadAISession(_ session: AISessionInfo) {
         guard session.projectName == aiActiveProject,
               session.workspaceName == aiActiveWorkspace else { return }
+
+        let targetTool = session.aiTool
+
+        if targetTool != aiChatTool {
+            // 跨工具打开历史会话时，允许在“非流式/非待发/非停止中”条件下切换工具，
+            // 不依赖 aiCurrentSessionId（否则会出现已选中但详情不加载）。
+            guard aiPendingSendRequest == nil,
+                  aiAbortPendingSessionId == nil,
+                  !aiIsStreaming else { return }
+
+            saveCurrentAISnapshotIfNeeded()
+            aiPendingSendRequest = nil
+            aiAbortPendingSessionId = nil
+            aiChatTool = targetTool
+            restoreAISnapshot(project: aiActiveProject, workspace: aiActiveWorkspace)
+            aiProviders = []
+            aiSelectedModel = nil
+            aiAgents = []
+            aiSelectedAgent = nil
+            aiSlashCommands = []
+            wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
+            wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
+            wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
+        }
+
         aiCurrentSessionId = session.id
         aiChatMessages = []
         aiIsStreaming = false
         aiMessageIndexByMessageId = [:]
         aiPartIndexByPartId = [:]
+
         wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
-            aiTool: aiChatTool,
+            aiTool: targetTool,
             sessionId: session.id,
             limit: 200
         )
@@ -797,14 +835,18 @@ final class MobileAppState: ObservableObject {
 
     /// 删除会话
     func deleteAISession(_ session: AISessionInfo) {
+        let targetTool = session.aiTool
         wsClient.requestAISessionDelete(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
-            aiTool: aiChatTool,
+            aiTool: targetTool,
             sessionId: session.id
         )
-        aiSessions.removeAll { $0.id == session.id }
-        if aiCurrentSessionId == session.id {
+        if var sessions = aiSessionsByTool[targetTool] {
+            sessions.removeAll { $0.id == session.id }
+            setAISessions(sessions, for: targetTool)
+        }
+        if aiCurrentSessionId == session.id && aiChatTool == targetTool {
             aiCurrentSessionId = nil
             aiChatMessages = []
             aiIsStreaming = false
@@ -1018,6 +1060,17 @@ final class MobileAppState: ObservableObject {
     private func reloadCurrentAISessionIfNeeded() {
         guard let sessionId = aiCurrentSessionId,
               !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        // 兜底：避免“工具与 session_id 不匹配”时把请求发到错误后端（如 opencode + codex 线程 ID）。
+        let currentToolSessions = aiSessionsByTool[aiChatTool] ?? []
+        let existsInCurrentTool = currentToolSessions.contains { $0.id == sessionId }
+        guard existsInCurrentTool else {
+            aiCurrentSessionId = nil
+            aiChatMessages = []
+            aiIsStreaming = false
+            aiMessageIndexByMessageId = [:]
+            aiPartIndexByPartId = [:]
+            return
+        }
         wsClient.requestAISessionMessages(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
@@ -1120,6 +1173,21 @@ final class MobileAppState: ObservableObject {
               let modelID = agent.defaultModelID,
               !providerID.isEmpty, !modelID.isEmpty else { return }
         aiSelectedModel = AIModelSelection(providerID: providerID, modelID: modelID)
+    }
+
+    func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
+        aiSessionsByTool[tool] = sessions
+        if aiChatTool == tool {
+            aiSessions = sessions
+        } else {
+            refreshMergedAISessions()
+        }
+    }
+
+    private func refreshMergedAISessions() {
+        aiMergedSessions = AIChatTool.allCases
+            .flatMap { aiSessionsByTool[$0] ?? [] }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     // MARK: - 终端视图绑定
@@ -1762,8 +1830,7 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISessionList = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
             let sessions = ev.sessions.map {
                 AISessionInfo(
                     projectName: $0.projectName,
@@ -1774,7 +1841,7 @@ final class MobileAppState: ObservableObject {
                     updatedAt: $0.updatedAt
                 )
             }
-            self.aiSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
+            self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: ev.aiTool)
         }
 
         wsClient.onAISessionMessages = { [weak self] ev in

@@ -469,12 +469,15 @@ struct AITabView: View {
     }
 
     private func loadSession(_ session: AISessionInfo) {
+        if session.aiTool != appState.aiChatTool {
+            guard canSwitchAITool else { return }
+        }
+
         let targetStore = appState.aiStore(for: session.aiTool)
         targetStore.setCurrentSessionId(session.id)
         targetStore.clearMessages()
 
         if session.aiTool != appState.aiChatTool {
-            guard canSwitchAITool else { return }
             // 先请求目标会话详情，再切换工具；避免首击空白。
             appState.wsClient.requestAISessionMessages(
                 projectName: session.projectName,

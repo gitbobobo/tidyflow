@@ -72,21 +72,32 @@ struct MobileAIChatView: View {
         }
         .sheet(isPresented: $showSessionList) {
             NavigationStack {
-                List(appState.aiSessions) { session in
+                List(appState.aiMergedSessions) { session in
                     Button(action: {
                         loadSession(session)
                         showSessionList = false
                     }) {
-                        HStack {
-                            VStack(alignment: .leading) {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(session.displayTitle)
                                     .font(.headline)
-                                Text(session.formattedDate)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                                HStack(spacing: 6) {
+                                    Image(session.aiTool.iconAssetName)
+                                        .resizable()
+                                        .renderingMode(.original)
+                                        .scaledToFit()
+                                        .frame(width: 12, height: 12)
+                                    Text("·")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text(session.formattedDate)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                             Spacer()
-                            if session.id == appState.aiCurrentSessionId {
+                            if session.id == appState.aiCurrentSessionId && session.aiTool == appState.aiChatTool {
                                 Image(systemName: "checkmark")
                                     .foregroundColor(.accentColor)
                             }
