@@ -9,6 +9,7 @@ import UIKit
 /// 独立 Diff 渲染组件，视觉对齐 VS Code / GitHub 风格
 struct UnifiedDiffView: View {
     let diff: ParsedDiff
+    @State private var viewportWidth: CGFloat = 0
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
@@ -18,10 +19,22 @@ struct UnifiedDiffView: View {
                 }
             }
             .fixedSize(horizontal: true, vertical: true)
+            .frame(minWidth: viewportWidth, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.04))
         .cornerRadius(8)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        viewportWidth = geo.size.width
+                    }
+                    .onChange(of: geo.size.width) { _, newValue in
+                        viewportWidth = newValue
+                    }
+            }
+        )
     }
 
     // MARK: - 单行渲染
@@ -34,7 +47,7 @@ struct UnifiedDiffView: View {
                 .frame(width: 1)
             contentColumn(row)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: viewportWidth, alignment: .leading)
         .frame(height: rowHeight)
         .background(rowBackground(row.kind))
     }
