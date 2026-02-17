@@ -108,12 +108,8 @@ class AppState: ObservableObject {
     var aiCommitContinuations: [String: (AICommitResult) -> Void] = [:]
     var aiMergeContinuations: [String: (AIMergeResult) -> Void] = [:]
 
-    // AI Chat 状态（结构化 message/part 流）
-    @Published var aiCurrentSessionId: String?
-    @Published var aiChatMessages: [AIChatMessage] = []
-    @Published var aiIsStreaming: Bool = false
-    /// 用户已请求停止、等待服务端 done/error 收敛的会话 ID。
-    @Published var aiAbortPendingSessionId: String?
+    // AI Chat 状态（独立状态域，隔离高频流式更新）
+    let aiChatStore = AIChatStore()
     @Published var aiSessions: [AISessionInfo] = []
 
     // AI Provider / Model / Agent 状态
@@ -122,13 +118,6 @@ class AppState: ObservableObject {
     @Published var aiAgents: [AIAgentInfo] = []
     @Published var aiSelectedAgent: String?
     @Published var aiSlashCommands: [AISlashCommandInfo] = []
-
-    // AI Chat 索引（用于按 messageId/partId 稳定更新，不依赖数组顺序）
-    var aiMessageIndexByMessageId: [String: Int] = [:]
-    var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
-
-    // AI Chat 工作空间快照缓存（key: "projectName/workspaceName"）
-    var aiChatSnapshotCache: [String: AIChatSnapshot] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
