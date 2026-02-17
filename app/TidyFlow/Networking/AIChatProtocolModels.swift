@@ -75,15 +75,27 @@ struct AIProtocolPartInfo {
     let partType: String
     let text: String?
     let toolName: String?
+    let toolCallId: String?
     let toolState: [String: Any]?
+    let toolPartMetadata: [String: Any]?
 
     static func from(json: [String: Any]) -> AIProtocolPartInfo? {
         guard let id = json["id"] as? String,
               let partType = json["part_type"] as? String else { return nil }
         let text = json["text"] as? String
         let toolName = json["tool_name"] as? String
+        let toolCallId = json["tool_call_id"] as? String
         let toolState = json["tool_state"] as? [String: Any]
-        return AIProtocolPartInfo(id: id, partType: partType, text: text, toolName: toolName, toolState: toolState)
+        let toolPartMetadata = json["tool_part_metadata"] as? [String: Any]
+        return AIProtocolPartInfo(
+            id: id,
+            partType: partType,
+            text: text,
+            toolName: toolName,
+            toolCallId: toolCallId,
+            toolState: toolState,
+            toolPartMetadata: toolPartMetadata
+        )
     }
 }
 

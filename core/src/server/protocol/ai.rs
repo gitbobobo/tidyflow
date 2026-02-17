@@ -27,8 +27,14 @@ pub struct PartInfo {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+    /// OpenCode tool callID（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_state: Option<serde_json::Value>,
+    /// OpenCode tool part metadata（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_part_metadata: Option<serde_json::Value>,
 }
 
 /// AI 历史消息（对齐 OpenCode message）
