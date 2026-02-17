@@ -104,6 +104,7 @@ pub struct AiModelInfo {
     pub id: String,
     pub name: String,
     pub provider_id: String,
+    pub supports_image_input: bool,
 }
 
 /// AI Agent 信息（通用模型）

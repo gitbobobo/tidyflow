@@ -274,7 +274,7 @@ async fn try_handle_ai_chat_send(
     );
 
     // 将协议层 ImagePart/ModelSelection 转为 AI 层类型，并在服务端统一规范化图片格式。
-    let ai_image_parts_raw = image_parts.as_ref().map(|parts| {
+    let ai_image_parts_raw: Option<Vec<crate::ai::AiImagePart>> = image_parts.as_ref().map(|parts| {
         parts
             .iter()
             .map(|p| crate::ai::AiImagePart {
@@ -284,6 +284,13 @@ async fn try_handle_ai_chat_send(
             })
             .collect()
     });
+    if let Some(parts) = ai_image_parts_raw.as_ref() {
+        info!(
+            "AIChatSend image parts received: count={}, items={}",
+            parts.len(),
+            summarize_ai_image_parts(parts)
+        );
+    }
     let ai_image_parts = match normalize_ai_image_parts(ai_image_parts_raw).await {
         Ok(parts) => parts,
         Err(e) => {
@@ -300,6 +307,13 @@ async fn try_handle_ai_chat_send(
             return Ok(true);
         }
     };
+    if let Some(parts) = ai_image_parts.as_ref() {
+        info!(
+            "AIChatSend image parts normalized: count={}, items={}",
+            parts.len(),
+            summarize_ai_image_parts(parts)
+        );
+    }
     let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
         provider_id: m.provider_id.clone(),
         model_id: m.model_id.clone(),
@@ -551,7 +565,7 @@ async fn try_handle_ai_chat_command(
         arguments.len()
     );
 
-    let ai_image_parts_raw = image_parts.as_ref().map(|parts| {
+    let ai_image_parts_raw: Option<Vec<crate::ai::AiImagePart>> = image_parts.as_ref().map(|parts| {
         parts
             .iter()
             .map(|p| crate::ai::AiImagePart {
@@ -561,6 +575,13 @@ async fn try_handle_ai_chat_command(
             })
             .collect()
     });
+    if let Some(parts) = ai_image_parts_raw.as_ref() {
+        info!(
+            "AIChatCommand image parts received: count={}, items={}",
+            parts.len(),
+            summarize_ai_image_parts(parts)
+        );
+    }
     let ai_image_parts = match normalize_ai_image_parts(ai_image_parts_raw).await {
         Ok(parts) => parts,
         Err(e) => {
@@ -577,6 +598,13 @@ async fn try_handle_ai_chat_command(
             return Ok(true);
         }
     };
+    if let Some(parts) = ai_image_parts.as_ref() {
+        info!(
+            "AIChatCommand image parts normalized: count={}, items={}",
+            parts.len(),
+            summarize_ai_image_parts(parts)
+        );
+    }
     let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
         provider_id: m.provider_id.clone(),
         model_id: m.model_id.clone(),
@@ -1044,6 +1072,7 @@ async fn try_handle_ai_provider_list(
                     id: m.id,
                     name: m.name,
                     provider_id: m.provider_id,
+                    supports_image_input: m.supports_image_input,
                 })
                 .collect(),
         })
@@ -1221,6 +1250,14 @@ async fn normalize_ai_image_parts(
     }
 
     Ok(Some(normalized))
+}
+
+fn summarize_ai_image_parts(parts: &[crate::ai::AiImagePart]) -> String {
+    parts
+        .iter()
+        .map(|p| format!("{}|{}|{}B", p.filename, p.mime, p.data.len()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn normalize_mime(mime: &str) -> String {

@@ -61,6 +61,8 @@ pub struct ModelInfo {
     pub id: String,
     pub name: String,
     pub provider_id: String,
+    #[serde(default)]
+    pub supports_image_input: bool,
 }
 
 /// AI Agent 信息（动态获取的 agent 列表）

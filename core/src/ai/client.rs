@@ -744,6 +744,49 @@ pub struct ProviderModelResponse {
     /// 仅展示 active 模型
     #[serde(default)]
     pub status: Option<String>,
+    /// OpenCode Provider.Model.capabilities（新协议）
+    #[serde(default)]
+    pub capabilities: Option<ProviderModelCapabilitiesResponse>,
+    /// models.dev modalities（旧字段兜底）
+    #[serde(default)]
+    pub modalities: Option<ProviderModelModalitiesResponse>,
+}
+
+impl ProviderModelResponse {
+    pub fn supports_image_input(&self) -> bool {
+        if let Some(cap) = &self.capabilities {
+            if cap.input.image || cap.attachment {
+                return true;
+            }
+        }
+        if let Some(modalities) = &self.modalities {
+            return modalities
+                .input
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("image"));
+        }
+        false
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProviderModelCapabilitiesResponse {
+    #[serde(default)]
+    pub attachment: bool,
+    #[serde(default)]
+    pub input: ProviderModelInputCapabilitiesResponse,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProviderModelInputCapabilitiesResponse {
+    #[serde(default)]
+    pub image: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProviderModelModalitiesResponse {
+    #[serde(default)]
+    pub input: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1723,6 +1766,7 @@ impl AiAgent for OpenCodeAgent {
                         .into_iter()
                         .filter(|m| m.status.as_deref() != Some("disabled"))
                         .map(|m| AiModelInfo {
+                            supports_image_input: m.supports_image_input(),
                             id: m.id.clone(),
                             name: if m.name.is_empty() {
                                 m.id.clone()
