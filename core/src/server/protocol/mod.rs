@@ -494,6 +494,21 @@ pub enum ClientMessage {
         workspace_name: String,
         session_id: String,
     },
+    #[serde(rename = "ai_question_reply")]
+    AIQuestionReply {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
+        request_id: String,
+        answers: Vec<Vec<String>>,
+    },
+    #[serde(rename = "ai_question_reject")]
+    AIQuestionReject {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
+        request_id: String,
+    },
     #[serde(rename = "ai_session_list")]
     AISessionList {
         project_name: String,
@@ -1080,6 +1095,20 @@ pub enum ServerMessage {
         workspace_name: String,
         session_id: String,
         error: String,
+    },
+    #[serde(rename = "ai_question_asked")]
+    AIQuestionAsked {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
+        request: ai::QuestionRequestInfo,
+    },
+    #[serde(rename = "ai_question_cleared")]
+    AIQuestionCleared {
+        project_name: String,
+        workspace_name: String,
+        session_id: String,
+        request_id: String,
     },
     #[serde(rename = "ai_session_started")]
     AISessionStartedV2 {

@@ -154,6 +154,12 @@ pub async fn handle_ai_message(
     if try_handle_ai_chat_abort(client_msg, app_state, ai_state, output_tx).await? {
         return Ok(true);
     }
+    if try_handle_ai_question_reply(client_msg, app_state, ai_state, output_tx).await? {
+        return Ok(true);
+    }
+    if try_handle_ai_question_reject(client_msg, app_state, ai_state, output_tx).await? {
+        return Ok(true);
+    }
     if try_handle_ai_session_list(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
@@ -274,16 +280,17 @@ async fn try_handle_ai_chat_send(
     );
 
     // 将协议层 ImagePart/ModelSelection 转为 AI 层类型，并在服务端统一规范化图片格式。
-    let ai_image_parts_raw: Option<Vec<crate::ai::AiImagePart>> = image_parts.as_ref().map(|parts| {
-        parts
-            .iter()
-            .map(|p| crate::ai::AiImagePart {
-                filename: p.filename.clone(),
-                mime: p.mime.clone(),
-                data: p.data.clone(),
-            })
-            .collect()
-    });
+    let ai_image_parts_raw: Option<Vec<crate::ai::AiImagePart>> =
+        image_parts.as_ref().map(|parts| {
+            parts
+                .iter()
+                .map(|p| crate::ai::AiImagePart {
+                    filename: p.filename.clone(),
+                    mime: p.mime.clone(),
+                    data: p.data.clone(),
+                })
+                .collect()
+        });
     if let Some(parts) = ai_image_parts_raw.as_ref() {
         info!(
             "AIChatSend image parts received: count={}, items={}",
@@ -444,6 +451,53 @@ async fn try_handle_ai_chat_send(
                                     )
                                     .await
                                 }
+                                AiEvent::QuestionAsked { request } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIQuestionAsked {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            request: crate::server::protocol::ai::QuestionRequestInfo {
+                                                id: request.id,
+                                                session_id: request.session_id,
+                                                questions: request
+                                                    .questions
+                                                    .into_iter()
+                                                    .map(|q| crate::server::protocol::ai::QuestionInfo {
+                                                        question: q.question,
+                                                        header: q.header,
+                                                        options: q
+                                                            .options
+                                                            .into_iter()
+                                                            .map(|opt| crate::server::protocol::ai::QuestionOptionInfo {
+                                                                label: opt.label,
+                                                                description: opt.description,
+                                                            })
+                                                            .collect(),
+                                                        multiple: q.multiple,
+                                                        custom: q.custom,
+                                                    })
+                                                    .collect(),
+                                                tool_message_id: request.tool_message_id,
+                                                tool_call_id: request.tool_call_id,
+                                            },
+                                        },
+                                    )
+                                    .await
+                                }
+                                AiEvent::QuestionCleared { request_id, .. } => {
+                                    emit_server_message(
+                                        &output_tx,
+                                        ServerMessage::AIQuestionCleared {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            session_id: session_id.clone(),
+                                            request_id,
+                                        },
+                                    )
+                                    .await
+                                }
                                 AiEvent::Error { message } => {
                                     let _ = emit_server_message(
                                         &output_tx,
@@ -565,16 +619,17 @@ async fn try_handle_ai_chat_command(
         arguments.len()
     );
 
-    let ai_image_parts_raw: Option<Vec<crate::ai::AiImagePart>> = image_parts.as_ref().map(|parts| {
-        parts
-            .iter()
-            .map(|p| crate::ai::AiImagePart {
-                filename: p.filename.clone(),
-                mime: p.mime.clone(),
-                data: p.data.clone(),
-            })
-            .collect()
-    });
+    let ai_image_parts_raw: Option<Vec<crate::ai::AiImagePart>> =
+        image_parts.as_ref().map(|parts| {
+            parts
+                .iter()
+                .map(|p| crate::ai::AiImagePart {
+                    filename: p.filename.clone(),
+                    mime: p.mime.clone(),
+                    data: p.data.clone(),
+                })
+                .collect()
+        });
     if let Some(parts) = ai_image_parts_raw.as_ref() {
         info!(
             "AIChatCommand image parts received: count={}, items={}",
@@ -736,6 +791,7 @@ async fn try_handle_ai_chat_command(
                                     )
                                     .await
                                 }
+                                AiEvent::QuestionAsked { .. } | AiEvent::QuestionCleared { .. } => true,
                                 AiEvent::Error { message } => {
                                     let _ = emit_server_message(
                                         &output_tx,
@@ -882,6 +938,132 @@ async fn try_handle_ai_chat_abort(
         )
         .await;
     }
+
+    Ok(true)
+}
+
+async fn try_handle_ai_question_reply(
+    msg: &ClientMessage,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    output_tx: &mpsc::Sender<ServerMessage>,
+) -> Result<bool, String> {
+    let (project_name, workspace_name, session_id, request_id, answers) = match msg {
+        ClientMessage::AIQuestionReply {
+            project_name,
+            workspace_name,
+            session_id,
+            request_id,
+            answers,
+        } => (
+            project_name.clone(),
+            workspace_name.clone(),
+            session_id.clone(),
+            request_id.clone(),
+            answers.clone(),
+        ),
+        _ => return Ok(false),
+    };
+
+    let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
+    let agent = ensure_agent(ai_state).await?;
+    ensure_maintenance(ai_state, agent.clone()).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
+    }
+
+    info!(
+        "AIQuestionReply: project={}, workspace={}, session_id={}, request_id={}, answers_count={}",
+        project_name,
+        workspace_name,
+        session_id,
+        request_id,
+        answers.len()
+    );
+
+    agent
+        .reply_question(&directory, &request_id, answers)
+        .await
+        .map_err(|e| {
+            format!(
+                "AIQuestionReply failed: project={}, workspace={}, session_id={}, request_id={}, error={}",
+                project_name, workspace_name, session_id, request_id, e
+            )
+        })?;
+
+    let _ = emit_server_message(
+        output_tx,
+        ServerMessage::AIQuestionCleared {
+            project_name,
+            workspace_name,
+            session_id,
+            request_id,
+        },
+    )
+    .await;
+
+    Ok(true)
+}
+
+async fn try_handle_ai_question_reject(
+    msg: &ClientMessage,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    output_tx: &mpsc::Sender<ServerMessage>,
+) -> Result<bool, String> {
+    let (project_name, workspace_name, session_id, request_id) = match msg {
+        ClientMessage::AIQuestionReject {
+            project_name,
+            workspace_name,
+            session_id,
+            request_id,
+        } => (
+            project_name.clone(),
+            workspace_name.clone(),
+            session_id.clone(),
+            request_id.clone(),
+        ),
+        _ => return Ok(false),
+    };
+
+    let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
+    let agent = ensure_agent(ai_state).await?;
+    ensure_maintenance(ai_state, agent.clone()).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        ai.directory_last_used_ms
+            .insert(directory.clone(), now_ms());
+    }
+
+    info!(
+        "AIQuestionReject: project={}, workspace={}, session_id={}, request_id={}",
+        project_name, workspace_name, session_id, request_id
+    );
+
+    agent
+        .reject_question(&directory, &request_id)
+        .await
+        .map_err(|e| {
+            format!(
+                "AIQuestionReject failed: project={}, workspace={}, session_id={}, request_id={}, error={}",
+                project_name, workspace_name, session_id, request_id, e
+            )
+        })?;
+
+    let _ = emit_server_message(
+        output_tx,
+        ServerMessage::AIQuestionCleared {
+            project_name,
+            workspace_name,
+            session_id,
+            request_id,
+        },
+    )
+    .await;
 
     Ok(true)
 }

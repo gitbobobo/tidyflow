@@ -696,6 +696,51 @@ impl OpenCodeClient {
             Err(OpenCodeError::ServerError { status, message })
         }
     }
+
+    /// 回复 question 请求（POST /question/{id}/reply）
+    pub async fn reply_question(
+        &self,
+        directory: &str,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+    ) -> Result<(), OpenCodeError> {
+        let url = format!("{}/question/{}/reply", self.base_url, request_id);
+        let body = serde_json::json!({ "answers": answers });
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .json(&body)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    /// 拒绝 question 请求（POST /question/{id}/reject）
+    pub async fn reject_question(
+        &self,
+        directory: &str,
+        request_id: &str,
+    ) -> Result<(), OpenCodeError> {
+        let url = format!("{}/question/{}/reject", self.base_url, request_id);
+        let response = self
+            .with_directory(self.client.post(&url), directory)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1349,6 +1394,127 @@ impl AiAgent for OpenCodeAgent {
                                 .to_string();
                             Some(Ok(AiEvent::Error { message }))
                         }
+                        "question.asked" => {
+                            let props = &bus_event.properties;
+                            let asked_session = props.get("sessionID").and_then(|v| v.as_str())?;
+                            if asked_session != session_id {
+                                return None;
+                            }
+
+                            let request_id = props.get("id").and_then(|v| v.as_str())?.to_string();
+                            let questions = props
+                                .get("questions")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|item| {
+                                            let obj = item.as_object()?;
+                                            let question = obj
+                                                .get("question")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let header = obj
+                                                .get("header")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let options = obj
+                                                .get("options")
+                                                .and_then(|v| v.as_array())
+                                                .map(|opts| {
+                                                    opts.iter()
+                                                        .filter_map(|opt| {
+                                                            let o = opt.as_object()?;
+                                                            let label = o
+                                                                .get("label")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or("")
+                                                                .to_string();
+                                                            if label.is_empty() {
+                                                                return None;
+                                                            }
+                                                            let description = o
+                                                                .get("description")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or("")
+                                                                .to_string();
+                                                            Some(crate::ai::AiQuestionOption {
+                                                                label,
+                                                                description,
+                                                            })
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+                                            if question.is_empty() {
+                                                return None;
+                                            }
+                                            Some(crate::ai::AiQuestionInfo {
+                                                question,
+                                                header,
+                                                options,
+                                                multiple: obj
+                                                    .get("multiple")
+                                                    .and_then(|v| v.as_bool())
+                                                    .unwrap_or(false),
+                                                custom: obj
+                                                    .get("custom")
+                                                    .and_then(|v| v.as_bool())
+                                                    .unwrap_or(true),
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+
+                            let (tool_message_id, tool_call_id) = props
+                                .get("tool")
+                                .and_then(|v| v.as_object())
+                                .map(|tool| {
+                                    (
+                                        tool.get("messageID")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                        tool.get("callID")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                    )
+                                })
+                                .unwrap_or((None, None));
+
+                            Some(Ok(AiEvent::QuestionAsked {
+                                request: crate::ai::AiQuestionRequest {
+                                    id: request_id,
+                                    session_id: asked_session.to_string(),
+                                    questions,
+                                    tool_message_id,
+                                    tool_call_id,
+                                },
+                            }))
+                        }
+                        "question.replied" | "question.rejected" => {
+                            let props = &bus_event.properties;
+                            let asked_session = props
+                                .get("sessionID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if asked_session != session_id {
+                                return None;
+                            }
+                            let request_id = props
+                                .get("requestID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if request_id.is_empty() {
+                                return None;
+                            }
+                            Some(Ok(AiEvent::QuestionCleared {
+                                session_id: asked_session.to_string(),
+                                request_id,
+                            }))
+                        }
                         // 心跳和连接事件忽略
                         "server.heartbeat" | "server.connected" => None,
                         _ => None,
@@ -1644,6 +1810,127 @@ impl AiAgent for OpenCodeAgent {
                                 .to_string();
                             Some(Ok(AiEvent::Error { message }))
                         }
+                        "question.asked" => {
+                            let props = &bus_event.properties;
+                            let asked_session = props.get("sessionID").and_then(|v| v.as_str())?;
+                            if asked_session != session_id {
+                                return None;
+                            }
+
+                            let request_id = props.get("id").and_then(|v| v.as_str())?.to_string();
+                            let questions = props
+                                .get("questions")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|item| {
+                                            let obj = item.as_object()?;
+                                            let question = obj
+                                                .get("question")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let header = obj
+                                                .get("header")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let options = obj
+                                                .get("options")
+                                                .and_then(|v| v.as_array())
+                                                .map(|opts| {
+                                                    opts.iter()
+                                                        .filter_map(|opt| {
+                                                            let o = opt.as_object()?;
+                                                            let label = o
+                                                                .get("label")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or("")
+                                                                .to_string();
+                                                            if label.is_empty() {
+                                                                return None;
+                                                            }
+                                                            let description = o
+                                                                .get("description")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or("")
+                                                                .to_string();
+                                                            Some(crate::ai::AiQuestionOption {
+                                                                label,
+                                                                description,
+                                                            })
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+                                            if question.is_empty() {
+                                                return None;
+                                            }
+                                            Some(crate::ai::AiQuestionInfo {
+                                                question,
+                                                header,
+                                                options,
+                                                multiple: obj
+                                                    .get("multiple")
+                                                    .and_then(|v| v.as_bool())
+                                                    .unwrap_or(false),
+                                                custom: obj
+                                                    .get("custom")
+                                                    .and_then(|v| v.as_bool())
+                                                    .unwrap_or(true),
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+
+                            let (tool_message_id, tool_call_id) = props
+                                .get("tool")
+                                .and_then(|v| v.as_object())
+                                .map(|tool| {
+                                    (
+                                        tool.get("messageID")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                        tool.get("callID")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                    )
+                                })
+                                .unwrap_or((None, None));
+
+                            Some(Ok(AiEvent::QuestionAsked {
+                                request: crate::ai::AiQuestionRequest {
+                                    id: request_id,
+                                    session_id: asked_session.to_string(),
+                                    questions,
+                                    tool_message_id,
+                                    tool_call_id,
+                                },
+                            }))
+                        }
+                        "question.replied" | "question.rejected" => {
+                            let props = &bus_event.properties;
+                            let asked_session = props
+                                .get("sessionID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if asked_session != session_id {
+                                return None;
+                            }
+                            let request_id = props
+                                .get("requestID")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if request_id.is_empty() {
+                                return None;
+                            }
+                            Some(Ok(AiEvent::QuestionCleared {
+                                session_id: asked_session.to_string(),
+                                request_id,
+                            }))
+                        }
                         "server.heartbeat" | "server.connected" => None,
                         _ => None,
                     }
@@ -1828,6 +2115,27 @@ impl AiAgent for OpenCodeAgent {
                 }
             })
             .collect())
+    }
+
+    async fn reply_question(
+        &self,
+        directory: &str,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+    ) -> Result<(), String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        client
+            .reply_question(directory, request_id, answers)
+            .await
+            .map_err(|e| format!("Failed to reply question: {}", e))
+    }
+
+    async fn reject_question(&self, directory: &str, request_id: &str) -> Result<(), String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        client
+            .reject_question(directory, request_id)
+            .await
+            .map_err(|e| format!("Failed to reject question: {}", e))
     }
 }
 

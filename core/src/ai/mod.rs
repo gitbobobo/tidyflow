@@ -36,6 +36,13 @@ pub enum AiEvent {
     },
     /// 错误
     Error { message: String },
+    /// question.asked：请求用户选择
+    QuestionAsked { request: AiQuestionRequest },
+    /// question.replied / question.rejected：清理 pending 请求
+    QuestionCleared {
+        session_id: String,
+        request_id: String,
+    },
     /// 流结束
     Done,
 }
@@ -56,6 +63,33 @@ pub struct AiPart {
     pub tool_state: Option<serde_json::Value>,
     /// tool part 上的 metadata（JSON 透传）
     pub tool_part_metadata: Option<serde_json::Value>,
+}
+
+/// Question 选项
+#[derive(Debug, Clone)]
+pub struct AiQuestionOption {
+    pub label: String,
+    pub description: String,
+}
+
+/// Question 条目
+#[derive(Debug, Clone)]
+pub struct AiQuestionInfo {
+    pub question: String,
+    pub header: String,
+    pub options: Vec<AiQuestionOption>,
+    pub multiple: bool,
+    pub custom: bool,
+}
+
+/// Question 请求（与工具调用绑定）
+#[derive(Debug, Clone)]
+pub struct AiQuestionRequest {
+    pub id: String,
+    pub session_id: String,
+    pub questions: Vec<AiQuestionInfo>,
+    pub tool_message_id: Option<String>,
+    pub tool_call_id: Option<String>,
 }
 
 /// AI 会话信息
@@ -229,5 +263,20 @@ pub trait AiAgent: Send + Sync {
     /// 获取斜杠命令列表（默认返回空）
     async fn list_slash_commands(&self, _directory: &str) -> Result<Vec<AiSlashCommand>, String> {
         Ok(vec![])
+    }
+
+    /// 回复 question 请求（answers 与 questions 顺序一致）
+    async fn reply_question(
+        &self,
+        _directory: &str,
+        _request_id: &str,
+        _answers: Vec<Vec<String>>,
+    ) -> Result<(), String> {
+        Err("Question reply is not supported by current AI backend".to_string())
+    }
+
+    /// 拒绝 question 请求
+    async fn reject_question(&self, _directory: &str, _request_id: &str) -> Result<(), String> {
+        Err("Question reject is not supported by current AI backend".to_string())
     }
 }

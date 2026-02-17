@@ -111,6 +111,41 @@ pub struct SlashCommandInfo {
     pub action: String,
 }
 
+/// Question 选项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionOptionInfo {
+    pub label: String,
+    pub description: String,
+}
+
+/// Question 条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionInfo {
+    pub question: String,
+    pub header: String,
+    pub options: Vec<QuestionOptionInfo>,
+    #[serde(default)]
+    pub multiple: bool,
+    #[serde(default = "default_question_custom")]
+    pub custom: bool,
+}
+
+/// Question 请求（与工具调用绑定）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionRequestInfo {
+    pub id: String,
+    pub session_id: String,
+    pub questions: Vec<QuestionInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+fn default_question_custom() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
