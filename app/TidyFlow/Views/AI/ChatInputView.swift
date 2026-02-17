@@ -963,10 +963,8 @@ struct ChatInputView: View {
                         }) {
                             HStack {
                                 Text(agent.name)
-                                    .foregroundStyle(dropdownPrimaryTextColor)
                                 if let desc = agent.description, !desc.isEmpty {
                                     Text("— \(desc)")
-                                        .foregroundStyle(dropdownSecondaryTextColor)
                                 }
                             }
                         }
@@ -978,7 +976,9 @@ struct ChatInputView: View {
                         Text(selectedAgent ?? agents.first?.name ?? "Agent")
                             .font(.system(size: 11))
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
+                    .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.secondary.opacity(0.1))
@@ -986,7 +986,7 @@ struct ChatInputView: View {
                     .foregroundStyle(dropdownPrimaryTextColor)
                 }
                 .menuStyle(.borderlessButton)
-                .fixedSize()
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -997,14 +997,27 @@ struct ChatInputView: View {
         Group {
             if !providers.isEmpty {
                 Menu {
-                    ForEach(providers) { provider in
-                        Section(provider.name) {
-                            ForEach(provider.models) { model in
+                    if availableModelProviders.count <= 1 {
+                        if let onlyProvider = availableModelProviders.first {
+                            ForEach(onlyProvider.models) { model in
                                 Button(action: {
-                                    selectedModel = AIModelSelection(providerID: provider.id, modelID: model.id)
+                                    selectedModel = AIModelSelection(providerID: onlyProvider.id, modelID: model.id)
                                 }) {
                                     Text(model.name)
-                                        .foregroundStyle(dropdownPrimaryTextColor)
+                                }
+                            }
+                        } else {
+                            Text("暂无可用模型")
+                        }
+                    } else {
+                        ForEach(availableModelProviders) { provider in
+                            Menu(provider.name) {
+                                ForEach(provider.models) { model in
+                                    Button(action: {
+                                        selectedModel = AIModelSelection(providerID: provider.id, modelID: model.id)
+                                    }) {
+                                        Text(model.name)
+                                    }
                                 }
                             }
                         }
@@ -1016,9 +1029,11 @@ struct ChatInputView: View {
                         Text(selectedModelDisplayName)
                             .font(.system(size: 11))
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8))
                     }
+                    .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.secondary.opacity(0.1))
@@ -1026,9 +1041,14 @@ struct ChatInputView: View {
                     .foregroundStyle(dropdownPrimaryTextColor)
                 }
                 .menuStyle(.borderlessButton)
-                .fixedSize()
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
+    }
+
+    /// 仅保留有模型的提供商，避免展示空菜单。
+    private var availableModelProviders: [AIProviderInfo] {
+        providers.filter { !$0.models.isEmpty }
     }
 
     private var selectedModelDisplayName: String {
@@ -1061,9 +1081,9 @@ struct ChatInputView: View {
             matching: .images
         ) {
             Image(systemName: "photo")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: actionIconFontSize, weight: .semibold))
                 .foregroundColor(.white)
-                .frame(width: 36, height: 36)
+                .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                 .background(Color.white.opacity(0.18))
                 .clipShape(Circle())
         }
@@ -1073,7 +1093,11 @@ struct ChatInputView: View {
         #else
         Button(action: pickImage) {
             Image(systemName: "photo")
-                .font(.system(size: 14))
+                .font(.system(size: actionIconFontSize, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: actionButtonDiameter, height: actionButtonDiameter)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(Circle())
         }
         .buttonStyle(.plain)
         .help("上传图片")
@@ -1169,6 +1193,30 @@ struct ChatInputView: View {
         #endif
     }
 
+    private var selectorLabelMaxWidth: CGFloat {
+        #if os(iOS)
+        return 140
+        #else
+        return 180
+        #endif
+    }
+
+    private var actionButtonDiameter: CGFloat {
+        #if os(iOS)
+        return 36
+        #else
+        return 28
+        #endif
+    }
+
+    private var actionIconFontSize: CGFloat {
+        #if os(iOS)
+        return 16
+        #else
+        return 13
+        #endif
+    }
+
     // MARK: - 发送/停止按钮
 
     private var sendOrStopButton: some View {
@@ -1176,9 +1224,9 @@ struct ChatInputView: View {
             if isStreaming {
                 Button(action: onStop) {
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: actionIconFontSize, weight: .bold))
                         .foregroundColor(canStopStreaming ? .white : .white.opacity(0.72))
-                        .frame(width: 36, height: 36)
+                        .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                         .background(canStopStreaming ? Color.red : Color.gray.opacity(0.55))
                         .clipShape(Circle())
                 }
@@ -1188,9 +1236,9 @@ struct ChatInputView: View {
             } else {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: actionIconFontSize, weight: .bold))
                         .foregroundColor(canSend ? .white : .white.opacity(0.72))
-                        .frame(width: 36, height: 36)
+                        .frame(width: actionButtonDiameter, height: actionButtonDiameter)
                         .background(canSend ? Color.accentColor : Color.gray.opacity(0.55))
                         .clipShape(Circle())
                 }

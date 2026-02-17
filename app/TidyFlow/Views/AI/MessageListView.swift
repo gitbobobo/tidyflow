@@ -63,6 +63,7 @@ struct MessageListView: View {
                         )
                 }
                 .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .coordinateSpace(name: scrollSpaceName)
             .background(
@@ -168,12 +169,14 @@ private struct MessageBubble: View {
             VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
                 bubble
             }
+            .frame(maxWidth: 760, alignment: isUser ? .trailing : .leading)
 
             if !isUser {
                 Spacer(minLength: 32)
             }
         }
         .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
     }
 
     @ViewBuilder

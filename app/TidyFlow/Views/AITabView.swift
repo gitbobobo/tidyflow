@@ -57,7 +57,7 @@ struct AITabView: View {
                         createNewSession()
                     }
                 )
-                .frame(minWidth: 220, maxWidth: 300)
+                .frame(minWidth: 180, idealWidth: 220, maxWidth: 260)
             }
 
             VStack(spacing: 0) {
@@ -84,6 +84,7 @@ struct AITabView: View {
                     }
                 inputArea
             }
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         }
         #if os(macOS)
         .background(Color(NSColor.windowBackgroundColor))
