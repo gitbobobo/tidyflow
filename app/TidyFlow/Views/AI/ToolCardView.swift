@@ -162,7 +162,9 @@ struct ToolCardView: View {
     private func sectionBlock(_ section: AIToolSection) -> some View {
         if section.id == "edit-diff" {
             editDiffSectionBlock(section)
-        } else if section.id == "edit-diagnostics" {
+        } else if section.id == "lsp-diagnostics-file" {
+            diagnosticsFileSectionBlock(section)
+        } else if section.id == "edit-diagnostics" || section.id == "lsp-diagnostics-issues" {
             diagnosticsSectionBlock(section)
         } else {
             genericSectionBlock(section)
@@ -227,6 +229,8 @@ struct ToolCardView: View {
             return buildReadSections(invocation)
         case "edit", "write", "apply_patch", "multiedit":
             return buildEditLikeSections(invocation)
+        case "lsp_diagnostics":
+            return buildLspDiagnosticsSections(invocation)
         case "lsp":
             return buildLspSections(invocation)
         case "bash":
@@ -291,6 +295,24 @@ struct ToolCardView: View {
 
         if let error = invocation.error, !error.isEmpty {
             sections.append(AIToolSection(id: "edit-error", title: "error", content: error, isCode: false))
+        }
+
+        return sections
+    }
+
+    private func buildLspDiagnosticsSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+
+        if let filePath = lspDiagnosticsFilePath(invocation), !filePath.isEmpty {
+            sections.append(AIToolSection(id: "lsp-diagnostics-file", title: "file", content: filePath, isCode: true))
+        }
+
+        if let (items, raw) = lspDiagnosticsItems(invocation), !items.isEmpty {
+            sections.append(section(id: "lsp-diagnostics-issues", title: "issues", any: raw))
+        }
+
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "lsp-diagnostics-error", title: "error", content: error, isCode: false))
         }
 
         return sections
@@ -424,6 +446,8 @@ struct ToolCardView: View {
             return stringValue(invocation.input["filePath"]) ?? stringValue(invocation.input["path"])
         case "edit", "write", "apply_patch", "multiedit":
             return nil
+        case "lsp_diagnostics":
+            return nil
         case "lsp":
             let op = stringValue(invocation.input["operation"]) ?? "lsp"
             let file = stringValue(invocation.input["filePath"]) ?? ""
@@ -450,6 +474,7 @@ struct ToolCardView: View {
         case "edit": return "edit"
         case "write": return "write"
         case "apply_patch": return "apply_patch"
+        case "lsp_diagnostics": return "lsp_diagnostics"
         case "lsp": return "lsp"
         case "bash": return "bash"
         case "grep": return "grep"
@@ -476,6 +501,8 @@ struct ToolCardView: View {
             return "doc.text"
         case "edit", "write", "apply_patch", "multiedit":
             return "square.and.pencil"
+        case "lsp_diagnostics":
+            return "stethoscope"
         case "lsp":
             return "point.3.connected.trianglepath.dotted"
         case "bash":
@@ -501,6 +528,16 @@ struct ToolCardView: View {
         } else {
             genericSectionBlock(section)
         }
+    }
+
+    @ViewBuilder
+    private func diagnosticsFileSectionBlock(_ section: AIToolSection) -> some View {
+        Text(section.content)
+            .textSelection(.enabled)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -607,6 +644,43 @@ struct ToolCardView: View {
             }
         }
         return []
+    }
+
+    private func lspDiagnosticsFilePath(_ invocation: AIToolInvocationState) -> String? {
+        stringValue(invocation.input["filePath"]) ??
+            stringValue(invocation.input["path"]) ??
+            stringValue(invocation.input["file"]) ??
+            stringValue(invocation.input["uri"])
+    }
+
+    private func lspDiagnosticsItems(_ invocation: AIToolInvocationState) -> (items: [ToolDiagnosticItem], raw: Any)? {
+        if let metadata = invocation.metadata {
+            let metadataCandidates: [Any] = [
+                metadata["diagnostics"],
+                metadata["items"],
+                metadata["issues"],
+                metadata["problems"],
+                metadata
+            ].compactMap { $0 }
+            for candidate in metadataCandidates {
+                let items = parseDiagnosticsAny(candidate)
+                if !items.isEmpty {
+                    return (items, candidate)
+                }
+            }
+        }
+
+        if let output = invocation.output,
+           !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let data = output.data(using: .utf8),
+           let raw = try? JSONSerialization.jsonObject(with: data) {
+            let items = parseDiagnosticsAny(raw)
+            if !items.isEmpty {
+                return (items, raw)
+            }
+        }
+
+        return nil
     }
 
     private func parseDiagnostic(dict: [String: Any], index: Int, fallbackPath: String?) -> ToolDiagnosticItem? {
