@@ -622,6 +622,22 @@ extension AppState {
             self.aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
         }
 
+        wsClient.onAIQuestionAsked = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+            self.aiChatStore.upsertQuestionRequest(ev.request)
+        }
+
+        wsClient.onAIQuestionCleared = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+            self.aiChatStore.clearQuestionRequest(requestId: ev.requestId)
+        }
+
         wsClient.onAIProviderList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,

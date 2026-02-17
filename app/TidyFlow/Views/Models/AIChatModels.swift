@@ -179,6 +179,8 @@ struct AIChatSnapshot {
     var sessions: [AISessionInfo]
     var messageIndexByMessageId: [String: Int]
     var partIndexByPartId: [String: (msgIdx: Int, partIdx: Int)]
+    var pendingToolQuestions: [String: AIQuestionRequestInfo]
+    var questionRequestToCallId: [String: String]
 }
 
 private enum AIChatStreamEvent {
@@ -193,12 +195,14 @@ final class AIChatStore: ObservableObject {
     @Published var messages: [AIChatMessage] = []
     @Published var isStreaming: Bool = false
     @Published var abortPendingSessionId: String?
+    @Published var pendingToolQuestions: [String: AIQuestionRequestInfo] = [:]
 
     /// 工作空间快照缓存（key: "projectName/workspaceName"）
     var snapshotCache: [String: AIChatSnapshot] = [:]
 
     private var messageIndexByMessageId: [String: Int] = [:]
     private var partIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
+    private var questionRequestToCallId: [String: String] = [:]
     private var streamingAssistantIndex: Int?
 
     private var pendingStreamEvents: [AIChatStreamEvent] = []
@@ -222,6 +226,8 @@ final class AIChatStore: ObservableObject {
         messages = snapshot.messages
         // 切换工作空间后不恢复流式态，后续由服务端事件重新驱动。
         abortPendingSessionId = nil
+        pendingToolQuestions = snapshot.pendingToolQuestions
+        questionRequestToCallId = snapshot.questionRequestToCallId
         clearAssistantStreaming()
         isStreaming = false
         rebuildIndexes()
@@ -234,7 +240,9 @@ final class AIChatStore: ObservableObject {
             isStreaming: isStreaming,
             sessions: sessions,
             messageIndexByMessageId: messageIndexByMessageId,
-            partIndexByPartId: partIndexByPartId
+            partIndexByPartId: partIndexByPartId,
+            pendingToolQuestions: pendingToolQuestions,
+            questionRequestToCallId: questionRequestToCallId
         )
     }
 
@@ -248,6 +256,8 @@ final class AIChatStore: ObservableObject {
         isStreaming = false
         messageIndexByMessageId = [:]
         partIndexByPartId = [:]
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
         streamingAssistantIndex = nil
     }
 
@@ -257,6 +267,8 @@ final class AIChatStore: ObservableObject {
         isStreaming = false
         messageIndexByMessageId = [:]
         partIndexByPartId = [:]
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
         streamingAssistantIndex = nil
     }
 
@@ -266,6 +278,8 @@ final class AIChatStore: ObservableObject {
         abortPendingSessionId = nil
         clearAssistantStreaming()
         isStreaming = false
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
         rebuildIndexes()
     }
 
@@ -285,6 +299,10 @@ final class AIChatStore: ObservableObject {
     }
 
     func setCurrentSessionId(_ sessionId: String?) {
+        if currentSessionId != sessionId {
+            pendingToolQuestions = [:]
+            questionRequestToCallId = [:]
+        }
         currentSessionId = sessionId
     }
 
@@ -300,6 +318,27 @@ final class AIChatStore: ObservableObject {
 
     func isAbortPending(for sessionId: String) -> Bool {
         abortPendingSessionId == sessionId
+    }
+
+    func upsertQuestionRequest(_ request: AIQuestionRequestInfo) {
+        guard let callId = request.toolCallId, !callId.isEmpty else { return }
+        pendingToolQuestions[callId] = request
+        questionRequestToCallId[request.id] = callId
+    }
+
+    func clearQuestionRequest(requestId: String) {
+        if let callId = questionRequestToCallId.removeValue(forKey: requestId) {
+            pendingToolQuestions.removeValue(forKey: callId)
+            return
+        }
+        if let matched = pendingToolQuestions.first(where: { $0.value.id == requestId }) {
+            pendingToolQuestions.removeValue(forKey: matched.key)
+        }
+    }
+
+    func questionRequest(forToolCallId callId: String?) -> AIQuestionRequestInfo? {
+        guard let callId, !callId.isEmpty else { return nil }
+        return pendingToolQuestions[callId]
     }
 
     func stopStreamingLocallyAndPrunePlaceholder() {
@@ -366,6 +405,8 @@ final class AIChatStore: ObservableObject {
         flushPendingStreamEvents()
         clearAbortPendingIfMatches(sessionId)
         isStreaming = false
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
         clearAssistantStreaming()
         messages.removeAll { msg in
             msg.role == .assistant && msg.messageId == nil && msg.parts.isEmpty
@@ -378,6 +419,8 @@ final class AIChatStore: ObservableObject {
         flushPendingStreamEvents()
         clearAbortPendingIfMatches(sessionId)
         isStreaming = false
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
         clearAssistantStreaming()
         messages.removeAll { msg in
             msg.role == .assistant && msg.messageId == nil && msg.parts.isEmpty
