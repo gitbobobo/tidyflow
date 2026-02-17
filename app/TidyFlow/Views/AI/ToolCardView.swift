@@ -80,7 +80,7 @@ struct ToolCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
 
-            if let summary = presentation.summary, !summary.isEmpty {
+            if let summary = presentation.summary, !summary.isEmpty, !isTodoTool {
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
@@ -133,6 +133,10 @@ struct ToolCardView: View {
         }
     }
 
+    private var isTodoTool: Bool {
+        presentation.toolID == "todowrite" || presentation.toolID == "todoread"
+    }
+
     private var statusColor: Color {
         guard let invocation else { return .secondary }
         switch invocation.status {
@@ -166,6 +170,8 @@ struct ToolCardView: View {
             diagnosticsFileSectionBlock(section)
         } else if section.id == "edit-diagnostics" || section.id == "lsp-diagnostics-issues" {
             diagnosticsSectionBlock(section)
+        } else if section.id == "todo-items" {
+            todoSectionBlock(section)
         } else {
             genericSectionBlock(section)
         }
@@ -239,7 +245,9 @@ struct ToolCardView: View {
             return buildBashSections(invocation)
         case "glob", "list", "websearch", "codesearch", "webfetch":
             return buildSearchSections(invocation)
-        case "task", "skill", "question", "plan_enter", "plan_exit", "todowrite", "todoread", "batch":
+        case "todowrite", "todoread":
+            return buildTodoSections(invocation)
+        case "task", "skill", "question", "plan_enter", "plan_exit", "batch":
             return buildTaskSections(invocation)
         default:
             return buildGenericSections(invocation)
@@ -406,6 +414,35 @@ struct ToolCardView: View {
         return sections
     }
 
+    private func buildTodoSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+        let items = todoItems(invocation)
+
+        if !items.isEmpty {
+            let payload = items.map { item in
+                var dict: [String: String] = [
+                    "content": item.content,
+                    "status": item.status
+                ]
+                if let priority = item.priority, !priority.isEmpty {
+                    dict["priority"] = priority
+                }
+                return dict
+            }
+            if let text = jsonText(payload) {
+                sections.append(AIToolSection(id: "todo-items", title: "todos", content: text, isCode: true))
+            }
+        } else {
+            sections.append(AIToolSection(id: "todo-empty", title: "todos", content: "暂无任务", isCode: false))
+        }
+
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "todo-error", title: "error", content: error, isCode: false))
+        }
+
+        return sections
+    }
+
     private func buildGenericSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
 
@@ -461,6 +498,8 @@ struct ToolCardView: View {
                 stringValue(invocation.input["pattern"]) ??
                 stringValue(invocation.input["url"]) ??
                 stringValue(invocation.input["path"])
+        case "todowrite", "todoread":
+            return nil
         default:
             return nil
         }
@@ -469,6 +508,9 @@ struct ToolCardView: View {
     private func toolCardTitle(toolID: String, invocation: AIToolInvocationState) -> String {
         if toolID == "grep", let keyword = grepKeyword(invocation), !keyword.isEmpty {
             return "grep(\(keyword))"
+        }
+        if toolID == "todowrite" || toolID == "todoread" {
+            return todoSummary(invocation) ?? "任务列表"
         }
         if let title = invocation.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return title
@@ -589,6 +631,51 @@ struct ToolCardView: View {
                                 Text(code)
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.06))
+                        .cornerRadius(8)
+                    }
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private func todoSectionBlock(_ section: AIToolSection) -> some View {
+        let items = parseTodoItems(section.content)
+
+        VStack(alignment: .leading, spacing: 6) {
+            if items.isEmpty {
+                Text("暂无任务")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(items) { item in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(todoStatusLabel(item.status))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(todoStatusColor(item.status))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(todoStatusColor(item.status).opacity(0.12))
+                                .cornerRadius(6)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.content)
+                                    .textSelection(.enabled)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if let priority = item.priority, !priority.isEmpty {
+                                    Text("优先级：\(priority)")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                }
                             }
                         }
                         .padding(.horizontal, 8)
@@ -780,6 +867,166 @@ struct ToolCardView: View {
         return token.isEmpty ? "info" : token
     }
 
+    private func todoSummary(_ invocation: AIToolInvocationState) -> String? {
+        let items = todoItems(invocation)
+        guard !items.isEmpty else { return nil }
+
+        let total = items.count
+        let completed = items.filter { $0.status == "completed" }.count
+        let running = items.filter { $0.status == "in_progress" }.count
+        let pending = items.filter { $0.status == "pending" }.count
+
+        var parts: [String] = ["\(total) 项任务"]
+        if completed > 0 { parts.append("已完成 \(completed)") }
+        if running > 0 { parts.append("进行中 \(running)") }
+        if pending > 0 { parts.append("待处理 \(pending)") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func todoItems(_ invocation: AIToolInvocationState) -> [ToolTodoItem] {
+        var candidates: [Any] = []
+
+        if let metadata = invocation.metadata {
+            candidates.append(metadata)
+            if let todos = metadata["todos"] { candidates.append(todos) }
+            if let items = metadata["items"] { candidates.append(items) }
+            if let tasks = metadata["tasks"] { candidates.append(tasks) }
+        }
+
+        if !invocation.input.isEmpty {
+            candidates.append(invocation.input)
+            if let todos = invocation.input["todos"] { candidates.append(todos) }
+            if let items = invocation.input["items"] { candidates.append(items) }
+            if let tasks = invocation.input["tasks"] { candidates.append(tasks) }
+        }
+
+        if let output = invocation.output,
+           !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let parsed = parseJSONText(output) {
+            candidates.append(parsed)
+        }
+
+        if let raw = invocation.raw,
+           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let parsed = parseJSONText(raw) {
+            candidates.append(parsed)
+        }
+
+        for candidate in candidates {
+            let parsed = parseTodoItemsAny(candidate)
+            if !parsed.isEmpty {
+                return parsed
+            }
+        }
+        return []
+    }
+
+    private func parseTodoItems(_ jsonString: String) -> [ToolTodoItem] {
+        guard let root = parseJSONText(jsonString) else { return [] }
+        return parseTodoItemsAny(root)
+    }
+
+    private func parseJSONText(_ text: String) -> Any? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private func parseTodoItemsAny(_ root: Any) -> [ToolTodoItem] {
+        if let array = root as? [[String: Any]] {
+            return array.enumerated().compactMap { parseTodoItem(dict: $0.element, index: $0.offset) }
+        }
+        if let dict = root as? [String: Any] {
+            if let todos = dict["todos"] {
+                let parsed = parseTodoItemsAny(todos)
+                if !parsed.isEmpty { return parsed }
+            }
+            if let items = dict["items"] {
+                let parsed = parseTodoItemsAny(items)
+                if !parsed.isEmpty { return parsed }
+            }
+            if let tasks = dict["tasks"] {
+                let parsed = parseTodoItemsAny(tasks)
+                if !parsed.isEmpty { return parsed }
+            }
+            if let list = dict["list"] {
+                let parsed = parseTodoItemsAny(list)
+                if !parsed.isEmpty { return parsed }
+            }
+            if let data = dict["data"] {
+                let parsed = parseTodoItemsAny(data)
+                if !parsed.isEmpty { return parsed }
+            }
+            if let item = parseTodoItem(dict: dict, index: 0) {
+                return [item]
+            }
+        }
+        return []
+    }
+
+    private func parseTodoItem(dict: [String: Any], index: Int) -> ToolTodoItem? {
+        let content =
+            stringValue(dict["content"]) ??
+            stringValue(dict["title"]) ??
+            stringValue(dict["text"]) ??
+            stringValue(dict["task"]) ??
+            stringValue(dict["name"]) ?? ""
+        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedContent.isEmpty else { return nil }
+
+        let rawStatus =
+            stringValue(dict["status"]) ??
+            stringValue(dict["state"]) ??
+            stringValue(dict["phase"]) ?? "pending"
+        let status = normalizeTodoStatus(rawStatus)
+        let priority = stringValue(dict["priority"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return ToolTodoItem(
+            id: "todo-\(index)-\(normalizedContent)-\(status)",
+            content: normalizedContent,
+            status: status,
+            priority: priority
+        )
+    }
+
+    private func normalizeTodoStatus(_ raw: String) -> String {
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if token.contains("progress") || token == "running" { return "in_progress" }
+        if token == "done" || token == "complete" || token == "completed" || token == "success" { return "completed" }
+        if token == "cancelled" || token == "canceled" { return "canceled" }
+        if token == "pending" || token == "todo" || token == "queued" { return "pending" }
+        return token.isEmpty ? "pending" : token
+    }
+
+    private func todoStatusLabel(_ status: String) -> String {
+        switch status {
+        case "completed":
+            return "已完成"
+        case "in_progress":
+            return "进行中"
+        case "canceled":
+            return "已取消"
+        case "pending":
+            return "待处理"
+        default:
+            return status
+        }
+    }
+
+    private func todoStatusColor(_ status: String) -> Color {
+        switch status {
+        case "completed":
+            return .green
+        case "in_progress":
+            return .orange
+        case "canceled":
+            return .secondary
+        case "pending":
+            return .blue
+        default:
+            return .secondary
+        }
+    }
+
     private func formattedEditFiles(_ files: [[String: Any]]) -> String? {
         let lines = files.compactMap { file -> String? in
             let path =
@@ -887,4 +1134,11 @@ private struct ToolDiagnosticItem: Identifiable {
     let message: String
     let location: String?
     let code: String?
+}
+
+private struct ToolTodoItem: Identifiable {
+    let id: String
+    let content: String
+    let status: String
+    let priority: String?
 }
