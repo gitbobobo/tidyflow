@@ -380,6 +380,8 @@ struct ChatInputView: View {
     @Binding var text: String
     @Binding var imageAttachments: [ImageAttachment]
     var isStreaming: Bool
+    /// iOS: 视图出现后自动聚焦输入框。
+    var autoFocusOnAppear: Bool = false
     /// 仅当已有 sessionId 时允许点击停止，避免会话创建竞态下误触。
     var canStopStreaming: Bool = true
     var onSend: () -> Void
@@ -506,6 +508,10 @@ struct ChatInputView: View {
             }
         }
         .padding(.bottom, 8)
+        .onAppear {
+            guard autoFocusOnAppear else { return }
+            requestIOSInputFocus()
+        }
         .onChange(of: isIOSInputFocused) { _, focused in
             if focused {
                 showIOSInputPanel = false
@@ -775,6 +781,17 @@ struct ChatInputView: View {
         } else {
             showIOSInputPanel = true
             isIOSInputFocused = false
+        }
+    }
+
+    private func requestIOSInputFocus() {
+        showIOSInputPanel = false
+        // 进入页面时多次尝试，覆盖导航动画和键盘系统时序。
+        for delay in [0.0, 0.12, 0.3, 0.6] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard iOSInputPanelSheet == nil else { return }
+                isIOSInputFocused = true
+            }
         }
     }
 

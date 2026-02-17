@@ -43,7 +43,7 @@ struct MobileAIChatView: View {
                 Button(action: {
                     showSessionList.toggle()
                 }) {
-                    Image(systemName: "sidebar.left")
+                    Image(systemName: "clock.arrow.circlepath")
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -161,6 +161,7 @@ struct MobileAIChatView: View {
                 text: $inputText,
                 imageAttachments: $imageAttachments,
                 isStreaming: appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil,
+                autoFocusOnAppear: true,
                 canStopStreaming: appState.aiCurrentSessionId != nil && appState.aiAbortPendingSessionId == nil,
                 onSend: { sendMessage() },
                 onStop: { stopStreaming() },

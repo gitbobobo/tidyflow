@@ -134,7 +134,7 @@ struct WorkspaceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                newTerminalMenu
+                aiChatButton
                 moreActionsMenu
             }
         }
@@ -146,45 +146,43 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    private var newTerminalMenu: some View {
-        Menu {
-            Button {
-                appState.navigationPath.append(MobileRoute.terminal(project: project, workspace: workspace))
-            } label: {
-                Label("新建终端", systemImage: "terminal")
-            }
-
-            if !appState.customCommands.isEmpty {
-                Divider()
-                ForEach(appState.customCommands) { cmd in
-                    Button {
-                        appState.navigationPath.append(MobileRoute.terminal(
-                            project: project,
-                            workspace: workspace,
-                            command: cmd.command,
-                            commandIcon: cmd.icon,
-                            commandName: cmd.name
-                        ))
-                    } label: {
-                        Label {
-                            Text(cmd.name)
-                        } icon: {
-                            MobileCommandIconView(iconName: cmd.icon, size: 14)
-                        }
-                    }
-                }
-            }
+    private var aiChatButton: some View {
+        Button {
+            appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
         } label: {
-            Image(systemName: "plus")
+            Image(systemName: "bubble.left.and.bubble.right")
         }
     }
 
     private var moreActionsMenu: some View {
         Menu {
-            Button {
-                appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
-            } label: {
-                Label("AI 聊天", systemImage: "bubble.left.and.bubble.right")
+            Menu("新建终端") {
+                Button {
+                    appState.navigationPath.append(MobileRoute.terminal(project: project, workspace: workspace))
+                } label: {
+                    Label("新建终端", systemImage: "terminal")
+                }
+
+                if !appState.customCommands.isEmpty {
+                    Divider()
+                    ForEach(appState.customCommands) { cmd in
+                        Button {
+                            appState.navigationPath.append(MobileRoute.terminal(
+                                project: project,
+                                workspace: workspace,
+                                command: cmd.command,
+                                commandIcon: cmd.icon,
+                                commandName: cmd.name
+                            ))
+                        } label: {
+                            Label {
+                                Text(cmd.name)
+                            } icon: {
+                                MobileCommandIconView(iconName: cmd.icon, size: 14)
+                            }
+                        }
+                    }
+                }
             }
 
             Button {
