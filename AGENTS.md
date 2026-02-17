@@ -88,6 +88,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - AI 聊天的高频流式状态应下沉到独立状态域（如 `AIChatStore`），并在 WS 增量到 UI 的链路做约 30fps 批量提交；避免把 token 级更新直接写入全局 `AppState` 导致整页重绘。
 - AI 图片附件链路应采用“客户端传二进制原图（MessagePack bin）+ 服务端统一探测格式并按需转码（如 HEIC→JPEG）”；不要在客户端先转 base64 或各端各自转码，避免格式误判与行为不一致。
 - AI 图片“可上传但不可读”排障时，应同时做两件事：前端基于模型能力（如 `capabilities.input.image`）发送前拦截并提示，后端记录 `image_parts` 的数量/mime/字节数日志，用于快速区分“上传链路正常但模型/代理不支持”与“附件传输失败”。
+- SwiftUI 组件新增可选交互参数时，避免使用 `let + 默认值` 期待自动成员初始化器透传；该模式不会生成对应入参。需要跨调用点可配置时应显式编写带默认值的 `init`，避免 “extra arguments in call” 编译错误。
+- SwiftUI 视图计算属性若参与渲染构建（如 `presentation`/`sections`）时，禁止在构建链路中反向读取依赖该构建结果的布尔 getter（如 `shouldShow...`）；否则会形成 getter 环并触发主线程递归栈溢出闪退。
 
 ## Build Commands
 
