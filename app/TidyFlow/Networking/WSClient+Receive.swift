@@ -367,6 +367,16 @@ extension WSClient {
                 onAIChatError?(ev)
             }
 
+        case "ai_question_asked":
+            if let ev = AIQuestionAskedV2.from(json: json) {
+                onAIQuestionAsked?(ev)
+            }
+
+        case "ai_question_cleared":
+            if let ev = AIQuestionClearedV2.from(json: json) {
+                onAIQuestionCleared?(ev)
+            }
+
         case "ai_provider_list":
             if let ev = AIProviderListResult.from(json: json) {
                 onAIProviderList?(ev)

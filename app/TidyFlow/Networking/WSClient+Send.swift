@@ -800,6 +800,40 @@ extension WSClient {
         ])
     }
 
+    /// 回复 AI question 请求
+    func requestAIQuestionReply(
+        projectName: String,
+        workspaceName: String,
+        sessionId: String,
+        requestId: String,
+        answers: [[String]]
+    ) {
+        send([
+            "type": "ai_question_reply",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "session_id": sessionId,
+            "request_id": requestId,
+            "answers": answers
+        ])
+    }
+
+    /// 拒绝 AI question 请求
+    func requestAIQuestionReject(
+        projectName: String,
+        workspaceName: String,
+        sessionId: String,
+        requestId: String
+    ) {
+        send([
+            "type": "ai_question_reject",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "session_id": sessionId,
+            "request_id": requestId
+        ])
+    }
+
     /// 获取 AI 会话列表
     func requestAISessionList(projectName: String, workspaceName: String) {
         send([
