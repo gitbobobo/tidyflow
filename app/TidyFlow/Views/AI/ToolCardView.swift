@@ -65,9 +65,7 @@ struct ToolCardView: View {
         if let partMetadata, !partMetadata.isEmpty {
             sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
         }
-        let displayTitle = invocation.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? invocation.title!
-            : toolDisplayName(normalizedToolID)
+        let displayTitle = toolCardTitle(toolID: normalizedToolID, invocation: invocation)
 
         return AIToolPresentation(
             toolID: normalizedToolID,
@@ -106,7 +104,7 @@ struct ToolCardView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: toolIconName(toolID: presentation.toolID))
-                .foregroundColor(statusColor)
+                .foregroundColor(.primary)
 
             Text(presentation.displayTitle)
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -229,6 +227,8 @@ struct ToolCardView: View {
         switch toolID {
         case "read":
             return buildReadSections(invocation)
+        case "grep":
+            return buildGrepSections(invocation)
         case "edit", "write", "apply_patch", "multiedit":
             return buildEditLikeSections(invocation)
         case "lsp_diagnostics":
@@ -237,7 +237,7 @@ struct ToolCardView: View {
             return buildLspSections(invocation)
         case "bash":
             return buildBashSections(invocation)
-        case "grep", "glob", "list", "websearch", "codesearch", "webfetch":
+        case "glob", "list", "websearch", "codesearch", "webfetch":
             return buildSearchSections(invocation)
         case "task", "skill", "question", "plan_enter", "plan_exit", "todowrite", "todoread", "batch":
             return buildTaskSections(invocation)
@@ -247,20 +247,9 @@ struct ToolCardView: View {
     }
 
     private func buildReadSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
-        var sections: [AIToolSection] = []
-
-        if let filePath = readFilePath(invocation), !filePath.isEmpty {
-            sections.append(AIToolSection(id: "read-file-path", title: "file", content: filePath, isCode: true))
-        }
-
-        if let error = invocation.error, !error.isEmpty {
-            sections.append(AIToolSection(id: "read-error", title: "error", content: error, isCode: false))
-        }
-
-        if sections.isEmpty {
-            sections = buildGenericSections(invocation)
-        }
-        return sections
+        // read 卡片仅展示头部（标题 + 状态），不展示正文内容区
+        _ = invocation
+        return []
     }
 
     private func buildEditLikeSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
@@ -386,6 +375,15 @@ struct ToolCardView: View {
         return sections
     }
 
+    private func buildGrepSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "grep-error", title: "error", content: error, isCode: false))
+        }
+        return sections
+    }
+
     private func buildTaskSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
 
@@ -442,6 +440,8 @@ struct ToolCardView: View {
         switch toolID {
         case "read":
             return nil
+        case "grep":
+            return grepStatsSummary(invocation)
         case "edit", "write", "apply_patch", "multiedit":
             return nil
         case "lsp_diagnostics":
@@ -456,7 +456,7 @@ struct ToolCardView: View {
                 .joined(separator: " ")
         case "bash":
             return nil
-        case "grep", "glob", "list", "websearch", "codesearch", "webfetch":
+        case "glob", "list", "websearch", "codesearch", "webfetch":
             return stringValue(invocation.input["query"]) ??
                 stringValue(invocation.input["pattern"]) ??
                 stringValue(invocation.input["url"]) ??
@@ -464,6 +464,16 @@ struct ToolCardView: View {
         default:
             return nil
         }
+    }
+
+    private func toolCardTitle(toolID: String, invocation: AIToolInvocationState) -> String {
+        if toolID == "grep", let keyword = grepKeyword(invocation), !keyword.isEmpty {
+            return "grep(\(keyword))"
+        }
+        if let title = invocation.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        return toolDisplayName(toolID)
     }
 
     private func toolDisplayName(_ toolID: String) -> String {
@@ -656,6 +666,41 @@ struct ToolCardView: View {
             stringValue(invocation.input["path"]) ??
             stringValue(invocation.input["file"]) ??
             stringValue(invocation.input["uri"])
+    }
+
+    private func grepStatsSummary(_ invocation: AIToolInvocationState) -> String? {
+        var stats: String?
+        if let metadata = invocation.metadata {
+            let matchCount =
+                intValue(metadata["matches"]) ??
+                intValue(metadata["matchCount"]) ??
+                intValue(metadata["matched"])
+            let fileCount =
+                intValue(metadata["files"]) ??
+                intValue(metadata["fileCount"])
+            if let matchCount, let fileCount {
+                stats = "Found \(matchCount) match(es) in \(fileCount) file(s)"
+            } else if let matchCount {
+                stats = "Found \(matchCount) match(es)"
+            }
+        }
+
+        if stats == nil, let output = invocation.output {
+            let lines = output.split(separator: "\n", omittingEmptySubsequences: true).map { String($0) }
+            if let statsLine = lines.first(where: { $0.contains("match(es)") && $0.contains("file(s)") }) {
+                stats = statsLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let first = lines.first {
+                stats = first.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return stats
+    }
+
+    private func grepKeyword(_ invocation: AIToolInvocationState) -> String? {
+        stringValue(invocation.input["pattern"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ??
+            stringValue(invocation.input["query"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func lspDiagnosticsItems(_ invocation: AIToolInvocationState) -> (items: [ToolDiagnosticItem], raw: Any)? {

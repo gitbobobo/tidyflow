@@ -173,6 +173,7 @@ private struct MessageBubble: View {
                 Spacer(minLength: 32)
             }
         }
+        .padding(.horizontal, 8)
     }
 
     @ViewBuilder
@@ -248,7 +249,6 @@ private struct MessageBubble: View {
                 .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
         )
         .cornerRadius(12)
-        .frame(maxWidth: 560, alignment: isUser ? .trailing : .leading)
     }
 
     private var bubbleBackgroundColor: Color {
