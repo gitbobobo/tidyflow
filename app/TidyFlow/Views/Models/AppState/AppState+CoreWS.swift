@@ -555,6 +555,12 @@ extension AppState {
                         id: p.id,
                         kind: kind,
                         text: p.text,
+                        mime: p.mime,
+                        filename: p.filename,
+                        url: p.url,
+                        synthetic: p.synthetic,
+                        ignored: p.ignored,
+                        source: p.source,
                         toolName: p.toolName,
                         toolState: p.toolState,
                         toolCallId: p.toolCallId,
@@ -571,11 +577,13 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
-            guard ev.role == "assistant" else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
             if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
 
-            self.aiChatStore.enqueueMessageUpdated(messageId: ev.messageId)
+            TFLog.app.debug(
+                "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
+            )
+            self.aiChatStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
         }
 
         wsClient.onAIChatPartUpdated = { [weak self] ev in
@@ -586,6 +594,9 @@ extension AppState {
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
             if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
 
+            TFLog.app.debug(
+                "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
+            )
             self.aiChatStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
         }
 
@@ -597,6 +608,9 @@ extension AppState {
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
             if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
 
+            TFLog.app.debug(
+                "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
+            )
             self.aiChatStore.enqueuePartDelta(
                 messageId: ev.messageId,
                 partId: ev.partId,
@@ -611,6 +625,7 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+            TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
             self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
         }
 
@@ -619,6 +634,9 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+            TFLog.app.error(
+                "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
+            )
             self.aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
         }
 

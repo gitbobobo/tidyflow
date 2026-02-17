@@ -74,6 +74,12 @@ struct AIProtocolPartInfo {
     let id: String
     let partType: String
     let text: String?
+    let mime: String?
+    let filename: String?
+    let url: String?
+    let synthetic: Bool?
+    let ignored: Bool?
+    let source: [String: Any]?
     let toolName: String?
     let toolCallId: String?
     let toolState: [String: Any]?
@@ -83,6 +89,12 @@ struct AIProtocolPartInfo {
         guard let id = json["id"] as? String,
               let partType = json["part_type"] as? String else { return nil }
         let text = json["text"] as? String
+        let mime = json["mime"] as? String
+        let filename = json["filename"] as? String
+        let url = json["url"] as? String
+        let synthetic = json["synthetic"] as? Bool
+        let ignored = json["ignored"] as? Bool
+        let source = json["source"] as? [String: Any]
         let toolName = json["tool_name"] as? String
         let toolCallId = json["tool_call_id"] as? String
         let toolState = json["tool_state"] as? [String: Any]
@@ -91,6 +103,12 @@ struct AIProtocolPartInfo {
             id: id,
             partType: partType,
             text: text,
+            mime: mime,
+            filename: filename,
+            url: url,
+            synthetic: synthetic,
+            ignored: ignored,
+            source: source,
             toolName: toolName,
             toolCallId: toolCallId,
             toolState: toolState,

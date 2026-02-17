@@ -12,12 +12,19 @@ enum AIChatPartKind: String {
     case text
     case reasoning
     case tool
+    case file
 }
 
 struct AIChatPart: Identifiable {
     let id: String
     let kind: AIChatPartKind
     var text: String?
+    var mime: String? = nil
+    var filename: String? = nil
+    var url: String? = nil
+    var synthetic: Bool? = nil
+    var ignored: Bool? = nil
+    var source: [String: Any]? = nil
     var toolName: String?
     var toolState: [String: Any]?
     var toolCallId: String? = nil
@@ -129,7 +136,7 @@ struct AIChatMessage: Identifiable {
     let id: String
     /// OpenCode messageID（服务端下发）；本地占位消息可为 nil
     var messageId: String?
-    let role: AIChatRole
+    var role: AIChatRole
     var parts: [AIChatPart]
     var isStreaming: Bool
     let timestamp: Date
@@ -184,7 +191,7 @@ struct AIChatSnapshot {
 }
 
 private enum AIChatStreamEvent {
-    case messageUpdated(messageId: String)
+    case messageUpdated(messageId: String, role: String)
     case partUpdated(messageId: String, part: AIProtocolPartInfo)
     case partDelta(messageId: String, partId: String, partType: String, field: String, delta: String)
 }
@@ -195,15 +202,22 @@ final class AIChatStore: ObservableObject {
     @Published var messages: [AIChatMessage] = []
     @Published var isStreaming: Bool = false
     @Published var abortPendingSessionId: String?
+    @Published var awaitingUserEcho: Bool = false
+    @Published var lastUserEchoMessageId: String?
     @Published var pendingToolQuestions: [String: AIQuestionRequestInfo] = [:]
 
     /// 工作空间快照缓存（key: "projectName/workspaceName"）
     var snapshotCache: [String: AIChatSnapshot] = [:]
 
     private var messageIndexByMessageId: [String: Int] = [:]
+    private var messageRoleByMessageId: [String: AIChatRole] = [:]
     private var partIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
     private var questionRequestToCallId: [String: String] = [:]
     private var streamingAssistantIndex: Int?
+    /// 当前轮次中 assistant 首条消息的锚点（用于 user echo 晚到时插回 assistant 之前）。
+    private var pendingUserEchoAssistantMessageId: String?
+    /// 进入 awaiting 前的消息数量快照；用于过滤“旧 user 消息更新”误触发收敛。
+    private var awaitingUserEchoBaselineIndex: Int?
 
     private var pendingStreamEvents: [AIChatStreamEvent] = []
     private var streamFlushWorkItem: DispatchWorkItem?
@@ -226,6 +240,10 @@ final class AIChatStore: ObservableObject {
         messages = snapshot.messages
         // 切换工作空间后不恢复流式态，后续由服务端事件重新驱动。
         abortPendingSessionId = nil
+        awaitingUserEcho = false
+        lastUserEchoMessageId = nil
+        pendingUserEchoAssistantMessageId = nil
+        awaitingUserEchoBaselineIndex = nil
         pendingToolQuestions = snapshot.pendingToolQuestions
         questionRequestToCallId = snapshot.questionRequestToCallId
         clearAssistantStreaming()
@@ -253,34 +271,49 @@ final class AIChatStore: ObservableObject {
         currentSessionId = nil
         messages = []
         abortPendingSessionId = nil
+        awaitingUserEcho = false
+        lastUserEchoMessageId = nil
         isStreaming = false
         messageIndexByMessageId = [:]
+        messageRoleByMessageId = [:]
         partIndexByPartId = [:]
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
+        pendingUserEchoAssistantMessageId = nil
+        awaitingUserEchoBaselineIndex = nil
     }
 
     func clearMessages() {
         flushPendingStreamEvents()
         messages = []
+        awaitingUserEcho = false
+        lastUserEchoMessageId = nil
         isStreaming = false
         messageIndexByMessageId = [:]
+        messageRoleByMessageId = [:]
         partIndexByPartId = [:]
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
+        pendingUserEchoAssistantMessageId = nil
+        awaitingUserEchoBaselineIndex = nil
     }
 
     func replaceMessages(_ newMessages: [AIChatMessage]) {
         flushPendingStreamEvents()
         messages = newMessages
         abortPendingSessionId = nil
+        awaitingUserEcho = false
+        lastUserEchoMessageId = nil
+        pendingUserEchoAssistantMessageId = nil
+        awaitingUserEchoBaselineIndex = nil
         clearAssistantStreaming()
         isStreaming = false
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         rebuildIndexes()
+        recomputeIsStreaming()
     }
 
     func appendMessage(_ message: AIChatMessage) {
@@ -302,6 +335,10 @@ final class AIChatStore: ObservableObject {
         if currentSessionId != sessionId {
             pendingToolQuestions = [:]
             questionRequestToCallId = [:]
+            awaitingUserEcho = false
+            lastUserEchoMessageId = nil
+            pendingUserEchoAssistantMessageId = nil
+            awaitingUserEchoBaselineIndex = nil
         }
         currentSessionId = sessionId
     }
@@ -318,6 +355,29 @@ final class AIChatStore: ObservableObject {
 
     func isAbortPending(for sessionId: String) -> Bool {
         abortPendingSessionId == sessionId
+    }
+
+    func beginAwaitingUserEcho() {
+        awaitingUserEcho = true
+        lastUserEchoMessageId = nil
+        pendingUserEchoAssistantMessageId = nil
+        awaitingUserEchoBaselineIndex = messages.count
+    }
+
+    func markUserEchoReceived(messageId: String) {
+        guard awaitingUserEcho else { return }
+        if let baseline = awaitingUserEchoBaselineIndex,
+           let idx = messageIndexByMessageId[messageId],
+           idx < baseline {
+            TFLog.app.debug(
+                "AI user echo ignored (stale message): message_id=\(messageId, privacy: .public), idx=\(idx), baseline=\(baseline)"
+            )
+            return
+        }
+        awaitingUserEcho = false
+        pendingUserEchoAssistantMessageId = nil
+        awaitingUserEchoBaselineIndex = nil
+        lastUserEchoMessageId = messageId
     }
 
     func upsertQuestionRequest(_ request: AIQuestionRequestInfo) {
@@ -354,8 +414,8 @@ final class AIChatStore: ObservableObject {
 
     // MARK: - Streaming Batch Apply
 
-    func enqueueMessageUpdated(messageId: String) {
-        pendingStreamEvents.append(.messageUpdated(messageId: messageId))
+    func enqueueMessageUpdated(messageId: String, role: String) {
+        pendingStreamEvents.append(.messageUpdated(messageId: messageId, role: role))
         scheduleStreamFlushIfNeeded()
     }
 
@@ -380,18 +440,91 @@ final class AIChatStore: ObservableObject {
         pendingStreamEvents.removeAll(keepingCapacity: true)
         var latestMessageIndex: Int?
 
+        // 先消费 message.updated，尽量先建立 message_id -> role 映射，
+        // 避免同批次里 part 先到导致角色误判。
+        for event in events {
+            guard case let .messageUpdated(messageId, roleToken) = event else { continue }
+            let role = roleFromToken(roleToken)
+            let msgIdx = ensureMessage(messageId: messageId, roleHint: role)
+            if role == .user || (role == nil && messages[msgIdx].role == .user) {
+                markUserEchoReceived(messageId: messageId)
+            }
+            if messages[msgIdx].role == .assistant {
+                if awaitingUserEcho, pendingUserEchoAssistantMessageId == nil {
+                    pendingUserEchoAssistantMessageId = messageId
+                }
+                latestMessageIndex = msgIdx
+            }
+        }
+
         for event in events {
             switch event {
-            case .messageUpdated(let messageId):
-                latestMessageIndex = ensureAssistantMessage(messageId: messageId)
+            case .messageUpdated:
+                continue
             case .partUpdated(let messageId, let part):
-                let msgIdx = ensureAssistantMessage(messageId: messageId)
+                var roleHint = messageRoleByMessageId[messageId]
+                if roleHint == nil,
+                   let sourceRole = part.source?["role"] as? String {
+                    roleHint = roleFromToken(sourceRole.lowercased())
+                    if roleHint != nil {
+                        TFLog.app.debug(
+                            "AI role inferred from part.source: message_id=\(messageId, privacy: .public), role=\(sourceRole, privacy: .public), part_type=\(part.partType, privacy: .public)"
+                        )
+                    }
+                }
+                if roleHint == nil, awaitingUserEcho {
+                    if part.partType == AIChatPartKind.file.rawValue {
+                        roleHint = .user
+                        TFLog.app.debug(
+                            "AI role inferred (file part): message_id=\(messageId, privacy: .public), role=user, part_type=\(part.partType, privacy: .public)"
+                        )
+                    } else if let anchorMessageId = pendingUserEchoAssistantMessageId {
+                        roleHint = (anchorMessageId == messageId) ? .assistant : .user
+                        TFLog.app.debug(
+                            "AI role inferred (anchor): message_id=\(messageId, privacy: .public), role=\(roleHint?.rawValue ?? "nil", privacy: .public), anchor=\(anchorMessageId, privacy: .public), part_type=\(part.partType, privacy: .public)"
+                        )
+                    } else if hasUnboundAssistantPlaceholder() {
+                        // 存在未绑定 assistant 占位时，首个未知消息优先视为 assistant。
+                        roleHint = .assistant
+                        TFLog.app.debug(
+                            "AI role inferred (placeholder): message_id=\(messageId, privacy: .public), role=assistant, part_type=\(part.partType, privacy: .public)"
+                        )
+                    }
+                }
+                let msgIdx = ensureMessage(messageId: messageId, roleHint: roleHint)
                 upsertPart(msgIdx: msgIdx, part: part)
-                latestMessageIndex = msgIdx
+                if messages[msgIdx].role == .assistant {
+                    if awaitingUserEcho,
+                       pendingUserEchoAssistantMessageId == nil,
+                       let assistantMessageId = messages[msgIdx].messageId {
+                        pendingUserEchoAssistantMessageId = assistantMessageId
+                    }
+                    latestMessageIndex = msgIdx
+                }
             case .partDelta(let messageId, let partId, let partType, let field, let delta):
-                let msgIdx = ensureAssistantMessage(messageId: messageId)
+                var roleHint = messageRoleByMessageId[messageId]
+                if roleHint == nil, awaitingUserEcho {
+                    if let anchorMessageId = pendingUserEchoAssistantMessageId {
+                        roleHint = (anchorMessageId == messageId) ? .assistant : .user
+                    } else if hasUnboundAssistantPlaceholder() {
+                        roleHint = .assistant
+                    }
+                    if roleHint != nil {
+                        TFLog.app.debug(
+                            "AI role inferred (delta): message_id=\(messageId, privacy: .public), role=\(roleHint?.rawValue ?? "nil", privacy: .public), part_type=\(partType, privacy: .public), part_id=\(partId, privacy: .public)"
+                        )
+                    }
+                }
+                let msgIdx = ensureMessage(messageId: messageId, roleHint: roleHint)
                 appendDelta(msgIdx: msgIdx, partId: partId, partType: partType, field: field, delta: delta)
-                latestMessageIndex = msgIdx
+                if messages[msgIdx].role == .assistant {
+                    if awaitingUserEcho,
+                       pendingUserEchoAssistantMessageId == nil,
+                       let assistantMessageId = messages[msgIdx].messageId {
+                        pendingUserEchoAssistantMessageId = assistantMessageId
+                    }
+                    latestMessageIndex = msgIdx
+                }
             }
         }
 
@@ -404,6 +537,12 @@ final class AIChatStore: ObservableObject {
     func handleChatDone(sessionId: String) {
         flushPendingStreamEvents()
         clearAbortPendingIfMatches(sessionId)
+        // 严格模式兜底：若 user echo 未回传，也要收敛输入状态，避免输入框长期不清空/禁用。
+        if awaitingUserEcho {
+            awaitingUserEcho = false
+            awaitingUserEchoBaselineIndex = nil
+            lastUserEchoMessageId = "done-\(sessionId)-\(UUID().uuidString)"
+        }
         isStreaming = false
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
@@ -418,6 +557,9 @@ final class AIChatStore: ObservableObject {
     func handleChatError(sessionId: String, error: String) {
         flushPendingStreamEvents()
         clearAbortPendingIfMatches(sessionId)
+        awaitingUserEcho = false
+        awaitingUserEchoBaselineIndex = nil
+        pendingUserEchoAssistantMessageId = nil
         isStreaming = false
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
@@ -449,12 +591,14 @@ final class AIChatStore: ObservableObject {
 
     private func rebuildIndexes() {
         messageIndexByMessageId = [:]
+        messageRoleByMessageId = [:]
         partIndexByPartId = [:]
         streamingAssistantIndex = nil
 
         for (i, msg) in messages.enumerated() {
             if let mid = msg.messageId {
                 messageIndexByMessageId[mid] = i
+                messageRoleByMessageId[mid] = msg.role
             }
             for (j, p) in msg.parts.enumerated() {
                 partIndexByPartId[p.id] = (i, j)
@@ -466,26 +610,124 @@ final class AIChatStore: ObservableObject {
     }
 
     @discardableResult
-    private func ensureAssistantMessage(messageId: String) -> Int {
+    private func roleFromToken(_ token: String) -> AIChatRole? {
+        switch token {
+        case "assistant":
+            return .assistant
+        case "user":
+            return .user
+        default:
+            return nil
+        }
+    }
+
+    @discardableResult
+    private func ensureMessage(messageId: String, roleHint: AIChatRole?) -> Int {
         if let idx = messageIndexByMessageId[messageId],
            idx < messages.count,
            messages[idx].messageId == messageId {
+            if let roleHint, messages[idx].role != roleHint {
+                messages[idx].role = roleHint
+                if roleHint == .user {
+                    messages[idx].isStreaming = false
+                    if streamingAssistantIndex == idx {
+                        streamingAssistantIndex = nil
+                    }
+                }
+            }
+            messageRoleByMessageId[messageId] = messages[idx].role
             return idx
         }
         messageIndexByMessageId.removeValue(forKey: messageId)
+        messageRoleByMessageId.removeValue(forKey: messageId)
 
-        // 优先复用本地占位气泡（发送时插入）。
-        if let idx = messages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
+        let resolvedRole = resolveIncomingRole(messageId: messageId, roleHint: roleHint)
+
+        // 仅 assistant 消息复用本地占位气泡（发送时插入）。
+        if resolvedRole == .assistant,
+           (!awaitingUserEcho || roleHint == .assistant || pendingUserEchoAssistantMessageId == messageId),
+           let idx = messages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
             messages[idx].messageId = messageId
+            messages[idx].role = resolvedRole
             messageIndexByMessageId[messageId] = idx
+            messageRoleByMessageId[messageId] = resolvedRole
             return idx
         }
 
-        let msg = AIChatMessage(messageId: messageId, role: .assistant, parts: [], isStreaming: true)
+        let msg = AIChatMessage(
+            messageId: messageId,
+            role: resolvedRole,
+            parts: [],
+            isStreaming: (resolvedRole == .assistant)
+        )
+
+        if resolvedRole == .assistant,
+           awaitingUserEcho,
+           pendingUserEchoAssistantMessageId == nil {
+            pendingUserEchoAssistantMessageId = messageId
+        }
+
+        // 优先使用当前轮次 assistant 锚点，保证 user echo 晚到时插回正确位置。
+        if resolvedRole == .user,
+           let anchorMessageId = pendingUserEchoAssistantMessageId,
+           let anchorIdx = messageIndexByMessageId[anchorMessageId],
+           anchorIdx >= 0,
+           anchorIdx < messages.count,
+           messages[anchorIdx].role == .assistant {
+            messages.insert(msg, at: anchorIdx)
+            rebuildIndexes()
+            if let idx = messageIndexByMessageId[messageId] {
+                return idx
+            }
+            return anchorIdx
+        }
+
+        // 严格模式下，若 user echo 晚于 assistant 首包到达，需把 user 放到当前流式 assistant 前面。
+        if resolvedRole == .user,
+           awaitingUserEcho,
+           let assistantIdx = streamingAssistantIndex,
+           assistantIdx >= 0,
+           assistantIdx < messages.count,
+           messages[assistantIdx].role == .assistant,
+           messages[assistantIdx].isStreaming {
+            messages.insert(msg, at: assistantIdx)
+            rebuildIndexes()
+            if let idx = messageIndexByMessageId[messageId] {
+                return idx
+            }
+            return assistantIdx
+        }
+
         messages.append(msg)
         let idx = messages.count - 1
         messageIndexByMessageId[messageId] = idx
+        messageRoleByMessageId[messageId] = resolvedRole
         return idx
+    }
+
+    private func resolveIncomingRole(messageId: String, roleHint: AIChatRole?) -> AIChatRole {
+        if let roleHint {
+            return roleHint
+        }
+        if let knownRole = messageRoleByMessageId[messageId] {
+            return knownRole
+        }
+        guard awaitingUserEcho else {
+            return .assistant
+        }
+        if let anchorMessageId = pendingUserEchoAssistantMessageId {
+            return anchorMessageId == messageId ? .assistant : .user
+        }
+        // 严格模式下，发送后会先插入一个未绑定 message_id 的 assistant 占位。
+        // role 未知时优先绑定占位，避免把 assistant 首包误判为 user。
+        if hasUnboundAssistantPlaceholder() {
+            return .assistant
+        }
+        return .assistant
+    }
+
+    private func hasUnboundAssistantPlaceholder() -> Bool {
+        messages.contains { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }
     }
 
     private func upsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
@@ -495,10 +737,19 @@ final class AIChatStore: ObservableObject {
         if let existing = partIndexByPartId[part.id], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
             messages[msgIdx].parts[existing.partIdx].text = part.text
+            messages[msgIdx].parts[existing.partIdx].mime = part.mime
+            messages[msgIdx].parts[existing.partIdx].filename = part.filename
+            messages[msgIdx].parts[existing.partIdx].url = part.url
+            messages[msgIdx].parts[existing.partIdx].synthetic = part.synthetic
+            messages[msgIdx].parts[existing.partIdx].ignored = part.ignored
+            messages[msgIdx].parts[existing.partIdx].source = part.source
             messages[msgIdx].parts[existing.partIdx].toolName = part.toolName
             messages[msgIdx].parts[existing.partIdx].toolState = part.toolState
             messages[msgIdx].parts[existing.partIdx].toolCallId = part.toolCallId
             messages[msgIdx].parts[existing.partIdx].toolPartMetadata = part.toolPartMetadata
+            if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
+                markUserEchoReceived(messageId: messageId)
+            }
             return
         }
 
@@ -507,6 +758,12 @@ final class AIChatStore: ObservableObject {
             id: part.id,
             kind: kind,
             text: part.text,
+            mime: part.mime,
+            filename: part.filename,
+            url: part.url,
+            synthetic: part.synthetic,
+            ignored: part.ignored,
+            source: part.source,
             toolName: part.toolName,
             toolState: part.toolState,
             toolCallId: part.toolCallId,
@@ -515,6 +772,9 @@ final class AIChatStore: ObservableObject {
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1
         partIndexByPartId[part.id] = (msgIdx, partIdx)
+        if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
+            markUserEchoReceived(messageId: messageId)
+        }
     }
 
     private func appendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
@@ -525,6 +785,9 @@ final class AIChatStore: ObservableObject {
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
             let current = messages[msgIdx].parts[existing.partIdx].text ?? ""
             messages[msgIdx].parts[existing.partIdx].text = current + delta
+            if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
+                markUserEchoReceived(messageId: messageId)
+            }
             return
         }
 
@@ -533,6 +796,9 @@ final class AIChatStore: ObservableObject {
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1
         partIndexByPartId[partId] = (msgIdx, partIdx)
+        if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
+            markUserEchoReceived(messageId: messageId)
+        }
     }
 
     private func markOnlyStreamingAssistant(at msgIdx: Int) {
@@ -573,7 +839,26 @@ final class AIChatStore: ObservableObject {
             return
         }
         streamingAssistantIndex = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming })
-        isStreaming = (streamingAssistantIndex != nil)
+        if streamingAssistantIndex != nil {
+            isStreaming = true
+            return
+        }
+
+        // 历史回放场景：若工具仍处于 pending/running，视为会话仍在进行中。
+        isStreaming = hasActiveAssistantTool()
+    }
+
+    private func hasActiveAssistantTool() -> Bool {
+        for message in messages where message.role == .assistant {
+            for part in message.parts where part.kind == .tool {
+                guard let rawStatus = part.toolState?["status"] as? String else { continue }
+                let status = rawStatus.lowercased()
+                if status == "pending" || status == "running" {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }
 

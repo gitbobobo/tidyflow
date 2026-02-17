@@ -1,4 +1,9 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 struct MessageListView: View {
     @EnvironmentObject var aiChatStore: AIChatStore
@@ -37,6 +42,8 @@ struct MessageListView: View {
             return message.parts.contains { part in
                 switch part.kind {
                 case .tool:
+                    return true
+                case .file:
                     return true
                 case .text, .reasoning:
                     return !(part.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
@@ -231,7 +238,10 @@ private struct MessageBubble: View, Equatable {
             let toolName = part.toolName ?? ""
             let toolStatus = (part.toolState?["status"] as? String) ?? ""
             let metadataCount = part.toolPartMetadata?.count ?? 0
-            return "\(part.id)|\(part.kind.rawValue)|\(textToken)|\(toolName)|\(toolStatus)|\(metadataCount)"
+            let fileName = part.filename ?? ""
+            let fileURL = part.url ?? ""
+            let fileMime = part.mime ?? ""
+            return "\(part.id)|\(part.kind.rawValue)|\(textToken)|\(toolName)|\(toolStatus)|\(metadataCount)|\(fileName)|\(fileMime)|\(fileURL)"
         }.joined(separator: ",")
         return [
             message.id,
@@ -351,6 +361,8 @@ private struct MessageBubble: View, Equatable {
                     textColor: .secondary
                 )
             }
+        case .file:
+            filePartView(part)
         case .tool:
             let pendingQuestion = questionRequestResolver(part.toolCallId)
             ToolCardView(
@@ -411,6 +423,9 @@ private struct MessageBubble: View, Equatable {
                    !text.isEmpty {
                     lines.append(text)
                 }
+            case .file:
+                let name = part.filename ?? "attachment"
+                lines.append("[附件] \(name)")
             case .tool:
                 let toolName = part.toolName ?? "tool"
                 lines.append("[工具] \(toolName)")
@@ -471,6 +486,85 @@ private struct MessageBubble: View, Equatable {
         var text = raw.replacingOccurrences(of: "\r\n", with: "\n")
         text = text.replacingOccurrences(of: "\r", with: "\n")
         return text
+    }
+
+    @ViewBuilder
+    private func filePartView(_ part: AIChatPart) -> some View {
+        let primaryTextColor: Color = isUser ? .white : .primary
+        let secondaryTextColor: Color = isUser ? .white.opacity(0.85) : .secondary
+        let fileName = part.filename ?? "attachment"
+        let mime = part.mime ?? "application/octet-stream"
+
+        VStack(alignment: .leading, spacing: 8) {
+            if let imageData = resolveImageData(for: part) {
+                imagePreview(data: imageData)
+                    .frame(maxWidth: 320, maxHeight: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 12))
+                    .foregroundColor(secondaryTextColor)
+                Text(fileName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(primaryTextColor)
+                    .lineLimit(1)
+            }
+
+            Text(mime)
+                .font(.system(size: 11))
+                .foregroundColor(secondaryTextColor)
+        }
+        .frame(maxWidth: 360, alignment: .leading)
+    }
+
+    private func resolveImageData(for part: AIChatPart) -> Data? {
+        guard let mime = part.mime?.lowercased(), mime.hasPrefix("image/") else { return nil }
+        if let url = part.url {
+            if let data = decodeDataURL(url) {
+                return data
+            }
+            if let data = loadFromFileURL(url) {
+                return data
+            }
+        }
+        return nil
+    }
+
+    private func decodeDataURL(_ value: String) -> Data? {
+        guard value.hasPrefix("data:"),
+              let comma = value.firstIndex(of: ",") else { return nil }
+        let header = String(value[..<comma]).lowercased()
+        let payloadStart = value.index(after: comma)
+        let payload = String(value[payloadStart...])
+
+        if header.contains(";base64") {
+            return Data(base64Encoded: payload)
+        }
+        return payload.removingPercentEncoding?.data(using: .utf8)
+    }
+
+    private func loadFromFileURL(_ value: String) -> Data? {
+        guard let url = URL(string: value), url.isFileURL else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    @ViewBuilder
+    private func imagePreview(data: Data) -> some View {
+        #if os(macOS)
+        if let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+        }
+        #elseif os(iOS)
+        if let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        }
+        #endif
     }
 }
 

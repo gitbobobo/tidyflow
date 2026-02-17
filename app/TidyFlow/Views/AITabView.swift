@@ -126,6 +126,12 @@ struct AITabView: View {
                 )
             }
         }
+        .onChange(of: aiChatStore.lastUserEchoMessageId) { _, newMessageId in
+            guard newMessageId != nil else { return }
+            inputText = ""
+            imageAttachments = []
+            autocomplete.reset()
+        }
     }
 
     /// 等待会话创建后的发送请求（含发起时工作空间，防止跨空间误发）
@@ -227,7 +233,7 @@ struct AITabView: View {
         ChatInputView(
             text: $inputText,
             imageAttachments: $imageAttachments,
-            isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil,
+            isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil || aiChatStore.awaitingUserEcho,
             canStopStreaming: aiChatStore.currentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
             onSend: {
                 sendMessage()
@@ -594,10 +600,6 @@ struct AITabView: View {
             return
         }
 
-        inputText = ""
-        imageAttachments = []
-        autocomplete.reset()
-
         let slashCommand = parseSlashCommand(from: text)
         let slashAction: String? = {
             guard let slashCommand else { return nil }
@@ -608,6 +610,9 @@ struct AITabView: View {
         if let slashCommand {
             let resolvedAction = slashAction ?? (slashCommand.name.caseInsensitiveCompare("new") == .orderedSame ? "client" : "agent")
             if resolvedAction == "client" {
+                inputText = ""
+                imageAttachments = []
+                autocomplete.reset()
                 switch slashCommand.name.lowercased() {
                 case "new":
                     createNewSession()
@@ -652,17 +657,14 @@ struct AITabView: View {
         // Agent 选择
         let agentName = appState.aiSelectedAgent
 
-        // 添加用户消息到 UI
-        let userMessage = AIChatMessage(
-            role: .user,
-            parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: text, toolName: nil, toolState: nil)],
-            isStreaming: false
-        )
-        aiChatStore.appendMessage(userMessage)
+        // 严格模式：以代理回传的 user message 为准，发送后先等待回传。
+        autocomplete.reset()
+        aiChatStore.beginAwaitingUserEcho()
         aiChatStore.isStreaming = true
 
-        // 预先插入一个"回复气泡占位"，首包到达后由 message_updated 绑定 messageId
-        aiChatStore.appendAssistantPlaceholder()
+        // 发送请求已入队后立即清空输入区；消息展示以代理回传的 user message 为准。
+        inputText = ""
+        imageAttachments = []
 
         if let sessionId = aiChatStore.currentSessionId {
             // 已有会话，直接发送
