@@ -8,7 +8,7 @@ struct AITabView: View {
 
     @State private var inputText: String = ""
     @State private var imageAttachments: [ImageAttachment] = []
-    @State private var showSessionList = false
+    @State private var showSessionList = true
     /// 记录上一次所在的工作空间 key，用于切换时保存快照
     @State private var previousSnapshotKey: String?
     /// 自动补全状态
@@ -99,7 +99,14 @@ struct AITabView: View {
             aiChatStore.setAbortPendingSessionId(nil)
             previousSnapshotKey = currentSnapshotKey
             loadSessions()
-            reloadCurrentSessionIfNeeded()
+            let currentSessionId = appState.aiStore(for: newTool).currentSessionId
+            if let skip = skipNextAutoReload,
+               skip.tool == newTool,
+               skip.sessionId == currentSessionId {
+                skipNextAutoReload = nil
+            } else {
+                reloadCurrentSessionIfNeeded(for: newTool)
+            }
         }
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, newMessageId in
             guard newMessageId != nil else { return }
@@ -134,6 +141,8 @@ struct AITabView: View {
         aiTool: AIChatTool,
         kind: PendingAIRequestKind
     )? = nil
+    /// 跨工具点击会话时，避免工具切换后的自动重载重复请求同一 session。
+    @State private var skipNextAutoReload: (tool: AIChatTool, sessionId: String)? = nil
 
     private var canSwitchAITool: Bool {
         pendingSendRequest == nil
@@ -141,14 +150,12 @@ struct AITabView: View {
 
     private var sessionListPane: some View {
         SessionListView(
-            sessions: Binding(
-                get: { appState.aiSessions },
-                set: { appState.aiSessions = $0 }
-            ),
+            sessions: appState.aiMergedSessions,
             currentSessionId: Binding(
-                get: { aiChatStore.currentSessionId },
-                set: { aiChatStore.setCurrentSessionId($0) }
+                get: { appState.aiStore(for: appState.aiChatTool).currentSessionId },
+                set: { appState.aiStore(for: appState.aiChatTool).setCurrentSessionId($0) }
             ),
+            currentTool: appState.aiChatTool,
             onSelect: { session in
                 loadSession(session)
             },
@@ -364,6 +371,7 @@ struct AITabView: View {
     /// 1. 视图重建（切 tab 后再回来）→ @State 被重置，previousSnapshotKey == nil
     /// 2. 工作空间切换后视图被移除再重建 → onChange 未触发，需要在此恢复
     private func restoreAIContextOnAppear() {
+        skipNextAutoReload = nil
         let newKey = currentSnapshotKey
         // 如果 previousSnapshotKey 与当前一致，说明是同一工作空间内的 tab 切换回来，
         // onDisappear 已保存快照，这里恢复即可
@@ -379,6 +387,9 @@ struct AITabView: View {
         }
         // 工作空间已变化，走完整的 reset 流程
         previousSnapshotKey = newKey
+        for tool in AIChatTool.allCases {
+            appState.setAISessions([], for: tool)
+        }
         if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             aiChatStore.applySnapshot(snapshot)
             appState.aiSessions = snapshot.sessions
@@ -399,6 +410,7 @@ struct AITabView: View {
     private func resetAIContext() {
         // 清除待发消息，避免跨工作空间误发
         pendingSendRequest = nil
+        skipNextAutoReload = nil
         aiChatStore.setAbortPendingSessionId(nil)
 
         // 保存旧工作空间快照
@@ -409,6 +421,9 @@ struct AITabView: View {
         let newKey = currentSnapshotKey
         previousSnapshotKey = newKey
 
+        for tool in AIChatTool.allCases {
+            appState.setAISessions([], for: tool)
+        }
         if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             // 恢复缓存的快照
             aiChatStore.applySnapshot(snapshot)
@@ -431,15 +446,22 @@ struct AITabView: View {
 
     private func loadSessions() {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else {
-            appState.aiSessions = []
+            for tool in AIChatTool.allCases {
+                appState.setAISessions([], for: tool)
+            }
             return
         }
+
+        // 会话列表按工具分别拉取，再在客户端做跨工具融合排序。
+        for tool in AIChatTool.allCases {
+            appState.wsClient.requestAISessionList(
+                projectName: appState.selectedProjectName,
+                workspaceName: ws,
+                aiTool: tool
+            )
+        }
+
         let aiTool = appState.aiChatTool
-        appState.wsClient.requestAISessionList(
-            projectName: appState.selectedProjectName,
-            workspaceName: ws,
-            aiTool: aiTool
-        )
         // 同时加载 provider/agent/斜杠命令 列表
         appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
         appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
@@ -447,12 +469,29 @@ struct AITabView: View {
     }
 
     private func loadSession(_ session: AISessionInfo) {
-        aiChatStore.setCurrentSessionId(session.id)
-        aiChatStore.clearMessages()
+        let targetStore = appState.aiStore(for: session.aiTool)
+        targetStore.setCurrentSessionId(session.id)
+        targetStore.clearMessages()
+
+        if session.aiTool != appState.aiChatTool {
+            guard canSwitchAITool else { return }
+            // 先请求目标会话详情，再切换工具；避免首击空白。
+            appState.wsClient.requestAISessionMessages(
+                projectName: session.projectName,
+                workspaceName: session.workspaceName,
+                aiTool: session.aiTool,
+                sessionId: session.id,
+                limit: 200
+            )
+            skipNextAutoReload = (session.aiTool, session.id)
+            appState.aiChatTool = session.aiTool
+            return
+        }
+
         appState.wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
-            aiTool: appState.aiChatTool,
+            aiTool: session.aiTool,
             sessionId: session.id,
             limit: 200
         )
@@ -462,12 +501,15 @@ struct AITabView: View {
         appState.wsClient.requestAISessionDelete(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
-            aiTool: appState.aiChatTool,
+            aiTool: session.aiTool,
             sessionId: session.id
         )
-        appState.aiSessions.removeAll { $0.id == session.id }
-        if aiChatStore.currentSessionId == session.id {
-            aiChatStore.clearAll()
+
+        appState.removeAISession(session.id, for: session.aiTool)
+
+        let store = appState.aiStore(for: session.aiTool)
+        if store.currentSessionId == session.id {
+            store.clearAll()
         }
     }
 
@@ -544,13 +586,14 @@ struct AITabView: View {
     }
 
     /// 恢复快照后，若有选中会话则重新拉取消息（弥补切走期间丢失的增量）
-    private func reloadCurrentSessionIfNeeded() {
-        guard let sessionId = aiChatStore.currentSessionId,
+    private func reloadCurrentSessionIfNeeded(for tool: AIChatTool? = nil) {
+        let targetTool = tool ?? appState.aiChatTool
+        guard let sessionId = appState.aiStore(for: targetTool).currentSessionId,
               let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
         appState.wsClient.requestAISessionMessages(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
-            aiTool: appState.aiChatTool,
+            aiTool: targetTool,
             sessionId: sessionId,
             limit: 200
         )
