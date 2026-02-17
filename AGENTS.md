@@ -65,6 +65,10 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - iOS SwiftTerm 远程终端场景下，zle 出现 `3R` 乱码的根因是 SwiftTerm 使用 8-bit C1 引导符（`0x9b`）而 shell 不识别，并非网络延迟；正确做法是在 `TerminalViewDelegate.send` 中做 C1→7-bit 规范化（`0x9b`→`ESC[`），而非丢弃 CPR 应答——丢弃会导致依赖 DSR/CPR 的 TUI 应用（helix、lazygit 等）无法获取光标位置而报错。
 - 终端 PTY 的 `cols/rows` 来自客户端上报，服务端必须做范围 clamp 并记录告警日志；异常尺寸（过大/为 0）可能触发远端 TUI/CLI 进程按屏幕大小分配缓存，从而 OOM 被系统 kill。
 - AI 聊天的 `pendingSendMessage`（等待会话创建后发送）等跨异步边界的临时状态，必须在工作空间切换时清除，并携带发起时的 `projectName/workspaceName` 做一致性校验；否则快照恢复触发 `aiCurrentSessionId` 变更时会把旧消息误发到新工作空间。切换回旧工作空间时应重新拉取当前会话消息，弥补切走期间被 guard 丢弃的流式增量。
+- AI 聊天消息需要支持 Markdown 时，assistant 内容应采用“流式阶段纯文本增量渲染、`done` 后一次性转 Markdown”策略，避免代码块/列表在增量过程中频繁重排造成抖动。
+- SwiftUI 聊天 Markdown 若直接用 `AttributedString(markdown: .full)`，可能把列表/段落结构扁平化；应改用 `inlineOnlyPreservingWhitespace` 并按 `inlinePresentationIntent` 显式映射粗体/斜体/代码字体。
+- 若聊天 Markdown 需要同时支持块级语法（如 `##`/列表）与行内样式，建议采用“行级解析块结构 + 行内 Markdown 二次渲染”而非单次 `AttributedString(markdown:)`，避免标题符号原样显示或段落被压扁。
+- 聊天 Markdown 做视觉微调时，优先在 `AttributedString` 层控制 `lineSpacing`、标题字号梯度和 `backgroundColor`（行内代码/代码块），能在不改消息模型的前提下快速提升层次感与可读性。
 - `AITabView` 等在 `switch` 分支中创建的子视图，切换工作空间时可能在同一 SwiftUI 更新周期被移除，导致 `onChange` 不触发而 `appState` 上的全局状态残留。必须在 `onDisappear` 保存快照（用 `previousSnapshotKey` 而非 `currentSnapshotKey`，因为后者已指向新空间），并在 `onAppear` 恢复当前工作空间的快照或清空，不能仅依赖 `onChange`。
 - 聊天输入框实现 `@` 文件引用和 `/` 斜杠命令自动补全时，应以“光标所在 token”做触发与替换范围，且在 `hasMarkedText` 组合态暂停补全并兼容全角 `＠`/`／`，避免中文输入法候选期误触发与整段文本被覆盖。
 - iOS 聊天自动补全弹层定位不要写死偏移；应由 `UITextView.caretRect` 上报光标位置，并结合容器宽度做左右 clamp，避免弹层漂移到中间或超出屏幕。
