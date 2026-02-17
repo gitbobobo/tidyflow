@@ -1853,7 +1853,8 @@ final class MobileAppState: ObservableObject {
                         AIModelInfo(
                             id: m.id,
                             name: m.name,
-                            providerID: m.providerID.isEmpty ? p.id : m.providerID
+                            providerID: m.providerID.isEmpty ? p.id : m.providerID,
+                            supportsImageInput: m.supportsImageInput
                         )
                     }
                 )
