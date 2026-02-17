@@ -162,6 +162,8 @@ struct ToolCardView: View {
     private func sectionBlock(_ section: AIToolSection) -> some View {
         if section.id == "edit-diff" {
             editDiffSectionBlock(section)
+        } else if section.id == "read-file-path" {
+            diagnosticsFileSectionBlock(section)
         } else if section.id == "lsp-diagnostics-file" {
             diagnosticsFileSectionBlock(section)
         } else if section.id == "edit-diagnostics" || section.id == "lsp-diagnostics-issues" {
@@ -247,16 +249,12 @@ struct ToolCardView: View {
     private func buildReadSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
 
-        if !invocation.input.isEmpty {
-            sections.append(section(id: "read-input", title: "input", any: invocation.input))
+        if let filePath = readFilePath(invocation), !filePath.isEmpty {
+            sections.append(AIToolSection(id: "read-file-path", title: "file", content: filePath, isCode: true))
         }
 
-        if let output = invocation.output, !output.isEmpty {
-            sections.append(AIToolSection(id: "read-output", title: "output", content: output, isCode: true))
-        }
-
-        if let metadata = invocation.metadata, !metadata.isEmpty {
-            sections.append(section(id: "read-metadata", title: "metadata", any: metadata))
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "read-error", title: "error", content: error, isCode: false))
         }
 
         if sections.isEmpty {
@@ -443,7 +441,7 @@ struct ToolCardView: View {
     private func toolSummary(toolID: String, invocation: AIToolInvocationState) -> String? {
         switch toolID {
         case "read":
-            return stringValue(invocation.input["filePath"]) ?? stringValue(invocation.input["path"])
+            return nil
         case "edit", "write", "apply_patch", "multiedit":
             return nil
         case "lsp_diagnostics":
@@ -498,7 +496,7 @@ struct ToolCardView: View {
     private func toolIconName(toolID: String) -> String {
         switch toolID {
         case "read":
-            return "doc.text"
+            return "eye"
         case "edit", "write", "apply_patch", "multiedit":
             return "square.and.pencil"
         case "lsp_diagnostics":
@@ -647,6 +645,13 @@ struct ToolCardView: View {
     }
 
     private func lspDiagnosticsFilePath(_ invocation: AIToolInvocationState) -> String? {
+        stringValue(invocation.input["filePath"]) ??
+            stringValue(invocation.input["path"]) ??
+            stringValue(invocation.input["file"]) ??
+            stringValue(invocation.input["uri"])
+    }
+
+    private func readFilePath(_ invocation: AIToolInvocationState) -> String? {
         stringValue(invocation.input["filePath"]) ??
             stringValue(invocation.input["path"]) ??
             stringValue(invocation.input["file"]) ??
