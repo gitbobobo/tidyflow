@@ -213,7 +213,9 @@ private struct MessageBubble: View {
                     case .tool:
                         ToolCardView(
                             name: part.toolName ?? "unknown",
-                            state: part.toolState
+                            state: part.toolState,
+                            callID: part.toolCallId,
+                            partMetadata: part.toolPartMetadata
                         )
                     }
                 }

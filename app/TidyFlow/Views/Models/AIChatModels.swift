@@ -20,6 +20,107 @@ struct AIChatPart: Identifiable {
     var text: String?
     var toolName: String?
     var toolState: [String: Any]?
+    var toolCallId: String? = nil
+    var toolPartMetadata: [String: Any]? = nil
+}
+
+enum AIToolStatus: String {
+    case pending
+    case running
+    case completed
+    case error
+    case unknown
+
+    var text: String {
+        switch self {
+        case .pending: return "pending"
+        case .running: return "running"
+        case .completed: return "completed"
+        case .error: return "error"
+        case .unknown: return "unknown"
+        }
+    }
+}
+
+struct AIToolInvocationState {
+    let status: AIToolStatus
+    let input: [String: Any]
+    let raw: String?
+    let title: String?
+    let output: String?
+    let error: String?
+    let metadata: [String: Any]?
+    let timeStart: Double?
+    let timeEnd: Double?
+    let attachments: [[String: Any]]?
+
+    static func from(state: [String: Any]?) -> AIToolInvocationState? {
+        guard let state else { return nil }
+        let statusRaw = (state["status"] as? String ?? "").lowercased()
+        let status = AIToolStatus(rawValue: statusRaw) ?? .unknown
+        let input = state["input"] as? [String: Any] ?? [:]
+        let raw = state["raw"] as? String
+        let title = state["title"] as? String
+        let output = state["output"] as? String
+        let error = state["error"] as? String
+        let metadata = state["metadata"] as? [String: Any]
+        let time = state["time"] as? [String: Any] ?? [:]
+        let attachments = state["attachments"] as? [[String: Any]]
+
+        return AIToolInvocationState(
+            status: status,
+            input: input,
+            raw: raw,
+            title: title,
+            output: output,
+            error: error,
+            metadata: metadata,
+            timeStart: Self.parseDouble(time["start"]),
+            timeEnd: Self.parseDouble(time["end"]),
+            attachments: attachments
+        )
+    }
+
+    var durationMs: Double? {
+        guard let start = timeStart, let end = timeEnd else { return nil }
+        return max(0, end - start)
+    }
+
+    private static func parseDouble(_ value: Any?) -> Double? {
+        switch value {
+        case let v as Double:
+            return v
+        case let v as Float:
+            return Double(v)
+        case let v as Int:
+            return Double(v)
+        case let v as Int64:
+            return Double(v)
+        case let v as UInt:
+            return Double(v)
+        case let v as NSNumber:
+            return v.doubleValue
+        case let v as String:
+            return Double(v)
+        default:
+            return nil
+        }
+    }
+}
+
+struct AIToolSection: Identifiable {
+    let id: String
+    let title: String
+    let content: String
+    let isCode: Bool
+}
+
+struct AIToolPresentation {
+    let toolID: String
+    let displayTitle: String
+    let statusText: String
+    let summary: String?
+    let sections: [AIToolSection]
 }
 
 /// 一条消息对应一个 OpenCode message（message_id），内部包含多个 part
