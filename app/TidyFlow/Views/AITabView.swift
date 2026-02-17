@@ -525,6 +525,15 @@ struct AITabView: View {
         return (body, "")
     }
 
+    private func selectedModelInfo() -> AIModelInfo? {
+        guard let selected = appState.aiSelectedModel else { return nil }
+        return appState.aiProviders
+            .flatMap(\.models)
+            .first {
+                $0.id == selected.modelID && $0.providerID == selected.providerID
+            }
+    }
+
     private func sendMessage() {
         // 上一次停止请求尚未收敛时，不允许发新消息，避免同会话事件串扰。
         if aiChatStore.abortPendingSessionId != nil {
@@ -535,6 +544,27 @@ struct AITabView: View {
 
         let text = inputText
         let images = imageAttachments
+
+        // 选中模型明确不支持图片输入时，直接在本地提示并阻止发送。
+        if !images.isEmpty,
+           let modelInfo = selectedModelInfo(),
+           modelInfo.supportsImageInput == false {
+            aiChatStore.appendMessage(
+                AIChatMessage(
+                    role: .assistant,
+                    parts: [AIChatPart(
+                        id: UUID().uuidString,
+                        kind: .text,
+                        text: "当前模型不支持图片输入，请切换支持图片的模型后再发送。",
+                        toolName: nil,
+                        toolState: nil
+                    )],
+                    isStreaming: false
+                )
+            )
+            return
+        }
+
         inputText = ""
         imageAttachments = []
         autocomplete.reset()

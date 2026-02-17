@@ -30,6 +30,8 @@ struct ChatTextView: NSViewRepresentable {
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Bool)?
     var onTab: (() -> Bool)?
+    /// 粘贴处理（返回 true 表示已消费）
+    var onPaste: (() -> Bool)?
     /// 输入上下文变化（光标 UTF16 位置, 是否处于 IME 组合态）
     var onInputContextChange: ((Int, Bool) -> Void)?
 
@@ -77,6 +79,7 @@ struct ChatTextView: NSViewRepresentable {
         textView.onArrowDown = { context.coordinator.parent.onArrowDown?() ?? false }
         textView.onEscape = { context.coordinator.parent.onEscape?() ?? false }
         textView.onTab = { context.coordinator.parent.onTab?() ?? false }
+        textView.onPaste = { context.coordinator.parent.onPaste?() ?? false }
         textView.onCompositionStateChange = { [weak textView] in
             context.coordinator.handleCompositionStateChange(textView)
         }
@@ -205,6 +208,7 @@ private class IMEAwareTextView: NSTextView {
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Bool)?
     var onTab: (() -> Bool)?
+    var onPaste: (() -> Bool)?
     var onCompositionStateChange: (() -> Void)?
     private(set) var isIMEComposing: Bool = false
     /// 防止同一次 Return 事件被 keyDown/doCommand 重复处理
@@ -231,6 +235,64 @@ private class IMEAwareTextView: NSTextView {
         isIMEComposing = false
         imeDebugLog("unmarkText after super hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
         onCompositionStateChange?()
+    }
+
+    override func paste(_ sender: Any?) {
+        if onPaste?() == true {
+            return
+        }
+        super.paste(sender)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // Cmd+V：优先走图片粘贴处理，未消费再回落默认文本粘贴。
+        if event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.shift),
+           !event.modifierFlags.contains(.option),
+           !event.modifierFlags.contains(.control),
+           event.charactersIgnoringModifiers?.lowercased() == "v" {
+            if onPaste?() == true {
+                return
+            }
+        }
+
+        // 每次按键先清理，避免旧 Return 状态污染后续事件。
+        didHandleReturnInKeyDown = false
+        if event.keyCode == 36 || hasMarkedText() || isIMEComposing {
+            imeDebugLog("keyDown keyCode=\(event.keyCode) chars=\((event.characters ?? "").debugDescription) charsIgnoringModifiers=\((event.charactersIgnoringModifiers ?? "").debugDescription) hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
+        }
+        // IME 组合态，全部交给系统处理
+        if hasMarkedText() || isIMEComposing {
+            imeDebugLog("keyDown forwarded to super due to composing")
+            super.keyDown(with: event)
+            return
+        }
+
+        let isShift = event.modifierFlags.contains(.shift)
+
+        switch event.keyCode {
+        case 36: // Return
+            if !isShift {
+                didHandleReturnInKeyDown = true
+                imeDebugLog("keyDown return -> trigger onEnter")
+                onEnter?()
+                return
+            }
+        case 126: // Arrow Up
+            if onArrowUp?() == true { return }
+        case 125: // Arrow Down
+            if onArrowDown?() == true { return }
+        case 53: // Escape
+            if onEscape?() == true { return }
+        case 48: // Tab
+            if onTab?() == true { return }
+        default:
+            break
+        }
+        if event.keyCode == 36 {
+            imeDebugLog("keyDown return fell through to super")
+        }
+        super.keyDown(with: event)
     }
 
     override func doCommand(by selector: Selector) {
@@ -286,46 +348,6 @@ private class IMEAwareTextView: NSTextView {
         }
 
         super.doCommand(by: selector)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        // 每次按键先清理，避免旧 Return 状态污染后续事件。
-        didHandleReturnInKeyDown = false
-        if event.keyCode == 36 || hasMarkedText() || isIMEComposing {
-            imeDebugLog("keyDown keyCode=\(event.keyCode) chars=\((event.characters ?? "").debugDescription) charsIgnoringModifiers=\((event.charactersIgnoringModifiers ?? "").debugDescription) hasMarkedText=\(hasMarkedText()) isIMEComposing=\(isIMEComposing)")
-        }
-        // IME 组合态，全部交给系统处理
-        if hasMarkedText() || isIMEComposing {
-            imeDebugLog("keyDown forwarded to super due to composing")
-            super.keyDown(with: event)
-            return
-        }
-
-        let isShift = event.modifierFlags.contains(.shift)
-
-        switch event.keyCode {
-        case 36: // Return
-            if !isShift {
-                didHandleReturnInKeyDown = true
-                imeDebugLog("keyDown return -> trigger onEnter")
-                onEnter?()
-                return
-            }
-        case 126: // Arrow Up
-            if onArrowUp?() == true { return }
-        case 125: // Arrow Down
-            if onArrowDown?() == true { return }
-        case 53: // Escape
-            if onEscape?() == true { return }
-        case 48: // Tab
-            if onTab?() == true { return }
-        default:
-            break
-        }
-        if event.keyCode == 36 {
-            imeDebugLog("keyDown return fell through to super")
-        }
-        super.keyDown(with: event)
     }
 }
 #endif
@@ -432,6 +454,9 @@ struct ChatInputView: View {
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty
     }
+    #if os(macOS)
+    private let maxImageAttachmentCount = 9
+    #endif
 
     private var inputEditorBackgroundColor: Color {
         #if os(iOS)
@@ -926,6 +951,9 @@ struct ChatInputView: View {
                     onSelectAutocomplete?(item)
                     return true
                 },
+                onPaste: {
+                    handleMacOSPasteImages()
+                },
                 onInputContextChange: onInputContextChange
             )
             .frame(height: min(max(textContentHeight, 28), 80))
@@ -1173,6 +1201,131 @@ struct ChatInputView: View {
         }
         #endif
     }
+
+    #if os(macOS)
+    private func handleMacOSPasteImages() -> Bool {
+        let pasteboard = NSPasteboard.general
+        let imageDataList = collectClipboardImageData(from: pasteboard, maxCount: maxImageAttachmentCount)
+        guard !imageDataList.isEmpty else {
+            return false
+        }
+
+        let remaining = max(0, maxImageAttachmentCount - imageAttachments.count)
+        guard remaining > 0 else {
+            return true
+        }
+
+        var appendedCount = 0
+        for sourceData in imageDataList.prefix(remaining) {
+            guard let jpegData = encodeClipboardImageAsJPEG(sourceData) else { continue }
+            let suffix = UUID().uuidString.prefix(8)
+            let filename = "clipboard_\(suffix).jpg"
+            imageAttachments.append(
+                ImageAttachment(
+                    filename: filename,
+                    data: jpegData,
+                    mime: "image/jpeg"
+                )
+            )
+            appendedCount += 1
+        }
+
+        return appendedCount > 0
+    }
+
+    private func collectClipboardImageData(from pasteboard: NSPasteboard, maxCount: Int) -> [Data] {
+        var result: [Data] = []
+
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty {
+            for url in urls {
+                guard isSupportedClipboardImageURL(url) else { continue }
+                guard let data = try? Data(contentsOf: url) else { continue }
+                result.append(data)
+                if result.count >= maxCount {
+                    return result
+                }
+            }
+        }
+
+        if let items = pasteboard.pasteboardItems, !items.isEmpty {
+            let preferredTypes: [NSPasteboard.PasteboardType] = [
+                .png,
+                .tiff,
+                NSPasteboard.PasteboardType("public.jpeg"),
+                NSPasteboard.PasteboardType("public.heic"),
+                NSPasteboard.PasteboardType("public.heif"),
+                NSPasteboard.PasteboardType("com.compuserve.gif"),
+                NSPasteboard.PasteboardType("org.webmproject.webp")
+            ]
+
+            for item in items {
+                var appended = false
+                for type in preferredTypes {
+                    if let data = item.data(forType: type), !data.isEmpty {
+                        result.append(data)
+                        appended = true
+                        break
+                    }
+                }
+                if !appended,
+                   let fileURLString = item.string(forType: .fileURL),
+                   let url = URL(string: fileURLString),
+                   isSupportedClipboardImageURL(url),
+                   let data = try? Data(contentsOf: url) {
+                    result.append(data)
+                }
+                if result.count >= maxCount {
+                    return result
+                }
+            }
+        }
+
+        if result.isEmpty,
+           let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage] {
+            for image in images {
+                guard let tiffData = image.tiffRepresentation else { continue }
+                result.append(tiffData)
+                if result.count >= maxCount {
+                    return result
+                }
+            }
+        }
+
+        return result
+    }
+
+    private func isSupportedClipboardImageURL(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        let supported: Set<String> = [
+            "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp"
+        ]
+        return supported.contains(ext)
+    }
+
+    private func encodeClipboardImageAsJPEG(_ sourceData: Data) -> Data? {
+        if let bitmap = NSBitmapImageRep(data: sourceData),
+           let encoded = bitmap.representation(
+               using: .jpeg,
+               properties: [.compressionFactor: 0.85]
+           ) {
+            return encoded
+        }
+
+        guard let image = NSImage(data: sourceData),
+              let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let encoded = bitmap.representation(
+                  using: .jpeg,
+                  properties: [.compressionFactor: 0.85]
+              ) else {
+            return nil
+        }
+        return encoded
+    }
+    #endif
 
     /// 根据文件头推断图片 MIME 与扩展名
     private func detectImageFileInfo(data: Data) -> (mime: String, ext: String) {

@@ -261,12 +261,19 @@ struct AIProtocolModelInfo {
     let id: String
     let name: String
     let providerID: String
+    let supportsImageInput: Bool
 
     static func from(json: [String: Any]) -> AIProtocolModelInfo? {
         guard let id = json["id"] as? String else { return nil }
         let name = json["name"] as? String ?? id
         let providerID = json["provider_id"] as? String ?? ""
-        return AIProtocolModelInfo(id: id, name: name, providerID: providerID)
+        let supportsImageInput = json["supports_image_input"] as? Bool ?? false
+        return AIProtocolModelInfo(
+            id: id,
+            name: name,
+            providerID: providerID,
+            supportsImageInput: supportsImageInput
+        )
     }
 }
 

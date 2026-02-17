@@ -568,6 +568,7 @@ struct AIModelInfo: Identifiable {
     let id: String
     let name: String
     let providerID: String
+    let supportsImageInput: Bool
 }
 
 struct AIModelSelection: Equatable {

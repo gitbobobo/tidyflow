@@ -632,7 +632,12 @@ extension AppState {
                     id: p.id,
                     name: p.name,
                     models: p.models.map { m in
-                        AIModelInfo(id: m.id, name: m.name, providerID: m.providerID.isEmpty ? p.id : m.providerID)
+                        AIModelInfo(
+                            id: m.id,
+                            name: m.name,
+                            providerID: m.providerID.isEmpty ? p.id : m.providerID,
+                            supportsImageInput: m.supportsImageInput
+                        )
                     }
                 )
             }
