@@ -2,9 +2,9 @@
 import SwiftUI
 
 struct SessionListView: View {
-    @EnvironmentObject var appState: AppState
-    @Binding var sessions: [AISessionInfo]
+    let sessions: [AISessionInfo]
     @Binding var currentSessionId: String?
+    let currentTool: AIChatTool
     var onSelect: (AISessionInfo) -> Void
     var onDelete: (AISessionInfo) -> Void
     var onCreateNew: () -> Void
@@ -29,7 +29,7 @@ struct SessionListView: View {
             List(sessions) { session in
                 SessionRow(
                     session: session,
-                    isSelected: session.id == currentSessionId
+                    isSelected: session.id == currentSessionId && session.aiTool == currentTool
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -65,9 +65,19 @@ struct SessionRow: View {
                     .lineLimit(2)
                     .truncationMode(.tail)
 
-                Text(session.formattedDate)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    Image(session.aiTool.iconAssetName)
+                        .resizable()
+                        .renderingMode(.original)
+                        .scaledToFit()
+                        .frame(width: 12, height: 12)
+                    Text("·")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Text(session.formattedDate)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             Spacer(minLength: 4)
@@ -89,11 +99,12 @@ struct SessionRow: View {
 
 #Preview {
     SessionListView(
-        sessions: .constant([
-            AISessionInfo(projectName: "p", workspaceName: "w", id: "1", title: "Test Session 1", updatedAt: Int64(Date().timeIntervalSince1970 * 1000)),
-            AISessionInfo(projectName: "p", workspaceName: "w", id: "2", title: "Test Session 2", updatedAt: Int64(Date().timeIntervalSince1970 * 1000) - 3600000)
-        ]),
+        sessions: [
+            AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .opencode, id: "1", title: "Test Session 1", updatedAt: Int64(Date().timeIntervalSince1970 * 1000)),
+            AISessionInfo(projectName: "p", workspaceName: "w", aiTool: .codex, id: "2", title: "Test Session 2", updatedAt: Int64(Date().timeIntervalSince1970 * 1000) - 3600000)
+        ],
         currentSessionId: .constant("1"),
+        currentTool: .opencode,
         onSelect: { _ in },
         onDelete: { _ in },
         onCreateNew: {}

@@ -194,6 +194,7 @@ struct AIChatMessage: Identifiable {
 struct AISessionInfo: Identifiable {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let id: String
     let title: String
     let updatedAt: Int64

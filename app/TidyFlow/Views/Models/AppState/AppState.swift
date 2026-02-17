@@ -117,8 +117,12 @@ class AppState: ObservableObject {
         }
     }
     @Published var aiSessions: [AISessionInfo] = [] {
-        didSet { aiSessionsByTool[aiChatTool] = aiSessions }
+        didSet {
+            aiSessionsByTool[aiChatTool] = aiSessions
+            refreshMergedAISessions()
+        }
     }
+    @Published var aiMergedSessions: [AISessionInfo] = []
 
     // AI Provider / Model / Agent 状态（当前工具上下文）
     @Published var aiProviders: [AIProviderInfo] = [] {
@@ -317,6 +321,7 @@ class AppState: ObservableObject {
             aiSlashCommandsByTool[tool] = []
             aiToolBadges[tool] = AIToolBadgeState()
         }
+        refreshMergedAISessions()
     }
 
     func aiStore(for tool: AIChatTool) -> AIChatStore {
@@ -348,6 +353,8 @@ class AppState: ObservableObject {
         aiSessionsByTool[tool] = sessions
         if aiChatTool == tool {
             aiSessions = sessions
+        } else {
+            refreshMergedAISessions()
         }
     }
 
@@ -355,6 +362,12 @@ class AppState: ObservableObject {
         var sessions = aiSessionsByTool[tool] ?? []
         sessions.removeAll { $0.id == session.id }
         sessions.insert(session, at: 0)
+        setAISessions(sessions, for: tool)
+    }
+
+    func removeAISession(_ sessionId: String, for tool: AIChatTool) {
+        var sessions = aiSessionsByTool[tool] ?? []
+        sessions.removeAll { $0.id == sessionId }
         setAISessions(sessions, for: tool)
     }
 
@@ -432,6 +445,12 @@ class AppState: ObservableObject {
     /// 兼容旧调用：默认作用于当前工具
     func applyAgentDefaultModel(_ agent: AIAgentInfo?) {
         applyAgentDefaultModel(agent, for: aiChatTool)
+    }
+
+    private func refreshMergedAISessions() {
+        aiMergedSessions = AIChatTool.allCases
+            .flatMap { aiSessionsByTool[$0] ?? [] }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
 }

@@ -523,6 +523,7 @@ extension AppState {
             let session = AISessionInfo(
                 projectName: ev.projectName,
                 workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
                 id: ev.sessionId,
                 title: ev.title,
                 updatedAt: updatedAt
@@ -537,7 +538,14 @@ extension AppState {
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
 
             let sessions = ev.sessions.map {
-                AISessionInfo(projectName: $0.projectName, workspaceName: $0.workspaceName, id: $0.id, title: $0.title, updatedAt: $0.updatedAt)
+                AISessionInfo(
+                    projectName: $0.projectName,
+                    workspaceName: $0.workspaceName,
+                    aiTool: ev.aiTool,
+                    id: $0.id,
+                    title: $0.title,
+                    updatedAt: $0.updatedAt
+                )
             }
             self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: ev.aiTool)
         }
