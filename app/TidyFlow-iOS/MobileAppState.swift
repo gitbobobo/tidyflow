@@ -1733,6 +1733,7 @@ final class MobileAppState: ObservableObject {
             let session = AISessionInfo(
                 projectName: ev.projectName,
                 workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
                 id: ev.sessionId,
                 title: ev.title,
                 updatedAt: updatedAt
@@ -1767,6 +1768,7 @@ final class MobileAppState: ObservableObject {
                 AISessionInfo(
                     projectName: $0.projectName,
                     workspaceName: $0.workspaceName,
+                    aiTool: ev.aiTool,
                     id: $0.id,
                     title: $0.title,
                     updatedAt: $0.updatedAt
