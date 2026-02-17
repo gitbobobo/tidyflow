@@ -188,27 +188,42 @@ private struct MessageBubble: View {
                 ForEach(message.parts) { part in
                     switch part.kind {
                     case .text:
-                        if let text = part.text,
-                           let normalizedText = normalizedDisplayText(text, keepOriginalForUser: isUser) {
-                            if isUser {
+                        if let text = part.text {
+                            if isUser,
+                               let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: true) {
                                 Text(normalizedText)
                                     .textSelection(.enabled)
                                     .font(.system(size: 13))
                                     .foregroundColor(.white)
-                            } else {
+                            } else if message.isStreaming,
+                                      let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
                                 TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
                                     .textSelection(.enabled)
                                     .font(.system(size: 13))
                                     .foregroundColor(.primary)
+                            } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                                MarkdownTextView(
+                                    text: markdownText,
+                                    baseFontSize: 13,
+                                    textColor: .primary
+                                )
                             }
                         }
                     case .reasoning:
-                        if let text = part.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            TypewriterText(text: text, isStreaming: message.isStreaming)
+                        if let text = part.text, message.isStreaming,
+                           let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
+                            TypewriterText(text: normalizedText, isStreaming: true)
                                 .textSelection(.enabled)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 12))
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if let text = part.text,
+                                  let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                            MarkdownTextView(
+                                text: markdownText,
+                                baseFontSize: 12,
+                                textColor: .secondary
+                            )
                         }
                     case .tool:
                         ToolCardView(
@@ -249,16 +264,15 @@ private struct MessageBubble: View {
         return Color.secondary.opacity(0.12)
     }
 
-    /// 规范化文本显示，避免异常空白片段把消息间距撑开。
-    private func normalizedDisplayText(_ raw: String, keepOriginalForUser: Bool) -> String? {
+    /// 流式阶段的文本规范化：兼顾可读性与抖动控制。
+    private func normalizedStreamingDisplayText(_ raw: String, keepOriginalForUser: Bool) -> String? {
         // 用户消息尽量保留原始格式；仅过滤纯空白输入。
         if keepOriginalForUser {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : raw
         }
 
-        var text = raw.replacingOccurrences(of: "\r\n", with: "\n")
-        text = text.replacingOccurrences(of: "\r", with: "\n")
+        var text = normalizedLineBreaks(raw)
 
         // 去掉首尾纯空白行，避免流式分片带来的大段空行。
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -271,6 +285,22 @@ private struct MessageBubble: View {
             options: .regularExpression
         )
 
+        return text
+    }
+
+    /// 完成态 Markdown 规范化：仅统一换行，不压缩内部空行，避免破坏 Markdown 语义。
+    private func normalizedMarkdownDisplayText(_ raw: String, keepOriginalForUser: Bool) -> String? {
+        if keepOriginalForUser {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : raw
+        }
+        let text = normalizedLineBreaks(raw)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    private func normalizedLineBreaks(_ raw: String) -> String {
+        var text = raw.replacingOccurrences(of: "\r\n", with: "\n")
+        text = text.replacingOccurrences(of: "\r", with: "\n")
         return text
     }
 }

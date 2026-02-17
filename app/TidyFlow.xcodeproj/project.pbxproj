@@ -58,6 +58,7 @@
 		AIC00012 /* DiffParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00011 /* DiffParser.swift */; };
 		AIC00014 /* DiffInlineHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00013 /* DiffInlineHighlighter.swift */; };
 		AIC00016 /* UnifiedDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00015 /* UnifiedDiffView.swift */; };
+		AIC00018 /* MarkdownTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00017 /* MarkdownTextView.swift */; };
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
@@ -206,6 +207,7 @@
 		AIC00011 /* DiffParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/DiffParser.swift"; sourceTree = "<group>"; };
 		AIC00013 /* DiffInlineHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/DiffInlineHighlighter.swift"; sourceTree = "<group>"; };
 		AIC00015 /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/UnifiedDiffView.swift"; sourceTree = "<group>"; };
+		AIC00017 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MarkdownTextView.swift"; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
@@ -326,6 +328,7 @@
 				B3A00014 /* TabContentHostView.swift */,
 				3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */,
 				AIC00001 /* MessageListView.swift */,
+				AIC00017 /* MarkdownTextView.swift */,
 				AIC00005 /* SessionListView.swift */,
 				AIC00006 /* ChatInputView.swift */,
 				AIC00009 /* ToolCardView.swift */,
@@ -704,6 +707,7 @@
 				B3A00004 /* TabContentHostView.swift in Sources */,
 				AF3CFDB4A7BE4CDD8CCE5640 /* AITabView.swift in Sources */,
 				AIC00002 /* MessageListView.swift in Sources */,
+				AIC00018 /* MarkdownTextView.swift in Sources */,
 				AIC00004 /* AIChatModels.swift in Sources */,
 				AIC00007 /* SessionListView.swift in Sources */,
 				AIC00008 /* ChatInputView.swift in Sources */,
