@@ -6,7 +6,8 @@ use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 use crate::ai::{
-    AiAgent, AiEvent, CodexAppServerAgent, CodexAppServerManager, OpenCodeAgent, OpenCodeManager,
+    AiAgent, AiEvent, CodexAppServerAgent, CodexAppServerManager, CopilotAcpAgent, OpenCodeAgent,
+    OpenCodeManager,
 };
 use crate::server::context::SharedAppState;
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -43,6 +44,16 @@ fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             let manager = CodexAppServerManager::new(std::env::temp_dir());
             Ok(Arc::new(CodexAppServerAgent::new(Arc::new(manager))))
         }
+        "copilot" => {
+            let manager = CodexAppServerManager::new_with_command_and_protocol(
+                std::env::temp_dir(),
+                "copilot",
+                vec!["--acp".to_string()],
+                "Copilot ACP server",
+                Some(1),
+            );
+            Ok(Arc::new(CopilotAcpAgent::new(Arc::new(manager))))
+        }
         other => Err(format!("Unsupported AI tool: {}", other)),
     }
 }
@@ -50,7 +61,7 @@ fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
 fn normalize_ai_tool(tool: &str) -> Result<String, String> {
     let normalized = tool.trim().to_lowercase();
     match normalized.as_str() {
-        "opencode" | "codex" => Ok(normalized),
+        "opencode" | "codex" | "copilot" => Ok(normalized),
         _ => Err(format!("Unsupported AI tool: {}", tool)),
     }
 }
@@ -379,10 +390,7 @@ async fn try_handle_ai_chat_send(
         let dir_key = tool_directory_key(&ai_tool, &directory);
         ai.active_streams.insert(abort_key.clone(), abort_tx);
         ai.directory_last_used_ms.insert(dir_key.clone(), now_ms());
-        let active = ai
-            .directory_active_streams
-            .entry(dir_key)
-            .or_insert(0);
+        let active = ai.directory_active_streams.entry(dir_key).or_insert(0);
         *active += 1;
     }
 
@@ -740,10 +748,7 @@ async fn try_handle_ai_chat_command(
         let dir_key = tool_directory_key(&ai_tool, &directory);
         ai.active_streams.insert(abort_key.clone(), abort_tx);
         ai.directory_last_used_ms.insert(dir_key.clone(), now_ms());
-        let active = ai
-            .directory_active_streams
-            .entry(dir_key)
-            .or_insert(0);
+        let active = ai.directory_active_streams.entry(dir_key).or_insert(0);
         *active += 1;
     }
 
