@@ -11,6 +11,7 @@ enum AIChatRole: String {
 enum AIChatTool: String, CaseIterable, Identifiable {
     case opencode
     case codex
+    case copilot
 
     var id: String { rawValue }
 
@@ -18,7 +19,17 @@ enum AIChatTool: String, CaseIterable, Identifiable {
         switch self {
         case .opencode: return "OpenCode"
         case .codex: return "Codex"
+        case .copilot: return "Copilot"
         }
+    }
+}
+
+struct AIToolBadgeState {
+    var hasRunning: Bool = false
+    var hasUnread: Bool = false
+
+    var showDot: Bool {
+        hasRunning || hasUnread
     }
 }
 

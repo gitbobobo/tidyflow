@@ -37,56 +37,17 @@ struct AITabView: View {
     }
 
     var body: some View {
-        HSplitView {
+        Group {
             if showSessionList {
-                SessionListView(
-                    sessions: Binding(
-                        get: { appState.aiSessions },
-                        set: { appState.aiSessions = $0 }
-                    ),
-                    currentSessionId: Binding(
-                        get: { aiChatStore.currentSessionId },
-                        set: { aiChatStore.setCurrentSessionId($0) }
-                    ),
-                    onSelect: { session in
-                        loadSession(session)
-                    },
-                    onDelete: { session in
-                        deleteSession(session)
-                    },
-                    onCreateNew: {
-                        createNewSession()
-                    }
-                )
-                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
+                HSplitView {
+                    sessionListPane
+                    mainPane
+                }
+            } else {
+                mainPane
             }
-
-            VStack(spacing: 0) {
-                toolbar
-                messageArea
-                    .overlay {
-                        // 弹出层可见时，点击消息区域关闭
-                        if autocomplete.isVisible {
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .onTapGesture { autocomplete.reset() }
-                        }
-                    }
-                    .overlay(alignment: .bottomLeading) {
-                        // 自动补全弹出层：底边对齐消息区域底部（即输入区域顶部）
-                        if autocomplete.isVisible {
-                            AutocompletePopupView(autocomplete: autocomplete) { item in
-                                handleAutocompleteSelect(item)
-                            }
-                            .frame(width: 320)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .offset(x: 12, y: -6)
-                        }
-                    }
-                inputArea
-            }
-            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         #if os(macOS)
         .background(Color(NSColor.windowBackgroundColor))
         #endif
@@ -134,7 +95,11 @@ struct AITabView: View {
                 appState.aiChatTool = oldTool
                 return
             }
-            resetAIContext()
+            pendingSendRequest = nil
+            aiChatStore.setAbortPendingSessionId(nil)
+            previousSnapshotKey = currentSnapshotKey
+            loadSessions()
+            reloadCurrentSessionIfNeeded()
         }
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, newMessageId in
             guard newMessageId != nil else { return }
@@ -171,11 +136,58 @@ struct AITabView: View {
     )? = nil
 
     private var canSwitchAITool: Bool {
-        aiChatStore.currentSessionId == nil &&
-        pendingSendRequest == nil &&
-        aiChatStore.abortPendingSessionId == nil &&
-        !aiChatStore.isStreaming &&
-        !aiChatStore.awaitingUserEcho
+        pendingSendRequest == nil
+    }
+
+    private var sessionListPane: some View {
+        SessionListView(
+            sessions: Binding(
+                get: { appState.aiSessions },
+                set: { appState.aiSessions = $0 }
+            ),
+            currentSessionId: Binding(
+                get: { aiChatStore.currentSessionId },
+                set: { aiChatStore.setCurrentSessionId($0) }
+            ),
+            onSelect: { session in
+                loadSession(session)
+            },
+            onDelete: { session in
+                deleteSession(session)
+            },
+            onCreateNew: {
+                createNewSession()
+            }
+        )
+        .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
+    }
+
+    private var mainPane: some View {
+        VStack(spacing: 0) {
+            toolbar
+            messageArea
+                .overlay {
+                    // 弹出层可见时，点击消息区域关闭
+                    if autocomplete.isVisible {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { autocomplete.reset() }
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    // 自动补全弹出层：底边对齐消息区域底部（即输入区域顶部）
+                    if autocomplete.isVisible {
+                        AutocompletePopupView(autocomplete: autocomplete) { item in
+                            handleAutocompleteSelect(item)
+                        }
+                        .frame(width: 320)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .offset(x: 12, y: -6)
+                    }
+                }
+            inputArea
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var toolbar: some View {
@@ -196,7 +208,12 @@ struct AITabView: View {
 
             Picker("Agent Tool", selection: $appState.aiChatTool) {
                 ForEach(AIChatTool.allCases) { tool in
-                    Text(tool.displayName).tag(tool)
+                    Text(
+                        appState.shouldShowAIBadge(for: tool)
+                            ? "\(tool.displayName) •"
+                            : tool.displayName
+                    )
+                    .tag(tool)
                 }
             }
             .pickerStyle(.segmented)
@@ -214,7 +231,7 @@ struct AITabView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(height: 44)
         .background(controlBackgroundColor)
         .overlay(
             Rectangle()

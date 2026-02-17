@@ -515,10 +515,10 @@ extension AppState {
             guard let self else { return }
             // 仅处理当前选中的 workspace
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
-            self.aiChatStore.setCurrentSessionId(ev.sessionId)
+            let store = self.aiStore(for: ev.aiTool)
+            store.setCurrentSessionId(ev.sessionId)
             let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
             let session = AISessionInfo(
                 projectName: ev.projectName,
@@ -527,28 +527,27 @@ extension AppState {
                 title: ev.title,
                 updatedAt: updatedAt
             )
-            self.aiSessions.removeAll { $0.id == session.id }
-            self.aiSessions.insert(session, at: 0)
+            self.upsertAISession(session, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAISessionList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
             let sessions = ev.sessions.map {
                 AISessionInfo(projectName: $0.projectName, workspaceName: $0.workspaceName, id: $0.id, title: $0.title, updatedAt: $0.updatedAt)
             }
-            self.aiSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
+            self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: ev.aiTool)
         }
 
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
 
             let mapped: [AIChatMessage] = ev.messages.compactMap { m in
                 let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
@@ -572,107 +571,118 @@ extension AppState {
                 }
                 return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
             }
-            self.aiChatStore.replaceMessages(mapped)
+            store.replaceMessages(mapped)
         }
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
-            if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
+            if store.isAbortPending(for: ev.sessionId) { return }
 
             TFLog.app.debug(
                 "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
             )
-            self.aiChatStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+            store.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+            self.setBadgeRunning(true, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAIChatPartUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
-            if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
+            if store.isAbortPending(for: ev.sessionId) { return }
 
             TFLog.app.debug(
                 "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
             )
-            self.aiChatStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+            store.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+            self.setBadgeRunning(true, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAIChatPartDelta = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
-            if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
+            if store.isAbortPending(for: ev.sessionId) { return }
 
             TFLog.app.debug(
                 "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
             )
-            self.aiChatStore.enqueuePartDelta(
+            store.enqueuePartDelta(
                 messageId: ev.messageId,
                 partId: ev.partId,
                 partType: ev.partType,
                 field: ev.field,
                 delta: ev.delta
             )
+            self.setBadgeRunning(true, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAIChatDone = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
             TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
-            self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
+            store.handleChatDone(sessionId: ev.sessionId)
+            self.setBadgeRunning(false, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAIChatError = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
             TFLog.app.error(
                 "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
             )
-            self.aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
+            store.handleChatError(sessionId: ev.sessionId, error: ev.error)
+            self.setBadgeRunning(false, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAIQuestionAsked = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
-            self.aiChatStore.upsertQuestionRequest(ev.request)
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
+            store.upsertQuestionRequest(ev.request)
+            self.setBadgeRunning(true, for: ev.aiTool)
+            self.markUnreadBadge(for: ev.aiTool)
         }
 
         wsClient.onAIQuestionCleared = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
-            self.aiChatStore.clearQuestionRequest(requestId: ev.requestId)
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let store = self.aiStore(for: ev.aiTool)
+            guard store.currentSessionId == ev.sessionId else { return }
+            store.clearQuestionRequest(requestId: ev.requestId)
         }
 
         wsClient.onAIProviderList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
-            self.aiProviders = ev.providers.map { p in
+            let providers = ev.providers.map { p in
                 AIProviderInfo(
                     id: p.id,
                     name: p.name,
@@ -686,15 +696,15 @@ extension AppState {
                     }
                 )
             }
+            self.setAIProviders(providers, for: ev.aiTool)
         }
 
         wsClient.onAIAgentList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
-            self.aiAgents = ev.agents.map { a in
+            let agents = ev.agents.map { a in
                 AIAgentInfo(
                     name: a.name,
                     description: a.description,
@@ -704,23 +714,24 @@ extension AppState {
                     defaultModelID: a.defaultModelID
                 )
             }
+            self.setAIAgents(agents, for: ev.aiTool)
             // 默认选中第一个 primary/all agent，并自动选择其默认模型
-            if self.aiSelectedAgent == nil {
-                let firstAgent = self.aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" })
-                    ?? self.aiAgents.first
-                self.aiSelectedAgent = firstAgent?.name
-                self.applyAgentDefaultModel(firstAgent)
+            if self.selectedAgent(for: ev.aiTool) == nil {
+                let firstAgent = agents.first(where: { $0.mode == "primary" || $0.mode == "all" })
+                    ?? agents.first
+                self.setAISelectedAgent(firstAgent?.name, for: ev.aiTool)
+                self.applyAgentDefaultModel(firstAgent, for: ev.aiTool)
             }
         }
 
         wsClient.onAISlashCommands = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            self.aiSlashCommands = ev.commands.map { cmd in
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+            let commands = ev.commands.map { cmd in
                 AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
             }
+            self.setAISlashCommands(commands, for: ev.aiTool)
         }
 
         wsClient.onError = { [weak self] errorMsg in

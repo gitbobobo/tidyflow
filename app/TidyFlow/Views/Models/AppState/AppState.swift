@@ -108,17 +108,43 @@ class AppState: ObservableObject {
     var aiCommitContinuations: [String: (AICommitResult) -> Void] = [:]
     var aiMergeContinuations: [String: (AIMergeResult) -> Void] = [:]
 
-    // AI Chat 状态（独立状态域，隔离高频流式更新）
-    let aiChatStore = AIChatStore()
-    @Published var aiChatTool: AIChatTool = .opencode
-    @Published var aiSessions: [AISessionInfo] = []
+    // AI Chat 状态（按 ai_tool 分桶，当前工具上下文映射到这些兼容字段）
+    @Published var aiChatStore: AIChatStore = AIChatStore()
+    @Published var aiChatTool: AIChatTool = .opencode {
+        didSet {
+            guard oldValue != aiChatTool else { return }
+            switchAIContext(to: aiChatTool)
+        }
+    }
+    @Published var aiSessions: [AISessionInfo] = [] {
+        didSet { aiSessionsByTool[aiChatTool] = aiSessions }
+    }
 
-    // AI Provider / Model / Agent 状态
-    @Published var aiProviders: [AIProviderInfo] = []
-    @Published var aiSelectedModel: AIModelSelection?
-    @Published var aiAgents: [AIAgentInfo] = []
-    @Published var aiSelectedAgent: String?
-    @Published var aiSlashCommands: [AISlashCommandInfo] = []
+    // AI Provider / Model / Agent 状态（当前工具上下文）
+    @Published var aiProviders: [AIProviderInfo] = [] {
+        didSet { aiProvidersByTool[aiChatTool] = aiProviders }
+    }
+    @Published var aiSelectedModel: AIModelSelection? {
+        didSet { aiSelectedModelByTool[aiChatTool] = aiSelectedModel }
+    }
+    @Published var aiAgents: [AIAgentInfo] = [] {
+        didSet { aiAgentsByTool[aiChatTool] = aiAgents }
+    }
+    @Published var aiSelectedAgent: String? {
+        didSet { aiSelectedAgentByTool[aiChatTool] = aiSelectedAgent }
+    }
+    @Published var aiSlashCommands: [AISlashCommandInfo] = [] {
+        didSet { aiSlashCommandsByTool[aiChatTool] = aiSlashCommands }
+    }
+    @Published var aiToolBadges: [AIChatTool: AIToolBadgeState] = [:]
+
+    private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
+    private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
+    private var aiProvidersByTool: [AIChatTool: [AIProviderInfo]] = [:]
+    private var aiSelectedModelByTool: [AIChatTool: AIModelSelection?] = [:]
+    private var aiAgentsByTool: [AIChatTool: [AIAgentInfo]] = [:]
+    private var aiSelectedAgentByTool: [AIChatTool: String?] = [:]
+    private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
@@ -245,6 +271,8 @@ class AppState: ObservableObject {
         self.projects = []
         self.selectedProjectId = nil
         self.selectedWorkspaceKey = nil
+        self.configureAIToolBuckets()
+        self.switchAIContext(to: aiChatTool)
 
         setupCommands()
 
@@ -278,13 +306,132 @@ class AppState: ObservableObject {
         startCoreIfNeeded()
     }
 
+    private func configureAIToolBuckets() {
+        for tool in AIChatTool.allCases {
+            aiChatStoresByTool[tool] = AIChatStore()
+            aiSessionsByTool[tool] = []
+            aiProvidersByTool[tool] = []
+            aiSelectedModelByTool[tool] = nil
+            aiAgentsByTool[tool] = []
+            aiSelectedAgentByTool[tool] = nil
+            aiSlashCommandsByTool[tool] = []
+            aiToolBadges[tool] = AIToolBadgeState()
+        }
+    }
+
+    func aiStore(for tool: AIChatTool) -> AIChatStore {
+        if let store = aiChatStoresByTool[tool] {
+            return store
+        }
+        let store = AIChatStore()
+        aiChatStoresByTool[tool] = store
+        return store
+    }
+
+    func switchAIContext(to tool: AIChatTool) {
+        let store = aiStore(for: tool)
+        if aiChatStore !== store {
+            aiChatStore = store
+        }
+
+        aiSessions = aiSessionsByTool[tool] ?? []
+        aiProviders = aiProvidersByTool[tool] ?? []
+        aiSelectedModel = aiSelectedModelByTool[tool] ?? nil
+        aiAgents = aiAgentsByTool[tool] ?? []
+        aiSelectedAgent = aiSelectedAgentByTool[tool] ?? nil
+        aiSlashCommands = aiSlashCommandsByTool[tool] ?? []
+
+        clearUnreadBadge(for: tool)
+    }
+
+    func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
+        aiSessionsByTool[tool] = sessions
+        if aiChatTool == tool {
+            aiSessions = sessions
+        }
+    }
+
+    func upsertAISession(_ session: AISessionInfo, for tool: AIChatTool) {
+        var sessions = aiSessionsByTool[tool] ?? []
+        sessions.removeAll { $0.id == session.id }
+        sessions.insert(session, at: 0)
+        setAISessions(sessions, for: tool)
+    }
+
+    func setAIProviders(_ providers: [AIProviderInfo], for tool: AIChatTool) {
+        aiProvidersByTool[tool] = providers
+        if aiChatTool == tool {
+            aiProviders = providers
+        }
+    }
+
+    func setAIAgents(_ agents: [AIAgentInfo], for tool: AIChatTool) {
+        aiAgentsByTool[tool] = agents
+        if aiChatTool == tool {
+            aiAgents = agents
+        }
+    }
+
+    func setAISelectedAgent(_ name: String?, for tool: AIChatTool) {
+        aiSelectedAgentByTool[tool] = name
+        if aiChatTool == tool {
+            aiSelectedAgent = name
+        }
+    }
+
+    func selectedAgent(for tool: AIChatTool) -> String? {
+        aiSelectedAgentByTool[tool] ?? nil
+    }
+
+    func setAISelectedModel(_ model: AIModelSelection?, for tool: AIChatTool) {
+        aiSelectedModelByTool[tool] = model
+        if aiChatTool == tool {
+            aiSelectedModel = model
+        }
+    }
+
+    func setAISlashCommands(_ commands: [AISlashCommandInfo], for tool: AIChatTool) {
+        aiSlashCommandsByTool[tool] = commands
+        if aiChatTool == tool {
+            aiSlashCommands = commands
+        }
+    }
+
+    func setBadgeRunning(_ running: Bool, for tool: AIChatTool) {
+        var badge = aiToolBadges[tool] ?? AIToolBadgeState()
+        badge.hasRunning = running
+        aiToolBadges[tool] = badge
+    }
+
+    func markUnreadBadge(for tool: AIChatTool) {
+        guard tool != aiChatTool else { return }
+        var badge = aiToolBadges[tool] ?? AIToolBadgeState()
+        badge.hasUnread = true
+        aiToolBadges[tool] = badge
+    }
+
+    func clearUnreadBadge(for tool: AIChatTool) {
+        var badge = aiToolBadges[tool] ?? AIToolBadgeState()
+        badge.hasUnread = false
+        aiToolBadges[tool] = badge
+    }
+
+    func shouldShowAIBadge(for tool: AIChatTool) -> Bool {
+        (aiToolBadges[tool] ?? AIToolBadgeState()).showDot
+    }
+
     /// 根据 agent 的默认模型自动设置 aiSelectedModel
-    func applyAgentDefaultModel(_ agent: AIAgentInfo?) {
+    func applyAgentDefaultModel(_ agent: AIAgentInfo?, for tool: AIChatTool) {
         guard let agent,
               let providerID = agent.defaultProviderID,
               let modelID = agent.defaultModelID,
               !providerID.isEmpty, !modelID.isEmpty else { return }
-        aiSelectedModel = AIModelSelection(providerID: providerID, modelID: modelID)
+        setAISelectedModel(AIModelSelection(providerID: providerID, modelID: modelID), for: tool)
+    }
+
+    /// 兼容旧调用：默认作用于当前工具
+    func applyAgentDefaultModel(_ agent: AIAgentInfo?) {
+        applyAgentDefaultModel(agent, for: aiChatTool)
     }
 
 }
