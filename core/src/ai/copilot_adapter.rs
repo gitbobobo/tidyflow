@@ -44,17 +44,8 @@ impl CopilotAcpAgent {
             }
         }
 
-        let sessions = self
-            .list_sessions_for_directory(directory, 2)
-            .await
-            .unwrap_or_default();
-        if let Some(session) = sessions.first() {
-            if let Ok(meta) = self.client.session_load(directory, &session.id).await {
-                self.cache_metadata(directory, meta.clone()).await;
-                return meta;
-            }
-        }
-
+        // 不在“仅查询元数据”路径主动 session_load 历史会话，避免把会话置为 loaded
+        // 后导致后续拉历史详情时触发 “Session ... is already loaded”。
         CopilotSessionMetadata::default()
     }
 
@@ -158,6 +149,13 @@ impl CopilotAcpAgent {
         normalized.contains("session") && normalized.contains("not found")
     }
 
+    fn is_session_already_loaded(err: &str) -> bool {
+        let normalized = err.to_lowercase();
+        normalized.contains("session")
+            && normalized.contains("already")
+            && normalized.contains("loaded")
+    }
+
     fn extract_update(event: &Value) -> Option<(String, String, String)> {
         let session_update = event
             .get("sessionUpdate")
@@ -234,8 +232,20 @@ impl CopilotAcpAgent {
         loop {
             tokio::select! {
                 load_result = &mut load_fut => {
-                    let metadata = load_result?;
-                    return Ok((messages, metadata));
+                    match load_result {
+                        Ok(metadata) => return Ok((messages, metadata)),
+                        Err(err) if Self::is_session_already_loaded(&err) => {
+                            let cached = self
+                                .metadata_by_directory
+                                .lock()
+                                .await
+                                .get(&Self::normalize_directory(directory))
+                                .cloned()
+                                .unwrap_or_default();
+                            return Ok((messages, cached));
+                        }
+                        Err(err) => return Err(err),
+                    }
                 }
                 recv = notifications.recv() => {
                     let Ok(notification) = recv else { continue };
