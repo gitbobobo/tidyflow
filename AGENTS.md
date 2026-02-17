@@ -87,6 +87,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 聊天长列表优化时，避免在 `onPreferenceChange` 中按滚动帧持续写入 `@State`（如锚点坐标）；应只在“是否接近底部”等阈值变化时更新，并为 Markdown 解析结果加缓存，以降低历史消息首轮滑动卡顿。
 - AI 聊天的高频流式状态应下沉到独立状态域（如 `AIChatStore`），并在 WS 增量到 UI 的链路做约 30fps 批量提交；避免把 token 级更新直接写入全局 `AppState` 导致整页重绘。
 - AI 图片附件链路应采用“客户端传二进制原图（MessagePack bin）+ 服务端统一探测格式并按需转码（如 HEIC→JPEG）”；不要在客户端先转 base64 或各端各自转码，避免格式误判与行为不一致。
+- AI 图片“可上传但不可读”排障时，应同时做两件事：前端基于模型能力（如 `capabilities.input.image`）发送前拦截并提示，后端记录 `image_parts` 的数量/mime/字节数日志，用于快速区分“上传链路正常但模型/代理不支持”与“附件传输失败”。
 
 ## Build Commands
 
