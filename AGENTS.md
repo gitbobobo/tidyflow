@@ -66,7 +66,9 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 终端 PTY 的 `cols/rows` 来自客户端上报，服务端必须做范围 clamp 并记录告警日志；异常尺寸（过大/为 0）可能触发远端 TUI/CLI 进程按屏幕大小分配缓存，从而 OOM 被系统 kill。
 - AI 聊天的 `pendingSendMessage`（等待会话创建后发送）等跨异步边界的临时状态，必须在工作空间切换时清除，并携带发起时的 `projectName/workspaceName` 做一致性校验；否则快照恢复触发 `aiCurrentSessionId` 变更时会把旧消息误发到新工作空间。切换回旧工作空间时应重新拉取当前会话消息，弥补切走期间被 guard 丢弃的流式增量。
 - AI 聊天支持多代理工具（如 OpenCode/Codex）时，协议请求与事件必须强制携带 `ai_tool`，并在客户端按 `project/workspace/ai_tool` 维度做事件过滤与快照分桶；否则切换工具后会话、流式增量和模型/Agent 列表会串台。
+- 多 AI 工具“后台保活”场景下，WebSocket 事件不能只按当前选中工具过滤；应按 `ai_tool` 路由到对应状态桶，当前工具仅负责前台渲染，并额外维护未读/进行中徽标以支持无损切换查看。
 - 对接 Codex app-server 时，不要在首条消息前对新建线程强制调用 `thread/resume`：新线程 rollout 文件会延迟到首条用户消息后才落盘；发送链路应优先 `turn/start`，仅在 `thread not found` 时再 `thread/resume` 后重试。
+- 对接 GitHub Copilot ACP 时，不能复用 Codex 的 `thread/*`/`turn/*` 协议；需按 ACP 使用 `initialize(protocolVersion)` + `session/new|load|list|prompt`，并将 `session/update` 事件映射到统一聊天增量模型。
 - 对接 Codex app-server 的“Agent”选择应按会话 `mode` 语义处理：优先走远端动态获取，展示值与发送值保持一致（如远端返回 `default` 就展示/发送 `default`）。
 - Codex `getUserAgent` 返回的是客户端 UA 字符串而非会话 mode；mode 列表应使用 `mode/list`（失败时再做最小本地兜底）。
 - AI 聊天消息需要支持 Markdown 时，assistant 内容应采用“流式阶段纯文本增量渲染、`done` 后一次性转 Markdown”策略，避免代码块/列表在增量过程中频繁重排造成抖动。
@@ -88,6 +90,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 工具卡片若已有稳定结构化语义（如 todo 列表），应优先渲染“语义化视图（任务+状态）”而非直接展示 `input/output/metadata` 原始 JSON，避免信息噪音淹没关键信息。
 - SwiftUI 渲染统一 diff 时，若需要“行级背景准确对齐 + 文本可跨行选择且不选中行号”，应将行号列与内容列拆分，并让内容列禁换行（`fixedSize(horizontal: true, vertical: true)` + 横向滚动）；否则长行软换行会导致背景与行号错位。
 - 聊天页含可折叠侧栏时，应由外层容器先定义总宽度约束（主区可压缩、侧栏宽度按可用空间夹取）；内部控件避免滥用 `fixedSize`，防止长文案反向撑宽窗口。
+- macOS 侧边栏可折叠页面若使用 `HSplitView`，在“侧栏隐藏”场景应切换为非 split 的单列布局，并给顶部工具栏显式固定高度，避免出现异常留白/工具栏高度被拉伸。
 - 聊天长列表优化时，避免在 `onPreferenceChange` 中按滚动帧持续写入 `@State`（如锚点坐标）；应只在“是否接近底部”等阈值变化时更新，并为 Markdown 解析结果加缓存，以降低历史消息首轮滑动卡顿。
 - AI 聊天的高频流式状态应下沉到独立状态域（如 `AIChatStore`），并在 WS 增量到 UI 的链路做约 30fps 批量提交；避免把 token 级更新直接写入全局 `AppState` 导致整页重绘。
 - AI 图片附件链路应采用“客户端传二进制原图（MessagePack bin）+ 服务端统一探测格式并按需转码（如 HEIC→JPEG）”；不要在客户端先转 base64 或各端各自转码，避免格式误判与行为不一致。
