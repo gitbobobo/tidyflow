@@ -62,6 +62,12 @@ struct WsAuthQuery {
     token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClientMessageTypeProbe {
+    #[serde(rename = "type")]
+    message_type: Option<String>,
+}
+
 #[derive(Debug, Default)]
 struct PairingRegistry {
     /// key: 6 位配对码
@@ -361,6 +367,13 @@ async fn ws_handler(
             )
         })
         .into_response()
+}
+
+fn probe_client_message_type(data: &[u8]) -> String {
+    rmp_serde::from_slice::<ClientMessageTypeProbe>(data)
+        .ok()
+        .and_then(|probe| probe.message_type)
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn is_request_from_loopback(addr: SocketAddr) -> bool {
@@ -946,23 +959,33 @@ async fn handle_socket(
                 match msg_result {
                     Some(Ok(Message::Binary(data))) => {
                         trace!("Received binary client message: {} bytes", data.len());
+                        let client_message_type = probe_client_message_type(&data);
                         if let Err(e) = handle_client_message(
                             &data,
                             &mut socket,
                             &handler_ctx,
                             &watcher,
                         ).await {
-                            warn!("Error handling client message: {}", e);
+                            warn!(
+                                "Error handling client message: conn_id={}, message_type={}, error={}",
+                                conn_meta.conn_id, client_message_type, e
+                            );
                             if let Err(send_err) = send_message(&mut socket, &ServerMessage::Error {
                                 code: "message_error".to_string(),
                                 message: e.clone(),
                             }).await {
-                                error!("Failed to send error message: {}", send_err);
+                                error!(
+                                    "Failed to send error message: conn_id={}, message_type={}, error={}",
+                                    conn_meta.conn_id, client_message_type, send_err
+                                );
                             }
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
-                        info!("WebSocket connection closed by client");
+                        info!(
+                            "WebSocket connection closed by client (conn_id={})",
+                            conn_meta.conn_id
+                        );
                         break;
                     }
                     Some(Ok(Message::Text(_))) => {
@@ -972,11 +995,14 @@ async fn handle_socket(
                         // Handled automatically by axum
                     }
                     Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
+                        error!("WebSocket error: conn_id={}, error={}", conn_meta.conn_id, e);
                         break;
                     }
                     None => {
-                        info!("WebSocket connection closed (recv returned None)");
+                        info!(
+                            "WebSocket connection closed (recv returned None, conn_id={})",
+                            conn_meta.conn_id
+                        );
                         break;
                     }
                 }

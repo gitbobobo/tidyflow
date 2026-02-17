@@ -469,13 +469,24 @@ struct AITabView: View {
     }
 
     private func loadSession(_ session: AISessionInfo) {
+        TFLog.app.info(
+            "AI loadSession: target_tool=\(session.aiTool.rawValue, privacy: .public), current_tool=\(appState.aiChatTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public), can_switch=\(canSwitchAITool)"
+        )
         if session.aiTool != appState.aiChatTool {
-            guard canSwitchAITool else { return }
+            guard canSwitchAITool else {
+                TFLog.app.warning(
+                    "AI loadSession skipped: cannot switch tool, target_tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+                )
+                return
+            }
         }
 
         let targetStore = appState.aiStore(for: session.aiTool)
         targetStore.setCurrentSessionId(session.id)
         targetStore.clearMessages()
+        TFLog.app.info(
+            "AI loadSession: set current session and cleared messages, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+        )
 
         if session.aiTool != appState.aiChatTool {
             // 先请求目标会话详情，再切换工具；避免首击空白。
@@ -487,6 +498,9 @@ struct AITabView: View {
                 limit: 200
             )
             skipNextAutoReload = (session.aiTool, session.id)
+            TFLog.app.info(
+                "AI loadSession: requested messages before switching tool, target_tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+            )
             appState.aiChatTool = session.aiTool
             return
         }
@@ -497,6 +511,9 @@ struct AITabView: View {
             aiTool: session.aiTool,
             sessionId: session.id,
             limit: 200
+        )
+        TFLog.app.info(
+            "AI loadSession: requested messages, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
         )
     }
 

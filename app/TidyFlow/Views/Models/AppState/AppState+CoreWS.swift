@@ -277,6 +277,7 @@ extension AppState {
                 self?.reconnectAttempt = 0  // 重置自动重连计数
                 self?.wsClient.requestListProjects()
                 self?.wsClient.requestGetClientSettings()
+                self?.reloadAISessionDataAfterReconnect()
                 // 重连后尝试附着已有终端会话
                 self?.requestTerminalReattach()
                 if let self, let ws = self.selectedWorkspaceKey {
@@ -553,9 +554,23 @@ extension AppState {
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName else {
+                TFLog.app.debug(
+                    "AI session_messages ignored: workspace mismatch, event_project=\(ev.projectName, privacy: .public), event_workspace=\(ev.workspaceName, privacy: .public), selected_project=\(self.selectedProjectName, privacy: .public), selected_workspace=\((self.selectedWorkspaceKey ?? ""), privacy: .public)"
+                )
+                return
+            }
             let store = self.aiStore(for: ev.aiTool)
-            guard store.currentSessionId == ev.sessionId else { return }
+            let currentSessionId = store.currentSessionId ?? ""
+            guard currentSessionId == ev.sessionId else {
+                TFLog.app.warning(
+                    "AI session_messages ignored: session mismatch, ai_tool=\(ev.aiTool.rawValue, privacy: .public), event_session_id=\(ev.sessionId, privacy: .public), current_session_id=\(currentSessionId, privacy: .public), messages_count=\(ev.messages.count)"
+                )
+                return
+            }
+            TFLog.app.info(
+                "AI session_messages accepted: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), messages_count=\(ev.messages.count)"
+            )
 
             let mapped: [AIChatMessage] = ev.messages.compactMap { m in
                 let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
@@ -580,6 +595,9 @@ extension AppState {
                 return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
             }
             store.replaceMessages(mapped)
+            TFLog.app.info(
+                "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count)"
+            )
         }
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
@@ -841,6 +859,38 @@ extension AppState {
 
     private static let maxReconnectAttempts = 5
     private static let reconnectDelays: [TimeInterval] = [0.5, 1.0, 2.0, 4.0, 8.0]
+
+    private func reloadAISessionDataAfterReconnect() {
+        guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else {
+            TFLog.app.debug("AI reconnect reload skipped: workspace not selected")
+            return
+        }
+
+        // 重连后补拉各工具会话列表，避免列表/详情状态滞后。
+        for tool in AIChatTool.allCases {
+            wsClient.requestAISessionList(
+                projectName: selectedProjectName,
+                workspaceName: workspace,
+                aiTool: tool
+            )
+        }
+
+        // 若某工具已有选中会话，则补拉详情，避免断线窗口内响应丢失导致空白。
+        for tool in AIChatTool.allCases {
+            let store = aiStore(for: tool)
+            guard let sessionId = store.currentSessionId, !sessionId.isEmpty else { continue }
+            TFLog.app.info(
+                "AI reconnect reload: request session messages, tool=\(tool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public)"
+            )
+            wsClient.requestAISessionMessages(
+                projectName: selectedProjectName,
+                workspaceName: workspace,
+                aiTool: tool,
+                sessionId: sessionId,
+                limit: 200
+            )
+        }
+    }
 
     private func handleSystemWake() {
         TFLog.core.info("系统唤醒，延迟探活 WebSocket")
