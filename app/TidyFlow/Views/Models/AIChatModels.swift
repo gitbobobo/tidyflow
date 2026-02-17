@@ -22,6 +22,14 @@ enum AIChatTool: String, CaseIterable, Identifiable {
         case .copilot: return "Copilot"
         }
     }
+
+    var iconAssetName: String {
+        switch self {
+        case .opencode: return "opencode-icon"
+        case .codex: return "codex-icon"
+        case .copilot: return "copilot-icon"
+        }
+    }
 }
 
 struct AIToolBadgeState {

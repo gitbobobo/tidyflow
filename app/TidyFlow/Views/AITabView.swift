@@ -206,20 +206,6 @@ struct AITabView: View {
                 .font(.headline)
                 .foregroundColor(.secondary)
 
-            Picker("Agent Tool", selection: $appState.aiChatTool) {
-                ForEach(AIChatTool.allCases) { tool in
-                    Text(
-                        appState.shouldShowAIBadge(for: tool)
-                            ? "\(tool.displayName) •"
-                            : tool.displayName
-                    )
-                    .tag(tool)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
-            .disabled(!canSwitchAITool)
-
             Spacer()
 
             Button(action: {
@@ -260,9 +246,28 @@ struct AITabView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 48))
-                .foregroundColor(.secondary.opacity(0.5))
+            Image(appState.aiChatTool.iconAssetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: 56, height: 56)
+                .padding(12)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            Picker("Agent Tool", selection: $appState.aiChatTool) {
+                ForEach(AIChatTool.allCases) { tool in
+                    Text(
+                        appState.shouldShowAIBadge(for: tool)
+                            ? "\(tool.displayName) •"
+                            : tool.displayName
+                    )
+                    .tag(tool)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            .disabled(!canSwitchAITool)
 
             Text("No messages yet")
                 .font(.title3)
