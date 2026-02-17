@@ -1730,7 +1730,15 @@ final class MobileAppState: ObservableObject {
                 let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
                 let parts: [AIChatPart] = m.parts.compactMap { p in
                     let kind = AIChatPartKind(rawValue: p.partType) ?? .text
-                    return AIChatPart(id: p.id, kind: kind, text: p.text, toolName: p.toolName, toolState: p.toolState)
+                    return AIChatPart(
+                        id: p.id,
+                        kind: kind,
+                        text: p.text,
+                        toolName: p.toolName,
+                        toolState: p.toolState,
+                        toolCallId: p.toolCallId,
+                        toolPartMetadata: p.toolPartMetadata
+                    )
                 }
                 return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
             }
@@ -1941,6 +1949,8 @@ final class MobileAppState: ObservableObject {
             aiChatMessages[msgIdx].parts[existing.partIdx].text = part.text
             aiChatMessages[msgIdx].parts[existing.partIdx].toolName = part.toolName
             aiChatMessages[msgIdx].parts[existing.partIdx].toolState = part.toolState
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolCallId = part.toolCallId
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolPartMetadata = part.toolPartMetadata
             return
         }
 
@@ -1950,7 +1960,9 @@ final class MobileAppState: ObservableObject {
             kind: kind,
             text: part.text,
             toolName: part.toolName,
-            toolState: part.toolState
+            toolState: part.toolState,
+            toolCallId: part.toolCallId,
+            toolPartMetadata: part.toolPartMetadata
         )
         aiChatMessages[msgIdx].parts.append(newPart)
         let newPartIdx = aiChatMessages[msgIdx].parts.count - 1

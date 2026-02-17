@@ -551,7 +551,15 @@ extension AppState {
                 let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
                 let parts: [AIChatPart] = m.parts.compactMap { p in
                     let kind = AIChatPartKind(rawValue: p.partType) ?? .text
-                    return AIChatPart(id: p.id, kind: kind, text: p.text, toolName: p.toolName, toolState: p.toolState)
+                    return AIChatPart(
+                        id: p.id,
+                        kind: kind,
+                        text: p.text,
+                        toolName: p.toolName,
+                        toolState: p.toolState,
+                        toolCallId: p.toolCallId,
+                        toolPartMetadata: p.toolPartMetadata
+                    )
                 }
                 return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
             }
@@ -913,12 +921,22 @@ extension AppState {
             aiChatMessages[msgIdx].parts[existing.partIdx].text = part.text
             aiChatMessages[msgIdx].parts[existing.partIdx].toolName = part.toolName
             aiChatMessages[msgIdx].parts[existing.partIdx].toolState = part.toolState
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolCallId = part.toolCallId
+            aiChatMessages[msgIdx].parts[existing.partIdx].toolPartMetadata = part.toolPartMetadata
             return
         }
         // 缓存失效或新 part，清除旧映射后追加
         aiPartIndexByPartId.removeValue(forKey: part.id)
 
-        let p = AIChatPart(id: part.id, kind: kind, text: part.text, toolName: part.toolName, toolState: part.toolState)
+        let p = AIChatPart(
+            id: part.id,
+            kind: kind,
+            text: part.text,
+            toolName: part.toolName,
+            toolState: part.toolState,
+            toolCallId: part.toolCallId,
+            toolPartMetadata: part.toolPartMetadata
+        )
         aiChatMessages[msgIdx].parts.append(p)
         let partIdx = aiChatMessages[msgIdx].parts.count - 1
         aiPartIndexByPartId[part.id] = (msgIdx, partIdx)
