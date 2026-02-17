@@ -84,6 +84,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 工具卡片若已有稳定结构化语义（如 todo 列表），应优先渲染“语义化视图（任务+状态）”而非直接展示 `input/output/metadata` 原始 JSON，避免信息噪音淹没关键信息。
 - SwiftUI 渲染统一 diff 时，若需要“行级背景准确对齐 + 文本可跨行选择且不选中行号”，应将行号列与内容列拆分，并让内容列禁换行（`fixedSize(horizontal: true, vertical: true)` + 横向滚动）；否则长行软换行会导致背景与行号错位。
 - 聊天页含可折叠侧栏时，应由外层容器先定义总宽度约束（主区可压缩、侧栏宽度按可用空间夹取）；内部控件避免滥用 `fixedSize`，防止长文案反向撑宽窗口。
+- 聊天长列表优化时，避免在 `onPreferenceChange` 中按滚动帧持续写入 `@State`（如锚点坐标）；应只在“是否接近底部”等阈值变化时更新，并为 Markdown 解析结果加缓存，以降低历史消息首轮滑动卡顿。
+- AI 聊天的高频流式状态应下沉到独立状态域（如 `AIChatStore`），并在 WS 增量到 UI 的链路做约 30fps 批量提交；避免把 token 级更新直接写入全局 `AppState` 导致整页重绘。
 
 ## Build Commands
 
