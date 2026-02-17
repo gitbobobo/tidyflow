@@ -52,6 +52,15 @@ impl CodexAppServerAgent {
         }
     }
 
+    fn parse_collaboration_mode(agent: Option<&str>) -> Option<String> {
+        let normalized = agent?.trim().to_lowercase();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
     fn is_thread_not_found_error(err: &str) -> bool {
         let normalized = err.to_lowercase();
         normalized.contains("thread not found")
@@ -652,7 +661,7 @@ impl AiAgent for CodexAppServerAgent {
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
         model: Option<AiModelSelection>,
-        _agent: Option<String>,
+        agent: Option<String>,
     ) -> Result<AiEventStream, String> {
         self.client.ensure_started().await?;
 
@@ -688,16 +697,23 @@ impl AiAgent for CodexAppServerAgent {
         }
 
         let (model_id, model_provider) = Self::parse_model_selection(model);
+        let collaboration_mode = Self::parse_collaboration_mode(agent.as_deref());
         let turn_id = match self
             .client
-            .turn_start(session_id, input.clone(), model_id.clone(), model_provider.clone())
+            .turn_start(
+                session_id,
+                input.clone(),
+                model_id.clone(),
+                model_provider.clone(),
+                collaboration_mode.clone(),
+            )
             .await
         {
             Ok(turn_id) => turn_id,
             Err(err) if Self::is_thread_not_found_error(&err) => {
                 self.client.thread_resume(directory, session_id).await?;
                 self.client
-                    .turn_start(session_id, input, model_id, model_provider)
+                    .turn_start(session_id, input, model_id, model_provider, collaboration_mode)
                     .await?
             }
             Err(err) => return Err(err),
@@ -788,18 +804,27 @@ impl AiAgent for CodexAppServerAgent {
 
     async fn list_agents(&self, directory: &str) -> Result<Vec<AiAgentInfo>, String> {
         let providers = self.list_providers(directory).await?;
-        let default_model = providers
+        let default_model_id = providers
             .first()
             .and_then(|p| p.models.iter().find(|m| m.id == "default").or_else(|| p.models.first()))
-            .cloned();
-        Ok(vec![AiAgentInfo {
-            name: "codex-default".to_string(),
-            description: Some("Codex app-server".to_string()),
-            mode: Some("primary".to_string()),
-            color: Some("blue".to_string()),
-            default_provider_id: Some("codex".to_string()),
-            default_model_id: default_model.map(|m| m.id),
-        }])
+            .map(|m| m.id.clone());
+
+        let agents = self.client.agent_list().await?;
+        Ok(agents
+            .into_iter()
+            .map(|agent| AiAgentInfo {
+                name: agent.name.clone(),
+                description: Some(format!("Codex {} mode", agent.name)),
+                mode: Some("primary".to_string()),
+                color: Some(if agent.collaboration_mode == "plan" {
+                    "orange".to_string()
+                } else {
+                    "blue".to_string()
+                }),
+                default_provider_id: Some("codex".to_string()),
+                default_model_id: default_model_id.clone(),
+            })
+            .collect())
     }
 
     async fn list_slash_commands(&self, _directory: &str) -> Result<Vec<AiSlashCommand>, String> {

@@ -1,5 +1,6 @@
 use super::codex_manager::{CodexAppServerManager, CodexNotification, CodexServerRequest};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -18,6 +19,13 @@ pub struct CodexModelInfo {
     pub model: String,
     pub display_name: String,
     pub input_modalities: Vec<String>,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexAgentInfo {
+    pub name: String,
+    pub collaboration_mode: String,
     pub is_default: bool,
 }
 
@@ -181,16 +189,28 @@ impl CodexAppServerClient {
         input: Vec<Value>,
         model_id: Option<String>,
         model_provider: Option<String>,
+        collaboration_mode: Option<String>,
     ) -> Result<String, String> {
         let mut params = serde_json::json!({
             "threadId": thread_id,
             "input": input
         });
-        if let Some(model_id) = model_id {
+        if let Some(model_id) = model_id.clone() {
             params["model"] = Value::String(model_id);
         }
         if let Some(provider) = model_provider {
             params["modelProvider"] = Value::String(provider);
+        }
+        if let Some(mode) = collaboration_mode {
+            let mode_model = model_id.unwrap_or_else(|| "default".to_string());
+            params["collaborationMode"] = serde_json::json!({
+                "mode": mode,
+                "settings": {
+                    "model": mode_model,
+                    "reasoning_effort": null,
+                    "developer_instructions": null
+                }
+            });
         }
 
         let result = self.manager.send_request("turn/start", Some(params)).await?;
@@ -263,6 +283,69 @@ impl CodexAppServerClient {
             });
         }
         Ok(models)
+    }
+
+    pub async fn agent_list(&self) -> Result<Vec<CodexAgentInfo>, String> {
+        let mut discovered_modes = self
+            .manager
+            .send_request("mode/list", Some(serde_json::json!({})))
+            .await
+            .ok()
+            .map(|v| Self::parse_mode_list(&v))
+            .unwrap_or_default();
+
+        let mut ordered_names = Vec::new();
+        ordered_names.append(&mut discovered_modes);
+        ordered_names.push("default".to_string());
+        ordered_names.push("plan".to_string());
+
+        let mut dedup = HashSet::new();
+        ordered_names.retain(|name| dedup.insert(name.clone()));
+        let default_mode = ordered_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+
+        Ok(ordered_names
+            .into_iter()
+            .map(|name| CodexAgentInfo {
+                collaboration_mode: name.clone(),
+                is_default: name == default_mode.as_str(),
+                name,
+            })
+            .collect())
+    }
+
+    fn normalize_mode_name(raw: &str) -> Option<String> {
+        let normalized = raw.trim().to_lowercase();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
+    fn parse_mode_list(value: &Value) -> Vec<String> {
+        let list = value
+            .get("data")
+            .and_then(|v| v.as_array())
+            .or_else(|| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        list.into_iter()
+            .filter_map(|item| {
+                if let Some(name) = item.as_str() {
+                    return Self::normalize_mode_name(name);
+                }
+                let obj = item.as_object()?;
+                obj.get("mode")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| obj.get("id").and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("name").and_then(|v| v.as_str()))
+                    .and_then(Self::normalize_mode_name)
+            })
+            .collect()
     }
 
     pub async fn send_approval_response(&self, id: Value, result: Value) -> Result<(), String> {
