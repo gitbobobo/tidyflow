@@ -9,13 +9,13 @@ mod tests {
         assert!(state.active_streams.is_empty());
         assert!(state.directory_last_used_ms.is_empty());
         assert!(state.directory_active_streams.is_empty());
-        assert!(state.agent.is_none());
+        assert!(state.agents.is_empty());
     }
 
     #[test]
     fn test_ai_state_default() {
         let state = AIState::default();
-        assert!(state.agent.is_none());
+        assert!(state.agents.is_empty());
     }
 
     #[test]

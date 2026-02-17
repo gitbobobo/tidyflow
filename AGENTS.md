@@ -65,6 +65,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - iOS SwiftTerm 远程终端场景下，zle 出现 `3R` 乱码的根因是 SwiftTerm 使用 8-bit C1 引导符（`0x9b`）而 shell 不识别，并非网络延迟；正确做法是在 `TerminalViewDelegate.send` 中做 C1→7-bit 规范化（`0x9b`→`ESC[`），而非丢弃 CPR 应答——丢弃会导致依赖 DSR/CPR 的 TUI 应用（helix、lazygit 等）无法获取光标位置而报错。
 - 终端 PTY 的 `cols/rows` 来自客户端上报，服务端必须做范围 clamp 并记录告警日志；异常尺寸（过大/为 0）可能触发远端 TUI/CLI 进程按屏幕大小分配缓存，从而 OOM 被系统 kill。
 - AI 聊天的 `pendingSendMessage`（等待会话创建后发送）等跨异步边界的临时状态，必须在工作空间切换时清除，并携带发起时的 `projectName/workspaceName` 做一致性校验；否则快照恢复触发 `aiCurrentSessionId` 变更时会把旧消息误发到新工作空间。切换回旧工作空间时应重新拉取当前会话消息，弥补切走期间被 guard 丢弃的流式增量。
+- AI 聊天支持多代理工具（如 OpenCode/Codex）时，协议请求与事件必须强制携带 `ai_tool`，并在客户端按 `project/workspace/ai_tool` 维度做事件过滤与快照分桶；否则切换工具后会话、流式增量和模型/Agent 列表会串台。
+- 对接 Codex app-server 时，不要在首条消息前对新建线程强制调用 `thread/resume`：新线程 rollout 文件会延迟到首条用户消息后才落盘；发送链路应优先 `turn/start`，仅在 `thread not found` 时再 `thread/resume` 后重试。
 - AI 聊天消息需要支持 Markdown 时，assistant 内容应采用“流式阶段纯文本增量渲染、`done` 后一次性转 Markdown”策略，避免代码块/列表在增量过程中频繁重排造成抖动。
 - SwiftUI 聊天 Markdown 若直接用 `AttributedString(markdown: .full)`，可能把列表/段落结构扁平化；应改用 `inlineOnlyPreservingWhitespace` 并按 `inlinePresentationIntent` 显式映射粗体/斜体/代码字体。
 - 若聊天 Markdown 需要同时支持块级语法（如 `##`/列表）与行内样式，建议采用“行级解析块结构 + 行内 Markdown 二次渲染”而非单次 `AttributedString(markdown:)`，避免标题符号原样显示或段落被压扁。

@@ -454,6 +454,7 @@ pub enum ClientMessage {
     AIChatStart {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
     },
@@ -461,6 +462,7 @@ pub enum ClientMessage {
     AIChatSend {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -476,6 +478,7 @@ pub enum ClientMessage {
     AIChatCommand {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         command: String,
         arguments: String,
@@ -492,12 +495,14 @@ pub enum ClientMessage {
     AIChatAbort {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
     },
     #[serde(rename = "ai_question_reply")]
     AIQuestionReply {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         request_id: String,
         answers: Vec<Vec<String>>,
@@ -506,6 +511,7 @@ pub enum ClientMessage {
     AIQuestionReject {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         request_id: String,
     },
@@ -513,11 +519,13 @@ pub enum ClientMessage {
     AISessionList {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
     },
     #[serde(rename = "ai_session_messages")]
     AISessionMessages {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
@@ -526,6 +534,7 @@ pub enum ClientMessage {
     AISessionDelete {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
     },
 
@@ -534,11 +543,13 @@ pub enum ClientMessage {
     AIProviderList {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
     },
     #[serde(rename = "ai_agent_list")]
     AIAgentList {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
     },
 
     // vNext: AI 斜杠命令列表
@@ -546,6 +557,7 @@ pub enum ClientMessage {
     AISlashCommands {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
     },
 
     // v1.40: 查询任务历史（iOS 重连恢复）
@@ -1060,6 +1072,7 @@ pub enum ServerMessage {
     AIChatMessageUpdated {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         message_id: String,
         role: String,
@@ -1068,6 +1081,7 @@ pub enum ServerMessage {
     AIChatPartUpdated {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         message_id: String,
         part: ai::PartInfo,
@@ -1076,6 +1090,7 @@ pub enum ServerMessage {
     AIChatPartDelta {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         message_id: String,
         part_id: String,
@@ -1087,12 +1102,14 @@ pub enum ServerMessage {
     AIChatDone {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
     },
     #[serde(rename = "ai_chat_error")]
     AIChatErrorV2 {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         error: String,
     },
@@ -1100,6 +1117,7 @@ pub enum ServerMessage {
     AIQuestionAsked {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         request: ai::QuestionRequestInfo,
     },
@@ -1107,6 +1125,7 @@ pub enum ServerMessage {
     AIQuestionCleared {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         request_id: String,
     },
@@ -1114,6 +1133,7 @@ pub enum ServerMessage {
     AISessionStartedV2 {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         title: String,
         updated_at: i64,
@@ -1122,12 +1142,14 @@ pub enum ServerMessage {
     AISessionListV2 {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         sessions: Vec<ai::SessionInfo>,
     },
     #[serde(rename = "ai_session_messages")]
     AISessionMessages {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         session_id: String,
         messages: Vec<ai::MessageInfo>,
     },
@@ -1135,18 +1157,21 @@ pub enum ServerMessage {
     AIProviderListResult {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         providers: Vec<ai::ProviderInfo>,
     },
     #[serde(rename = "ai_agent_list")]
     AIAgentListResult {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         agents: Vec<ai::AgentInfo>,
     },
     #[serde(rename = "ai_slash_commands")]
     AISlashCommandsResult {
         project_name: String,
         workspace_name: String,
+        ai_tool: String,
         commands: Vec<ai::SlashCommandInfo>,
     },
 }

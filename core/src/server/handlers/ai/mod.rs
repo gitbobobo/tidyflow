@@ -5,7 +5,9 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::ai::{AiAgent, AiEvent, OpenCodeAgent, OpenCodeManager};
+use crate::ai::{
+    AiAgent, AiEvent, CodexAppServerAgent, CodexAppServerManager, OpenCodeAgent, OpenCodeManager,
+};
 use crate::server::context::SharedAppState;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
@@ -31,13 +33,34 @@ fn now_ms() -> i64 {
 }
 
 /// 创建 AI 代理实例（单 opencode serve child + x-opencode-directory 路由）
-fn create_agent() -> Arc<dyn AiAgent> {
-    let manager = OpenCodeManager::new(std::env::temp_dir());
-    Arc::new(OpenCodeAgent::new(Arc::new(manager)))
+fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
+    match tool {
+        "opencode" => {
+            let manager = OpenCodeManager::new(std::env::temp_dir());
+            Ok(Arc::new(OpenCodeAgent::new(Arc::new(manager))))
+        }
+        "codex" => {
+            let manager = CodexAppServerManager::new(std::env::temp_dir());
+            Ok(Arc::new(CodexAppServerAgent::new(Arc::new(manager))))
+        }
+        other => Err(format!("Unsupported AI tool: {}", other)),
+    }
 }
 
-fn stream_key(directory: &str, session_id: &str) -> String {
-    format!("{}::{}", directory, session_id)
+fn normalize_ai_tool(tool: &str) -> Result<String, String> {
+    let normalized = tool.trim().to_lowercase();
+    match normalized.as_str() {
+        "opencode" | "codex" => Ok(normalized),
+        _ => Err(format!("Unsupported AI tool: {}", tool)),
+    }
+}
+
+fn tool_directory_key(tool: &str, directory: &str) -> String {
+    format!("{}::{}", tool, directory)
+}
+
+fn stream_key(tool: &str, directory: &str, session_id: &str) -> String {
+    format!("{}::{}::{}", tool, directory, session_id)
 }
 
 async fn emit_server_message(output_tx: &mpsc::Sender<ServerMessage>, msg: ServerMessage) -> bool {
@@ -48,16 +71,21 @@ async fn emit_server_message(output_tx: &mpsc::Sender<ServerMessage>, msg: Serve
     true
 }
 
-async fn cleanup_stream_state(ai_state: &SharedAIState, abort_key: &str, directory: &str) {
+async fn cleanup_stream_state(
+    ai_state: &SharedAIState,
+    abort_key: &str,
+    tool: &str,
+    directory: &str,
+) {
     let mut ai = ai_state.lock().await;
     ai.active_streams.remove(abort_key);
+    let dir_key = tool_directory_key(tool, directory);
     let active = ai
         .directory_active_streams
-        .entry(directory.to_string())
+        .entry(dir_key.clone())
         .or_insert(0);
     *active = active.saturating_sub(1);
-    ai.directory_last_used_ms
-        .insert(directory.to_string(), now_ms());
+    ai.directory_last_used_ms.insert(dir_key, now_ms());
 }
 
 async fn resolve_directory(
@@ -72,13 +100,13 @@ async fn resolve_directory(
     Ok(ws.root_path.to_string_lossy().to_string())
 }
 
-async fn ensure_agent(ai_state: &SharedAIState) -> Result<Arc<dyn AiAgent>, String> {
+async fn ensure_agent(ai_state: &SharedAIState, tool: &str) -> Result<Arc<dyn AiAgent>, String> {
     let agent = {
         let mut ai = ai_state.lock().await;
-        if ai.agent.is_none() {
-            ai.agent = Some(create_agent());
+        if !ai.agents.contains_key(tool) {
+            ai.agents.insert(tool.to_string(), create_agent(tool)?);
         }
-        ai.agent.as_ref().unwrap().clone()
+        ai.agents.get(tool).unwrap().clone()
     };
 
     // start() 幂等：内部会 health check，失败才 spawn；event hub 也会 ensure_started。
@@ -86,7 +114,7 @@ async fn ensure_agent(ai_state: &SharedAIState) -> Result<Arc<dyn AiAgent>, Stri
     Ok(agent)
 }
 
-async fn ensure_maintenance(ai_state: &SharedAIState, agent: Arc<dyn AiAgent>) {
+async fn ensure_maintenance(ai_state: &SharedAIState) {
     let should_start = {
         let mut ai = ai_state.lock().await;
         if ai.maintenance_started {
@@ -106,14 +134,14 @@ async fn ensure_maintenance(ai_state: &SharedAIState, agent: Arc<dyn AiAgent>) {
             tokio::time::sleep(std::time::Duration::from_secs(MAINTENANCE_INTERVAL_SECS)).await;
 
             let now = now_ms();
-            let idle_dirs: Vec<String> = {
+            let idle_keys: Vec<String> = {
                 let ai = ai_state.lock().await;
                 ai.directory_last_used_ms
                     .iter()
-                    .filter_map(|(dir, last_used)| {
-                        let active = ai.directory_active_streams.get(dir).cloned().unwrap_or(0);
+                    .filter_map(|(key, last_used)| {
+                        let active = ai.directory_active_streams.get(key).cloned().unwrap_or(0);
                         if active == 0 && now.saturating_sub(*last_used) > IDLE_DISPOSE_TTL_MS {
-                            Some(dir.clone())
+                            Some(key.clone())
                         } else {
                             None
                         }
@@ -121,14 +149,24 @@ async fn ensure_maintenance(ai_state: &SharedAIState, agent: Arc<dyn AiAgent>) {
                     .collect()
             };
 
-            for dir in idle_dirs {
-                match agent.dispose_instance(&dir).await {
-                    Ok(_) => {
-                        let mut ai = ai_state.lock().await;
-                        // dispose 后更新时间戳，避免立即重复 dispose
-                        ai.directory_last_used_ms.insert(dir, now_ms());
+            for key in idle_keys {
+                let mut parts = key.splitn(2, "::");
+                let Some(tool) = parts.next() else { continue };
+                let Some(dir) = parts.next() else { continue };
+
+                let agent = {
+                    let ai = ai_state.lock().await;
+                    ai.agents.get(tool).cloned()
+                };
+                if let Some(agent) = agent {
+                    match agent.dispose_instance(dir).await {
+                        Ok(_) => {
+                            let mut ai = ai_state.lock().await;
+                            // dispose 后更新时间戳，避免立即重复 dispose
+                            ai.directory_last_used_ms.insert(key.clone(), now_ms());
+                        }
+                        Err(e) => warn!("AI maintenance: dispose_instance failed: {}", e),
                     }
-                    Err(e) => warn!("AI maintenance: dispose_instance failed: {}", e),
                 }
             }
         }
@@ -190,15 +228,17 @@ async fn try_handle_ai_chat_start(
     let ClientMessage::AIChatStart {
         project_name,
         workspace_name,
+        ai_tool,
         title,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     let title = title.clone().unwrap_or_else(|| "New Chat".to_string());
     info!(
@@ -210,8 +250,8 @@ async fn try_handle_ai_chat_start(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     send_message(
@@ -219,6 +259,7 @@ async fn try_handle_ai_chat_start(
         &crate::server::protocol::ServerMessage::AISessionStartedV2 {
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
+            ai_tool,
             session_id: session.id,
             title: session.title,
             updated_at: session.updated_at,
@@ -244,10 +285,12 @@ async fn try_handle_ai_chat_send(
         image_parts,
         model,
         agent_name,
+        ai_tool,
     ) = match msg {
         ClientMessage::AIChatSend {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
             message,
             file_refs,
@@ -263,13 +306,15 @@ async fn try_handle_ai_chat_send(
             image_parts.clone(),
             model.clone(),
             agent.clone(),
+            ai_tool.clone(),
         ),
         _ => return Ok(false),
     };
+    let ai_tool = normalize_ai_tool(&ai_tool)?;
 
     let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     info!(
         "AIChatSend: project={}, workspace={}, session_id={}, message_len={}",
@@ -306,6 +351,7 @@ async fn try_handle_ai_chat_send(
                 ServerMessage::AIChatErrorV2 {
                     project_name: project_name.clone(),
                     workspace_name: workspace_name.clone(),
+                    ai_tool: ai_tool.clone(),
                     session_id: session_id.clone(),
                     error: e,
                 },
@@ -327,15 +373,15 @@ async fn try_handle_ai_chat_send(
     });
 
     let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
-    let abort_key = stream_key(&directory, &session_id);
+    let abort_key = stream_key(&ai_tool, &directory, &session_id);
     {
         let mut ai = ai_state.lock().await;
+        let dir_key = tool_directory_key(&ai_tool, &directory);
         ai.active_streams.insert(abort_key.clone(), abort_tx);
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms.insert(dir_key.clone(), now_ms());
         let active = ai
             .directory_active_streams
-            .entry(directory.clone())
+            .entry(dir_key)
             .or_insert(0);
         *active += 1;
     }
@@ -366,12 +412,13 @@ async fn try_handle_ai_chat_send(
                     ServerMessage::AIChatErrorV2 {
                         project_name: project_name.clone(),
                         workspace_name: workspace_name.clone(),
+                        ai_tool: ai_tool.clone(),
                         session_id: session_id.clone(),
                         error: e,
                     },
                 )
                 .await;
-                cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+                cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
                 return;
             }
         };
@@ -391,6 +438,7 @@ async fn try_handle_ai_chat_send(
                         ServerMessage::AIChatDone {
                             project_name: project_name.clone(),
                             workspace_name: workspace_name.clone(),
+                            ai_tool: ai_tool.clone(),
                             session_id: session_id.clone(),
                         },
                     )
@@ -407,6 +455,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIChatMessageUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
                                             role,
@@ -420,6 +469,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIChatPartUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
                                             part: crate::server::protocol::ai::PartInfo {
@@ -447,6 +497,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIChatPartDelta {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
                                             part_id,
@@ -463,6 +514,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIQuestionAsked {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             request: crate::server::protocol::ai::QuestionRequestInfo {
                                                 id: request.id,
@@ -498,6 +550,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIQuestionCleared {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             request_id,
                                         },
@@ -510,6 +563,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIChatErrorV2 {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             error: message,
                                         },
@@ -523,6 +577,7 @@ async fn try_handle_ai_chat_send(
                                         ServerMessage::AIChatDone {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                         },
                                     )
@@ -540,6 +595,7 @@ async fn try_handle_ai_chat_send(
                                 ServerMessage::AIChatErrorV2 {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
+                                    ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                     error: e,
                                 },
@@ -554,6 +610,7 @@ async fn try_handle_ai_chat_send(
                                 ServerMessage::AIChatDone {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
+                                    ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                 },
                             )
@@ -565,7 +622,7 @@ async fn try_handle_ai_chat_send(
             }
         }
 
-        cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+        cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
     });
 
     Ok(true)
@@ -587,10 +644,12 @@ async fn try_handle_ai_chat_command(
         image_parts,
         model,
         agent_name,
+        ai_tool,
     ) = match msg {
         ClientMessage::AIChatCommand {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
             command,
             arguments,
@@ -608,13 +667,15 @@ async fn try_handle_ai_chat_command(
             image_parts.clone(),
             model.clone(),
             agent.clone(),
+            ai_tool.clone(),
         ),
         _ => return Ok(false),
     };
+    let ai_tool = normalize_ai_tool(&ai_tool)?;
 
     let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     info!(
         "AIChatCommand: project={}, workspace={}, session_id={}, command={}, arguments_len={}",
@@ -651,6 +712,7 @@ async fn try_handle_ai_chat_command(
                 ServerMessage::AIChatErrorV2 {
                     project_name: project_name.clone(),
                     workspace_name: workspace_name.clone(),
+                    ai_tool: ai_tool.clone(),
                     session_id: session_id.clone(),
                     error: e,
                 },
@@ -672,15 +734,15 @@ async fn try_handle_ai_chat_command(
     });
 
     let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
-    let abort_key = stream_key(&directory, &session_id);
+    let abort_key = stream_key(&ai_tool, &directory, &session_id);
     {
         let mut ai = ai_state.lock().await;
+        let dir_key = tool_directory_key(&ai_tool, &directory);
         ai.active_streams.insert(abort_key.clone(), abort_tx);
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        ai.directory_last_used_ms.insert(dir_key.clone(), now_ms());
         let active = ai
             .directory_active_streams
-            .entry(directory.clone())
+            .entry(dir_key)
             .or_insert(0);
         *active += 1;
     }
@@ -712,12 +774,13 @@ async fn try_handle_ai_chat_command(
                     ServerMessage::AIChatErrorV2 {
                         project_name: project_name.clone(),
                         workspace_name: workspace_name.clone(),
+                        ai_tool: ai_tool.clone(),
                         session_id: session_id.clone(),
                         error: e,
                     },
                 )
                 .await;
-                cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+                cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
                 return;
             }
         };
@@ -737,6 +800,7 @@ async fn try_handle_ai_chat_command(
                         ServerMessage::AIChatDone {
                             project_name: project_name.clone(),
                             workspace_name: workspace_name.clone(),
+                            ai_tool: ai_tool.clone(),
                             session_id: session_id.clone(),
                         },
                     )
@@ -753,6 +817,7 @@ async fn try_handle_ai_chat_command(
                                         ServerMessage::AIChatMessageUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
                                             role,
@@ -766,6 +831,7 @@ async fn try_handle_ai_chat_command(
                                         ServerMessage::AIChatPartUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
                                             part: crate::server::protocol::ai::PartInfo {
@@ -793,6 +859,7 @@ async fn try_handle_ai_chat_command(
                                         ServerMessage::AIChatPartDelta {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
                                             part_id,
@@ -810,6 +877,7 @@ async fn try_handle_ai_chat_command(
                                         ServerMessage::AIChatErrorV2 {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             error: message,
                                         },
@@ -823,6 +891,7 @@ async fn try_handle_ai_chat_command(
                                         ServerMessage::AIChatDone {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                         },
                                     )
@@ -840,6 +909,7 @@ async fn try_handle_ai_chat_command(
                                 ServerMessage::AIChatErrorV2 {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
+                                    ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                     error: e,
                                 },
@@ -853,6 +923,7 @@ async fn try_handle_ai_chat_command(
                                 ServerMessage::AIChatDone {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
+                                    ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                 },
                             )
@@ -864,7 +935,7 @@ async fn try_handle_ai_chat_command(
             }
         }
 
-        cleanup_stream_state(&ai_state_cloned, &abort_key, &directory).await;
+        cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
     });
 
     Ok(true)
@@ -876,21 +947,24 @@ async fn try_handle_ai_chat_abort(
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
-    let (project_name, workspace_name, session_id) = match msg {
+    let (project_name, workspace_name, session_id, ai_tool) = match msg {
         ClientMessage::AIChatAbort {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
         } => (
             project_name.clone(),
             workspace_name.clone(),
             session_id.clone(),
+            ai_tool.clone(),
         ),
         _ => return Ok(false),
     };
+    let ai_tool = normalize_ai_tool(&ai_tool)?;
 
     let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
-    let key = stream_key(&directory, &session_id);
+    let key = stream_key(&ai_tool, &directory, &session_id);
     info!(
         "AIChatAbort: project={}, workspace={}, session_id={}, key={}",
         project_name, workspace_name, session_id, key
@@ -898,8 +972,8 @@ async fn try_handle_ai_chat_abort(
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     let abort_tx = {
@@ -923,8 +997,9 @@ async fn try_handle_ai_chat_abort(
     let session_id_cloned = session_id.clone();
     let project_name_cloned = project_name.clone();
     let workspace_name_cloned = workspace_name.clone();
+    let ai_tool_cloned = ai_tool.clone();
     tokio::spawn(async move {
-        if let Ok(agent) = ensure_agent(&ai_state_cloned).await {
+        if let Ok(agent) = ensure_agent(&ai_state_cloned, &ai_tool_cloned).await {
             info!("AIChatAbort: calling agent.abort_session");
             if let Err(e) = agent
                 .abort_session(&directory_cloned, &session_id_cloned)
@@ -945,6 +1020,7 @@ async fn try_handle_ai_chat_abort(
             ServerMessage::AIChatDone {
                 project_name,
                 workspace_name,
+                ai_tool,
                 session_id,
             },
         )
@@ -960,10 +1036,11 @@ async fn try_handle_ai_question_reply(
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
-    let (project_name, workspace_name, session_id, request_id, answers) = match msg {
+    let (project_name, workspace_name, session_id, request_id, answers, ai_tool) = match msg {
         ClientMessage::AIQuestionReply {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
             request_id,
             answers,
@@ -973,18 +1050,20 @@ async fn try_handle_ai_question_reply(
             session_id.clone(),
             request_id.clone(),
             answers.clone(),
+            ai_tool.clone(),
         ),
         _ => return Ok(false),
     };
+    let ai_tool = normalize_ai_tool(&ai_tool)?;
 
     let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     info!(
@@ -1011,6 +1090,7 @@ async fn try_handle_ai_question_reply(
         ServerMessage::AIQuestionCleared {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
             request_id,
         },
@@ -1026,10 +1106,11 @@ async fn try_handle_ai_question_reject(
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
 ) -> Result<bool, String> {
-    let (project_name, workspace_name, session_id, request_id) = match msg {
+    let (project_name, workspace_name, session_id, request_id, ai_tool) = match msg {
         ClientMessage::AIQuestionReject {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
             request_id,
         } => (
@@ -1037,18 +1118,20 @@ async fn try_handle_ai_question_reject(
             workspace_name.clone(),
             session_id.clone(),
             request_id.clone(),
+            ai_tool.clone(),
         ),
         _ => return Ok(false),
     };
+    let ai_tool = normalize_ai_tool(&ai_tool)?;
 
     let directory = resolve_directory(app_state, &project_name, &workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     info!(
@@ -1071,6 +1154,7 @@ async fn try_handle_ai_question_reject(
         ServerMessage::AIQuestionCleared {
             project_name,
             workspace_name,
+            ai_tool,
             session_id,
             request_id,
         },
@@ -1089,19 +1173,21 @@ async fn try_handle_ai_session_list(
     let ClientMessage::AISessionList {
         project_name,
         workspace_name,
+        ai_tool,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     let sessions = agent.list_sessions(&directory).await?;
@@ -1121,6 +1207,7 @@ async fn try_handle_ai_session_list(
         &crate::server::protocol::ServerMessage::AISessionListV2 {
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
+            ai_tool,
             sessions,
         },
     )
@@ -1138,21 +1225,23 @@ async fn try_handle_ai_session_messages(
     let ClientMessage::AISessionMessages {
         project_name,
         workspace_name,
+        ai_tool,
         session_id,
         limit,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     let messages = agent
@@ -1190,6 +1279,7 @@ async fn try_handle_ai_session_messages(
         &crate::server::protocol::ServerMessage::AISessionMessages {
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
+            ai_tool,
             session_id: session_id.clone(),
             messages,
         },
@@ -1207,24 +1297,26 @@ async fn try_handle_ai_session_delete(
     let ClientMessage::AISessionDelete {
         project_name,
         workspace_name,
+        ai_tool,
         session_id,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     // 先清理本地 active stream
-    let key = stream_key(&directory, session_id);
+    let key = stream_key(&ai_tool, &directory, session_id);
     {
         let mut ai = ai_state.lock().await;
         ai.active_streams.remove(&key);
@@ -1244,19 +1336,21 @@ async fn try_handle_ai_provider_list(
     let ClientMessage::AIProviderList {
         project_name,
         workspace_name,
+        ai_tool,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     let providers = agent.list_providers(&directory).await?;
@@ -1283,6 +1377,7 @@ async fn try_handle_ai_provider_list(
         &crate::server::protocol::ServerMessage::AIProviderListResult {
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
+            ai_tool,
             providers,
         },
     )
@@ -1300,19 +1395,21 @@ async fn try_handle_ai_agent_list(
     let ClientMessage::AIAgentList {
         project_name,
         workspace_name,
+        ai_tool,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state).await?;
-    ensure_maintenance(ai_state, agent.clone()).await;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
 
     {
         let mut ai = ai_state.lock().await;
-        ai.directory_last_used_ms
-            .insert(directory.clone(), now_ms());
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
     let agents = agent.list_agents(&directory).await?;
@@ -1335,6 +1432,7 @@ async fn try_handle_ai_agent_list(
         &crate::server::protocol::ServerMessage::AIAgentListResult {
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
+            ai_tool,
             agents,
         },
     )
@@ -1354,10 +1452,12 @@ async fn try_handle_ai_slash_commands(
     let ClientMessage::AISlashCommands {
         project_name,
         workspace_name,
+        ai_tool,
     } = msg
     else {
         return Ok(false);
     };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
 
     // 验证工作空间存在，并作为 /command 的目录路由依据
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
@@ -1376,8 +1476,8 @@ async fn try_handle_ai_slash_commands(
     }
 
     // 动态命令来源：OpenCode /command（与 CLI 实际可用命令保持一致）
-    if let Ok(agent) = ensure_agent(ai_state).await {
-        ensure_maintenance(ai_state, agent.clone()).await;
+    if let Ok(agent) = ensure_agent(ai_state, &ai_tool).await {
+        ensure_maintenance(ai_state).await;
         if let Ok(dynamic_commands) = agent.list_slash_commands(&directory).await {
             for cmd in dynamic_commands {
                 let info = SlashCommandInfo {
@@ -1397,6 +1497,7 @@ async fn try_handle_ai_slash_commands(
         &crate::server::protocol::ServerMessage::AISlashCommandsResult {
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
+            ai_tool,
             commands,
         },
     )
