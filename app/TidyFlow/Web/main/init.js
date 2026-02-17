@@ -46,8 +46,13 @@
     }
 
     const wsURL = window.TIDYFLOW_WS_URL || "ws://127.0.0.1:47999/ws";
+    const existing = TF.transport;
 
-    if (TF.transport) TF.transport.close();
+    // 避免重复 connect 把“正在连接/已连接”的 socket 主动 close 掉，导致连接抖动
+    if (existing && existing.url === wsURL && (existing.isConnected || existing.isConnecting)) {
+      return;
+    }
+    if (existing) existing.close();
 
     console.log("Connecting to " + wsURL);
 

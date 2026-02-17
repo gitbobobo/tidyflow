@@ -44,6 +44,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 移动端展示/配对使用的端口必须取 Core `running` 态端口；不要使用 `starting` 态端口（尚未监听），并确保 `AppState` 转发 `CoreProcessManager` 变更以避免 UI 端口文案滞后。
 - 涉及 Core 重启（如切换远程访问开关）时，不要用固定延时后直接 `start()`；应等待 `stop` 确认完成后再启动，否则会被运行态守卫拦截并出现“端口不可用”卡死。
 - `CoreProcessManager` 的异步回调（`stop` 完成、`terminationHandler`、延迟置 `running`）必须校验“是否仍是当前 process 实例”；否则旧进程回调会覆盖新状态，导致 UI 误判为“端口不可用”。
+- `WSClient` 重连时，`receive`/`didOpen`/`didClose`/`didComplete` 等回调必须校验“是否仍是当前 `webSocketTask`”；否则旧连接的延迟回调会把新连接误判为断线，触发自动重连风暴并表现为 Core 反复“重启”。
+- 同机（localhost）场景出现大量 `WebSocket connection closed by client` 时，优先排查客户端连接状态机：`connect` 必须幂等（已有 `OPEN/CONNECTING` 连接时禁止再次 close+connect），且“主动断开”标记应在新连接 `didOpen` 后再复位，同时避免向上层重复派发同值连接状态。
 - 对“监听地址/网络暴露”这类 socket 绑定配置，若产品要求不中断进行中任务，应采用“仅落盘配置、下次启动生效”策略，不在设置页切换时重启 Core。
 - 使用 MessagePack + AnyCodable 解析协议时，动态值模型必须显式支持 `Data`（bin）；否则终端输出/scrollback 等二进制字段会解码失败并表现为黑屏或无输出。
 - 使用 AnyCodable 编码请求体时，`[UInt8]` 必须优先转为 `Data`（MessagePack bin）或显式映射为整数；否则会被默认分支转成字符串数组，导致 `input`/`file_write` 等二进制字段在 Core 端解析失败。
@@ -69,6 +71,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 多 AI 工具“后台保活”场景下，WebSocket 事件不能只按当前选中工具过滤；应按 `ai_tool` 路由到对应状态桶，当前工具仅负责前台渲染，并额外维护未读/进行中徽标以支持无损切换查看。
 - 会话侧栏若需融合多 AI 工具历史，状态层应继续按 `ai_tool` 分桶存储，展示层再做全局聚合并按 `updatedAt` 降序排序；每条会话必须携带 `ai_tool`，且非当前工具分桶更新也要触发列表刷新。
 - 会话列表跨 `ai_tool` 点击会话时，应先把目标 `session_id` 写入目标工具的状态桶，再切换 `ai_tool`，并由切换后的统一重载流程拉取详情；避免先切工具再写状态导致首击空白，以及重复拉取触发 Copilot `Session ... is already loaded`。
+- 跨 `ai_tool` 打开历史会话时，必须先校验“可切换工具”再写入 `currentSessionId`/清空消息；否则早退会留下“tool 与 session_id 不匹配”的脏状态，后续会出现“会话已选中但详情不显示”，甚至把请求发到错误后端（如 `opencode` 携带 `codex` 线程 ID）。
 - Copilot ACP 适配层不要在“仅为获取模型/模式元数据”的路径里调用 `session/load` 历史会话；这会把会话提前置为 loaded，随后拉历史详情易报 `Session ... is already loaded`。元数据优先走缓存，缺失时用最小兜底。
 - 对接 Codex app-server 时，不要在首条消息前对新建线程强制调用 `thread/resume`：新线程 rollout 文件会延迟到首条用户消息后才落盘；发送链路应优先 `turn/start`，仅在 `thread not found` 时再 `thread/resume` 后重试。
 - 对接 GitHub Copilot ACP 时，不能复用 Codex 的 `thread/*`/`turn/*` 协议；需按 ACP 使用 `initialize(protocolVersion)` + `session/new|load|list|prompt`，并将 `session/update` 事件映射到统一聊天增量模型。

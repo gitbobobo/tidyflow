@@ -59,6 +59,9 @@
     get isConnected() {
       return this.ws && this.ws.readyState === WebSocket.OPEN;
     }
+    get isConnecting() {
+      return this.ws && this.ws.readyState === WebSocket.CONNECTING;
+    }
   }
 
   function notifySwift(type, data) {

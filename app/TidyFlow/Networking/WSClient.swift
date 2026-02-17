@@ -14,7 +14,9 @@ class WSClient: NSObject, ObservableObject {
     let msgpackDecoder = MessagePackDecoder()
     @Published private(set) var isConnected: Bool = false
     /// 标记当前断连是否为主动行为（disconnect/reconnect），用于区分意外断连
-    private(set) var isIntentionalDisconnect: Bool = false
+    var isIntentionalDisconnect: Bool = false
+    /// 当前是否处于连接建立中（尚未 didOpen）
+    var isConnecting: Bool = false
     /// 进入后台时标记为 stale，回到前台时据此判断是否需要重连
     private(set) var isStale: Bool = false
 
@@ -25,6 +27,8 @@ class WSClient: NSObject, ObservableObject {
     var currentURL: URL?
     /// WebSocket 鉴权 token（由 Core 进程启动时注入）
     private(set) var wsAuthToken: String?
+    /// 重连防抖任务，避免短时间重复 reconnect 打断新连接
+    private var pendingReconnectWorkItem: DispatchWorkItem?
 
     /// Get current URL string for debug display
     var currentURLString: String? {
@@ -169,19 +173,24 @@ class WSClient: NSObject, ObservableObject {
     // MARK: - Connection
 
     func connect() {
-        guard webSocketTask == nil else { return }
+        guard webSocketTask == nil, !isConnecting else { return }
 
         guard let url = currentURL else {
             onError?("No WebSocket URL configured")
             return
         }
 
-        isIntentionalDisconnect = false
         isStale = false
+        isConnecting = true
         TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
-        webSocketTask = urlSession?.webSocketTask(with: url)
-        webSocketTask?.resume()
-        receiveMessage()
+        guard let task = urlSession?.webSocketTask(with: url) else {
+            isConnecting = false
+            onError?("Failed to create WebSocket task")
+            return
+        }
+        webSocketTask = task
+        task.resume()
+        receiveMessage(for: task)
     }
 
     /// Connect to a specific port (convenience method)
@@ -191,18 +200,30 @@ class WSClient: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        disconnect(clearPendingReconnect: true)
+    }
+
+    private func disconnect(clearPendingReconnect: Bool) {
         isIntentionalDisconnect = true
         isStale = false
+        isConnecting = false
+        if clearPendingReconnect {
+            pendingReconnectWorkItem?.cancel()
+            pendingReconnectWorkItem = nil
+        }
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         updateConnectionState(false)
     }
 
     func reconnect() {
-        disconnect()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        disconnect(clearPendingReconnect: false)
+        pendingReconnectWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
             self?.connect()
         }
+        pendingReconnectWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
     }
 
     /// 发送 WebSocket ping 探活，超时则回调 false
@@ -247,8 +268,10 @@ class WSClient: NSObject, ObservableObject {
 
     func updateConnectionState(_ connected: Bool) {
         DispatchQueue.main.async { [weak self] in
-            self?.isConnected = connected
-            self?.onConnectionStateChanged?(connected)
+            guard let self else { return }
+            guard self.isConnected != connected else { return }
+            self.isConnected = connected
+            self.onConnectionStateChanged?(connected)
         }
     }
 

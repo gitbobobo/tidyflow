@@ -6,18 +6,24 @@ extension WSClient {
 
     // MARK: - Receive Messages
 
-    func receiveMessage() {
-        webSocketTask?.receive { [weak self] result in
+    func receiveMessage(for task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            guard let self else { return }
+            // 旧连接回调可能在重连后延迟到达；只处理当前 task 的回调。
+            guard self.webSocketTask === task else { return }
             switch result {
             case .success(let message):
-                self?.handleMessage(message)
-                self?.receiveMessage() // Continue listening
+                self.handleMessage(message)
+                self.receiveMessage(for: task) // Continue listening
             case .failure(let error):
                 // Connection closed or error — 切回主线程更新状态
                 DispatchQueue.main.async {
-                    if self?.isConnected == true {
-                        self?.onError?("Receive error: \(error.localizedDescription)")
-                        self?.updateConnectionState(false)
+                    guard self.webSocketTask === task else { return }
+                    self.isConnecting = false
+                    self.webSocketTask = nil
+                    if self.isConnected {
+                        self.onError?("Receive error: \(error.localizedDescription)")
+                        self.updateConnectionState(false)
                     }
                 }
             }
@@ -448,18 +454,28 @@ extension WSClient {
 
 extension WSClient: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        guard self.webSocketTask === webSocketTask else { return }
+        isConnecting = false
+        isIntentionalDisconnect = false
         TFLog.ws.info("WebSocket connected to: \(self.currentURL?.absoluteString ?? "unknown", privacy: .public)")
         updateConnectionState(true)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        guard self.webSocketTask === webSocketTask else { return }
+        isConnecting = false
+        self.webSocketTask = nil
         TFLog.ws.info("WebSocket disconnected. Code: \(closeCode.rawValue, privacy: .public)")
         updateConnectionState(false)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard task === webSocketTask else { return }
+        isConnecting = false
         if let error = error {
+            webSocketTask = nil
             TFLog.ws.error("URLSession error: \(error.localizedDescription, privacy: .public)")
+            updateConnectionState(false)
         }
     }
 }
