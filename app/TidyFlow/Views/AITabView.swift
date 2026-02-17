@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AITabView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var aiChatStore: AIChatStore
     @EnvironmentObject var fileCache: FileCacheState
 
     @State private var inputText: String = ""
@@ -44,8 +45,8 @@ struct AITabView: View {
                         set: { appState.aiSessions = $0 }
                     ),
                     currentSessionId: Binding(
-                        get: { appState.aiCurrentSessionId },
-                        set: { appState.aiCurrentSessionId = $0 }
+                        get: { aiChatStore.currentSessionId },
+                        set: { aiChatStore.setCurrentSessionId($0) }
                     ),
                     onSelect: { session in
                         loadSession(session)
@@ -105,7 +106,7 @@ struct AITabView: View {
         .onChange(of: appState.selectedProjectName) { _, _ in
             resetAIContext()
         }
-        .onChange(of: appState.aiCurrentSessionId) { _, newSessionId in
+        .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
             guard let newSessionId else { return }
 
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
@@ -193,10 +194,10 @@ struct AITabView: View {
         ZStack {
             Color.clear
 
-            if appState.aiChatMessages.isEmpty {
+            if aiChatStore.messages.isEmpty {
                 emptyState
             } else {
-                MessageListView(messages: appState.aiChatMessages)
+                MessageListView(messages: aiChatStore.messages)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -222,8 +223,8 @@ struct AITabView: View {
         ChatInputView(
             text: $inputText,
             imageAttachments: $imageAttachments,
-            isStreaming: appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil,
-            canStopStreaming: appState.aiCurrentSessionId != nil && appState.aiAbortPendingSessionId == nil,
+            isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil,
+            canStopStreaming: aiChatStore.currentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
             onSend: {
                 sendMessage()
             },
@@ -295,14 +296,7 @@ struct AITabView: View {
 
     /// 保存当前 AI 聊天状态到快照缓存
     private func saveSnapshot(forKey key: String) {
-        appState.aiChatSnapshotCache[key] = AIChatSnapshot(
-            currentSessionId: appState.aiCurrentSessionId,
-            messages: appState.aiChatMessages,
-            isStreaming: appState.aiIsStreaming,
-            sessions: appState.aiSessions,
-            messageIndexByMessageId: appState.aiMessageIndexByMessageId,
-            partIndexByPartId: appState.aiPartIndexByPartId
-        )
+        aiChatStore.saveSnapshot(forKey: key, sessions: appState.aiSessions)
     }
 
     /// 视图出现时，确保 AI 状态与当前工作空间一致
@@ -315,13 +309,9 @@ struct AITabView: View {
         // onDisappear 已保存快照，这里恢复即可
         if previousSnapshotKey == newKey && previousSnapshotKey != nil {
             // 同一工作空间，从快照恢复（弥补视图重建导致的 @State 丢失）
-            if let key = newKey, let snapshot = appState.aiChatSnapshotCache[key] {
-                appState.aiCurrentSessionId = snapshot.currentSessionId
-                appState.aiChatMessages = snapshot.messages
-                appState.aiIsStreaming = false
+            if let key = newKey, let snapshot = aiChatStore.snapshot(forKey: key) {
+                aiChatStore.applySnapshot(snapshot)
                 appState.aiSessions = snapshot.sessions
-                appState.aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
-                appState.aiPartIndexByPartId = snapshot.partIndexByPartId
             }
             loadSessions()
             reloadCurrentSessionIfNeeded()
@@ -329,20 +319,12 @@ struct AITabView: View {
         }
         // 工作空间已变化，走完整的 reset 流程
         previousSnapshotKey = newKey
-        if let newKey, let snapshot = appState.aiChatSnapshotCache[newKey] {
-            appState.aiCurrentSessionId = snapshot.currentSessionId
-            appState.aiChatMessages = snapshot.messages
-            appState.aiIsStreaming = false
+        if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
+            aiChatStore.applySnapshot(snapshot)
             appState.aiSessions = snapshot.sessions
-            appState.aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
-            appState.aiPartIndexByPartId = snapshot.partIndexByPartId
         } else {
-            appState.aiCurrentSessionId = nil
-            appState.aiChatMessages = []
-            appState.aiIsStreaming = false
+            aiChatStore.clearAll()
             appState.aiSessions = []
-            appState.aiMessageIndexByMessageId = [:]
-            appState.aiPartIndexByPartId = [:]
         }
         loadSessions()
         reloadCurrentSessionIfNeeded()
@@ -352,7 +334,7 @@ struct AITabView: View {
     private func resetAIContext() {
         // 清除待发消息，避免跨工作空间误发
         pendingSendRequest = nil
-        appState.aiAbortPendingSessionId = nil
+        aiChatStore.setAbortPendingSessionId(nil)
 
         // 保存旧工作空间快照
         if let oldKey = previousSnapshotKey {
@@ -362,22 +344,14 @@ struct AITabView: View {
         let newKey = currentSnapshotKey
         previousSnapshotKey = newKey
 
-        if let newKey, let snapshot = appState.aiChatSnapshotCache[newKey] {
+        if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             // 恢复缓存的快照
-            appState.aiCurrentSessionId = snapshot.currentSessionId
-            appState.aiChatMessages = snapshot.messages
-            appState.aiIsStreaming = false // 不恢复流式状态，由后续事件驱动
+            aiChatStore.applySnapshot(snapshot)
             appState.aiSessions = snapshot.sessions
-            appState.aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
-            appState.aiPartIndexByPartId = snapshot.partIndexByPartId
         } else {
             // 无缓存，清空并从服务端加载
-            appState.aiCurrentSessionId = nil
-            appState.aiChatMessages = []
-            appState.aiIsStreaming = false
+            aiChatStore.clearAll()
             appState.aiSessions = []
-            appState.aiMessageIndexByMessageId = [:]
-            appState.aiPartIndexByPartId = [:]
         }
         // 始终刷新会话列表（保持与服务端同步）
         loadSessions()
@@ -398,8 +372,8 @@ struct AITabView: View {
     }
 
     private func loadSession(_ session: AISessionInfo) {
-        appState.aiCurrentSessionId = session.id
-        appState.aiChatMessages = []
+        aiChatStore.setCurrentSessionId(session.id)
+        aiChatStore.clearMessages()
         appState.wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
@@ -415,9 +389,8 @@ struct AITabView: View {
             sessionId: session.id
         )
         appState.aiSessions.removeAll { $0.id == session.id }
-        if appState.aiCurrentSessionId == session.id {
-            appState.aiCurrentSessionId = nil
-            appState.aiChatMessages = []
+        if aiChatStore.currentSessionId == session.id {
+            aiChatStore.clearAll()
         }
     }
 
@@ -425,11 +398,9 @@ struct AITabView: View {
         inputText = ""
         imageAttachments = []
         pendingSendRequest = nil
-        appState.aiAbortPendingSessionId = nil
+        aiChatStore.setAbortPendingSessionId(nil)
         autocomplete.reset()
-        appState.aiChatMessages = []
-        appState.aiCurrentSessionId = nil
-        appState.aiIsStreaming = false
+        aiChatStore.clearAll()
     }
 
     // MARK: - 自动补全处理
@@ -497,7 +468,7 @@ struct AITabView: View {
 
     /// 恢复快照后，若有选中会话则重新拉取消息（弥补切走期间丢失的增量）
     private func reloadCurrentSessionIfNeeded() {
-        guard let sessionId = appState.aiCurrentSessionId,
+        guard let sessionId = aiChatStore.currentSessionId,
               let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
         appState.wsClient.requestAISessionMessages(
             projectName: appState.selectedProjectName,
@@ -556,7 +527,7 @@ struct AITabView: View {
 
     private func sendMessage() {
         // 上一次停止请求尚未收敛时，不允许发新消息，避免同会话事件串扰。
-        if appState.aiAbortPendingSessionId != nil {
+        if aiChatStore.abortPendingSessionId != nil {
             return
         }
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
@@ -583,7 +554,7 @@ struct AITabView: View {
                     createNewSession()
                 default:
                     // 当前仅支持 /new；未知 client 命令直接提示，避免误路由到 agent。
-                    appState.aiChatMessages.append(
+                    aiChatStore.appendMessage(
                         AIChatMessage(
                             role: .assistant,
                             parts: [AIChatPart(
@@ -628,13 +599,13 @@ struct AITabView: View {
             parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: text, toolName: nil, toolState: nil)],
             isStreaming: false
         )
-        appState.aiChatMessages.append(userMessage)
-        appState.aiIsStreaming = true
+        aiChatStore.appendMessage(userMessage)
+        aiChatStore.isStreaming = true
 
         // 预先插入一个"回复气泡占位"，首包到达后由 message_updated 绑定 messageId
-        appState.aiChatMessages.append(AIChatMessage(role: .assistant, parts: [], isStreaming: true))
+        aiChatStore.appendAssistantPlaceholder()
 
-        if let sessionId = appState.aiCurrentSessionId {
+        if let sessionId = aiChatStore.currentSessionId {
             // 已有会话，直接发送
             if let slash = slashCommand {
                 appState.wsClient.requestAIChatCommand(
@@ -698,25 +669,15 @@ struct AITabView: View {
 
     private func stopStreaming() {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
-              let sessionId = appState.aiCurrentSessionId else { return }
-        appState.aiAbortPendingSessionId = sessionId
+              let sessionId = aiChatStore.currentSessionId else { return }
+        aiChatStore.setAbortPendingSessionId(sessionId)
         TFLog.app.info("AI Stop requested: session_id=\(sessionId, privacy: .public)")
         appState.wsClient.requestAIChatAbort(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
             sessionId: sessionId
         )
-        appState.aiIsStreaming = false
-
-        // 立即停止所有“加载中”展示，避免等待服务端 done 才收敛
-        for idx in appState.aiChatMessages.indices.reversed() {
-            guard appState.aiChatMessages[idx].role == .assistant,
-                  appState.aiChatMessages[idx].isStreaming else { continue }
-            appState.aiChatMessages[idx].isStreaming = false
-            if appState.aiChatMessages[idx].parts.isEmpty {
-                appState.aiChatMessages.remove(at: idx)
-            }
-        }
+        aiChatStore.stopStreamingLocallyAndPrunePlaceholder()
     }
 }
 
@@ -724,6 +685,7 @@ struct AITabView_Previews: PreviewProvider {
     static var previews: some View {
         AITabView()
             .environmentObject(AppState())
+            .environmentObject(AIChatStore())
             .environmentObject(FileCacheState())
     }
 }
