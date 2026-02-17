@@ -28,7 +28,7 @@ struct ToolCardView: View {
               let invocation,
               let metadata = invocation.metadata,
               let diff = metadata["diff"] as? String,
-              let parsed = parseUnifiedDiff(diff) else { return nil }
+              let parsed = AIDiffParser.parse(diff) else { return nil }
         return (parsed.addedCount, parsed.removedCount)
     }
 
@@ -495,84 +495,12 @@ struct ToolCardView: View {
 
     @ViewBuilder
     private func editDiffSectionBlock(_ section: AIToolSection) -> some View {
-        let parsed = parseUnifiedDiff(section.content)
-        let rows = parsed?.rows ?? []
-        let needsCollapse = rows.count > 120
-        let expanded = expandedSections.contains(section.id)
-        let displayRows = (!needsCollapse || expanded) ? rows : Array(rows.prefix(120))
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                if needsCollapse {
-                    Button(expanded ? "折叠" : "展开") {
-                        if expanded {
-                            expandedSections.remove(section.id)
-                        } else {
-                            expandedSections.insert(section.id)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundColor(.accentColor)
-                }
-                Spacer()
-            }
-
-            if let parsed {
-                let diffBodyText = formatDiffRowsForDisplay(displayRows)
-                ZStack(alignment: .topLeading) {
-                    VStack(spacing: 0) {
-                        ForEach(displayRows) { row in
-                            Rectangle()
-                                .fill(diffRowBackground(row.kind))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: diffRowHeight)
-                        }
-                    }
-
-                    HStack(alignment: .top, spacing: 8) {
-                        VStack(alignment: .trailing, spacing: 0) {
-                            ForEach(displayRows) { row in
-                                HStack(spacing: 8) {
-                                    Text(leftPadNumber(row.oldLine))
-                                        .frame(width: 34, alignment: .trailing)
-                                    Text(leftPadNumber(row.newLine))
-                                        .frame(width: 34, alignment: .trailing)
-                                }
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.secondary.opacity(0.72))
-                                .frame(height: diffRowHeight, alignment: .center)
-                            }
-                        }
-
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            Text(diffBodyText)
-                                .textSelection(.enabled)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.primary)
-                                .lineSpacing(0)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: true, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.06))
-                .cornerRadius(8)
-
-                if needsCollapse && !expanded {
-                    Text("…")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary.opacity(0.5))
-                }
-            } else {
-                genericSectionBlock(section)
-            }
+        if let parsed = AIDiffParser.parse(section.content) {
+            UnifiedDiffView(diff: parsed)
+                .padding(.top, 2)
+        } else {
+            genericSectionBlock(section)
         }
-        .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -629,150 +557,17 @@ struct ToolCardView: View {
         .padding(.top, 2)
     }
 
-    private func parseUnifiedDiff(_ text: String) -> ParsedToolDiff? {
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        guard !lines.isEmpty else { return nil }
-
-        var filePath: String?
-        var rows: [ToolDiffRow] = []
-        var oldLine: Int?
-        var newLine: Int?
-        var addedCount = 0
-        var removedCount = 0
-        var rowID = 0
-
-        for line in lines {
-            // 直接隐藏 patch 元信息行，保留真正变更内容与 hunk
-            if line.hasPrefix("Index: ") || isDiffSeparatorLine(line) || line.hasPrefix("--- ") {
-                continue
-            }
-            if line.hasPrefix("diff --git ") {
-                let parts = line.components(separatedBy: " ")
-                if parts.count >= 4 {
-                    filePath = normalizeDiffPath(parts[3])
-                }
-                continue
-            }
-            if line.hasPrefix("+++ "), !line.contains("/dev/null") {
-                filePath = normalizeDiffPath(String(line.dropFirst(4)))
-                continue
-            }
-            if line.hasPrefix("@@"), let (oldStart, newStart) = parseHunkHeader(line) {
-                oldLine = oldStart
-                newLine = newStart
-                rows.append(
-                    ToolDiffRow(
-                        id: rowID,
-                        kind: .hunk,
-                        marker: "@@",
-                        text: line,
-                        oldLine: nil,
-                        newLine: nil
-                    )
-                )
-                rowID += 1
-                continue
-            }
-
-            if line.hasPrefix("+"), !line.hasPrefix("+++") {
-                rows.append(
-                    ToolDiffRow(
-                        id: rowID,
-                        kind: .added,
-                        marker: "+",
-                        text: String(line.dropFirst()),
-                        oldLine: nil,
-                        newLine: newLine
-                    )
-                )
-                addedCount += 1
-                rowID += 1
-                if let n = newLine { newLine = n + 1 }
-                continue
-            }
-            if line.hasPrefix("-"), !line.hasPrefix("---") {
-                rows.append(
-                    ToolDiffRow(
-                        id: rowID,
-                        kind: .removed,
-                        marker: "-",
-                        text: String(line.dropFirst()),
-                        oldLine: oldLine,
-                        newLine: nil
-                    )
-                )
-                removedCount += 1
-                rowID += 1
-                if let n = oldLine { oldLine = n + 1 }
-                continue
-            }
-            if line.hasPrefix(" ") {
-                rows.append(
-                    ToolDiffRow(
-                        id: rowID,
-                        kind: .context,
-                        marker: " ",
-                        text: String(line.dropFirst()),
-                        oldLine: oldLine,
-                        newLine: newLine
-                    )
-                )
-                rowID += 1
-                if let n = oldLine { oldLine = n + 1 }
-                if let n = newLine { newLine = n + 1 }
-                continue
-            }
-
-            // 其他行（如 "\ No newline at end of file"）
-            if !line.isEmpty {
-                rows.append(
-                    ToolDiffRow(
-                        id: rowID,
-                        kind: .meta,
-                        marker: "",
-                        text: line,
-                        oldLine: nil,
-                        newLine: nil
-                    )
-                )
-                rowID += 1
-            }
+    private func diagnosticSeverityColor(_ severity: String) -> Color {
+        switch severity {
+        case "error":
+            return .red
+        case "warning":
+            return .orange
+        case "hint":
+            return .mint
+        default:
+            return .secondary
         }
-
-        guard !rows.isEmpty else { return nil }
-        return ParsedToolDiff(filePath: filePath, addedCount: addedCount, removedCount: removedCount, rows: rows)
-    }
-
-    private func isDiffSeparatorLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return trimmed.allSatisfy { $0 == "=" }
-    }
-
-    private func parseHunkHeader(_ line: String) -> (Int, Int)? {
-        let parts = line.components(separatedBy: " ")
-        guard parts.count >= 3 else { return nil }
-        guard let oldStart = parseHunkStart(parts[1], prefix: "-"),
-              let newStart = parseHunkStart(parts[2], prefix: "+") else { return nil }
-        return (oldStart, newStart)
-    }
-
-    private func parseHunkStart(_ token: String, prefix: Character) -> Int? {
-        guard token.first == prefix else { return nil }
-        let body = token.dropFirst()
-        let start = body.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: true).first ?? ""
-        return Int(start)
-    }
-
-    private func normalizeDiffPath(_ raw: String) -> String {
-        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
-            value = String(value.dropFirst().dropLast())
-        }
-        if value.hasPrefix("a/") || value.hasPrefix("b/") {
-            value = String(value.dropFirst(2))
-        }
-        return value
     }
 
     private func parseDiagnostics(_ jsonString: String) -> [ToolDiagnosticItem] {
@@ -785,13 +580,10 @@ struct ToolCardView: View {
         if let array = root as? [[String: Any]] {
             return array.enumerated().compactMap { parseDiagnostic(dict: $0.element, index: $0.offset, fallbackPath: nil) }
         }
-
         if let dict = root as? [String: Any] {
             if let items = dict["items"] as? [[String: Any]] {
                 return items.enumerated().compactMap { parseDiagnostic(dict: $0.element, index: $0.offset, fallbackPath: nil) }
             }
-
-            // diagnostics 也可能是 { "<filePath>": [diag, ...], ... }
             var perFileItems: [ToolDiagnosticItem] = []
             var idx = 0
             for (filePath, value) in dict.sorted(by: { $0.key < $1.key }) {
@@ -809,15 +601,11 @@ struct ToolCardView: View {
                     }
                 }
             }
-            if !perFileItems.isEmpty {
-                return perFileItems
-            }
-
+            if !perFileItems.isEmpty { return perFileItems }
             if let single = parseDiagnostic(dict: dict, index: 0, fallbackPath: nil) {
                 return [single]
             }
         }
-
         return []
     }
 
@@ -828,55 +616,34 @@ struct ToolCardView: View {
             stringValue(dict["text"]) ??
             stringValue(dict["detail"]) ?? ""
         guard !message.isEmpty else { return nil }
-
         let severityRaw =
             stringValue(dict["severity"]) ??
             stringValue(dict["level"]) ??
-            stringValue(dict["type"]) ??
-            "info"
-
+            stringValue(dict["type"]) ?? "info"
         let severity = normalizeSeverity(severityRaw)
-
         let path =
             stringValue(dict["path"]) ??
             stringValue(dict["filePath"]) ??
             stringValue(dict["file"]) ??
-            stringValue(dict["uri"]) ??
-            fallbackPath
-
+            stringValue(dict["uri"]) ?? fallbackPath
         let line = intValue(dict["line"]) ?? intValue(dict["row"]) ?? nestedInt(dict, keys: ["range", "start", "line"])
         let column = intValue(dict["column"]) ?? intValue(dict["col"]) ?? intValue(dict["character"]) ??
             nestedInt(dict, keys: ["range", "start", "character"])
-
         let location: String? = {
-            var locationParts: [String] = []
-            if let path, !path.isEmpty {
-                locationParts.append(path)
-            }
+            var parts: [String] = []
+            if let path, !path.isEmpty { parts.append(path) }
             var lineCol = ""
             if let line {
                 lineCol = String(line)
-                if let column {
-                    lineCol += ":\(column)"
-                }
+                if let column { lineCol += ":\(column)" }
             }
-            if !lineCol.isEmpty {
-                locationParts.append(lineCol)
-            }
-            return locationParts.isEmpty ? nil : locationParts.joined(separator: ":")
+            if !lineCol.isEmpty { parts.append(lineCol) }
+            return parts.isEmpty ? nil : parts.joined(separator: ":")
         }()
-
-        let code =
-            stringValue(dict["code"]) ??
-            stringValue(dict["rule"]) ??
-            stringValue(dict["source"])
-
+        let code = stringValue(dict["code"]) ?? stringValue(dict["rule"]) ?? stringValue(dict["source"])
         return ToolDiagnosticItem(
-            id: "diag-\(index)-\(message)",
-            severity: severity,
-            message: message,
-            location: location,
-            code: code
+            id: "diag-\(index)-\(message)", severity: severity,
+            message: message, location: location, code: code
         )
     }
 
@@ -887,59 +654,6 @@ struct ToolCardView: View {
         if token == "3" || token.contains("info") { return "info" }
         if token == "4" || token.contains("hint") { return "hint" }
         return token.isEmpty ? "info" : token
-    }
-
-    private var diffRowHeight: CGFloat {
-        #if os(macOS)
-        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        return ceil(font.ascender - font.descender + font.leading)
-        #else
-        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        return ceil(font.lineHeight)
-        #endif
-    }
-
-    private func formatDiffRowsForDisplay(_ rows: [ToolDiffRow]) -> String {
-        rows.map { row in
-            if row.kind == .hunk || row.kind == .meta {
-                return row.text
-            }
-            let marker = row.marker.isEmpty ? " " : row.marker
-            return "\(marker) \(row.text)"
-        }.joined(separator: "\n")
-    }
-
-    private func leftPadNumber(_ value: Int?) -> String {
-        guard let value else { return "    " }
-        let raw = String(value)
-        if raw.count >= 4 { return raw }
-        return String(repeating: " ", count: 4 - raw.count) + raw
-    }
-
-    private func diffRowBackground(_ kind: ToolDiffRowKind) -> Color {
-        switch kind {
-        case .added:
-            return Color.green.opacity(0.20)
-        case .removed:
-            return Color.red.opacity(0.20)
-        case .hunk:
-            return Color.blue.opacity(0.18)
-        case .context, .meta:
-            return Color.clear
-        }
-    }
-
-    private func diagnosticSeverityColor(_ severity: String) -> Color {
-        switch severity {
-        case "error":
-            return .red
-        case "warning":
-            return .orange
-        case "hint":
-            return .mint
-        default:
-            return .secondary
-        }
     }
 
     private func formattedEditFiles(_ files: [[String: Any]]) -> String? {
@@ -1041,30 +755,6 @@ struct ToolCardView: View {
         UIPasteboard.general.string = text
         #endif
     }
-}
-
-private enum ToolDiffRowKind {
-    case hunk
-    case added
-    case removed
-    case context
-    case meta
-}
-
-private struct ToolDiffRow: Identifiable {
-    let id: Int
-    let kind: ToolDiffRowKind
-    let marker: String
-    let text: String
-    let oldLine: Int?
-    let newLine: Int?
-}
-
-private struct ParsedToolDiff {
-    let filePath: String?
-    let addedCount: Int
-    let removedCount: Int
-    let rows: [ToolDiffRow]
 }
 
 private struct ToolDiagnosticItem: Identifiable {
