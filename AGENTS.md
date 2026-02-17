@@ -52,6 +52,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 排查启动卡顿/卡死时先确认日志归属：Debug 构建主要看 `~/.tidyflow/logs/*-dev.log` / `*.dev.log`，应用包运行主要看 `~/.tidyflow/logs/YYYY-MM-DD.log`，避免错看时间段。
 - 应用启动链路（首屏前）禁止在主线程同步执行外部命令并 `waitUntilExit`；此类探测应放后台并加超时兜底，否则会出现 Dock 图标持续跳动但窗口不出现。
 - 排查开发环境问题时应优先查看 `~/.tidyflow/logs/*-dev.log`（或 `*.dev.log`）；仅排查打包产物/生产行为时再看纯日期日志。
+- 需要更细粒度 Core 日志时，在 Debug 启动链路显式设置 `RUST_LOG`；默认 `info` 不会落 `debug/trace`，且 Swift 侧直接 `Logger.debug` 不会自动转发到 Core 文件日志。
 - 启动期若要延迟展示主窗口，隐藏动作应放在 `AppDelegate.applicationDidFinishLaunching`（窗口首帧前）而非 `ContentView.onAppear`，否则会出现窗口闪一下。
 - iOS 侧若在 `List` 等容器内使用 SwiftUI `Menu` 触发 UIKit “`_UIReparentingView` 加到 `UIHostingController.view`”告警/层级异常，可优先尝试给 `Menu`（或其 label）加 `.compositingGroup()`；若仍存在再考虑将入口移到 `toolbar` 的 `Menu`（避免在 `List` cell 内弹出）。
 - iOS 终端若改为原生输入代理，不能同时关闭 xterm stdin 作为唯一输入路径；至少保留 xterm `onData` 兜底，并确保触摸手势可触发 `term.focus()`，否则会出现“无法输入/键盘不弹出”。
@@ -72,6 +73,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 会话侧栏若需融合多 AI 工具历史，状态层应继续按 `ai_tool` 分桶存储，展示层再做全局聚合并按 `updatedAt` 降序排序；每条会话必须携带 `ai_tool`，且非当前工具分桶更新也要触发列表刷新。
 - 会话列表跨 `ai_tool` 点击会话时，应先把目标 `session_id` 写入目标工具的状态桶，再切换 `ai_tool`，并由切换后的统一重载流程拉取详情；避免先切工具再写状态导致首击空白，以及重复拉取触发 Copilot `Session ... is already loaded`。
 - 跨 `ai_tool` 打开历史会话时，必须先校验“可切换工具”再写入 `currentSessionId`/清空消息；否则早退会留下“tool 与 session_id 不匹配”的脏状态，后续会出现“会话已选中但详情不显示”，甚至把请求发到错误后端（如 `opencode` 携带 `codex` 线程 ID）。
+- 排查“会话可见但详情打不开”时，优先查看 `AISessionMessages` 日志中的 `ai_tool/session_id/project/workspace/limit/messages_count`；若 `ai_tool=opencode` 且 `session_id` 非 `ses` 前缀，优先怀疑跨工具会话路由错配。
 - Copilot ACP 适配层不要在“仅为获取模型/模式元数据”的路径里调用 `session/load` 历史会话；这会把会话提前置为 loaded，随后拉历史详情易报 `Session ... is already loaded`。元数据优先走缓存，缺失时用最小兜底。
 - 对接 Codex app-server 时，不要在首条消息前对新建线程强制调用 `thread/resume`：新线程 rollout 文件会延迟到首条用户消息后才落盘；发送链路应优先 `turn/start`，仅在 `thread not found` 时再 `thread/resume` 后重试。
 - 对接 GitHub Copilot ACP 时，不能复用 Codex 的 `thread/*`/`turn/*` 协议；需按 ACP 使用 `initialize(protocolVersion)` + `session/new|load|list|prompt`，并将 `session/update` 事件映射到统一聊天增量模型。
