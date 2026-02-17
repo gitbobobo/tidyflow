@@ -113,7 +113,8 @@ struct AITabView: View {
             if let pending = pendingSendRequest {
                 guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
                       pending.projectName == appState.selectedProjectName,
-                      pending.workspaceName == ws else {
+                      pending.workspaceName == ws,
+                      pending.aiTool == appState.aiChatTool else {
                     pendingSendRequest = nil
                     return
                 }
@@ -122,9 +123,18 @@ struct AITabView: View {
                     pending.kind,
                     sessionId: newSessionId,
                     projectName: appState.selectedProjectName,
-                    workspaceName: ws
+                    workspaceName: ws,
+                    aiTool: appState.aiChatTool
                 )
             }
+        }
+        .onChange(of: appState.aiChatTool) { oldTool, newTool in
+            guard oldTool != newTool else { return }
+            guard canSwitchAITool else {
+                appState.aiChatTool = oldTool
+                return
+            }
+            resetAIContext()
         }
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, newMessageId in
             guard newMessageId != nil else { return }
@@ -156,8 +166,17 @@ struct AITabView: View {
     @State private var pendingSendRequest: (
         projectName: String,
         workspaceName: String,
+        aiTool: AIChatTool,
         kind: PendingAIRequestKind
     )? = nil
+
+    private var canSwitchAITool: Bool {
+        aiChatStore.currentSessionId == nil &&
+        pendingSendRequest == nil &&
+        aiChatStore.abortPendingSessionId == nil &&
+        !aiChatStore.isStreaming &&
+        !aiChatStore.awaitingUserEcho
+    }
 
     private var toolbar: some View {
         HStack {
@@ -174,6 +193,15 @@ struct AITabView: View {
             Text("AI Assistant")
                 .font(.headline)
                 .foregroundColor(.secondary)
+
+            Picker("Agent Tool", selection: $appState.aiChatTool) {
+                ForEach(AIChatTool.allCases) { tool in
+                    Text(tool.displayName).tag(tool)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            .disabled(!canSwitchAITool)
 
             Spacer()
 
@@ -301,7 +329,7 @@ struct AITabView: View {
     /// 生成当前工作空间的快照 key
     private var currentSnapshotKey: String? {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return nil }
-        return "\(appState.selectedProjectName)/\(ws)"
+        return "\(appState.selectedProjectName)/\(ws)/\(appState.aiChatTool.rawValue)"
     }
 
     /// 保存当前 AI 聊天状态到快照缓存
@@ -336,6 +364,11 @@ struct AITabView: View {
             aiChatStore.clearAll()
             appState.aiSessions = []
         }
+        appState.aiProviders = []
+        appState.aiSelectedModel = nil
+        appState.aiAgents = []
+        appState.aiSelectedAgent = nil
+        appState.aiSlashCommands = []
         loadSessions()
         reloadCurrentSessionIfNeeded()
     }
@@ -363,6 +396,11 @@ struct AITabView: View {
             aiChatStore.clearAll()
             appState.aiSessions = []
         }
+        appState.aiProviders = []
+        appState.aiSelectedModel = nil
+        appState.aiAgents = []
+        appState.aiSelectedAgent = nil
+        appState.aiSlashCommands = []
         // 始终刷新会话列表（保持与服务端同步）
         loadSessions()
         // 若有选中会话，重新加载消息以弥补切走期间丢失的增量
@@ -374,11 +412,16 @@ struct AITabView: View {
             appState.aiSessions = []
             return
         }
-        appState.wsClient.requestAISessionList(projectName: appState.selectedProjectName, workspaceName: ws)
+        let aiTool = appState.aiChatTool
+        appState.wsClient.requestAISessionList(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: aiTool
+        )
         // 同时加载 provider/agent/斜杠命令 列表
-        appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws)
-        appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws)
-        appState.wsClient.requestAISlashCommands(projectName: appState.selectedProjectName, workspaceName: ws)
+        appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
+        appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
+        appState.wsClient.requestAISlashCommands(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
     }
 
     private func loadSession(_ session: AISessionInfo) {
@@ -387,6 +430,7 @@ struct AITabView: View {
         appState.wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
+            aiTool: appState.aiChatTool,
             sessionId: session.id,
             limit: 200
         )
@@ -396,6 +440,7 @@ struct AITabView: View {
         appState.wsClient.requestAISessionDelete(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
+            aiTool: appState.aiChatTool,
             sessionId: session.id
         )
         appState.aiSessions.removeAll { $0.id == session.id }
@@ -483,6 +528,7 @@ struct AITabView: View {
         appState.wsClient.requestAISessionMessages(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
+            aiTool: appState.aiChatTool,
             sessionId: sessionId,
             limit: 200
         )
@@ -492,13 +538,15 @@ struct AITabView: View {
         _ kind: PendingAIRequestKind,
         sessionId: String,
         projectName: String,
-        workspaceName: String
+        workspaceName: String,
+        aiTool: AIChatTool
     ) {
         switch kind {
         case let .message(text, imageParts, model, agent, fileRefs):
             appState.wsClient.requestAIChatSend(
                 projectName: projectName,
                 workspaceName: workspaceName,
+                aiTool: aiTool,
                 sessionId: sessionId,
                 message: text,
                 fileRefs: fileRefs,
@@ -510,6 +558,7 @@ struct AITabView: View {
             appState.wsClient.requestAIChatCommand(
                 projectName: projectName,
                 workspaceName: workspaceName,
+                aiTool: aiTool,
                 sessionId: sessionId,
                 command: command,
                 arguments: arguments,
@@ -549,6 +598,7 @@ struct AITabView: View {
         appState.wsClient.requestAIQuestionReply(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
+            aiTool: appState.aiChatTool,
             sessionId: request.sessionId,
             requestId: request.id,
             answers: answers
@@ -562,6 +612,7 @@ struct AITabView: View {
         appState.wsClient.requestAIQuestionReject(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
+            aiTool: appState.aiChatTool,
             sessionId: request.sessionId,
             requestId: request.id
         )
@@ -656,6 +707,7 @@ struct AITabView: View {
 
         // Agent 选择
         let agentName = appState.aiSelectedAgent
+        let aiTool = appState.aiChatTool
 
         // 严格模式：以代理回传的 user message 为准，发送后先等待回传。
         autocomplete.reset()
@@ -672,6 +724,7 @@ struct AITabView: View {
                 appState.wsClient.requestAIChatCommand(
                     projectName: appState.selectedProjectName,
                     workspaceName: ws,
+                    aiTool: aiTool,
                     sessionId: sessionId,
                     command: slash.name,
                     arguments: slash.arguments,
@@ -684,6 +737,7 @@ struct AITabView: View {
                 appState.wsClient.requestAIChatSend(
                     projectName: appState.selectedProjectName,
                     workspaceName: ws,
+                    aiTool: aiTool,
                     sessionId: sessionId,
                     message: text,
                     fileRefs: fileRefsParam,
@@ -698,6 +752,7 @@ struct AITabView: View {
                 pendingSendRequest = (
                     appState.selectedProjectName,
                     ws,
+                    aiTool,
                     .command(
                         command: slash.name,
                         arguments: slash.arguments,
@@ -711,6 +766,7 @@ struct AITabView: View {
                 pendingSendRequest = (
                     appState.selectedProjectName,
                     ws,
+                    aiTool,
                     .message(
                         text: text,
                         imageParts: imageParts,
@@ -723,6 +779,7 @@ struct AITabView: View {
             appState.wsClient.requestAIChatStart(
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,
+                aiTool: aiTool,
                 title: String(text.prefix(50))
             )
         }
@@ -736,6 +793,7 @@ struct AITabView: View {
         appState.wsClient.requestAIChatAbort(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
+            aiTool: appState.aiChatTool,
             sessionId: sessionId
         )
         aiChatStore.stopStreamingLocallyAndPrunePlaceholder()

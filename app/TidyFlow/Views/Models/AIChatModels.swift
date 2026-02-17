@@ -8,6 +8,20 @@ enum AIChatRole: String {
     case assistant
 }
 
+enum AIChatTool: String, CaseIterable, Identifiable {
+    case opencode
+    case codex
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .opencode: return "OpenCode"
+        case .codex: return "Codex"
+        }
+    }
+}
+
 enum AIChatPartKind: String {
     case text
     case reasoning

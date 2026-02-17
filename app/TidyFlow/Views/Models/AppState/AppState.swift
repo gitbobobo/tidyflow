@@ -110,6 +110,7 @@ class AppState: ObservableObject {
 
     // AI Chat 状态（独立状态域，隔离高频流式更新）
     let aiChatStore = AIChatStore()
+    @Published var aiChatTool: AIChatTool = .opencode
     @Published var aiSessions: [AISessionInfo] = []
 
     // AI Provider / Model / Agent 状态

@@ -515,7 +515,8 @@ extension AppState {
             guard let self else { return }
             // 仅处理当前选中的 workspace
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
 
             self.aiChatStore.setCurrentSessionId(ev.sessionId)
             let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
@@ -533,7 +534,8 @@ extension AppState {
         wsClient.onAISessionList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
 
             let sessions = ev.sessions.map {
                 AISessionInfo(projectName: $0.projectName, workspaceName: $0.workspaceName, id: $0.id, title: $0.title, updatedAt: $0.updatedAt)
@@ -544,7 +546,8 @@ extension AppState {
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
 
             let mapped: [AIChatMessage] = ev.messages.compactMap { m in
@@ -575,7 +578,8 @@ extension AppState {
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
             if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
@@ -589,7 +593,8 @@ extension AppState {
         wsClient.onAIChatPartUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
             if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
@@ -603,7 +608,8 @@ extension AppState {
         wsClient.onAIChatPartDelta = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
             if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
@@ -623,7 +629,8 @@ extension AppState {
         wsClient.onAIChatDone = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
             self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
@@ -632,7 +639,8 @@ extension AppState {
         wsClient.onAIChatError = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             TFLog.app.error(
                 "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
@@ -643,7 +651,8 @@ extension AppState {
         wsClient.onAIQuestionAsked = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             self.aiChatStore.upsertQuestionRequest(ev.request)
         }
@@ -651,7 +660,8 @@ extension AppState {
         wsClient.onAIQuestionCleared = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiChatStore.currentSessionId == ev.sessionId else { return }
             self.aiChatStore.clearQuestionRequest(requestId: ev.requestId)
         }
@@ -659,7 +669,8 @@ extension AppState {
         wsClient.onAIProviderList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
 
             self.aiProviders = ev.providers.map { p in
                 AIProviderInfo(
@@ -680,7 +691,8 @@ extension AppState {
         wsClient.onAIAgentList = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
 
             self.aiAgents = ev.agents.map { a in
                 AIAgentInfo(
@@ -704,7 +716,8 @@ extension AppState {
         wsClient.onAISlashCommands = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+                  self.selectedWorkspaceKey == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             self.aiSlashCommands = ev.commands.map { cmd in
                 AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
             }
