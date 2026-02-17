@@ -42,6 +42,36 @@ struct ToolCardView: View {
         let headerDiffStats: (added: Int, removed: Int)?
     }
 
+    /// iOS 端渲染超长工具输出/大 JSON 很容易触发内存峰值（甚至直接被 jetsam kill）。
+    /// 这里做统一截断与“超大卡片不缓存”策略，避免加载历史日志时闪退。
+    private static var maxCodeSectionChars: Int {
+        #if os(iOS)
+        return 60_000
+        #else
+        return 300_000
+        #endif
+    }
+
+    private static var maxTextSectionChars: Int {
+        #if os(iOS)
+        return 16_000
+        #else
+        return 80_000
+        #endif
+    }
+
+    private static var maxCachedPresentationChars: Int {
+        #if os(iOS)
+        return 120_000
+        #else
+        return 600_000
+        #endif
+    }
+
+    private static let renderHashMaxNodes = 2200
+    private static let jsonProbeMaxNodes = 1800
+    private static let jsonProbeMaxDepth = 6
+
     private static let renderCacheLimit = 200
     private static let renderCacheLock = NSLock()
     private static var renderCache: [String: CachedRenderModel] = [:]
@@ -66,7 +96,9 @@ struct ToolCardView: View {
             return cached
         }
         let built = buildRenderModel()
-        Self.storeRenderModel(built, forKey: renderCacheKey)
+        if Self.shouldCacheRenderModel(built) {
+            Self.storeRenderModel(built, forKey: renderCacheKey)
+        }
         return built
     }
 
@@ -130,6 +162,7 @@ struct ToolCardView: View {
                     )
                 )
             }
+            sections = clampSectionsIfNeeded(sections)
             let presentation = AIToolPresentation(
                 toolID: normalizedToolID,
                 displayTitle: name,
@@ -150,6 +183,7 @@ struct ToolCardView: View {
            !partMetadata.isEmpty {
             sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
         }
+        sections = clampSectionsIfNeeded(sections)
         let displayTitle = toolCardTitle(toolID: normalizedToolID, invocation: invocation)
 
         let presentation = AIToolPresentation(
@@ -164,6 +198,39 @@ struct ToolCardView: View {
             presentation: presentation,
             headerDiffStats: headerDiffStats
         )
+    }
+
+    private func clampSectionsIfNeeded(_ sections: [AIToolSection]) -> [AIToolSection] {
+        sections.map { section in
+            let limit = section.isCode ? Self.maxCodeSectionChars : Self.maxTextSectionChars
+            let clamped = clampText(section.content, limit: limit)
+            guard clamped != section.content else { return section }
+            return AIToolSection(id: section.id, title: section.title, content: clamped, isCode: section.isCode)
+        }
+    }
+
+    private func clampText(_ text: String, limit: Int) -> String {
+        guard limit > 0, text.count > limit else { return text }
+        let headCount = max(0, limit - 180)
+        let tailCount = max(0, min(160, limit / 6))
+        let head = String(text.prefix(headCount))
+        let tail = tailCount > 0 ? String(text.suffix(tailCount)) : ""
+        let midNotice = "\n…（已截断，原始长度 \(text.count) 字符）…\n"
+        return head + midNotice + tail
+    }
+
+    private static func shouldCacheRenderModel(_ model: CachedRenderModel) -> Bool {
+        var total = 0
+        if let summary = model.presentation.summary {
+            total += summary.count
+        }
+        for section in model.presentation.sections {
+            total += section.content.count
+            if total > maxCachedPresentationChars {
+                return false
+            }
+        }
+        return true
     }
 
     var body: some View {
@@ -1340,16 +1407,68 @@ struct ToolCardView: View {
 
     private func stableRenderHash(_ value: Any?) -> String {
         guard let value else { return "nil" }
-        if let dict = value as? [String: Any],
-           let text = jsonText(dict) {
-            return "\(text.count):\(text.hashValue)"
+        var hasher = Hasher()
+        var nodes = 0
+        stableHashWalk(value, hasher: &hasher, nodes: &nodes, depth: 0)
+        return "\(nodes):\(hasher.finalize())"
+    }
+
+    private func stableHashWalk(_ value: Any, hasher: inout Hasher, nodes: inout Int, depth: Int) {
+        if nodes > Self.renderHashMaxNodes { return }
+        nodes += 1
+        if depth > 8 {
+            hasher.combine("…")
+            return
         }
-        if let array = value as? [Any],
-           let text = jsonText(array) {
-            return "\(text.count):\(text.hashValue)"
+
+        switch value {
+        case is NSNull:
+            hasher.combine(0)
+        case let b as Bool:
+            hasher.combine(b)
+        case let i as Int:
+            hasher.combine(i)
+        case let i as Int64:
+            hasher.combine(i)
+        case let u as UInt:
+            hasher.combine(u)
+        case let n as NSNumber:
+            hasher.combine(n.doubleValue)
+        case let d as Double:
+            hasher.combine(d)
+        case let s as String:
+            // 避免把超长日志完整喂给 hasher；用长度 + 前后缀足够区分增量变化
+            hasher.combine(s.count)
+            hasher.combine(String(s.prefix(64)))
+            hasher.combine(String(s.suffix(32)))
+        case let data as Data:
+            hasher.combine(data.count)
+            hasher.combine(String(describing: data.prefix(16)))
+        case let dict as [String: Any]:
+            hasher.combine(dict.count)
+            // key 排序以降低“同内容不同顺序”导致的 cache miss
+            for key in dict.keys.sorted() {
+                if nodes > Self.renderHashMaxNodes { break }
+                hasher.combine(key)
+                if let v = dict[key] {
+                    stableHashWalk(v, hasher: &hasher, nodes: &nodes, depth: depth + 1)
+                } else {
+                    hasher.combine(0)
+                }
+            }
+        case let array as [Any]:
+            hasher.combine(array.count)
+            // 大数组只采样前 N 项，避免遍历爆炸
+            let sample = min(array.count, 64)
+            for i in 0..<sample {
+                if nodes > Self.renderHashMaxNodes { break }
+                stableHashWalk(array[i], hasher: &hasher, nodes: &nodes, depth: depth + 1)
+            }
+        default:
+            let text = String(describing: value)
+            hasher.combine(text.count)
+            hasher.combine(String(text.prefix(96)))
         }
-        let text = String(describing: value)
-        return "\(text.count):\(text.hashValue)"
     }
 
     private static func cachedRenderModel(forKey key: String) -> CachedRenderModel? {
@@ -1405,10 +1524,123 @@ struct ToolCardView: View {
 
     private func jsonText(_ obj: Any) -> String? {
         guard JSONSerialization.isValidJSONObject(obj) else { return nil }
+        // 先做轻量探测：如果对象结构/字符串明显过大，就不要 JSON pretty print（iOS 上很容易直接 OOM）。
+        if isJSONTooHeavyForPrettyPrint(obj) {
+            return summarizeAny(obj)
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else {
             return nil
         }
-        return String(data: data, encoding: .utf8)
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        return clampText(text, limit: Self.maxCodeSectionChars)
+    }
+
+    private func isJSONTooHeavyForPrettyPrint(_ obj: Any) -> Bool {
+        var nodes = 0
+        var totalStringChars = 0
+        var maxStringLen = 0
+        var stack: [(Any, Int)] = [(obj, 0)]
+
+        while let (v, depth) = stack.popLast() {
+            nodes += 1
+            if nodes > Self.jsonProbeMaxNodes { return true }
+            if depth > Self.jsonProbeMaxDepth { continue }
+
+            switch v {
+            case let s as String:
+                totalStringChars += s.count
+                maxStringLen = max(maxStringLen, s.count)
+                if maxStringLen > 16_000 { return true }
+                if totalStringChars > 120_000 { return true }
+            case let d as Data:
+                // 二进制字段 pretty print 没意义且可能很大
+                if d.count > 32_000 { return true }
+            case let dict as [String: Any]:
+                if dict.count > 600 { return true }
+                for (_, vv) in dict {
+                    stack.append((vv, depth + 1))
+                    if stack.count > Self.jsonProbeMaxNodes { break }
+                }
+            case let array as [Any]:
+                if array.count > 800 { return true }
+                // 只探测部分元素即可
+                let sample = min(array.count, 96)
+                for i in 0..<sample {
+                    stack.append((array[i], depth + 1))
+                    if stack.count > Self.jsonProbeMaxNodes { break }
+                }
+            default:
+                continue
+            }
+        }
+        return false
+    }
+
+    private func summarizeAny(_ obj: Any) -> String {
+        // 目标：不做深层 JSON 序列化，给一个可读的结构摘要，避免 iOS 端直接爆内存。
+        if let dict = obj as? [String: Any] {
+            let keys = dict.keys.sorted()
+            let showKeys = keys.prefix(80)
+            var lines: [String] = ["{", "  _keys_count: \(keys.count)"]
+            for key in showKeys {
+                guard let v = dict[key] else { continue }
+                lines.append("  \(key): \(summarizeValue(v))")
+                if lines.count > 120 { break }
+            }
+            if keys.count > showKeys.count {
+                lines.append("  …")
+            }
+            lines.append("}")
+            return lines.joined(separator: "\n")
+        }
+        if let array = obj as? [Any] {
+            var lines: [String] = ["[", "  _count: \(array.count)"]
+            let sample = min(array.count, 40)
+            for i in 0..<sample {
+                lines.append("  [\(i)]: \(summarizeValue(array[i]))")
+                if lines.count > 120 { break }
+            }
+            if array.count > sample {
+                lines.append("  …")
+            }
+            lines.append("]")
+            return lines.joined(separator: "\n")
+        }
+        return summarizeValue(obj)
+    }
+
+    private func summarizeValue(_ value: Any) -> String {
+        switch value {
+        case is NSNull:
+            return "null"
+        case let s as String:
+            if s.count <= 240 {
+                return "\"\(s)\""
+            }
+            return "\"\(String(s.prefix(200)))…\" (len=\(s.count))"
+        case let b as Bool:
+            return b ? "true" : "false"
+        case let i as Int:
+            return String(i)
+        case let i as Int64:
+            return String(i)
+        case let u as UInt:
+            return String(u)
+        case let n as NSNumber:
+            return n.stringValue
+        case let d as Double:
+            return String(d)
+        case let data as Data:
+            return "<Data \(data.count) bytes>"
+        case let dict as [String: Any]:
+            return "{…} (keys=\(dict.count))"
+        case let array as [Any]:
+            return "[…] (count=\(array.count))"
+        default:
+            let text = String(describing: value)
+            if text.count <= 240 { return text }
+            return "\(String(text.prefix(200)))… (len=\(text.count))"
+        }
     }
 
     private func copyToClipboard(_ text: String) {
