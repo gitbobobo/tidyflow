@@ -21,10 +21,22 @@ pub struct SessionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartInfo {
     pub id: String,
-    /// "text" | "reasoning" | "tool"
+    /// "text" | "reasoning" | "tool" | "file"
     pub part_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synthetic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignored: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
     /// OpenCode tool callID（若为 tool）

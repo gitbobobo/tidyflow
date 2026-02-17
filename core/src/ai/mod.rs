@@ -51,10 +51,22 @@ pub enum AiEvent {
 #[derive(Debug, Clone)]
 pub struct AiPart {
     pub id: String,
-    /// "text" | "reasoning" | "tool"
+    /// "text" | "reasoning" | "tool" | "file"
     pub part_type: String,
     /// text/reasoning 的内容（全量）
     pub text: Option<String>,
+    /// file part 的 MIME（若为 file）
+    pub mime: Option<String>,
+    /// file part 的文件名（若为 file）
+    pub filename: Option<String>,
+    /// file part 的 URL（若为 file）
+    pub url: Option<String>,
+    /// text part 的 synthetic 标记（若有）
+    pub synthetic: Option<bool>,
+    /// text part 的 ignored 标记（若有）
+    pub ignored: Option<bool>,
+    /// part source（JSON 透传）
+    pub source: Option<serde_json::Value>,
     /// tool 名（若为 tool）
     pub tool_name: Option<String>,
     /// tool 调用 ID（若为 tool）

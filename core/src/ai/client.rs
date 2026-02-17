@@ -2,7 +2,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio_stream::Stream;
 
@@ -82,6 +85,87 @@ fn percent_decode_to_utf8(input: &str) -> Option<String> {
     }
 
     String::from_utf8(out).ok()
+}
+
+static IMAGE_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn safe_file_stem(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "image".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn infer_image_extension(filename: &str, mime: &str) -> &'static str {
+    if let Some(ext) = Path::new(filename).extension().and_then(|s| s.to_str()) {
+        if !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            // 常见大小写统一为小写，便于后续排查。
+            match ext.to_ascii_lowercase().as_str() {
+                "jpeg" | "jpg" => return "jpg",
+                "png" => return "png",
+                "webp" => return "webp",
+                "gif" => return "gif",
+                "heic" => return "heic",
+                "heif" => return "heif",
+                _ => {}
+            }
+        }
+    }
+
+    match mime {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/heic" => "heic",
+        "image/heif" => "heif",
+        _ => "bin",
+    }
+}
+
+fn image_part_url_for_opencode(image: &super::AiImagePart) -> String {
+    // 优先落临时文件并传 file://，避免工具链对超长 data URL 解析失败。
+    let ext = {
+        let inferred = infer_image_extension(&image.filename, &image.mime);
+        if inferred.is_empty() {
+            "bin"
+        } else {
+            inferred
+        }
+    };
+    let stem = Path::new(&image.filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(safe_file_stem)
+        .unwrap_or_else(|| "image".to_string());
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let seq = IMAGE_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join("tidyflow-ai-images");
+    let file_name = format!("{}-{}-{}.{}", stem, ts, seq, ext);
+    let path = dir.join(file_name);
+
+    if std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&path, &image.data).is_ok() {
+        if let Ok(url) = reqwest::Url::from_file_path(&path) {
+            return url.to_string();
+        }
+    }
+
+    // 兜底：保持旧行为，避免文件写入失败时消息直接丢失。
+    let encoded = BASE64.encode(&image.data);
+    format!("data:{};base64,{}", image.mime, encoded)
 }
 
 #[derive(Debug, Error)]
@@ -239,13 +323,13 @@ impl OpenCodeClient {
             }
         }
 
-        // 图片附件转为 OpenCode FilePart（data URL 格式）
+        // 图片附件优先落临时文件走 file://，失败时回退 data URL。
         if let Some(ref images) = image_parts {
             for img in images {
-                let encoded = BASE64.encode(&img.data);
+                let url = image_part_url_for_opencode(img);
                 parts.push(serde_json::json!({
                     "type": "file",
-                    "url": format!("data:{};base64,{}", img.mime, encoded),
+                    "url": url,
                     "filename": img.filename,
                     "mime": img.mime,
                 }));
@@ -321,10 +405,10 @@ impl OpenCodeClient {
 
         if let Some(ref images) = image_parts {
             for img in images {
-                let encoded = BASE64.encode(&img.data);
+                let url = image_part_url_for_opencode(img);
                 parts.push(serde_json::json!({
                     "type": "file",
-                    "url": format!("data:{};base64,{}", img.mime, encoded),
+                    "url": url,
                     "filename": img.filename,
                     "mime": img.mime,
                 }));
@@ -893,6 +977,18 @@ pub struct PartEnvelope {
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
+    pub mime: Option<String>,
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub synthetic: Option<bool>,
+    #[serde(default)]
+    pub ignored: Option<bool>,
+    #[serde(default)]
+    pub source: Option<serde_json::Value>,
+    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub tool: Option<String>,
@@ -1133,25 +1229,18 @@ impl AiAgent for OpenCodeAgent {
 
         // 3. 过滤全局事件流，只保留当前 directory + session 的事件，映射为通用 AiEvent
         //
-        // 注意：
-        // - message.updated 告知 message role（user/assistant）。
-        // - part.updated/delta 可能先于 message.updated 到达，因此需要 role 未知时的兜底过滤。
+        // 注意：message.updated/part.updated/part.delta 均透传（含 user）。
         let session_id = session_id.to_string();
         let directory = directory.to_string();
-        let user_message = message.to_string();
-        let message_roles: StdArc<StdMutex<HashMap<String, String>>> =
-            StdArc::new(StdMutex::new(HashMap::new()));
         // partID -> part.type （用于把 message.part.delta 路由到 text/reasoning）
         let part_types: StdArc<StdMutex<HashMap<String, String>>> =
             StdArc::new(StdMutex::new(HashMap::new()));
 
         let stream = tokio_stream::wrappers::BroadcastStream::new(rx);
         let mapped = tokio_stream::StreamExt::filter_map(stream, move |result| {
-            let message_roles = message_roles.clone();
             let part_types = part_types.clone();
             let session_id = session_id.clone();
             let directory = directory.clone();
-            let user_message = user_message.clone();
 
             match result {
                 Ok(hub_event) => {
@@ -1160,7 +1249,7 @@ impl AiAgent for OpenCodeAgent {
                     }
                     let bus_event = hub_event.event;
                     match bus_event.event_type.as_str() {
-                        // message.updated：记录 messageID -> role 映射
+                        // message.updated：透传 messageID + role
                         "message.updated" => {
                             let props = &bus_event.properties;
                             let info = props.get("info")?;
@@ -1168,27 +1257,11 @@ impl AiAgent for OpenCodeAgent {
                             if info_session != session_id {
                                 return None;
                             }
-                            let message_id = info.get("id").and_then(|v| v.as_str())?.to_string();
-                            let role = info
-                                .get("role")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            if !message_id.is_empty() && !role.is_empty() {
-                                if let Ok(mut map) = message_roles.lock() {
-                                    map.insert(message_id, role);
-                                }
-                            }
-                            // 只对 assistant 转发，用户消息不需要展示（UI 已本地插入）
                             let role = info.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                            if role == "assistant" {
-                                Some(Ok(AiEvent::MessageUpdated {
-                                    message_id: info.get("id")?.as_str()?.to_string(),
-                                    role: role.to_string(),
-                                }))
-                            } else {
-                                None
-                            }
+                            Some(Ok(AiEvent::MessageUpdated {
+                                message_id: info.get("id")?.as_str()?.to_string(),
+                                role: role.to_string(),
+                            }))
                         }
 
                         // part 全量：message.part.updated
@@ -1202,22 +1275,6 @@ impl AiAgent for OpenCodeAgent {
                             let message_id =
                                 part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
                             let part_id = part.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-                            let role = if !message_id.is_empty() {
-                                message_roles
-                                    .lock()
-                                    .ok()
-                                    .and_then(|m| m.get(message_id).cloned())
-                            } else {
-                                None
-                            };
-
-                            // 已知是 user 的 message：一律不转发到 AIChatText，避免重复显示
-                            if let Some(ref r) = role {
-                                if r == "user" {
-                                    return None;
-                                }
-                            }
 
                             let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -1247,14 +1304,21 @@ impl AiAgent for OpenCodeAgent {
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
 
-                            // role 未知时的兜底：若文本与刚发送的 user message 完全一致，通常是用户消息回放，忽略
-                            if role.is_none()
-                                && part_type == "text"
-                                && !user_message.is_empty()
-                                && text.as_deref().unwrap_or("").trim() == user_message.trim()
-                            {
-                                return None;
-                            }
+                            let mime = part
+                                .get("mime")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let filename = part
+                                .get("filename")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let url = part
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let synthetic = part.get("synthetic").and_then(|v| v.as_bool());
+                            let ignored = part.get("ignored").and_then(|v| v.as_bool());
+                            let source = part.get("source").cloned();
 
                             let tool_state = part.get("state").cloned();
                             let tool_part_metadata = part.get("metadata").cloned();
@@ -1265,6 +1329,12 @@ impl AiAgent for OpenCodeAgent {
                                     id: part_id,
                                     part_type: part_type_s,
                                     text,
+                                    mime,
+                                    filename,
+                                    url,
+                                    synthetic,
+                                    ignored,
+                                    source,
                                     tool_name,
                                     tool_call_id,
                                     tool_state,
@@ -1291,20 +1361,6 @@ impl AiAgent for OpenCodeAgent {
                                 return None;
                             }
 
-                            let role = if !message_id.is_empty() {
-                                message_roles
-                                    .lock()
-                                    .ok()
-                                    .and_then(|m| m.get(message_id).cloned())
-                            } else {
-                                None
-                            };
-                            if let Some(ref r) = role {
-                                if r == "user" {
-                                    return None;
-                                }
-                            }
-
                             let part_type = if !part_id.is_empty() {
                                 part_types.lock().ok().and_then(|m| m.get(part_id).cloned())
                             } else {
@@ -1313,12 +1369,6 @@ impl AiAgent for OpenCodeAgent {
 
                             let part_type_s =
                                 part_type.clone().unwrap_or_else(|| "text".to_string());
-                            if role.is_none()
-                                && !user_message.is_empty()
-                                && delta.trim() == user_message.trim()
-                            {
-                                return None;
-                            }
                             Some(Ok(AiEvent::PartDelta {
                                 message_id: message_id.to_string(),
                                 part_id: part_id.to_string(),
@@ -1563,23 +1613,14 @@ impl AiAgent for OpenCodeAgent {
         // 3. 与 send_message 使用同一套事件映射逻辑（避免行为分叉）
         let session_id = session_id.to_string();
         let directory = directory.to_string();
-        let user_message = if arguments.trim().is_empty() {
-            format!("/{}", command.trim())
-        } else {
-            format!("/{} {}", command.trim(), arguments.trim())
-        };
-        let message_roles: StdArc<StdMutex<HashMap<String, String>>> =
-            StdArc::new(StdMutex::new(HashMap::new()));
         let part_types: StdArc<StdMutex<HashMap<String, String>>> =
             StdArc::new(StdMutex::new(HashMap::new()));
 
         let stream = tokio_stream::wrappers::BroadcastStream::new(rx);
         let mapped = tokio_stream::StreamExt::filter_map(stream, move |result| {
-            let message_roles = message_roles.clone();
             let part_types = part_types.clone();
             let session_id = session_id.clone();
             let directory = directory.clone();
-            let user_message = user_message.clone();
 
             match result {
                 Ok(hub_event) => {
@@ -1595,26 +1636,11 @@ impl AiAgent for OpenCodeAgent {
                             if info_session != session_id {
                                 return None;
                             }
-                            let message_id = info.get("id").and_then(|v| v.as_str())?.to_string();
-                            let role = info
-                                .get("role")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            if !message_id.is_empty() && !role.is_empty() {
-                                if let Ok(mut map) = message_roles.lock() {
-                                    map.insert(message_id, role);
-                                }
-                            }
                             let role = info.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                            if role == "assistant" {
-                                Some(Ok(AiEvent::MessageUpdated {
-                                    message_id: info.get("id")?.as_str()?.to_string(),
-                                    role: role.to_string(),
-                                }))
-                            } else {
-                                None
-                            }
+                            Some(Ok(AiEvent::MessageUpdated {
+                                message_id: info.get("id")?.as_str()?.to_string(),
+                                role: role.to_string(),
+                            }))
                         }
                         "message.part.updated" => {
                             let props = &bus_event.properties;
@@ -1626,21 +1652,6 @@ impl AiAgent for OpenCodeAgent {
                             let message_id =
                                 part.get("messageID").and_then(|v| v.as_str()).unwrap_or("");
                             let part_id = part.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-                            let role = if !message_id.is_empty() {
-                                message_roles
-                                    .lock()
-                                    .ok()
-                                    .and_then(|m| m.get(message_id).cloned())
-                            } else {
-                                None
-                            };
-
-                            if let Some(ref r) = role {
-                                if r == "user" {
-                                    return None;
-                                }
-                            }
 
                             let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -1669,13 +1680,21 @@ impl AiAgent for OpenCodeAgent {
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
 
-                            if role.is_none()
-                                && part_type == "text"
-                                && !user_message.is_empty()
-                                && text.as_deref().unwrap_or("").trim() == user_message.trim()
-                            {
-                                return None;
-                            }
+                            let mime = part
+                                .get("mime")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let filename = part
+                                .get("filename")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let url = part
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let synthetic = part.get("synthetic").and_then(|v| v.as_bool());
+                            let ignored = part.get("ignored").and_then(|v| v.as_bool());
+                            let source = part.get("source").cloned();
 
                             let tool_state = part.get("state").cloned();
                             let tool_part_metadata = part.get("metadata").cloned();
@@ -1686,6 +1705,12 @@ impl AiAgent for OpenCodeAgent {
                                     id: part_id,
                                     part_type: part_type_s,
                                     text,
+                                    mime,
+                                    filename,
+                                    url,
+                                    synthetic,
+                                    ignored,
+                                    source,
                                     tool_name,
                                     tool_call_id,
                                     tool_state,
@@ -1711,20 +1736,6 @@ impl AiAgent for OpenCodeAgent {
                                 return None;
                             }
 
-                            let role = if !message_id.is_empty() {
-                                message_roles
-                                    .lock()
-                                    .ok()
-                                    .and_then(|m| m.get(message_id).cloned())
-                            } else {
-                                None
-                            };
-                            if let Some(ref r) = role {
-                                if r == "user" {
-                                    return None;
-                                }
-                            }
-
                             let part_type = if !part_id.is_empty() {
                                 part_types.lock().ok().and_then(|m| m.get(part_id).cloned())
                             } else {
@@ -1733,12 +1744,6 @@ impl AiAgent for OpenCodeAgent {
 
                             let part_type_s =
                                 part_type.clone().unwrap_or_else(|| "text".to_string());
-                            if role.is_none()
-                                && !user_message.is_empty()
-                                && delta.trim() == user_message.trim()
-                            {
-                                return None;
-                            }
                             Some(Ok(AiEvent::PartDelta {
                                 message_id: message_id.to_string(),
                                 part_id: part_id.to_string(),
@@ -2001,6 +2006,12 @@ impl AiAgent for OpenCodeAgent {
                         id: p.id,
                         part_type: p.part_type,
                         text: p.text,
+                        mime: p.mime,
+                        filename: p.filename,
+                        url: p.url,
+                        synthetic: p.synthetic,
+                        ignored: p.ignored,
+                        source: p.source,
                         tool_name: p.name.or(p.tool),
                         tool_call_id: p.call_id,
                         tool_state: p.state,
@@ -2210,6 +2221,22 @@ mod tests {
     }
 
     #[test]
+    fn test_part_envelope_file_fields() {
+        let json = r#"{
+            "id":"p_file_1",
+            "type":"file",
+            "mime":"image/png",
+            "filename":"image.png",
+            "url":"data:image/png;base64,AAA"
+        }"#;
+        let part: PartEnvelope = serde_json::from_str(json).unwrap();
+        assert_eq!(part.part_type, "file");
+        assert_eq!(part.mime.as_deref(), Some("image/png"));
+        assert_eq!(part.filename.as_deref(), Some("image.png"));
+        assert_eq!(part.url.as_deref(), Some("data:image/png;base64,AAA"));
+    }
+
+    #[test]
     fn test_bus_event_session_status() {
         let json = r#"{"type":"session.status","properties":{"ses_123":{"type":"idle"}}}"#;
         let event: BusEvent = serde_json::from_str(json).unwrap();
@@ -2223,6 +2250,29 @@ mod tests {
         let json = r#"{"type":"server.heartbeat","properties":{}}"#;
         let event: BusEvent = serde_json::from_str(json).unwrap();
         assert_eq!(event.event_type, "server.heartbeat");
+    }
+
+    #[test]
+    fn test_infer_image_extension() {
+        assert_eq!(infer_image_extension("photo.jpeg", "image/png"), "jpg");
+        assert_eq!(infer_image_extension("photo.png", "image/jpeg"), "png");
+        assert_eq!(infer_image_extension("photo", "image/webp"), "webp");
+        assert_eq!(
+            infer_image_extension("photo.unknown", "application/octet-stream"),
+            "bin"
+        );
+    }
+
+    #[test]
+    fn test_image_part_url_for_opencode_prefers_file_url() {
+        let image = super::super::AiImagePart {
+            filename: "clipboard_test.jpg".to_string(),
+            mime: "image/jpeg".to_string(),
+            data: vec![0xFF, 0xD8, 0xFF, 0xD9],
+        };
+
+        let url = image_part_url_for_opencode(&image);
+        assert!(url.starts_with("file://") || url.starts_with("data:image/jpeg;base64,"));
     }
 
     #[test]
