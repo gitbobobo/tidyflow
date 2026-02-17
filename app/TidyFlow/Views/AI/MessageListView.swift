@@ -1,7 +1,10 @@
 import SwiftUI
 
 struct MessageListView: View {
+    @EnvironmentObject var aiChatStore: AIChatStore
     let messages: [AIChatMessage]
+    let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
+    let onQuestionReject: (AIQuestionRequestInfo) -> Void
     @State private var viewportHeight: CGFloat = 0
     @State private var isNearBottom: Bool = true
     @State private var shouldAutoScroll: Bool = true
@@ -74,7 +77,14 @@ struct MessageListView: View {
                     ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
                         MessageBubble(
                             message: message,
-                            prefersFullRender: shouldFullyRender(message: message, index: index)
+                            prefersFullRender: shouldFullyRender(message: message, index: index),
+                            pendingQuestionToken: pendingQuestionToken(for: message),
+                            questionRequestResolver: { callId in
+                                guard let callId else { return nil }
+                                return aiChatStore.pendingToolQuestions[callId]
+                            },
+                            onQuestionReply: onQuestionReply,
+                            onQuestionReject: onQuestionReject
                         )
                             .equatable()
                             .id(message.id)
@@ -171,6 +181,16 @@ struct MessageListView: View {
             action()
         }
     }
+
+    private func pendingQuestionToken(for message: AIChatMessage) -> String {
+        let items: [String] = message.parts.compactMap { part in
+            guard part.kind == .tool, let callId = part.toolCallId, !callId.isEmpty else { return nil }
+            guard let request = aiChatStore.pendingToolQuestions[callId] else { return nil }
+            return "\(callId):\(request.id):\(request.questions.count)"
+        }
+        if items.isEmpty { return "" }
+        return items.sorted().joined(separator: "|")
+    }
 }
 
 private struct MessageListViewportHeightKey: PreferenceKey {
@@ -192,11 +212,17 @@ private struct MessageListBottomAnchorKey: PreferenceKey {
 private struct MessageBubble: View, Equatable {
     let message: AIChatMessage
     let prefersFullRender: Bool
+    let pendingQuestionToken: String
+    let questionRequestResolver: (String?) -> AIQuestionRequestInfo?
+    let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
+    let onQuestionReject: (AIQuestionRequestInfo) -> Void
 
     private var isUser: Bool { message.role == .user }
 
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
-        lhs.prefersFullRender == rhs.prefersFullRender && lhs.renderKey == rhs.renderKey
+        lhs.prefersFullRender == rhs.prefersFullRender &&
+            lhs.pendingQuestionToken == rhs.pendingQuestionToken &&
+            lhs.renderKey == rhs.renderKey
     }
 
     private var renderKey: String {
@@ -264,54 +290,8 @@ private struct MessageBubble: View, Equatable {
                         EmptyView()
                     }
                 } else {
-                    ForEach(message.parts) { part in
-                        switch part.kind {
-                        case .text:
-                            if let text = part.text {
-                                if isUser,
-                                   let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: true) {
-                                    Text(normalizedText)
-                                        .textSelection(.enabled)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.white)
-                                } else if message.isStreaming,
-                                          let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                                    TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
-                                        .textSelection(.enabled)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.primary)
-                                } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                                    MarkdownTextView(
-                                        text: markdownText,
-                                        baseFontSize: 13,
-                                        textColor: .primary
-                                    )
-                                }
-                            }
-                        case .reasoning:
-                            if let text = part.text, message.isStreaming,
-                               let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                                TypewriterText(text: normalizedText, isStreaming: true)
-                                    .textSelection(.enabled)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else if let text = part.text,
-                                      let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                                MarkdownTextView(
-                                    text: markdownText,
-                                    baseFontSize: 12,
-                                    textColor: .secondary
-                                )
-                            }
-                        case .tool:
-                            ToolCardView(
-                                name: part.toolName ?? "unknown",
-                                state: part.toolState,
-                                callID: part.toolCallId,
-                                partMetadata: part.toolPartMetadata
-                            )
-                        }
+                    ForEach(Array(message.parts.enumerated()), id: \.element.id) { _, part in
+                        partContentView(part)
                     }
                 }
 
@@ -327,6 +307,67 @@ private struct MessageBubble: View, Equatable {
                     .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
             )
             .cornerRadius(12)
+        }
+    }
+
+    @ViewBuilder
+    private func partContentView(_ part: AIChatPart) -> some View {
+        switch part.kind {
+        case .text:
+            if let text = part.text {
+                if isUser,
+                   let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: true) {
+                    Text(normalizedText)
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white)
+                } else if message.isStreaming,
+                          let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
+                    TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .foregroundColor(.primary)
+                } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                    MarkdownTextView(
+                        text: markdownText,
+                        baseFontSize: 13,
+                        textColor: .primary
+                    )
+                }
+            }
+        case .reasoning:
+            if let text = part.text, message.isStreaming,
+               let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
+                TypewriterText(text: normalizedText, isStreaming: true)
+                    .textSelection(.enabled)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let text = part.text,
+                      let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                MarkdownTextView(
+                    text: markdownText,
+                    baseFontSize: 12,
+                    textColor: .secondary
+                )
+            }
+        case .tool:
+            let pendingQuestion = questionRequestResolver(part.toolCallId)
+            ToolCardView(
+                name: part.toolName ?? "unknown",
+                state: part.toolState,
+                callID: part.toolCallId,
+                partMetadata: part.toolPartMetadata,
+                pendingQuestion: pendingQuestion,
+                onQuestionReply: { answers in
+                    guard let pendingQuestion else { return }
+                    onQuestionReply(pendingQuestion, answers)
+                },
+                onQuestionReject: {
+                    guard let pendingQuestion else { return }
+                    onQuestionReject(pendingQuestion)
+                }
+            )
         }
     }
 

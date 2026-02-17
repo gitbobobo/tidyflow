@@ -197,7 +197,11 @@ struct AITabView: View {
             if aiChatStore.messages.isEmpty {
                 emptyState
             } else {
-                MessageListView(messages: aiChatStore.messages)
+                MessageListView(
+                    messages: aiChatStore.messages,
+                    onQuestionReply: handleQuestionReply,
+                    onQuestionReject: handleQuestionReject
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -532,6 +536,31 @@ struct AITabView: View {
             .first {
                 $0.id == selected.modelID && $0.providerID == selected.providerID
             }
+    }
+
+    private func handleQuestionReply(_ request: AIQuestionRequestInfo, answers: [[String]]) {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
+        appState.wsClient.requestAIQuestionReply(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            sessionId: request.sessionId,
+            requestId: request.id,
+            answers: answers
+        )
+        // 先本地收敛，后端会再推送 ai_question_cleared 做最终一致。
+        aiChatStore.clearQuestionRequest(requestId: request.id)
+    }
+
+    private func handleQuestionReject(_ request: AIQuestionRequestInfo) {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
+        appState.wsClient.requestAIQuestionReject(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            sessionId: request.sessionId,
+            requestId: request.id
+        )
+        // 先本地收敛，后端会再推送 ai_question_cleared 做最终一致。
+        aiChatStore.clearQuestionRequest(requestId: request.id)
     }
 
     private func sendMessage() {

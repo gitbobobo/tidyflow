@@ -12,6 +12,27 @@ struct ToolCardView: View {
     let state: [String: Any]?
     let callID: String?
     let partMetadata: [String: Any]?
+    let pendingQuestion: AIQuestionRequestInfo?
+    let onQuestionReply: (([[String]]) -> Void)?
+    let onQuestionReject: (() -> Void)?
+
+    init(
+        name: String,
+        state: [String: Any]?,
+        callID: String?,
+        partMetadata: [String: Any]?,
+        pendingQuestion: AIQuestionRequestInfo? = nil,
+        onQuestionReply: (([[String]]) -> Void)? = nil,
+        onQuestionReject: (() -> Void)? = nil
+    ) {
+        self.name = name
+        self.state = state
+        self.callID = callID
+        self.partMetadata = partMetadata
+        self.pendingQuestion = pendingQuestion
+        self.onQuestionReply = onQuestionReply
+        self.onQuestionReject = onQuestionReject
+    }
 
     @State private var expandedSections: Set<String> = []
 
@@ -35,7 +56,8 @@ struct ToolCardView: View {
             normalizedToolID,
             callID ?? "",
             stableRenderHash(state),
-            stableRenderHash(partMetadata)
+            stableRenderHash(partMetadata),
+            pendingQuestion?.id ?? ""
         ].joined(separator: "|")
     }
 
@@ -64,6 +86,22 @@ struct ToolCardView: View {
         renderModel.presentation
     }
 
+    private var questionPromptItems: [ToolQuestionPromptItem] {
+        questionPromptItems(from: invocation)
+    }
+
+    private var questionPromptInteractive: Bool {
+        questionPromptInteractive(toolID: normalizedToolID, invocation: invocation)
+    }
+
+    private var shouldShowQuestionPrompt: Bool {
+        shouldShowQuestionPrompt(
+            toolID: normalizedToolID,
+            invocation: invocation,
+            promptItems: questionPromptItems
+        )
+    }
+
     private func buildRenderModel() -> CachedRenderModel {
         let invocation = AIToolInvocationState.from(state: state)
         let headerDiffStats: (added: Int, removed: Int)? = {
@@ -77,7 +115,9 @@ struct ToolCardView: View {
 
         guard let invocation else {
             var sections: [AIToolSection] = []
-            if let partMetadata, !partMetadata.isEmpty {
+            if normalizedToolID != "question",
+               let partMetadata,
+               !partMetadata.isEmpty {
                 sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
             }
             if let state {
@@ -105,7 +145,9 @@ struct ToolCardView: View {
         }
 
         var sections = buildSections(toolID: normalizedToolID, invocation: invocation)
-        if let partMetadata, !partMetadata.isEmpty {
+        if normalizedToolID != "question",
+           let partMetadata,
+           !partMetadata.isEmpty {
             sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
         }
         let displayTitle = toolCardTitle(toolID: normalizedToolID, invocation: invocation)
@@ -133,6 +175,16 @@ struct ToolCardView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if shouldShowQuestionPrompt {
+                ToolQuestionPromptView(
+                    items: questionPromptItems,
+                    interactive: questionPromptInteractive,
+                    onReply: onQuestionReply,
+                    onReject: onQuestionReject
+                )
+                .id(pendingQuestion?.id ?? "question-prompt-\(callID ?? "")")
             }
 
             ForEach(presentation.sections) { section in
@@ -295,7 +347,9 @@ struct ToolCardView: View {
             return buildSearchSections(invocation)
         case "todowrite", "todoread":
             return buildTodoSections(invocation)
-        case "task", "skill", "question", "plan_enter", "plan_exit", "batch":
+        case "question":
+            return buildQuestionSections(invocation)
+        case "task", "skill", "plan_enter", "plan_exit", "batch":
             return buildTaskSections(invocation)
         default:
             return buildGenericSections(invocation)
@@ -462,6 +516,36 @@ struct ToolCardView: View {
         return sections
     }
 
+    private func buildQuestionSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+        let promptItems = questionPromptItems(from: invocation)
+        // 避免在 renderModel 构建链路中反向读取 shouldShowQuestionPrompt 触发递归。
+        let showPrompt = shouldShowQuestionPrompt(
+            toolID: normalizedToolID,
+            invocation: invocation,
+            promptItems: promptItems
+        )
+
+        // question 处于待回答阶段时，交互区已单独渲染；避免重复展示大段 input JSON。
+        if !showPrompt, !invocation.input.isEmpty {
+            sections.append(section(id: "task-input", title: "input", any: invocation.input))
+        }
+
+        if let output = invocation.output, !output.isEmpty {
+            sections.append(AIToolSection(id: "task-output", title: "output", content: output, isCode: true))
+        }
+
+        if let metadata = invocation.metadata, !metadata.isEmpty {
+            sections.append(section(id: "task-metadata", title: "metadata", any: metadata))
+        }
+
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "task-error", title: "error", content: error, isCode: false))
+        }
+
+        return sections
+    }
+
     private func buildTodoSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
         let items = todoItems(invocation)
@@ -607,7 +691,9 @@ struct ToolCardView: View {
             return "terminal"
         case "grep", "glob", "list", "websearch", "codesearch", "webfetch":
             return "magnifyingglass"
-        case "task", "skill", "question", "plan_enter", "plan_exit":
+        case "question":
+            return "questionmark.circle"
+        case "task", "skill", "plan_enter", "plan_exit":
             return "list.bullet.clipboard"
         case "todowrite", "todoread":
             return "checklist"
@@ -1075,6 +1161,108 @@ struct ToolCardView: View {
         }
     }
 
+    private func parseQuestionPromptItems(from root: Any?) -> [ToolQuestionPromptItem] {
+        guard let root else { return [] }
+        if let array = root as? [[String: Any]] {
+            return array.enumerated().compactMap { parseQuestionPromptItem(dict: $0.element, index: $0.offset) }
+        }
+        if let array = root as? [Any] {
+            return array.enumerated().compactMap { item in
+                guard let dict = item.element as? [String: Any] else { return nil }
+                return parseQuestionPromptItem(dict: dict, index: item.offset)
+            }
+        }
+        if let dict = root as? [String: Any] {
+            if let questions = dict["questions"] {
+                let parsed = parseQuestionPromptItems(from: questions)
+                if !parsed.isEmpty { return parsed }
+            }
+            if let item = parseQuestionPromptItem(dict: dict, index: 0) {
+                return [item]
+            }
+        }
+        return []
+    }
+
+    private func questionPromptItems(from invocation: AIToolInvocationState?) -> [ToolQuestionPromptItem] {
+        if let pendingQuestion, !pendingQuestion.questions.isEmpty {
+            return pendingQuestion.questions.map { item in
+                ToolQuestionPromptItem(
+                    question: item.question,
+                    header: item.header,
+                    options: item.options.map {
+                        ToolQuestionPromptOption(label: $0.label, description: $0.description)
+                    },
+                    multiple: item.multiple,
+                    custom: item.custom
+                )
+            }
+        }
+        guard let invocation else { return [] }
+        return parseQuestionPromptItems(from: invocation.input["questions"])
+    }
+
+    private func questionPromptInteractive(
+        toolID: String,
+        invocation: AIToolInvocationState?
+    ) -> Bool {
+        guard toolID == "question" else { return false }
+        guard pendingQuestion != nil else { return false }
+        guard let invocation else { return false }
+        return invocation.status == .pending || invocation.status == .running
+    }
+
+    private func shouldShowQuestionPrompt(
+        toolID: String,
+        invocation: AIToolInvocationState?,
+        promptItems: [ToolQuestionPromptItem]
+    ) -> Bool {
+        guard toolID == "question" else { return false }
+        guard !promptItems.isEmpty else { return false }
+        if questionPromptInteractive(toolID: toolID, invocation: invocation) {
+            return true
+        }
+        guard let invocation else { return false }
+        return invocation.status == .pending || invocation.status == .running
+    }
+
+    private func parseQuestionPromptItem(dict: [String: Any], index: Int) -> ToolQuestionPromptItem? {
+        let question =
+            stringValue(dict["question"]) ??
+            stringValue(dict["prompt"]) ??
+            stringValue(dict["text"]) ?? ""
+        let normalizedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuestion.isEmpty else { return nil }
+
+        let header = (stringValue(dict["header"]) ?? stringValue(dict["name"]) ?? "问题\(index + 1)")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var options: [ToolQuestionPromptOption] = []
+        if let optionArray = dict["options"] as? [[String: Any]] {
+            options = optionArray.compactMap { option in
+                let label = (stringValue(option["label"]) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !label.isEmpty else { return nil }
+                let description = (stringValue(option["description"]) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return ToolQuestionPromptOption(label: label, description: description)
+            }
+        } else if let choiceArray = dict["choices"] as? [String] {
+            options = choiceArray.compactMap { raw in
+                let label = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !label.isEmpty else { return nil }
+                return ToolQuestionPromptOption(label: label, description: "")
+            }
+        }
+
+        return ToolQuestionPromptItem(
+            question: normalizedQuestion,
+            header: header.isEmpty ? "问题\(index + 1)" : header,
+            options: options,
+            multiple: boolValue(dict["multiple"]) ?? false,
+            custom: boolValue(dict["custom"]) ?? true
+        )
+    }
+
     private func formattedEditFiles(_ files: [[String: Any]]) -> String? {
         let lines = files.compactMap { file -> String? in
             let path =
@@ -1127,6 +1315,24 @@ struct ToolCardView: View {
             return v.intValue
         case let v as String:
             return Int(v)
+        default:
+            return nil
+        }
+    }
+
+    private func boolValue(_ value: Any?) -> Bool? {
+        switch value {
+        case let v as Bool:
+            return v
+        case let v as Int:
+            return v != 0
+        case let v as NSNumber:
+            return v.boolValue
+        case let v as String:
+            let token = v.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if ["true", "1", "yes", "y"].contains(token) { return true }
+            if ["false", "0", "no", "n"].contains(token) { return false }
+            return nil
         default:
             return nil
         }
@@ -1212,6 +1418,302 @@ struct ToolCardView: View {
         #else
         UIPasteboard.general.string = text
         #endif
+    }
+}
+
+private struct ToolQuestionPromptOption: Identifiable {
+    var id: String { label }
+    let label: String
+    let description: String
+}
+
+private struct ToolQuestionPromptItem: Identifiable {
+    var id: String { "\(header)|\(question)" }
+    let question: String
+    let header: String
+    let options: [ToolQuestionPromptOption]
+    let multiple: Bool
+    let custom: Bool
+}
+
+private struct ToolQuestionPromptView: View {
+    let items: [ToolQuestionPromptItem]
+    let interactive: Bool
+    let onReply: (([[String]]) -> Void)?
+    let onReject: (() -> Void)?
+
+    @State private var tab: Int = 0
+    @State private var answers: [Int: [String]] = [:]
+    @State private var customInputs: [Int: String] = [:]
+    @State private var editingCustom: Bool = false
+
+    private var isSingleAutoSubmit: Bool {
+        items.count == 1 && !(items.first?.multiple ?? false)
+    }
+
+    private var currentItem: ToolQuestionPromptItem? {
+        guard tab >= 0, tab < items.count else { return nil }
+        return items[tab]
+    }
+
+    private var isConfirmStep: Bool {
+        !isSingleAutoSubmit && tab == items.count
+    }
+
+    private var currentAnswers: [String] {
+        answers[tab] ?? []
+    }
+
+    private var customInput: String {
+        customInputs[tab] ?? ""
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !isSingleAutoSubmit {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                            Button(item.header) {
+                                guard interactive else { return }
+                                tab = index
+                                editingCustom = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(tab == index ? .primary : .secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background((tab == index ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)))
+                            .cornerRadius(6)
+                        }
+
+                        Button("确认") {
+                            guard interactive else { return }
+                            tab = items.count
+                            editingCustom = false
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(isConfirmStep ? .primary : .secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background((isConfirmStep ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)))
+                        .cornerRadius(6)
+                    }
+                }
+            }
+
+            if isConfirmStep {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("请确认你的选择")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.question)
+                                .font(.system(size: 11))
+                                .foregroundColor(.primary)
+                            Text((answers[index] ?? []).isEmpty ? "未回答" : (answers[index] ?? []).joined(separator: "、"))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.06))
+                        .cornerRadius(8)
+                    }
+                }
+            } else if let item = currentItem {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.question + (item.multiple ? "（可多选）" : ""))
+                        .font(.system(size: 11))
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(item.options) { option in
+                        let picked = currentAnswers.contains(option.label)
+                        Button {
+                            handleOptionTap(option: option.label, multiple: item.multiple)
+                        } label: {
+                            HStack(alignment: .top, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.label)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    if !option.description.isEmpty {
+                                        Text(option.description)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                                if picked {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(picked ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!interactive)
+                    }
+
+                    if item.custom {
+                        Button {
+                            guard interactive else { return }
+                            editingCustom = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("自定义答案")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.primary)
+                                    if !editingCustom && !customInput.isEmpty {
+                                        Text(customInput)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                                if currentAnswers.contains(customInput), !customInput.isEmpty {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(Color.secondary.opacity(0.06))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!interactive)
+                    }
+
+                    if editingCustom {
+                        HStack(spacing: 6) {
+                            TextField("输入自定义答案", text: Binding(
+                                get: { customInputs[tab] ?? "" },
+                                set: { customInputs[tab] = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11))
+                            Button(item.multiple ? "添加" : "提交") {
+                                submitCustom(multiple: item.multiple)
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundColor(.accentColor)
+                            Button("取消") {
+                                editingCustom = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if interactive {
+                HStack(spacing: 10) {
+                    if let onReject {
+                        Button("忽略") {
+                            onReject()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    }
+
+                    if !isSingleAutoSubmit {
+                        if isConfirmStep {
+                            Button("提交") {
+                                submitAll()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.accentColor)
+                        } else if currentItem?.multiple == true {
+                            Button("下一步") {
+                                tab = min(items.count, tab + 1)
+                                editingCustom = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor((currentAnswers.isEmpty) ? .secondary : .accentColor)
+                            .disabled(currentAnswers.isEmpty)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.05))
+        .cornerRadius(8)
+    }
+
+    private func handleOptionTap(option: String, multiple: Bool) {
+        guard interactive else { return }
+        if multiple {
+            var next = answers[tab] ?? []
+            if let idx = next.firstIndex(of: option) {
+                next.remove(at: idx)
+            } else {
+                next.append(option)
+            }
+            answers[tab] = next
+            return
+        }
+        answers[tab] = [option]
+        if isSingleAutoSubmit {
+            onReply?([[option]])
+            return
+        }
+        tab = min(items.count, tab + 1)
+        editingCustom = false
+    }
+
+    private func submitCustom(multiple: Bool) {
+        guard interactive else { return }
+        let value = (customInputs[tab] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            editingCustom = false
+            return
+        }
+        if multiple {
+            var next = answers[tab] ?? []
+            if !next.contains(value) {
+                next.append(value)
+            }
+            answers[tab] = next
+            editingCustom = false
+            return
+        }
+        answers[tab] = [value]
+        if isSingleAutoSubmit {
+            onReply?([[value]])
+            return
+        }
+        tab = min(items.count, tab + 1)
+        editingCustom = false
+    }
+
+    private func submitAll() {
+        guard interactive else { return }
+        let payload: [[String]] = items.enumerated().map { answers[$0.offset] ?? [] }
+        onReply?(payload)
     }
 }
 
