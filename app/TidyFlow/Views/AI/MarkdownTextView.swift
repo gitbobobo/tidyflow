@@ -9,13 +9,29 @@ struct MarkdownTextView: View {
     var textColor: Color = .primary
     private let bodyLineSpacing: CGFloat = 3
 
+    private enum MarkdownBlock {
+        case text(AttributedString)
+        case divider
+    }
+
     var body: some View {
-        if let attributed = parseMarkdown(text) {
-            Text(attributed)
-                .foregroundColor(textColor)
-                .lineSpacing(bodyLineSpacing)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        let blocks = parseMarkdownBlocks(text)
+        if !blocks.isEmpty {
+            VStack(alignment: .leading, spacing: bodyLineSpacing) {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    switch block {
+                    case .text(let attributed):
+                        Text(attributed)
+                            .foregroundColor(textColor)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    case .divider:
+                        Divider()
+                            .padding(.vertical, 2)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(text)
                 .font(.system(size: baseFontSize))
@@ -26,13 +42,13 @@ struct MarkdownTextView: View {
         }
     }
 
-    private func parseMarkdown(_ source: String) -> AttributedString? {
+    private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
 
         let rawLines = normalized.components(separatedBy: "\n")
-        var lines: [AttributedString] = []
+        var blocks: [MarkdownBlock] = []
         var inCodeFence = false
 
         for rawLine in rawLines {
@@ -46,13 +62,17 @@ struct MarkdownTextView: View {
                 var code = AttributedString("  \(rawLine)")
                 code.font = .system(size: baseFontSize, design: .monospaced)
                 code.foregroundColor = .primary
-                code.backgroundColor = Color.secondary.opacity(0.18)
-                lines.append(code)
+                blocks.append(.text(code))
                 continue
             }
 
             if trimmed.isEmpty {
-                lines.append(AttributedString(""))
+                blocks.append(.text(AttributedString("")))
+                continue
+            }
+
+            if isThematicBreakLine(rawLine) {
+                blocks.append(.divider)
                 continue
             }
 
@@ -60,7 +80,7 @@ struct MarkdownTextView: View {
                 let size = headingFontSize(level: heading.level)
                 var content = parseInlineMarkdown(heading.content, defaultFont: .system(size: size, weight: .semibold))
                 content.font = .system(size: size, weight: .semibold)
-                lines.append(content)
+                blocks.append(.text(content))
                 continue
             }
 
@@ -68,7 +88,7 @@ struct MarkdownTextView: View {
                 var prefix = AttributedString(" • ")
                 prefix.font = .system(size: baseFontSize)
                 let content = parseInlineMarkdown(item, defaultFont: .system(size: baseFontSize))
-                lines.append(prefix + content)
+                blocks.append(.text(prefix + content))
                 continue
             }
 
@@ -76,7 +96,7 @@ struct MarkdownTextView: View {
                 var prefix = AttributedString("  \(item.index). ")
                 prefix.font = .system(size: baseFontSize)
                 let content = parseInlineMarkdown(item.content, defaultFont: .system(size: baseFontSize))
-                lines.append(prefix + content)
+                blocks.append(.text(prefix + content))
                 continue
             }
 
@@ -86,23 +106,14 @@ struct MarkdownTextView: View {
                 prefix.foregroundColor = .secondary
                 var content = parseInlineMarkdown(quote, defaultFont: .system(size: baseFontSize))
                 content.foregroundColor = .secondary
-                lines.append(prefix + content)
+                blocks.append(.text(prefix + content))
                 continue
             }
 
-            lines.append(parseInlineMarkdown(rawLine, defaultFont: .system(size: baseFontSize)))
+            blocks.append(.text(parseInlineMarkdown(rawLine, defaultFont: .system(size: baseFontSize))))
         }
 
-        guard !lines.isEmpty else { return nil }
-
-        var result = AttributedString()
-        for idx in lines.indices {
-            if idx > 0 {
-                result += AttributedString("\n")
-            }
-            result += lines[idx]
-        }
-        return result
+        return blocks
     }
 
     private func parseInlineMarkdown(_ source: String, defaultFont: Font) -> AttributedString {
@@ -127,7 +138,6 @@ struct MarkdownTextView: View {
             if intent?.contains(.code) == true {
                 font = .system(size: baseFontSize, design: .monospaced)
                 styled[run.range].foregroundColor = .primary
-                styled[run.range].backgroundColor = Color.secondary.opacity(0.2)
             } else {
                 if intent?.contains(.stronglyEmphasized) == true {
                     font = font.weight(.bold)
@@ -224,6 +234,16 @@ struct MarkdownTextView: View {
         let contentStart = line.index(line.startIndex, offsetBy: contentStartOffset)
         let content = String(line[contentStart...])
         return content.isEmpty ? nil : content
+    }
+
+    private func isThematicBreakLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        let compact = trimmed.replacingOccurrences(of: " ", with: "")
+        guard compact.count >= 3 else { return false }
+        let charset = Set(compact)
+        guard charset.count == 1, let token = charset.first else { return false }
+        return token == "-" || token == "*" || token == "_"
     }
 
 }
