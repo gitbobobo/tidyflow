@@ -127,6 +127,7 @@ final class MobileAppState: ObservableObject {
     // AI Chat 状态（iOS 端完整对齐 macOS）
     @Published var aiActiveProject: String = ""
     @Published var aiActiveWorkspace: String = ""
+    @Published var aiChatTool: AIChatTool = .opencode
     @Published var aiCurrentSessionId: String?
     @Published var aiChatMessages: [AIChatMessage] = []
     @Published var aiIsStreaming: Bool = false
@@ -189,6 +190,7 @@ final class MobileAppState: ObservableObject {
     private var aiPendingSendRequest: (
         projectName: String,
         workspaceName: String,
+        aiTool: AIChatTool,
         kind: PendingAIRequestKind
     )?
     /// 项目命令 started/completed 路由（project|workspace|commandId -> taskId 队列）
@@ -710,6 +712,11 @@ final class MobileAppState: ObservableObject {
             restoreAISnapshot(project: trimmedProject, workspace: trimmedWorkspace)
         }
 
+        aiProviders = []
+        aiSelectedModel = nil
+        aiAgents = []
+        aiSelectedAgent = nil
+        aiSlashCommands = []
         requestAIContextResources()
         reloadCurrentAISessionIfNeeded()
     }
@@ -732,13 +739,42 @@ final class MobileAppState: ObservableObject {
         aiPartIndexByPartId = [:]
     }
 
+    var canSwitchAIChatTool: Bool {
+        aiCurrentSessionId == nil &&
+        aiPendingSendRequest == nil &&
+        aiAbortPendingSessionId == nil &&
+        !aiIsStreaming
+    }
+
+    /// 切换 AI 工具（仅空白会话允许）
+    func switchAIChatTool(_ newTool: AIChatTool) {
+        guard newTool != aiChatTool else { return }
+        guard canSwitchAIChatTool else { return }
+
+        saveCurrentAISnapshotIfNeeded()
+        aiPendingSendRequest = nil
+        aiAbortPendingSessionId = nil
+        aiChatTool = newTool
+
+        if !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty {
+            restoreAISnapshot(project: aiActiveProject, workspace: aiActiveWorkspace)
+            aiProviders = []
+            aiSelectedModel = nil
+            aiAgents = []
+            aiSelectedAgent = nil
+            aiSlashCommands = []
+            requestAIContextResources()
+            reloadCurrentAISessionIfNeeded()
+        }
+    }
+
     /// 拉取会话列表 + provider/agent/斜杠命令
     func requestAIContextResources() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
-        wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
-        wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
-        wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
-        wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace)
+        wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
+        wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
+        wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
+        wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
     }
 
     /// 加载指定会话消息
@@ -753,6 +789,7 @@ final class MobileAppState: ObservableObject {
         wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
+            aiTool: aiChatTool,
             sessionId: session.id,
             limit: 200
         )
@@ -763,6 +800,7 @@ final class MobileAppState: ObservableObject {
         wsClient.requestAISessionDelete(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
+            aiTool: aiChatTool,
             sessionId: session.id
         )
         aiSessions.removeAll { $0.id == session.id }
@@ -835,6 +873,7 @@ final class MobileAppState: ObservableObject {
             ["provider_id": $0.providerID, "model_id": $0.modelID]
         }
         let agentName = aiSelectedAgent
+        let aiTool = aiChatTool
 
         // 先渲染用户消息与 assistant 占位，确保发送后即时反馈
         aiChatMessages.append(
@@ -852,6 +891,7 @@ final class MobileAppState: ObservableObject {
                 wsClient.requestAIChatCommand(
                     projectName: aiActiveProject,
                     workspaceName: aiActiveWorkspace,
+                    aiTool: aiTool,
                     sessionId: sessionId,
                     command: slash.name,
                     arguments: slash.arguments,
@@ -864,6 +904,7 @@ final class MobileAppState: ObservableObject {
                 wsClient.requestAIChatSend(
                     projectName: aiActiveProject,
                     workspaceName: aiActiveWorkspace,
+                    aiTool: aiTool,
                     sessionId: sessionId,
                     message: text,
                     fileRefs: fileRefsParam,
@@ -877,6 +918,7 @@ final class MobileAppState: ObservableObject {
                 aiPendingSendRequest = (
                     aiActiveProject,
                     aiActiveWorkspace,
+                    aiTool,
                     .command(
                         command: slash.name,
                         arguments: slash.arguments,
@@ -890,6 +932,7 @@ final class MobileAppState: ObservableObject {
                 aiPendingSendRequest = (
                     aiActiveProject,
                     aiActiveWorkspace,
+                    aiTool,
                     .message(
                         text: text,
                         imageParts: imageParts,
@@ -902,6 +945,7 @@ final class MobileAppState: ObservableObject {
             wsClient.requestAIChatStart(
                 projectName: aiActiveProject,
                 workspaceName: aiActiveWorkspace,
+                aiTool: aiTool,
                 title: String(text.prefix(50))
             )
         }
@@ -917,6 +961,7 @@ final class MobileAppState: ObservableObject {
         wsClient.requestAIChatAbort(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
             sessionId: sessionId
         )
         aiIsStreaming = false
@@ -976,13 +1021,14 @@ final class MobileAppState: ObservableObject {
         wsClient.requestAISessionMessages(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
             sessionId: sessionId,
             limit: 200
         )
     }
 
     private func aiContextKey(project: String, workspace: String) -> String {
-        "\(project):\(workspace)"
+        "\(project):\(workspace):\(aiChatTool.rawValue)"
     }
 
     private func saveCurrentAISnapshotIfNeeded() {
@@ -994,7 +1040,9 @@ final class MobileAppState: ObservableObject {
             isStreaming: aiIsStreaming,
             sessions: aiSessions,
             messageIndexByMessageId: aiMessageIndexByMessageId,
-            partIndexByPartId: aiPartIndexByPartId
+            partIndexByPartId: aiPartIndexByPartId,
+            pendingToolQuestions: [:],
+            questionRequestToCallId: [:]
         )
     }
 
@@ -1034,13 +1082,15 @@ final class MobileAppState: ObservableObject {
         _ kind: PendingAIRequestKind,
         sessionId: String,
         projectName: String,
-        workspaceName: String
+        workspaceName: String,
+        aiTool: AIChatTool
     ) {
         switch kind {
         case let .message(text, imageParts, model, agent, fileRefs):
             wsClient.requestAIChatSend(
                 projectName: projectName,
                 workspaceName: workspaceName,
+                aiTool: aiTool,
                 sessionId: sessionId,
                 message: text,
                 fileRefs: fileRefs,
@@ -1052,6 +1102,7 @@ final class MobileAppState: ObservableObject {
             wsClient.requestAIChatCommand(
                 projectName: projectName,
                 workspaceName: workspaceName,
+                aiTool: aiTool,
                 sessionId: sessionId,
                 command: command,
                 arguments: arguments,
@@ -1674,7 +1725,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISessionStarted = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
 
             self.aiCurrentSessionId = ev.sessionId
             let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
@@ -1690,7 +1742,8 @@ final class MobileAppState: ObservableObject {
 
             if let pending = self.aiPendingSendRequest {
                 guard pending.projectName == ev.projectName,
-                      pending.workspaceName == ev.workspaceName else {
+                      pending.workspaceName == ev.workspaceName,
+                      pending.aiTool == ev.aiTool else {
                     self.aiPendingSendRequest = nil
                     return
                 }
@@ -1699,7 +1752,8 @@ final class MobileAppState: ObservableObject {
                     pending.kind,
                     sessionId: ev.sessionId,
                     projectName: ev.projectName,
-                    workspaceName: ev.workspaceName
+                    workspaceName: ev.workspaceName,
+                    aiTool: ev.aiTool
                 )
             }
         }
@@ -1707,7 +1761,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISessionList = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             let sessions = ev.sessions.map {
                 AISessionInfo(
                     projectName: $0.projectName,
@@ -1723,7 +1778,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
 
             self.aiChatMessages = ev.messages.compactMap { m in
@@ -1749,7 +1805,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             guard ev.role == "assistant" else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
@@ -1762,7 +1819,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIChatPartUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
 
@@ -1775,7 +1833,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIChatPartDelta = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
 
@@ -1794,7 +1853,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIChatDone = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId {
                 self.aiAbortPendingSessionId = nil
@@ -1812,7 +1872,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIChatError = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId {
                 self.aiAbortPendingSessionId = nil
@@ -1844,7 +1905,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIProviderList = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             self.aiProviders = ev.providers.map { p in
                 AIProviderInfo(
                     id: p.id,
@@ -1864,7 +1926,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAIAgentList = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             self.aiAgents = ev.agents.map { a in
                 AIAgentInfo(
                     name: a.name,
@@ -1885,7 +1948,8 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISlashCommands = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName else { return }
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
             self.aiSlashCommands = ev.commands.map {
                 AISlashCommandInfo(name: $0.name, description: $0.description, action: $0.action)
             }

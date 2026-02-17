@@ -11,6 +11,13 @@ struct MobileAIChatView: View {
     @State private var showSessionList = false
     @State private var referenceSearchTask: Task<Void, Never>?
 
+    private var aiToolBinding: Binding<AIChatTool> {
+        Binding(
+            get: { appState.aiChatTool },
+            set: { appState.switchAIChatTool($0) }
+        )
+    }
+
     private var systemBackgroundColor: Color {
         #if os(iOS)
         return Color(UIColor.systemBackground)
@@ -38,6 +45,16 @@ struct MobileAIChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("AI Tool", selection: aiToolBinding) {
+                    ForEach(AIChatTool.allCases) { tool in
+                        Text(tool.displayName).tag(tool)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+                .disabled(!appState.canSwitchAIChatTool)
+            }
             #if os(iOS)
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
@@ -148,7 +165,11 @@ struct MobileAIChatView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
-                MessageListView(messages: appState.aiChatMessages)
+                MessageListView(
+                    messages: appState.aiChatMessages,
+                    onQuestionReply: { _, _ in },
+                    onQuestionReject: { _ in }
+                )
             }
         }
         .background(systemGroupedBackgroundColor)
