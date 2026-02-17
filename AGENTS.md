@@ -88,8 +88,15 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - AI 聊天的高频流式状态应下沉到独立状态域（如 `AIChatStore`），并在 WS 增量到 UI 的链路做约 30fps 批量提交；避免把 token 级更新直接写入全局 `AppState` 导致整页重绘。
 - AI 图片附件链路应采用“客户端传二进制原图（MessagePack bin）+ 服务端统一探测格式并按需转码（如 HEIC→JPEG）”；不要在客户端先转 base64 或各端各自转码，避免格式误判与行为不一致。
 - AI 图片“可上传但不可读”排障时，应同时做两件事：前端基于模型能力（如 `capabilities.input.image`）发送前拦截并提示，后端记录 `image_parts` 的数量/mime/字节数日志，用于快速区分“上传链路正常但模型/代理不支持”与“附件传输失败”。
+- 对接 OpenCode 的图片工具链（如 `look_at`）时，优先把图片落临时文件并传 `file://`；`data:` URL 在部分链路会出现 `failed to fetch the data URL` 并导致工具长期停留 `pending`。
 - SwiftUI 组件新增可选交互参数时，避免使用 `let + 默认值` 期待自动成员初始化器透传；该模式不会生成对应入参。需要跨调用点可配置时应显式编写带默认值的 `init`，避免 “extra arguments in call” 编译错误。
 - SwiftUI 视图计算属性若参与渲染构建（如 `presentation`/`sections`）时，禁止在构建链路中反向读取依赖该构建结果的布尔 getter（如 `shouldShow...`）；否则会形成 getter 环并触发主线程递归栈溢出闪退。
+- AI 聊天若要求“以代理回传为准”，发送后不要本地插入 user 气泡；输入框清空应与消息渲染解耦（可在请求入队后立即清空），避免依赖 user echo 事件导致残留输入。
+- AI 聊天严格模式下，若 assistant 首包先于 user echo 到达，`ensureMessage` 需将 user 消息前插到当前流式 assistant 之前并重建索引，避免时间线出现“assistant 在前、user 在后”倒序。
+- OpenCode 流式里 `part.updated/part.delta` 可能早于或缺失 `message.updated(role)`；role 未知时不能默认 assistant，需结合“awaiting 状态 + assistant 锚点 + part 类型(file)”推断 user，避免实时顺序错乱与清空信号丢失。
+- AI 聊天流式批处理若同时收到 `message.updated` 与 `part.*`，应先处理 `message.updated` 建立 `message_id -> role` 映射，再消费 `part`，避免同批次内因处理顺序导致角色误判与消息倒序。
+- AI 聊天等待 user echo 时，收敛条件应绑定“本轮新消息范围”（如进入 awaiting 时的消息基线索引）；不要让旧 user 消息的增量更新提前结束 awaiting，否则会清空本轮 assistant 锚点并导致实时顺序错乱。
+- AI 聊天若要求“用户消息以代理回传为准”，不要在发送时预插 assistant 占位气泡；否则会在 user echo 尚未回传时形成“assistant 先出现”的实时错觉，导致顺序体验不稳定。
 
 ## Build Commands
 
