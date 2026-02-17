@@ -20,6 +20,8 @@ struct PendingApproval {
     id: Value,
     method: String,
     question_ids: Vec<String>,
+    session_id: String,
+    tool_message_id: Option<String>,
 }
 
 pub struct CodexAppServerAgent {
@@ -212,7 +214,12 @@ impl CodexAppServerAgent {
         chunks.join("\n")
     }
 
-    fn map_turn_item_to_message(turn_id: &str, index: usize, item: &Value) -> Option<AiMessage> {
+    fn map_turn_item_to_message(
+        turn_id: &str,
+        index: usize,
+        item: &Value,
+        pending_request_id: Option<&str>,
+    ) -> Option<AiMessage> {
         let item_type = item
             .get("type")
             .and_then(|v| v.as_str())
@@ -245,11 +252,35 @@ impl CodexAppServerAgent {
                 }],
             });
         }
-        Self::map_item_to_part(item).map(|part| AiMessage {
-            id: item_id,
-            role: "assistant".to_string(),
-            created_at: None,
-            parts: vec![part],
+        Self::map_item_to_part(item).map(|mut part| {
+            if part.part_type == "tool"
+                && part
+                    .tool_name
+                    .as_deref()
+                    .map(|name| name.eq_ignore_ascii_case("question"))
+                    .unwrap_or(false)
+            {
+                if let Some(request_id) = pending_request_id {
+                    part.tool_call_id = Some(request_id.to_string());
+                    let mut metadata = part
+                        .tool_part_metadata
+                        .and_then(|v| v.as_object().cloned())
+                        .unwrap_or_default();
+                    metadata.insert(
+                        "request_id".to_string(),
+                        Value::String(request_id.to_string()),
+                    );
+                    metadata.insert("tool_message_id".to_string(), Value::String(item_id.clone()));
+                    part.tool_part_metadata = Some(Value::Object(metadata));
+                }
+            }
+
+            AiMessage {
+                id: item_id,
+                role: "assistant".to_string(),
+                created_at: None,
+                parts: vec![part],
+            }
         })
     }
 
@@ -585,13 +616,16 @@ impl CodexAppServerAgent {
                                 }
                                 let request_key = CodexAppServerAgent::request_id_key(&req.id);
                                 if let Some((question, question_ids)) = CodexAppServerAgent::build_question_from_request(&req.method, &request_key, &params) {
+                                    let pending = PendingApproval {
+                                        id: req.id,
+                                        method: req.method.clone(),
+                                        question_ids,
+                                        session_id: question.session_id.clone(),
+                                        tool_message_id: question.tool_message_id.clone(),
+                                    };
                                     approvals.lock().await.insert(
                                         request_key.clone(),
-                                        PendingApproval {
-                                            id: req.id,
-                                            method: req.method.clone(),
-                                            question_ids,
-                                        },
+                                        pending,
                                     );
                                     let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question }));
                                 }
@@ -769,6 +803,20 @@ impl AiAgent for CodexAppServerAgent {
             .cloned()
             .unwrap_or_default();
 
+        let pending_request_id_by_item_id: HashMap<String, String> = self
+            .pending_approvals
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(request_id, pending)| {
+                if pending.session_id != session_id {
+                    return None;
+                }
+                let tool_message_id = pending.tool_message_id.clone()?;
+                Some((tool_message_id, request_id.clone()))
+            })
+            .collect();
+
         let mut messages = Vec::new();
         for turn in turns {
             let turn_id = turn
@@ -782,7 +830,17 @@ impl AiAgent for CodexAppServerAgent {
                 .cloned()
                 .unwrap_or_default();
             for (idx, item) in items.iter().enumerate() {
-                if let Some(msg) = Self::map_turn_item_to_message(&turn_id, idx, item) {
+                let item_id = item
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{}-{}", turn_id, idx));
+                let pending_request_id = pending_request_id_by_item_id
+                    .get(&item_id)
+                    .map(|s| s.as_str());
+                if let Some(msg) =
+                    Self::map_turn_item_to_message(&turn_id, idx, item, pending_request_id)
+                {
                     messages.push(msg);
                 }
             }

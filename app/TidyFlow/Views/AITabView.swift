@@ -244,7 +244,8 @@ struct AITabView: View {
                 MessageListView(
                     messages: aiChatStore.messages,
                     onQuestionReply: handleQuestionReply,
-                    onQuestionReject: handleQuestionReject
+                    onQuestionReject: handleQuestionReject,
+                    onQuestionReplyAsMessage: handleQuestionReplyAsMessage
                 )
             }
         }
@@ -703,6 +704,62 @@ struct AITabView: View {
         )
         // 先本地收敛，后端会再推送 ai_question_cleared 做最终一致。
         aiChatStore.clearQuestionRequest(requestId: request.id)
+    }
+
+    private func handleQuestionReplyAsMessage(_ rawText: String) {
+        // 上一次停止请求尚未收敛时，不允许发新消息，避免同会话事件串扰。
+        if aiChatStore.abortPendingSessionId != nil {
+            return
+        }
+        guard pendingSendRequest == nil else { return }
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
+
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let model: [String: String]? = appState.aiSelectedModel.map {
+            ["provider_id": $0.providerID, "model_id": $0.modelID]
+        }
+        let agentName = appState.aiSelectedAgent
+        let aiTool = appState.aiChatTool
+
+        // 历史 question 回答以普通消息发送，保持与手动输入一致的流式状态管理。
+        aiChatStore.beginAwaitingUserEcho()
+        aiChatStore.isStreaming = true
+
+        if let sessionId = aiChatStore.currentSessionId {
+            appState.wsClient.requestAIChatSend(
+                projectName: appState.selectedProjectName,
+                workspaceName: ws,
+                aiTool: aiTool,
+                sessionId: sessionId,
+                message: text,
+                fileRefs: nil,
+                imageParts: nil,
+                model: model,
+                agent: agentName
+            )
+            return
+        }
+
+        pendingSendRequest = (
+            appState.selectedProjectName,
+            ws,
+            aiTool,
+            .message(
+                text: text,
+                imageParts: nil,
+                model: model,
+                agent: agentName,
+                fileRefs: nil
+            )
+        )
+        appState.wsClient.requestAIChatStart(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: aiTool,
+            title: String(text.prefix(50))
+        )
     }
 
     private func sendMessage() {

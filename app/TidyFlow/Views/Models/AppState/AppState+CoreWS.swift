@@ -594,9 +594,14 @@ extension AppState {
                 }
                 return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
             }
+            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                sessionId: ev.sessionId,
+                messages: ev.messages
+            )
             store.replaceMessages(mapped)
+            store.replaceQuestionRequests(restoredQuestions)
             TFLog.app.info(
-                "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count)"
+                "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
             )
         }
 
@@ -853,6 +858,92 @@ extension AppState {
     private static func parseISO8601(_ text: String) -> Date? {
         let fmt = ISO8601DateFormatter()
         return fmt.date(from: text)
+    }
+
+    private static func rebuildPendingQuestionRequests(
+        sessionId: String,
+        messages: [AIProtocolMessageInfo]
+    ) -> [AIQuestionRequestInfo] {
+        var requests: [AIQuestionRequestInfo] = []
+        var seenRequestIDs: Set<String> = []
+
+        for message in messages {
+            for part in message.parts {
+                guard part.partType == "tool" else { continue }
+                let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard toolName == "question" else { continue }
+                guard let stateDict = part.toolState else { continue }
+
+                let status = ((stateDict["status"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                // 仅重建未结束的 question，避免把已完成历史误判为待处理。
+                if status == "completed" || status == "error" || status == "failed" || status == "done" {
+                    continue
+                }
+
+                let input = stateDict["input"] as? [String: Any]
+                let questionsValue = input?["questions"] ?? stateDict["questions"]
+                let questions = parseQuestionInfos(from: questionsValue)
+                guard !questions.isEmpty else { continue }
+
+                let metadata = part.toolPartMetadata ?? [:]
+                let requestId =
+                    stringValue(metadata["request_id"]) ??
+                    stringValue(metadata["requestId"]) ??
+                    stringValue(stateDict["request_id"]) ??
+                    stringValue(stateDict["requestId"]) ??
+                    stringValue((stateDict["metadata"] as? [String: Any])?["request_id"]) ??
+                    stringValue((stateDict["metadata"] as? [String: Any])?["requestId"]) ??
+                    part.toolCallId
+                guard let requestId, !requestId.isEmpty else { continue }
+                guard !seenRequestIDs.contains(requestId) else { continue }
+                seenRequestIDs.insert(requestId)
+
+                let toolMessageId =
+                    stringValue(metadata["tool_message_id"]) ??
+                    stringValue(metadata["toolMessageId"]) ??
+                    part.id
+
+                requests.append(
+                    AIQuestionRequestInfo(
+                        id: requestId,
+                        sessionId: sessionId,
+                        questions: questions,
+                        toolMessageId: toolMessageId,
+                        toolCallId: part.toolCallId
+                    )
+                )
+            }
+        }
+
+        return requests
+    }
+
+    private static func parseQuestionInfos(from value: Any?) -> [AIQuestionInfo] {
+        if let array = value as? [[String: Any]] {
+            return array.compactMap { AIQuestionInfo.from(json: $0) }
+        }
+        if let array = value as? [Any] {
+            return array.compactMap { item in
+                guard let dict = item as? [String: Any] else { return nil }
+                return AIQuestionInfo.from(json: dict)
+            }
+        }
+        if let dict = value as? [String: Any], let nested = dict["questions"] {
+            return parseQuestionInfos(from: nested)
+        }
+        return []
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        switch value {
+        case let value as String:
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let value as NSNumber:
+            return value.stringValue
+        default:
+            return nil
+        }
     }
 
     // MARK: - 系统唤醒探活 + 自动重连

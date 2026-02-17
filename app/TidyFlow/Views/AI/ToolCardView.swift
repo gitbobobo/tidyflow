@@ -15,6 +15,7 @@ struct ToolCardView: View {
     let pendingQuestion: AIQuestionRequestInfo?
     let onQuestionReply: (([[String]]) -> Void)?
     let onQuestionReject: (() -> Void)?
+    let onQuestionReplyAsMessage: ((String) -> Void)?
 
     init(
         name: String,
@@ -23,7 +24,8 @@ struct ToolCardView: View {
         partMetadata: [String: Any]?,
         pendingQuestion: AIQuestionRequestInfo? = nil,
         onQuestionReply: (([[String]]) -> Void)? = nil,
-        onQuestionReject: (() -> Void)? = nil
+        onQuestionReject: (() -> Void)? = nil,
+        onQuestionReplyAsMessage: ((String) -> Void)? = nil
     ) {
         self.name = name
         self.state = state
@@ -32,6 +34,7 @@ struct ToolCardView: View {
         self.pendingQuestion = pendingQuestion
         self.onQuestionReply = onQuestionReply
         self.onQuestionReject = onQuestionReject
+        self.onQuestionReplyAsMessage = onQuestionReplyAsMessage
     }
 
     @State private var expandedSections: Set<String> = []
@@ -249,7 +252,8 @@ struct ToolCardView: View {
                     items: questionPromptItems,
                     interactive: questionPromptInteractive,
                     onReply: onQuestionReply,
-                    onReject: onQuestionReject
+                    onReject: onQuestionReject,
+                    onReplyAsMessage: onQuestionReplyAsMessage
                 )
                 .id(pendingQuestion?.id ?? "question-prompt-\(callID ?? "")")
             }
@@ -1274,9 +1278,8 @@ struct ToolCardView: View {
         invocation: AIToolInvocationState?
     ) -> Bool {
         guard toolID == "question" else { return false }
-        guard pendingQuestion != nil else { return false }
-        guard let invocation else { return false }
-        return invocation.status == .pending || invocation.status == .running
+        guard let invocation else { return true }
+        return invocation.status == .pending || invocation.status == .running || invocation.status == .unknown
     }
 
     private func shouldShowQuestionPrompt(
@@ -1673,6 +1676,7 @@ private struct ToolQuestionPromptView: View {
     let interactive: Bool
     let onReply: (([[String]]) -> Void)?
     let onReject: (() -> Void)?
+    let onReplyAsMessage: ((String) -> Void)?
 
     @State private var tab: Int = 0
     @State private var answers: [Int: [String]] = [:]
@@ -1686,6 +1690,18 @@ private struct ToolQuestionPromptView: View {
     private var currentItem: ToolQuestionPromptItem? {
         guard tab >= 0, tab < items.count else { return nil }
         return items[tab]
+    }
+
+    private var canReply: Bool {
+        onReply != nil
+    }
+
+    private var canReplyAsMessage: Bool {
+        onReplyAsMessage != nil
+    }
+
+    private var canSubmit: Bool {
+        canReply || canReplyAsMessage
     }
 
     private var isConfirmStep: Bool {
@@ -1868,12 +1884,18 @@ private struct ToolQuestionPromptView: View {
 
                     if !isSingleAutoSubmit {
                         if isConfirmStep {
-                            Button("提交") {
-                                submitAll()
+                            if canSubmit {
+                                Button("提交") {
+                                    submitAll()
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.accentColor)
+                            } else {
+                                Text("历史记录不可提交")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
                             }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.accentColor)
                         } else if currentItem?.multiple == true {
                             Button("下一步") {
                                 tab = min(items.count, tab + 1)
@@ -1910,7 +1932,7 @@ private struct ToolQuestionPromptView: View {
         }
         answers[tab] = [option]
         if isSingleAutoSubmit {
-            onReply?([[option]])
+            submitPayload([[option]])
             return
         }
         tab = min(items.count, tab + 1)
@@ -1935,7 +1957,7 @@ private struct ToolQuestionPromptView: View {
         }
         answers[tab] = [value]
         if isSingleAutoSubmit {
-            onReply?([[value]])
+            submitPayload([[value]])
             return
         }
         tab = min(items.count, tab + 1)
@@ -1945,7 +1967,38 @@ private struct ToolQuestionPromptView: View {
     private func submitAll() {
         guard interactive else { return }
         let payload: [[String]] = items.enumerated().map { answers[$0.offset] ?? [] }
-        onReply?(payload)
+        submitPayload(payload)
+    }
+
+    private func submitPayload(_ payload: [[String]]) {
+        if let onReply {
+            onReply(payload)
+            return
+        }
+        guard let onReplyAsMessage else { return }
+        onReplyAsMessage(buildReplyMessage(payload: payload))
+    }
+
+    private func buildReplyMessage(payload: [[String]]) -> String {
+        var lines: [String] = ["以下是我对该问题卡片的回答："]
+        for (idx, item) in items.enumerated() {
+            let header = item.header.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = header.isEmpty ? "问题\(idx + 1)" : header
+            let answers = payload[safe: idx]?
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty } ?? []
+            let answerText = answers.isEmpty ? "未回答" : answers.joined(separator: "、")
+            lines.append("\(idx + 1). \(title)：\(item.question)")
+            lines.append("答案：\(answerText)")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }
 

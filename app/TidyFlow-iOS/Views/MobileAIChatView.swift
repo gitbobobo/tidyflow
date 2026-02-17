@@ -188,7 +188,10 @@ struct MobileAIChatView: View {
                 MessageListView(
                     messages: appState.aiChatMessages,
                     onQuestionReply: { _, _ in },
-                    onQuestionReject: { _ in }
+                    onQuestionReject: { _ in },
+                    onQuestionReplyAsMessage: { text in
+                        _ = appState.sendAIMessage(text: text, imageAttachments: [])
+                    }
                 )
                 .environmentObject(aiChatStore)
             }

@@ -10,6 +10,7 @@ struct MessageListView: View {
     let messages: [AIChatMessage]
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
+    let onQuestionReplyAsMessage: (String) -> Void
     @State private var viewportHeight: CGFloat = 0
     @State private var isNearBottom: Bool = true
     @State private var shouldAutoScroll: Bool = true
@@ -86,12 +87,16 @@ struct MessageListView: View {
                             message: message,
                             prefersFullRender: shouldFullyRender(message: message, index: index),
                             pendingQuestionToken: pendingQuestionToken(for: message),
-                            questionRequestResolver: { callId in
-                                guard let callId else { return nil }
-                                return aiChatStore.pendingToolQuestions[callId]
+                            questionRequestResolver: { callId, toolPartId, messageId in
+                                aiChatStore.questionRequest(
+                                    forToolCallId: callId,
+                                    toolPartId: toolPartId,
+                                    toolMessageId: messageId
+                                )
                             },
                             onQuestionReply: onQuestionReply,
-                            onQuestionReject: onQuestionReject
+                            onQuestionReject: onQuestionReject,
+                            onQuestionReplyAsMessage: onQuestionReplyAsMessage
                         )
                             .equatable()
                             .id(message.id)
@@ -191,9 +196,14 @@ struct MessageListView: View {
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
         let items: [String] = message.parts.compactMap { part in
-            guard part.kind == .tool, let callId = part.toolCallId, !callId.isEmpty else { return nil }
-            guard let request = aiChatStore.pendingToolQuestions[callId] else { return nil }
-            return "\(callId):\(request.id):\(request.questions.count)"
+            guard part.kind == .tool else { return nil }
+            guard let request = aiChatStore.questionRequest(
+                forToolCallId: part.toolCallId,
+                toolPartId: part.id,
+                toolMessageId: message.messageId
+            ) else { return nil }
+            let linkKey = (part.toolCallId?.isEmpty == false ? part.toolCallId : nil) ?? part.id
+            return "\(linkKey):\(request.id):\(request.questions.count)"
         }
         if items.isEmpty { return "" }
         return items.sorted().joined(separator: "|")
@@ -220,9 +230,10 @@ private struct MessageBubble: View, Equatable {
     let message: AIChatMessage
     let prefersFullRender: Bool
     let pendingQuestionToken: String
-    let questionRequestResolver: (String?) -> AIQuestionRequestInfo?
+    let questionRequestResolver: (String?, String?, String?) -> AIQuestionRequestInfo?
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
+    let onQuestionReplyAsMessage: (String) -> Void
 
     private var isUser: Bool { message.role == .user }
 
@@ -364,21 +375,22 @@ private struct MessageBubble: View, Equatable {
         case .file:
             filePartView(part)
         case .tool:
-            let pendingQuestion = questionRequestResolver(part.toolCallId)
+            let pendingQuestion = questionRequestResolver(part.toolCallId, part.id, message.messageId)
             ToolCardView(
                 name: part.toolName ?? "unknown",
                 state: part.toolState,
                 callID: part.toolCallId,
                 partMetadata: part.toolPartMetadata,
                 pendingQuestion: pendingQuestion,
-                onQuestionReply: { answers in
+                onQuestionReply: pendingQuestion == nil ? nil : { answers in
                     guard let pendingQuestion else { return }
                     onQuestionReply(pendingQuestion, answers)
                 },
-                onQuestionReject: {
+                onQuestionReject: pendingQuestion == nil ? nil : {
                     guard let pendingQuestion else { return }
                     onQuestionReject(pendingQuestion)
-                }
+                },
+                onQuestionReplyAsMessage: pendingQuestion == nil ? onQuestionReplyAsMessage : nil
             )
         }
     }

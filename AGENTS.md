@@ -114,6 +114,10 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - AI 聊天流式批处理若同时收到 `message.updated` 与 `part.*`，应先处理 `message.updated` 建立 `message_id -> role` 映射，再消费 `part`，避免同批次内因处理顺序导致角色误判与消息倒序。
 - AI 聊天等待 user echo 时，收敛条件应绑定“本轮新消息范围”（如进入 awaiting 时的消息基线索引）；不要让旧 user 消息的增量更新提前结束 awaiting，否则会清空本轮 assistant 锚点并导致实时顺序错乱。
 - AI 聊天若要求“用户消息以代理回传为准”，不要在发送时预插 assistant 占位气泡；否则会在 user echo 尚未回传时形成“assistant 先出现”的实时错觉，导致顺序体验不稳定。
+- AI `question` 工具卡片关联 pending 请求时，前端必须同时按 `tool_call_id` 与 `tool_message_id`（常对应 tool part `id`）查找；仅用 message `id` 会导致“卡片可见但无法选择/切换/提交”。
+- 历史会话打开时若需继续处理 `question`，不能只依赖实时 `ai_question_asked` 事件；需在 `ai_session_messages` 加载后从 tool part（`question` + `pending/running`）重建 pending question 状态并恢复交互。
+- 历史 `question` 卡片在缺少可回复 `request_id` 时，提交应降级为“将结构化答案整理成普通用户消息发送给当前 AI 会话”，避免 UI 可操作但业务链路断开。
+- 共享 SwiftUI 组件（macOS/iOS 共用）新增必填参数时，必须同步更新所有平台调用点（含移动端页面），避免单端编译通过、另一端报缺参。
 
 ## Build Commands
 

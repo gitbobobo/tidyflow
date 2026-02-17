@@ -415,9 +415,15 @@ final class AIChatStore: ObservableObject {
     }
 
     func upsertQuestionRequest(_ request: AIQuestionRequestInfo) {
-        guard let callId = request.toolCallId, !callId.isEmpty else { return }
-        pendingToolQuestions[callId] = request
-        questionRequestToCallId[request.id] = callId
+        if let callId = request.toolCallId, !callId.isEmpty {
+            pendingToolQuestions[callId] = request
+            questionRequestToCallId[request.id] = callId
+            return
+        }
+        if let messageId = request.toolMessageId, !messageId.isEmpty {
+            pendingToolQuestions[messageId] = request
+            questionRequestToCallId[request.id] = messageId
+        }
     }
 
     func clearQuestionRequest(requestId: String) {
@@ -433,6 +439,43 @@ final class AIChatStore: ObservableObject {
     func questionRequest(forToolCallId callId: String?) -> AIQuestionRequestInfo? {
         guard let callId, !callId.isEmpty else { return nil }
         return pendingToolQuestions[callId]
+    }
+
+    func replaceQuestionRequests(_ requests: [AIQuestionRequestInfo]) {
+        pendingToolQuestions = [:]
+        questionRequestToCallId = [:]
+        for request in requests {
+            upsertQuestionRequest(request)
+        }
+    }
+
+    func questionRequest(forToolCallId callId: String?, toolMessageId: String?) -> AIQuestionRequestInfo? {
+        questionRequest(forToolCallId: callId, toolPartId: nil, toolMessageId: toolMessageId)
+    }
+
+    func questionRequest(
+        forToolCallId callId: String?,
+        toolPartId: String?,
+        toolMessageId: String?
+    ) -> AIQuestionRequestInfo? {
+        if let callId, !callId.isEmpty, let request = pendingToolQuestions[callId] {
+            return request
+        }
+
+        if let toolPartId, !toolPartId.isEmpty {
+            if let request = pendingToolQuestions[toolPartId] {
+                return request
+            }
+            if let matched = pendingToolQuestions.first(where: { $0.value.toolMessageId == toolPartId }) {
+                return matched.value
+            }
+        }
+
+        guard let toolMessageId, !toolMessageId.isEmpty else { return nil }
+        if let request = pendingToolQuestions[toolMessageId] {
+            return request
+        }
+        return pendingToolQuestions.first { $0.value.toolMessageId == toolMessageId }?.value
     }
 
     func stopStreamingLocallyAndPrunePlaceholder() {
