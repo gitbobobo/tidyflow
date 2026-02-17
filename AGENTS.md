@@ -76,6 +76,8 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - WebSocket `handle_client_message` 内不要同步阻塞长生命周期流（如 AI 流式回复）；应改为后台 task 并通过 `cmd_output_tx` 回传事件，否则同连接的 `ai_chat_abort` 等控制消息无法及时处理，会出现“前端已停止但代理仍在执行”。
 - 单 Target 多平台工程若通过 `EXCLUDED_SOURCE_FILE_NAMES` 做按 SDK 排除，macOS 专用视图仍建议做文件级 `#if os(macOS)` 包裹，并在改动后执行一次 `xcodebuild -sdk iphonesimulator` 校验，避免排除名单漂移导致 iOS 编译回归。
 - 需求包含“远端实时搜索”时，先核对现有协议是否支持 `query`；若仅有全量接口（如 `file_index`），应先做可选 `query` 的向后兼容扩展，再接入 UI 搜索，避免前端看似实时但实际只在本地过滤。
+- 对接 OpenCode 工具调用展示时，必须以 `tool state.status`（`pending/running/completed/error`）作为主判别并结构化解析 `input/output/metadata`；不要仅按是否存在 `input/output` 做弱判断，避免状态与展示错位。
+- SwiftUI 渲染统一 diff 时，若需要“行级背景准确对齐 + 文本可跨行选择且不选中行号”，应将行号列与内容列拆分，并让内容列禁换行（`fixedSize(horizontal: true, vertical: true)` + 横向滚动）；否则长行软换行会导致背景与行号错位。
 
 ## Build Commands
 
