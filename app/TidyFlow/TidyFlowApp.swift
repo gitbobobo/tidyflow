@@ -180,6 +180,7 @@ struct TidyFlowApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(appState.aiChatStore)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
                 .environmentObject(appState.paletteState)
@@ -235,6 +236,7 @@ struct TidyFlowApp: App {
         Settings {
             SettingsContentView()
                 .environmentObject(appState)
+                .environmentObject(appState.aiChatStore)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
                 .environmentObject(appState.paletteState)

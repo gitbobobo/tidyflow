@@ -13,9 +13,13 @@ struct MarkdownTextView: View {
         case text(AttributedString)
         case divider
     }
+    private static let cacheLimit = 240
+    private static let cacheLock = NSLock()
+    private static var blockCache: [String: [MarkdownBlock]] = [:]
+    private static var cacheOrder: [String] = []
 
     var body: some View {
-        let blocks = parseMarkdownBlocks(text)
+        let blocks = resolvedBlocks(for: text)
         if !blocks.isEmpty {
             VStack(alignment: .leading, spacing: bodyLineSpacing) {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
@@ -40,6 +44,16 @@ struct MarkdownTextView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func resolvedBlocks(for source: String) -> [MarkdownBlock] {
+        let key = "\(baseFontSize)|\(source)"
+        if let cached = Self.cachedBlocks(for: key) {
+            return cached
+        }
+        let parsed = parseMarkdownBlocks(source)
+        Self.storeCachedBlocks(parsed, for: key)
+        return parsed
     }
 
     private func parseMarkdownBlocks(_ source: String) -> [MarkdownBlock] {
@@ -244,6 +258,31 @@ struct MarkdownTextView: View {
         let charset = Set(compact)
         guard charset.count == 1, let token = charset.first else { return false }
         return token == "-" || token == "*" || token == "_"
+    }
+
+    private static func cachedBlocks(for key: String) -> [MarkdownBlock]? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let blocks = blockCache[key] else { return nil }
+        if let index = cacheOrder.firstIndex(of: key) {
+            cacheOrder.remove(at: index)
+        }
+        cacheOrder.append(key)
+        return blocks
+    }
+
+    private static func storeCachedBlocks(_ blocks: [MarkdownBlock], for key: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        blockCache[key] = blocks
+        if let index = cacheOrder.firstIndex(of: key) {
+            cacheOrder.remove(at: index)
+        }
+        cacheOrder.append(key)
+        if cacheOrder.count > cacheLimit, let evictKey = cacheOrder.first {
+            cacheOrder.removeFirst()
+            blockCache.removeValue(forKey: evictKey)
+        }
     }
 
 }

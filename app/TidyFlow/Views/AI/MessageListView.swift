@@ -3,14 +3,15 @@ import SwiftUI
 struct MessageListView: View {
     let messages: [AIChatMessage]
     @State private var viewportHeight: CGFloat = 0
-    @State private var bottomAnchorMaxY: CGFloat = 0
     @State private var isNearBottom: Bool = true
     @State private var shouldAutoScroll: Bool = true
     @State private var isUserDragging: Bool = false
+    @State private var visibleMessageIDs: Set<String> = []
 
     private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
     private let bottomTolerance: CGFloat = 36
+    private let renderBufferCount: Int = 12
 
     /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
     private var tailChangeToken: String {
@@ -41,13 +42,48 @@ struct MessageListView: View {
         }
     }
 
+    private var fullRenderRange: ClosedRange<Int>? {
+        let visibleIndices = displayMessages.enumerated().compactMap { index, message in
+            visibleMessageIDs.contains(message.id) ? index : nil
+        }
+        guard let minVisible = visibleIndices.min(),
+              let maxVisible = visibleIndices.max() else {
+            return nil
+        }
+        let lower = max(0, minVisible - renderBufferCount)
+        let upper = min(displayMessages.count - 1, maxVisible + renderBufferCount)
+        return lower...upper
+    }
+
+    private func shouldFullyRender(message: AIChatMessage, index: Int) -> Bool {
+        if message.isStreaming {
+            return true
+        }
+        guard let range = fullRenderRange else {
+            let warmStartCount = renderBufferCount * 3
+            let lowerBound = max(0, displayMessages.count - warmStartCount)
+            return index >= lowerBound
+        }
+        return range.contains(index)
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    ForEach(displayMessages) { message in
-                        MessageBubble(message: message)
+                    ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
+                        MessageBubble(
+                            message: message,
+                            prefersFullRender: shouldFullyRender(message: message, index: index)
+                        )
+                            .equatable()
                             .id(message.id)
+                            .onAppear {
+                                visibleMessageIDs.insert(message.id)
+                            }
+                            .onDisappear {
+                                visibleMessageIDs.remove(message.id)
+                            }
                     }
 
                     Color.clear
@@ -74,24 +110,26 @@ struct MessageListView: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { _ in
-                        isUserDragging = true
+                        if !isUserDragging {
+                            isUserDragging = true
+                        }
                     }
                     .onEnded { _ in
-                        isUserDragging = false
-                        if isNearBottom {
-                            shouldAutoScroll = true
-                        } else {
-                            shouldAutoScroll = false
+                        if isUserDragging {
+                            isUserDragging = false
+                        }
+                        let shouldFollow = isNearBottom
+                        if shouldAutoScroll != shouldFollow {
+                            shouldAutoScroll = shouldFollow
                         }
                     }
             )
             .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
+                guard abs(newHeight - viewportHeight) > 0.5 else { return }
                 viewportHeight = newHeight
-                refreshBottomState()
             }
             .onPreferenceChange(MessageListBottomAnchorKey.self) { newBottom in
-                bottomAnchorMaxY = newBottom
-                refreshBottomState()
+                updateBottomState(withBottomAnchorMaxY: newBottom)
             }
             .onAppear {
                 scrollToBottom(proxy: proxy, animated: false)
@@ -103,16 +141,20 @@ struct MessageListView: View {
         }
     }
 
-    private func refreshBottomState() {
+    private func updateBottomState(withBottomAnchorMaxY bottomAnchorMaxY: CGFloat) {
         guard viewportHeight > 0 else { return }
         let distanceToBottom = max(0, bottomAnchorMaxY - viewportHeight)
         let nearBottomNow = distanceToBottom <= bottomTolerance
-        isNearBottom = nearBottomNow
+        if nearBottomNow != isNearBottom {
+            isNearBottom = nearBottomNow
+        }
 
         // 只有用户主动拖拽离开底部时才关闭自动跟随，避免流式增量误判。
         if nearBottomNow {
-            shouldAutoScroll = true
-        } else if isUserDragging {
+            if !shouldAutoScroll {
+                shouldAutoScroll = true
+            }
+        } else if isUserDragging && shouldAutoScroll {
             shouldAutoScroll = false
         }
     }
@@ -147,10 +189,40 @@ private struct MessageListBottomAnchorKey: PreferenceKey {
     }
 }
 
-private struct MessageBubble: View {
+private struct MessageBubble: View, Equatable {
     let message: AIChatMessage
+    let prefersFullRender: Bool
 
     private var isUser: Bool { message.role == .user }
+
+    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
+        lhs.prefersFullRender == rhs.prefersFullRender && lhs.renderKey == rhs.renderKey
+    }
+
+    private var renderKey: String {
+        let partToken = message.parts.map { part in
+            let textToken = compactTextToken(part.text)
+            let toolName = part.toolName ?? ""
+            let toolStatus = (part.toolState?["status"] as? String) ?? ""
+            let metadataCount = part.toolPartMetadata?.count ?? 0
+            return "\(part.id)|\(part.kind.rawValue)|\(textToken)|\(toolName)|\(toolStatus)|\(metadataCount)"
+        }.joined(separator: ",")
+        return [
+            message.id,
+            message.role.rawValue,
+            message.isStreaming ? "1" : "0",
+            "\(message.parts.count)",
+            partToken
+        ].joined(separator: "#")
+    }
+
+    /// 仅取长度 + 前后缀摘要，兼顾变更感知和计算成本。
+    private func compactTextToken(_ text: String?) -> String {
+        guard let text, !text.isEmpty else { return "0:0:0" }
+        let prefixHash = String(text.prefix(48)).hashValue
+        let suffixHash = String(text.suffix(24)).hashValue
+        return "\(text.count):\(prefixHash):\(suffixHash)"
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -181,67 +253,101 @@ private struct MessageBubble: View {
 
     @ViewBuilder
     private var bubble: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if message.parts.isEmpty {
+        if !prefersFullRender {
+            lightweightBubble
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                if message.parts.isEmpty {
+                    if message.isStreaming {
+                        TypingIndicator()
+                    } else {
+                        EmptyView()
+                    }
+                } else {
+                    ForEach(message.parts) { part in
+                        switch part.kind {
+                        case .text:
+                            if let text = part.text {
+                                if isUser,
+                                   let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: true) {
+                                    Text(normalizedText)
+                                        .textSelection(.enabled)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.white)
+                                } else if message.isStreaming,
+                                          let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
+                                    TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
+                                        .textSelection(.enabled)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.primary)
+                                } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                                    MarkdownTextView(
+                                        text: markdownText,
+                                        baseFontSize: 13,
+                                        textColor: .primary
+                                    )
+                                }
+                            }
+                        case .reasoning:
+                            if let text = part.text, message.isStreaming,
+                               let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
+                                TypewriterText(text: normalizedText, isStreaming: true)
+                                    .textSelection(.enabled)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else if let text = part.text,
+                                      let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                                MarkdownTextView(
+                                    text: markdownText,
+                                    baseFontSize: 12,
+                                    textColor: .secondary
+                                )
+                            }
+                        case .tool:
+                            ToolCardView(
+                                name: part.toolName ?? "unknown",
+                                state: part.toolState,
+                                callID: part.toolCallId,
+                                partMetadata: part.toolPartMetadata
+                            )
+                        }
+                    }
+                }
+
+                if message.isStreaming && !isUser && !message.parts.isEmpty {
+                    TypingIndicator()
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(bubbleBackgroundColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
+            )
+            .cornerRadius(12)
+        }
+    }
+
+    private var lightweightBubble: some View {
+        let summary = compactSummaryText()
+        return VStack(alignment: .leading, spacing: 6) {
+            if summary.isEmpty {
                 if message.isStreaming {
                     TypingIndicator()
                 } else {
-                    EmptyView()
+                    Text("...")
+                        .font(.system(size: 12))
+                        .foregroundColor(isUser ? .white.opacity(0.9) : .secondary)
                 }
             } else {
-                ForEach(message.parts) { part in
-                    switch part.kind {
-                    case .text:
-                        if let text = part.text {
-                            if isUser,
-                               let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: true) {
-                                Text(normalizedText)
-                                    .textSelection(.enabled)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.white)
-                            } else if message.isStreaming,
-                                      let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                                TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
-                                    .textSelection(.enabled)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.primary)
-                            } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                                MarkdownTextView(
-                                    text: markdownText,
-                                    baseFontSize: 13,
-                                    textColor: .primary
-                                )
-                            }
-                        }
-                    case .reasoning:
-                        if let text = part.text, message.isStreaming,
-                           let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                            TypewriterText(text: normalizedText, isStreaming: true)
-                                .textSelection(.enabled)
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else if let text = part.text,
-                                  let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
-                            MarkdownTextView(
-                                text: markdownText,
-                                baseFontSize: 12,
-                                textColor: .secondary
-                            )
-                        }
-                    case .tool:
-                        ToolCardView(
-                            name: part.toolName ?? "unknown",
-                            state: part.toolState,
-                            callID: part.toolCallId,
-                            partMetadata: part.toolPartMetadata
-                        )
-                    }
-                }
-            }
-
-            if message.isStreaming && !isUser && !message.parts.isEmpty {
-                TypingIndicator()
+                Text(summary)
+                    .textSelection(.enabled)
+                    .font(.system(size: 13))
+                    .foregroundColor(isUser ? .white : .primary)
+                    .lineLimit(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, 12)
@@ -252,6 +358,25 @@ private struct MessageBubble: View {
                 .stroke(bubbleBorderColor, lineWidth: isUser ? 0 : 1)
         )
         .cornerRadius(12)
+    }
+
+    private func compactSummaryText() -> String {
+        var lines: [String] = []
+        for part in message.parts {
+            switch part.kind {
+            case .text, .reasoning:
+                if let text = part.text?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !text.isEmpty {
+                    lines.append(text)
+                }
+            case .tool:
+                let toolName = part.toolName ?? "tool"
+                lines.append("[工具] \(toolName)")
+            }
+        }
+        if lines.isEmpty { return "" }
+        return lines.joined(separator: "\n")
     }
 
     private var bubbleBackgroundColor: Color {

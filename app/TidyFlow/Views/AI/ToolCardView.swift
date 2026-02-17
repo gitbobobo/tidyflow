@@ -15,21 +15,45 @@ struct ToolCardView: View {
 
     @State private var expandedSections: Set<String> = []
 
+    private struct CachedRenderModel {
+        let invocation: AIToolInvocationState?
+        let presentation: AIToolPresentation
+        let headerDiffStats: (added: Int, removed: Int)?
+    }
+
+    private static let renderCacheLimit = 200
+    private static let renderCacheLock = NSLock()
+    private static var renderCache: [String: CachedRenderModel] = [:]
+    private static var renderCacheOrder: [String] = []
+
     private var normalizedToolID: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    private var renderCacheKey: String {
+        [
+            normalizedToolID,
+            callID ?? "",
+            stableRenderHash(state),
+            stableRenderHash(partMetadata)
+        ].joined(separator: "|")
+    }
+
+    private var renderModel: CachedRenderModel {
+        if let cached = Self.cachedRenderModel(forKey: renderCacheKey) {
+            return cached
+        }
+        let built = buildRenderModel()
+        Self.storeRenderModel(built, forKey: renderCacheKey)
+        return built
+    }
+
     private var invocation: AIToolInvocationState? {
-        AIToolInvocationState.from(state: state)
+        renderModel.invocation
     }
 
     private var headerDiffStats: (added: Int, removed: Int)? {
-        guard ["edit", "write", "apply_patch", "multiedit"].contains(normalizedToolID),
-              let invocation,
-              let metadata = invocation.metadata,
-              let diff = metadata["diff"] as? String,
-              let parsed = AIDiffParser.parse(diff) else { return nil }
-        return (parsed.addedCount, parsed.removedCount)
+        renderModel.headerDiffStats
     }
 
     private var showsCopyButton: Bool {
@@ -37,6 +61,20 @@ struct ToolCardView: View {
     }
 
     private var presentation: AIToolPresentation {
+        renderModel.presentation
+    }
+
+    private func buildRenderModel() -> CachedRenderModel {
+        let invocation = AIToolInvocationState.from(state: state)
+        let headerDiffStats: (added: Int, removed: Int)? = {
+            guard ["edit", "write", "apply_patch", "multiedit"].contains(normalizedToolID),
+                  let invocation,
+                  let metadata = invocation.metadata,
+                  let diff = metadata["diff"] as? String,
+                  let parsed = AIDiffParser.parse(diff) else { return nil }
+            return (parsed.addedCount, parsed.removedCount)
+        }()
+
         guard let invocation else {
             var sections: [AIToolSection] = []
             if let partMetadata, !partMetadata.isEmpty {
@@ -52,12 +90,17 @@ struct ToolCardView: View {
                     )
                 )
             }
-            return AIToolPresentation(
+            let presentation = AIToolPresentation(
                 toolID: normalizedToolID,
                 displayTitle: name,
                 statusText: "unknown",
                 summary: nil,
                 sections: sections
+            )
+            return CachedRenderModel(
+                invocation: nil,
+                presentation: presentation,
+                headerDiffStats: headerDiffStats
             )
         }
 
@@ -67,12 +110,17 @@ struct ToolCardView: View {
         }
         let displayTitle = toolCardTitle(toolID: normalizedToolID, invocation: invocation)
 
-        return AIToolPresentation(
+        let presentation = AIToolPresentation(
             toolID: normalizedToolID,
             displayTitle: displayTitle,
             statusText: invocation.status.text,
             summary: toolSummary(toolID: normalizedToolID, invocation: invocation),
             sections: sections
+        )
+        return CachedRenderModel(
+            invocation: invocation,
+            presentation: presentation,
+            headerDiffStats: headerDiffStats
         )
     }
 
@@ -1081,6 +1129,45 @@ struct ToolCardView: View {
             return Int(v)
         default:
             return nil
+        }
+    }
+
+    private func stableRenderHash(_ value: Any?) -> String {
+        guard let value else { return "nil" }
+        if let dict = value as? [String: Any],
+           let text = jsonText(dict) {
+            return "\(text.count):\(text.hashValue)"
+        }
+        if let array = value as? [Any],
+           let text = jsonText(array) {
+            return "\(text.count):\(text.hashValue)"
+        }
+        let text = String(describing: value)
+        return "\(text.count):\(text.hashValue)"
+    }
+
+    private static func cachedRenderModel(forKey key: String) -> CachedRenderModel? {
+        renderCacheLock.lock()
+        defer { renderCacheLock.unlock() }
+        guard let model = renderCache[key] else { return nil }
+        if let idx = renderCacheOrder.firstIndex(of: key) {
+            renderCacheOrder.remove(at: idx)
+        }
+        renderCacheOrder.append(key)
+        return model
+    }
+
+    private static func storeRenderModel(_ model: CachedRenderModel, forKey key: String) {
+        renderCacheLock.lock()
+        defer { renderCacheLock.unlock() }
+        renderCache[key] = model
+        if let idx = renderCacheOrder.firstIndex(of: key) {
+            renderCacheOrder.remove(at: idx)
+        }
+        renderCacheOrder.append(key)
+        if renderCacheOrder.count > renderCacheLimit, let evict = renderCacheOrder.first {
+            renderCacheOrder.removeFirst()
+            renderCache.removeValue(forKey: evict)
         }
     }
 
