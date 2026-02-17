@@ -501,11 +501,6 @@ impl AiAgent for CopilotAcpAgent {
             .clone()
             .or_else(|| metadata.models.first().map(|m| m.id.clone()))
             .or_else(|| Some("default".to_string()));
-        let default_mode_id = metadata
-            .current_mode_id
-            .clone()
-            .or_else(|| metadata.modes.first().map(|m| m.id.clone()));
-
         let mut agents = metadata
             .modes
             .into_iter()
@@ -524,7 +519,7 @@ impl AiAgent for CopilotAcpAgent {
                 AiAgentInfo {
                     name,
                     description: mode.description,
-                    mode: Some(mode.id),
+                    mode: Some("primary".to_string()),
                     color,
                     default_provider_id: Some("copilot".to_string()),
                     default_model_id: default_model_id.clone(),
@@ -536,9 +531,7 @@ impl AiAgent for CopilotAcpAgent {
             agents.push(AiAgentInfo {
                 name: "agent".to_string(),
                 description: Some("Copilot Agent mode".to_string()),
-                mode: default_mode_id.or_else(|| {
-                    Some("https://agentclientprotocol.com/protocol/session-modes#agent".to_string())
-                }),
+                mode: Some("primary".to_string()),
                 color: Some("blue".to_string()),
                 default_provider_id: Some("copilot".to_string()),
                 default_model_id,

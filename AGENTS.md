@@ -69,6 +69,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 多 AI 工具“后台保活”场景下，WebSocket 事件不能只按当前选中工具过滤；应按 `ai_tool` 路由到对应状态桶，当前工具仅负责前台渲染，并额外维护未读/进行中徽标以支持无损切换查看。
 - 对接 Codex app-server 时，不要在首条消息前对新建线程强制调用 `thread/resume`：新线程 rollout 文件会延迟到首条用户消息后才落盘；发送链路应优先 `turn/start`，仅在 `thread not found` 时再 `thread/resume` 后重试。
 - 对接 GitHub Copilot ACP 时，不能复用 Codex 的 `thread/*`/`turn/*` 协议；需按 ACP 使用 `initialize(protocolVersion)` + `session/new|load|list|prompt`，并将 `session/update` 事件映射到统一聊天增量模型。
+- 各 AI 适配器返回 `AiAgentInfo.mode` 时必须遵守统一语义（`primary`/`subagent`/`all`），不要复用后端原始 mode id（如 URI）；否则会被 `ai_agent_list` 的通用过滤逻辑误过滤，前端出现“模型有、代理空”。
 - 对接 Codex app-server 的“Agent”选择应按会话 `mode` 语义处理：优先走远端动态获取，展示值与发送值保持一致（如远端返回 `default` 就展示/发送 `default`）。
 - Codex `getUserAgent` 返回的是客户端 UA 字符串而非会话 mode；mode 列表应使用 `mode/list`（失败时再做最小本地兜底）。
 - AI 聊天消息需要支持 Markdown 时，assistant 内容应采用“流式阶段纯文本增量渲染、`done` 后一次性转 Markdown”策略，避免代码块/列表在增量过程中频繁重排造成抖动。
