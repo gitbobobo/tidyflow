@@ -44,8 +44,17 @@ impl CopilotAcpAgent {
             }
         }
 
-        // 不在“仅查询元数据”路径主动 session_load 历史会话，避免把会话置为 loaded
-        // 后导致后续拉历史详情时触发 “Session ... is already loaded”。
+        // 缓存为空时，通过 session/new 主动获取模型/模式元数据。
+        // 不用 session/load 是为了避免把历史会话置为 loaded 导致后续
+        // "Session ... is already loaded" 错误。session/new 创建的会话
+        // 后续可被正常使用或自然过期，不会产生副作用。
+        if self.client.ensure_started().await.is_ok() {
+            if let Ok((_session_id, metadata)) = self.client.session_new(directory).await {
+                self.cache_metadata(directory, metadata.clone()).await;
+                return metadata;
+            }
+        }
+
         CopilotSessionMetadata::default()
     }
 
