@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -240,9 +242,10 @@ impl OpenCodeClient {
         // 图片附件转为 OpenCode FilePart（data URL 格式）
         if let Some(ref images) = image_parts {
             for img in images {
+                let encoded = BASE64.encode(&img.data);
                 parts.push(serde_json::json!({
                     "type": "file",
-                    "url": format!("data:{};base64,{}", img.mime, img.data),
+                    "url": format!("data:{};base64,{}", img.mime, encoded),
                     "filename": img.filename,
                     "mime": img.mime,
                 }));
@@ -318,9 +321,10 @@ impl OpenCodeClient {
 
         if let Some(ref images) = image_parts {
             for img in images {
+                let encoded = BASE64.encode(&img.data);
                 parts.push(serde_json::json!({
                     "type": "file",
-                    "url": format!("data:{};base64,{}", img.mime, img.data),
+                    "url": format!("data:{};base64,{}", img.mime, encoded),
                     "filename": img.filename,
                     "mime": img.mime,
                 }));

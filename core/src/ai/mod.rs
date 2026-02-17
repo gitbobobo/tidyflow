@@ -75,12 +75,12 @@ pub struct AiMessage {
     pub parts: Vec<AiPart>,
 }
 
-/// AI 图片附件（base64 编码）
+/// AI 图片附件（二进制）
 #[derive(Debug, Clone)]
 pub struct AiImagePart {
     pub filename: String,
     pub mime: String,
-    pub data: String,
+    pub data: Vec<u8>,
 }
 
 /// AI 模型选择

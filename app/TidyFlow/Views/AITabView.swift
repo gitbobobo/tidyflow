@@ -132,7 +132,7 @@ struct AITabView: View {
     private enum PendingAIRequestKind {
         case message(
             text: String,
-            imageParts: [[String: String]]?,
+            imageParts: [[String: Any]]?,
             model: [String: String]?,
             agent: String?,
             fileRefs: [String]?
@@ -140,7 +140,7 @@ struct AITabView: View {
         case command(
             command: String,
             arguments: String,
-            imageParts: [[String: String]]?,
+            imageParts: [[String: Any]]?,
             model: [String: String]?,
             agent: String?,
             fileRefs: [String]?
@@ -576,12 +576,12 @@ struct AITabView: View {
         let fileRefs = extractFileRefs(from: text)
         let fileRefsParam: [String]? = fileRefs.isEmpty ? nil : fileRefs
 
-        // 构建图片 parts（base64）
-        let imageParts: [[String: String]]? = images.isEmpty ? nil : images.map { img in
+        // 构建图片 parts（二进制）
+        let imageParts: [[String: Any]]? = images.isEmpty ? nil : images.map { img in
             [
                 "filename": img.filename,
                 "mime": img.mime,
-                "data": img.data.base64EncodedString()
+                "data": img.data
             ]
         }
 

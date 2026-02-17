@@ -1191,7 +1191,17 @@ struct ChatInputView: View {
            bytes[8] == 0x57, bytes[9] == 0x45, bytes[10] == 0x42, bytes[11] == 0x50 {
             return ("image/webp", "webp")
         }
-        return ("image/jpeg", "jpg")
+        if bytes.count >= 12,
+           bytes[4] == 0x66, bytes[5] == 0x74, bytes[6] == 0x79, bytes[7] == 0x70 {
+            let brand = String(bytes: bytes[8..<12], encoding: .ascii)?.lowercased() ?? ""
+            if brand.hasPrefix("hei") || brand.hasPrefix("hev") {
+                return ("image/heic", "heic")
+            }
+            if brand == "mif1" || brand == "msf1" {
+                return ("image/heif", "heif")
+            }
+        }
+        return ("application/octet-stream", "bin")
     }
 
     private var dropdownPrimaryTextColor: Color {

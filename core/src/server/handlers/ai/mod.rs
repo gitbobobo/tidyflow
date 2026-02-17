@@ -273,8 +273,8 @@ async fn try_handle_ai_chat_send(
         message.len()
     );
 
-    // 将协议层 ImagePart/ModelSelection 转为 AI 层类型
-    let ai_image_parts = image_parts.as_ref().map(|parts| {
+    // 将协议层 ImagePart/ModelSelection 转为 AI 层类型，并在服务端统一规范化图片格式。
+    let ai_image_parts_raw = image_parts.as_ref().map(|parts| {
         parts
             .iter()
             .map(|p| crate::ai::AiImagePart {
@@ -284,6 +284,22 @@ async fn try_handle_ai_chat_send(
             })
             .collect()
     });
+    let ai_image_parts = match normalize_ai_image_parts(ai_image_parts_raw).await {
+        Ok(parts) => parts,
+        Err(e) => {
+            let _ = emit_server_message(
+                output_tx,
+                ServerMessage::AIChatErrorV2 {
+                    project_name: project_name.clone(),
+                    workspace_name: workspace_name.clone(),
+                    session_id: session_id.clone(),
+                    error: e,
+                },
+            )
+            .await;
+            return Ok(true);
+        }
+    };
     let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
         provider_id: m.provider_id.clone(),
         model_id: m.model_id.clone(),
@@ -535,7 +551,7 @@ async fn try_handle_ai_chat_command(
         arguments.len()
     );
 
-    let ai_image_parts = image_parts.as_ref().map(|parts| {
+    let ai_image_parts_raw = image_parts.as_ref().map(|parts| {
         parts
             .iter()
             .map(|p| crate::ai::AiImagePart {
@@ -545,6 +561,22 @@ async fn try_handle_ai_chat_command(
             })
             .collect()
     });
+    let ai_image_parts = match normalize_ai_image_parts(ai_image_parts_raw).await {
+        Ok(parts) => parts,
+        Err(e) => {
+            let _ = emit_server_message(
+                output_tx,
+                ServerMessage::AIChatErrorV2 {
+                    project_name: project_name.clone(),
+                    workspace_name: workspace_name.clone(),
+                    session_id: session_id.clone(),
+                    error: e,
+                },
+            )
+            .await;
+            return Ok(true);
+        }
+    };
     let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
         provider_id: m.provider_id.clone(),
         model_id: m.model_id.clone(),
@@ -1142,4 +1174,197 @@ async fn try_handle_ai_slash_commands(
     .await?;
 
     Ok(true)
+}
+
+async fn normalize_ai_image_parts(
+    image_parts: Option<Vec<crate::ai::AiImagePart>>,
+) -> Result<Option<Vec<crate::ai::AiImagePart>>, String> {
+    let Some(parts) = image_parts else {
+        return Ok(None);
+    };
+
+    let mut normalized: Vec<crate::ai::AiImagePart> = Vec::with_capacity(parts.len());
+    for mut part in parts {
+        let declared_mime = normalize_mime(&part.mime);
+        let detected_mime = detect_image_mime_from_bytes(&part.data);
+        let mut effective_mime = detected_mime.map(|s| s.to_string()).unwrap_or_else(|| {
+            if declared_mime.is_empty() {
+                "application/octet-stream".to_string()
+            } else {
+                declared_mime.clone()
+            }
+        });
+
+        if effective_mime == "image/jpg" {
+            effective_mime = "image/jpeg".to_string();
+        }
+
+        let should_transcode = !matches!(
+            effective_mime.as_str(),
+            "image/jpeg" | "image/png" | "image/webp" | "image/gif"
+        );
+
+        if should_transcode {
+            let converted = transcode_image_to_jpeg(&part.data, &effective_mime).await?;
+            info!(
+                "AI image transcoded on server: filename={}, from_mime={}, to_mime=image/jpeg",
+                part.filename, effective_mime
+            );
+            part.data = converted;
+            part.mime = "image/jpeg".to_string();
+            part.filename = to_jpg_filename(&part.filename);
+        } else {
+            part.mime = effective_mime;
+        }
+
+        normalized.push(part);
+    }
+
+    Ok(Some(normalized))
+}
+
+fn normalize_mime(mime: &str) -> String {
+    mime.trim().to_ascii_lowercase()
+}
+
+fn detect_image_mime_from_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(&[0x47, 0x49, 0x46, 0x38]) {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12
+        && bytes[0] == 0x52
+        && bytes[1] == 0x49
+        && bytes[2] == 0x46
+        && bytes[3] == 0x46
+        && bytes[8] == 0x57
+        && bytes[9] == 0x45
+        && bytes[10] == 0x42
+        && bytes[11] == 0x50
+    {
+        return Some("image/webp");
+    }
+    if bytes.len() >= 12
+        && bytes[4] == 0x66
+        && bytes[5] == 0x74
+        && bytes[6] == 0x79
+        && bytes[7] == 0x70
+    {
+        let brand = String::from_utf8_lossy(&bytes[8..12]).to_ascii_lowercase();
+        if brand.starts_with("hei") || brand.starts_with("hev") {
+            return Some("image/heic");
+        }
+        if brand == "mif1" || brand == "msf1" {
+            return Some("image/heif");
+        }
+        if brand == "avif" || brand == "avis" {
+            return Some("image/avif");
+        }
+    }
+    None
+}
+
+fn to_jpg_filename(filename: &str) -> String {
+    use std::path::Path;
+
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("image");
+    format!("{}.jpg", stem)
+}
+
+async fn transcode_image_to_jpeg(data: &[u8], source_mime: &str) -> Result<Vec<u8>, String> {
+    match transcode_with_image_crate(data).await {
+        Ok(bytes) => Ok(bytes),
+        Err(image_err) => match transcode_with_sips(data, source_mime).await {
+            Ok(bytes) => Ok(bytes),
+            Err(sips_err) => Err(format!(
+                "图片转 JPEG 失败（mime={}）：{}；{}",
+                source_mime, image_err, sips_err
+            )),
+        },
+    }
+}
+
+async fn transcode_with_image_crate(data: &[u8]) -> Result<Vec<u8>, String> {
+    let input = data.to_vec();
+    tokio::task::spawn_blocking(move || {
+        use image::ImageReader;
+        use std::io::Cursor;
+
+        let reader = ImageReader::new(Cursor::new(input))
+            .with_guessed_format()
+            .map_err(|e| format!("无法识别图片格式: {}", e))?;
+        let img = reader
+            .decode()
+            .map_err(|e| format!("图片解码失败: {}", e))?;
+
+        let mut out = Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Jpeg)
+            .map_err(|e| format!("JPEG 编码失败: {}", e))?;
+        Ok(out.into_inner())
+    })
+    .await
+    .map_err(|e| format!("图片转码任务失败: {}", e))?
+}
+
+#[cfg(target_os = "macos")]
+async fn transcode_with_sips(data: &[u8], source_mime: &str) -> Result<Vec<u8>, String> {
+    let input_ext = match source_mime {
+        "image/heic" => "heic",
+        "image/heif" => "heif",
+        "image/avif" => "avif",
+        "image/gif" => "gif",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/jpeg" => "jpg",
+        _ => "img",
+    };
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let in_path = std::env::temp_dir().join(format!("tidyflow_ai_{}.{}", id, input_ext));
+    let out_path = std::env::temp_dir().join(format!("tidyflow_ai_{}.jpg", id));
+
+    tokio::fs::write(&in_path, data)
+        .await
+        .map_err(|e| format!("写入临时图片失败: {}", e))?;
+
+    let output = tokio::process::Command::new("sips")
+        .arg("-s")
+        .arg("format")
+        .arg("jpeg")
+        .arg(&in_path)
+        .arg("--out")
+        .arg(&out_path)
+        .output()
+        .await
+        .map_err(|e| format!("调用 sips 失败: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = tokio::fs::remove_file(&in_path).await;
+        let _ = tokio::fs::remove_file(&out_path).await;
+        return Err(format!("sips 转码失败: {}", stderr.trim()));
+    }
+
+    let result = tokio::fs::read(&out_path)
+        .await
+        .map_err(|e| format!("读取转码结果失败: {}", e));
+
+    let _ = tokio::fs::remove_file(&in_path).await;
+    let _ = tokio::fs::remove_file(&out_path).await;
+
+    result
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn transcode_with_sips(_data: &[u8], _source_mime: &str) -> Result<Vec<u8>, String> {
+    Err("当前平台未启用 sips 图片转码".to_string())
 }

@@ -82,12 +82,13 @@ pub struct AgentInfo {
     pub default_model_id: Option<String>,
 }
 
-/// 图片附件（base64 编码）
+/// 图片附件（二进制）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImagePart {
     pub filename: String,
     pub mime: String,
-    pub data: String,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
 }
 
 /// 模型选择

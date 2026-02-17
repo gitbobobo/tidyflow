@@ -86,6 +86,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 聊天页含可折叠侧栏时，应由外层容器先定义总宽度约束（主区可压缩、侧栏宽度按可用空间夹取）；内部控件避免滥用 `fixedSize`，防止长文案反向撑宽窗口。
 - 聊天长列表优化时，避免在 `onPreferenceChange` 中按滚动帧持续写入 `@State`（如锚点坐标）；应只在“是否接近底部”等阈值变化时更新，并为 Markdown 解析结果加缓存，以降低历史消息首轮滑动卡顿。
 - AI 聊天的高频流式状态应下沉到独立状态域（如 `AIChatStore`），并在 WS 增量到 UI 的链路做约 30fps 批量提交；避免把 token 级更新直接写入全局 `AppState` 导致整页重绘。
+- AI 图片附件链路应采用“客户端传二进制原图（MessagePack bin）+ 服务端统一探测格式并按需转码（如 HEIC→JPEG）”；不要在客户端先转 base64 或各端各自转码，避免格式误判与行为不一致。
 
 ## Build Commands
 

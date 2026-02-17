@@ -202,7 +202,7 @@ final class MobileAppState: ObservableObject {
     private enum PendingAIRequestKind {
         case message(
             text: String,
-            imageParts: [[String: String]]?,
+            imageParts: [[String: Any]]?,
             model: [String: String]?,
             agent: String?,
             fileRefs: [String]?
@@ -210,7 +210,7 @@ final class MobileAppState: ObservableObject {
         case command(
             command: String,
             arguments: String,
-            imageParts: [[String: String]]?,
+            imageParts: [[String: Any]]?,
             model: [String: String]?,
             agent: String?,
             fileRefs: [String]?
@@ -824,11 +824,11 @@ final class MobileAppState: ObservableObject {
 
         let fileRefs = extractFileRefs(from: text)
         let fileRefsParam: [String]? = fileRefs.isEmpty ? nil : fileRefs
-        let imageParts: [[String: String]]? = imageAttachments.isEmpty ? nil : imageAttachments.map { img in
+        let imageParts: [[String: Any]]? = imageAttachments.isEmpty ? nil : imageAttachments.map { img in
             [
                 "filename": img.filename,
                 "mime": img.mime,
-                "data": img.data.base64EncodedString()
+                "data": img.data
             ]
         }
         let model: [String: String]? = aiSelectedModel.map {

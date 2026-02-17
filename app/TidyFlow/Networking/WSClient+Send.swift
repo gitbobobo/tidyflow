@@ -729,7 +729,7 @@ extension WSClient {
         sessionId: String,
         message: String,
         fileRefs: [String]? = nil,
-        imageParts: [[String: String]]? = nil,
+        imageParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
         agent: String? = nil
     ) {
@@ -763,7 +763,7 @@ extension WSClient {
         command: String,
         arguments: String,
         fileRefs: [String]? = nil,
-        imageParts: [[String: String]]? = nil,
+        imageParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
         agent: String? = nil
     ) {
