@@ -210,6 +210,104 @@ struct AIChatErrorV2 {
     }
 }
 
+struct AIQuestionOptionInfo {
+    let label: String
+    let description: String
+
+    static func from(json: [String: Any]) -> AIQuestionOptionInfo? {
+        guard let label = json["label"] as? String else { return nil }
+        let description = json["description"] as? String ?? ""
+        return AIQuestionOptionInfo(label: label, description: description)
+    }
+}
+
+struct AIQuestionInfo {
+    let question: String
+    let header: String
+    let options: [AIQuestionOptionInfo]
+    let multiple: Bool
+    let custom: Bool
+
+    static func from(json: [String: Any]) -> AIQuestionInfo? {
+        guard let question = json["question"] as? String else { return nil }
+        let header = json["header"] as? String ?? ""
+        let options = (json["options"] as? [[String: Any]] ?? []).compactMap { AIQuestionOptionInfo.from(json: $0) }
+        let multiple = json["multiple"] as? Bool ?? false
+        let custom = json["custom"] as? Bool ?? true
+        return AIQuestionInfo(
+            question: question,
+            header: header,
+            options: options,
+            multiple: multiple,
+            custom: custom
+        )
+    }
+}
+
+struct AIQuestionRequestInfo {
+    let id: String
+    let sessionId: String
+    let questions: [AIQuestionInfo]
+    let toolMessageId: String?
+    let toolCallId: String?
+
+    static func from(json: [String: Any]) -> AIQuestionRequestInfo? {
+        guard let id = json["id"] as? String,
+              let sessionId = json["session_id"] as? String else { return nil }
+        let questions = (json["questions"] as? [[String: Any]] ?? []).compactMap { AIQuestionInfo.from(json: $0) }
+        let toolMessageId = json["tool_message_id"] as? String
+        let toolCallId = json["tool_call_id"] as? String
+        return AIQuestionRequestInfo(
+            id: id,
+            sessionId: sessionId,
+            questions: questions,
+            toolMessageId: toolMessageId,
+            toolCallId: toolCallId
+        )
+    }
+}
+
+struct AIQuestionAskedV2 {
+    let projectName: String
+    let workspaceName: String
+    let sessionId: String
+    let request: AIQuestionRequestInfo
+
+    static func from(json: [String: Any]) -> AIQuestionAskedV2? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let sessionId = json["session_id"] as? String,
+              let requestDict = json["request"] as? [String: Any],
+              let request = AIQuestionRequestInfo.from(json: requestDict) else { return nil }
+        return AIQuestionAskedV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            sessionId: sessionId,
+            request: request
+        )
+    }
+}
+
+struct AIQuestionClearedV2 {
+    let projectName: String
+    let workspaceName: String
+    let sessionId: String
+    let requestId: String
+
+    static func from(json: [String: Any]) -> AIQuestionClearedV2? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let sessionId = json["session_id"] as? String,
+              let requestId = json["request_id"] as? String else { return nil }
+        return AIQuestionClearedV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            sessionId: sessionId,
+            requestId: requestId
+        )
+    }
+}
+
 // MARK: - Helpers
 
 private func parseInt64(_ any: Any?) -> Int64 {
