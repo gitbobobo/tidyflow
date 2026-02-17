@@ -5,6 +5,7 @@ import Foundation
 struct AISessionStartedV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let title: String
     let updatedAt: Int64
@@ -12,12 +13,14 @@ struct AISessionStartedV2 {
     static func from(json: [String: Any]) -> AISessionStartedV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let title = json["title"] as? String else { return nil }
         let updatedAt = parseInt64(json["updated_at"])
         return AISessionStartedV2(
             projectName: projectName,
             workspaceName: workspaceName,
+            aiTool: aiTool,
             sessionId: sessionId,
             title: title,
             updatedAt: updatedAt
@@ -28,28 +31,32 @@ struct AISessionStartedV2 {
 struct AISessionListV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessions: [AIProtocolSessionInfo]
 
     static func from(json: [String: Any]) -> AISessionListV2? {
         guard let projectName = json["project_name"] as? String,
-              let workspaceName = json["workspace_name"] as? String else { return nil }
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
         let items = (json["sessions"] as? [[String: Any]] ?? []).compactMap { AIProtocolSessionInfo.from(json: $0) }
-        return AISessionListV2(projectName: projectName, workspaceName: workspaceName, sessions: items)
+        return AISessionListV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessions: items)
     }
 }
 
 struct AISessionMessagesV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let messages: [AIProtocolMessageInfo]
 
     static func from(json: [String: Any]) -> AISessionMessagesV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
         let messages = (json["messages"] as? [[String: Any]] ?? []).compactMap { AIProtocolMessageInfo.from(json: $0) }
-        return AISessionMessagesV2(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId, messages: messages)
+        return AISessionMessagesV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, messages: messages)
     }
 }
 
@@ -136,6 +143,7 @@ struct AIProtocolMessageInfo {
 struct AIChatMessageUpdatedV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let messageId: String
     let role: String
@@ -143,16 +151,18 @@ struct AIChatMessageUpdatedV2 {
     static func from(json: [String: Any]) -> AIChatMessageUpdatedV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let messageId = json["message_id"] as? String,
               let role = json["role"] as? String else { return nil }
-        return AIChatMessageUpdatedV2(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId, messageId: messageId, role: role)
+        return AIChatMessageUpdatedV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, messageId: messageId, role: role)
     }
 }
 
 struct AIChatPartUpdatedV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let messageId: String
     let part: AIProtocolPartInfo
@@ -160,17 +170,19 @@ struct AIChatPartUpdatedV2 {
     static func from(json: [String: Any]) -> AIChatPartUpdatedV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let messageId = json["message_id"] as? String,
               let partDict = json["part"] as? [String: Any],
               let part = AIProtocolPartInfo.from(json: partDict) else { return nil }
-        return AIChatPartUpdatedV2(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId, messageId: messageId, part: part)
+        return AIChatPartUpdatedV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, messageId: messageId, part: part)
     }
 }
 
 struct AIChatPartDeltaV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let messageId: String
     let partId: String
@@ -181,6 +193,7 @@ struct AIChatPartDeltaV2 {
     static func from(json: [String: Any]) -> AIChatPartDeltaV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let messageId = json["message_id"] as? String,
               let partId = json["part_id"] as? String,
@@ -190,6 +203,7 @@ struct AIChatPartDeltaV2 {
         return AIChatPartDeltaV2(
             projectName: projectName,
             workspaceName: workspaceName,
+            aiTool: aiTool,
             sessionId: sessionId,
             messageId: messageId,
             partId: partId,
@@ -203,28 +217,32 @@ struct AIChatPartDeltaV2 {
 struct AIChatDoneV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
 
     static func from(json: [String: Any]) -> AIChatDoneV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
-        return AIChatDoneV2(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
+        return AIChatDoneV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId)
     }
 }
 
 struct AIChatErrorV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let error: String
 
     static func from(json: [String: Any]) -> AIChatErrorV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let error = json["error"] as? String else { return nil }
-        return AIChatErrorV2(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId, error: error)
+        return AIChatErrorV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, error: error)
     }
 }
 
@@ -288,18 +306,21 @@ struct AIQuestionRequestInfo {
 struct AIQuestionAskedV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let request: AIQuestionRequestInfo
 
     static func from(json: [String: Any]) -> AIQuestionAskedV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let requestDict = json["request"] as? [String: Any],
               let request = AIQuestionRequestInfo.from(json: requestDict) else { return nil }
         return AIQuestionAskedV2(
             projectName: projectName,
             workspaceName: workspaceName,
+            aiTool: aiTool,
             sessionId: sessionId,
             request: request
         )
@@ -309,17 +330,20 @@ struct AIQuestionAskedV2 {
 struct AIQuestionClearedV2 {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let sessionId: String
     let requestId: String
 
     static func from(json: [String: Any]) -> AIQuestionClearedV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String,
               let requestId = json["request_id"] as? String else { return nil }
         return AIQuestionClearedV2(
             projectName: projectName,
             workspaceName: workspaceName,
+            aiTool: aiTool,
             sessionId: sessionId,
             requestId: requestId
         )
@@ -345,18 +369,25 @@ private func parseInt64(_ any: Any?) -> Int64 {
     }
 }
 
+private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
+    guard let raw = any as? String else { return nil }
+    return AIChatTool(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+}
+
 // MARK: - Provider / Agent 列表
 
 struct AIProviderListResult {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let providers: [AIProtocolProviderInfo]
 
     static func from(json: [String: Any]) -> AIProviderListResult? {
         guard let projectName = json["project_name"] as? String,
-              let workspaceName = json["workspace_name"] as? String else { return nil }
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
         let items = (json["providers"] as? [[String: Any]] ?? []).compactMap { AIProtocolProviderInfo.from(json: $0) }
-        return AIProviderListResult(projectName: projectName, workspaceName: workspaceName, providers: items)
+        return AIProviderListResult(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, providers: items)
     }
 }
 
@@ -396,13 +427,15 @@ struct AIProtocolModelInfo {
 struct AIAgentListResult {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let agents: [AIProtocolAgentInfo]
 
     static func from(json: [String: Any]) -> AIAgentListResult? {
         guard let projectName = json["project_name"] as? String,
-              let workspaceName = json["workspace_name"] as? String else { return nil }
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
         let items = (json["agents"] as? [[String: Any]] ?? []).compactMap { AIProtocolAgentInfo.from(json: $0) }
-        return AIAgentListResult(projectName: projectName, workspaceName: workspaceName, agents: items)
+        return AIAgentListResult(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, agents: items)
     }
 }
 
@@ -432,13 +465,15 @@ struct AIProtocolAgentInfo {
 struct AISlashCommandsResult {
     let projectName: String
     let workspaceName: String
+    let aiTool: AIChatTool
     let commands: [AIProtocolSlashCommand]
 
     static func from(json: [String: Any]) -> AISlashCommandsResult? {
         guard let projectName = json["project_name"] as? String,
-              let workspaceName = json["workspace_name"] as? String else { return nil }
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
         let items = (json["commands"] as? [[String: Any]] ?? []).compactMap { AIProtocolSlashCommand.from(json: $0) }
-        return AISlashCommandsResult(projectName: projectName, workspaceName: workspaceName, commands: items)
+        return AISlashCommandsResult(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, commands: items)
     }
 }
 

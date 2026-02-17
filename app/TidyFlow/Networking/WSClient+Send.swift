@@ -712,11 +712,17 @@ extension WSClient {
     // MARK: - AI Chat（结构化 message/part 流）
 
     /// 开始新的 AI 聊天会话
-    func requestAIChatStart(projectName: String, workspaceName: String, title: String? = nil) {
+    func requestAIChatStart(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        title: String? = nil
+    ) {
         var msg: [String: Any] = [
             "type": "ai_chat_start",
             "project_name": projectName,
-            "workspace_name": workspaceName
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue
         ]
         if let title { msg["title"] = title }
         send(msg)
@@ -726,6 +732,7 @@ extension WSClient {
     func requestAIChatSend(
         projectName: String,
         workspaceName: String,
+        aiTool: AIChatTool,
         sessionId: String,
         message: String,
         fileRefs: [String]? = nil,
@@ -737,6 +744,7 @@ extension WSClient {
             "type": "ai_chat_send",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId,
             "message": message
         ]
@@ -759,6 +767,7 @@ extension WSClient {
     func requestAIChatCommand(
         projectName: String,
         workspaceName: String,
+        aiTool: AIChatTool,
         sessionId: String,
         command: String,
         arguments: String,
@@ -771,6 +780,7 @@ extension WSClient {
             "type": "ai_chat_command",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId,
             "command": command,
             "arguments": arguments
@@ -791,11 +801,17 @@ extension WSClient {
     }
 
     /// 终止正在进行的 AI 聊天
-    func requestAIChatAbort(projectName: String, workspaceName: String, sessionId: String) {
+    func requestAIChatAbort(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) {
         send([
             "type": "ai_chat_abort",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId
         ])
     }
@@ -804,6 +820,7 @@ extension WSClient {
     func requestAIQuestionReply(
         projectName: String,
         workspaceName: String,
+        aiTool: AIChatTool,
         sessionId: String,
         requestId: String,
         answers: [[String]]
@@ -812,6 +829,7 @@ extension WSClient {
             "type": "ai_question_reply",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId,
             "request_id": requestId,
             "answers": answers
@@ -822,6 +840,7 @@ extension WSClient {
     func requestAIQuestionReject(
         projectName: String,
         workspaceName: String,
+        aiTool: AIChatTool,
         sessionId: String,
         requestId: String
     ) {
@@ -829,26 +848,35 @@ extension WSClient {
             "type": "ai_question_reject",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId,
             "request_id": requestId
         ])
     }
 
     /// 获取 AI 会话列表
-    func requestAISessionList(projectName: String, workspaceName: String) {
+    func requestAISessionList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
         send([
             "type": "ai_session_list",
             "project_name": projectName,
-            "workspace_name": workspaceName
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue
         ])
     }
 
     /// 获取 AI 会话历史消息
-    func requestAISessionMessages(projectName: String, workspaceName: String, sessionId: String, limit: Int? = nil) {
+    func requestAISessionMessages(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        limit: Int? = nil
+    ) {
         var msg: [String: Any] = [
             "type": "ai_session_messages",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId
         ]
         if let limit { msg["limit"] = limit }
@@ -856,39 +884,48 @@ extension WSClient {
     }
 
     /// 删除 AI 会话
-    func requestAISessionDelete(projectName: String, workspaceName: String, sessionId: String) {
+    func requestAISessionDelete(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) {
         send([
             "type": "ai_session_delete",
             "project_name": projectName,
             "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
             "session_id": sessionId
         ])
     }
 
     /// 获取 AI Provider/模型列表
-    func requestAIProviderList(projectName: String, workspaceName: String) {
+    func requestAIProviderList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
         send([
             "type": "ai_provider_list",
             "project_name": projectName,
-            "workspace_name": workspaceName
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue
         ])
     }
 
     /// 获取 AI Agent 列表
-    func requestAIAgentList(projectName: String, workspaceName: String) {
+    func requestAIAgentList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
         send([
             "type": "ai_agent_list",
             "project_name": projectName,
-            "workspace_name": workspaceName
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue
         ])
     }
 
     /// 获取 AI 斜杠命令列表
-    func requestAISlashCommands(projectName: String, workspaceName: String) {
+    func requestAISlashCommands(projectName: String, workspaceName: String, aiTool: AIChatTool) {
         send([
             "type": "ai_slash_commands",
             "project_name": projectName,
-            "workspace_name": workspaceName
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue
         ])
     }
 }
