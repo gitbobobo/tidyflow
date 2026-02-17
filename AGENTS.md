@@ -67,6 +67,9 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - AI 聊天的 `pendingSendMessage`（等待会话创建后发送）等跨异步边界的临时状态，必须在工作空间切换时清除，并携带发起时的 `projectName/workspaceName` 做一致性校验；否则快照恢复触发 `aiCurrentSessionId` 变更时会把旧消息误发到新工作空间。切换回旧工作空间时应重新拉取当前会话消息，弥补切走期间被 guard 丢弃的流式增量。
 - AI 聊天支持多代理工具（如 OpenCode/Codex）时，协议请求与事件必须强制携带 `ai_tool`，并在客户端按 `project/workspace/ai_tool` 维度做事件过滤与快照分桶；否则切换工具后会话、流式增量和模型/Agent 列表会串台。
 - 多 AI 工具“后台保活”场景下，WebSocket 事件不能只按当前选中工具过滤；应按 `ai_tool` 路由到对应状态桶，当前工具仅负责前台渲染，并额外维护未读/进行中徽标以支持无损切换查看。
+- 会话侧栏若需融合多 AI 工具历史，状态层应继续按 `ai_tool` 分桶存储，展示层再做全局聚合并按 `updatedAt` 降序排序；每条会话必须携带 `ai_tool`，且非当前工具分桶更新也要触发列表刷新。
+- 会话列表跨 `ai_tool` 点击会话时，应先把目标 `session_id` 写入目标工具的状态桶，再切换 `ai_tool`，并由切换后的统一重载流程拉取详情；避免先切工具再写状态导致首击空白，以及重复拉取触发 Copilot `Session ... is already loaded`。
+- Copilot ACP 适配层不要在“仅为获取模型/模式元数据”的路径里调用 `session/load` 历史会话；这会把会话提前置为 loaded，随后拉历史详情易报 `Session ... is already loaded`。元数据优先走缓存，缺失时用最小兜底。
 - 对接 Codex app-server 时，不要在首条消息前对新建线程强制调用 `thread/resume`：新线程 rollout 文件会延迟到首条用户消息后才落盘；发送链路应优先 `turn/start`，仅在 `thread not found` 时再 `thread/resume` 后重试。
 - 对接 GitHub Copilot ACP 时，不能复用 Codex 的 `thread/*`/`turn/*` 协议；需按 ACP 使用 `initialize(protocolVersion)` + `session/new|load|list|prompt`，并将 `session/update` 事件映射到统一聊天增量模型。
 - 各 AI 适配器返回 `AiAgentInfo.mode` 时必须遵守统一语义（`primary`/`subagent`/`all`），不要复用后端原始 mode id（如 URI）；否则会被 `ai_agent_list` 的通用过滤逻辑误过滤，前端出现“模型有、代理空”。
