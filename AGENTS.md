@@ -82,6 +82,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 需求包含“远端实时搜索”时，先核对现有协议是否支持 `query`；若仅有全量接口（如 `file_index`），应先做可选 `query` 的向后兼容扩展，再接入 UI 搜索，避免前端看似实时但实际只在本地过滤。
 - 对接 OpenCode 工具调用展示时，必须以 `tool state.status`（`pending/running/completed/error`）作为主判别并结构化解析 `input/output/metadata`；不要仅按是否存在 `input/output` 做弱判断，避免状态与展示错位。
 - SwiftUI 渲染统一 diff 时，若需要“行级背景准确对齐 + 文本可跨行选择且不选中行号”，应将行号列与内容列拆分，并让内容列禁换行（`fixedSize(horizontal: true, vertical: true)` + 横向滚动）；否则长行软换行会导致背景与行号错位。
+- 聊天页含可折叠侧栏时，应由外层容器先定义总宽度约束（主区可压缩、侧栏宽度按可用空间夹取）；内部控件避免滥用 `fixedSize`，防止长文案反向撑宽窗口。
 
 ## Build Commands
 
