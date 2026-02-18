@@ -1,4 +1,4 @@
-use super::codex_manager::{CodexAppServerManager, CodexNotification};
+use super::codex_manager::{CodexAppServerManager, CodexNotification, CodexServerRequest};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
@@ -145,6 +145,10 @@ impl CopilotAcpClient {
         self.manager.subscribe_notifications()
     }
 
+    pub fn subscribe_requests(&self) -> broadcast::Receiver<CodexServerRequest> {
+        self.manager.subscribe_requests()
+    }
+
     pub async fn session_cancel(&self, session_id: &str) -> Result<(), String> {
         self.manager
             .send_notification(
@@ -154,6 +158,34 @@ impl CopilotAcpClient {
                 })),
             )
             .await
+    }
+
+    /// 回复权限请求（包括 question 工具）
+    pub async fn respond_to_permission_request(
+        &self,
+        request_id: serde_json::Value,
+        option_id: &str,
+    ) -> Result<(), String> {
+        let result = serde_json::json!({
+            "outcome": {
+                "outcome": "selected",
+                "optionId": option_id
+            }
+        });
+        self.manager.send_response(request_id, result).await
+    }
+
+    /// 拒绝权限请求
+    pub async fn reject_permission_request(
+        &self,
+        request_id: serde_json::Value,
+    ) -> Result<(), String> {
+        let result = serde_json::json!({
+            "outcome": {
+                "outcome": "cancelled"
+            }
+        });
+        self.manager.send_response(request_id, result).await
     }
 
     fn parse_session_summary(value: Value) -> Option<CopilotSessionSummary> {

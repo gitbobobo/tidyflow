@@ -2,7 +2,8 @@ use super::codex_manager::CodexAppServerManager;
 use super::copilot_client::{CopilotAcpClient, CopilotSessionMetadata, CopilotSessionSummary};
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
-    AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSlashCommand,
+    AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption,
+    AiQuestionRequest, AiSession, AiSlashCommand,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -13,9 +14,17 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::debug;
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+struct PendingPermission {
+    request_id: Value,
+    session_id: String,
+    tool_call_id: Option<String>,
+}
+
 pub struct CopilotAcpAgent {
     client: CopilotAcpClient,
     metadata_by_directory: Arc<Mutex<HashMap<String, CopilotSessionMetadata>>>,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
 }
 
 impl CopilotAcpAgent {
@@ -23,6 +32,7 @@ impl CopilotAcpAgent {
         Self {
             client: CopilotAcpClient::new(manager),
             metadata_by_directory: Arc::new(Mutex::new(HashMap::new())),
+            pending_permissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -164,6 +174,98 @@ impl CopilotAcpAgent {
         normalized.contains("session")
             && normalized.contains("already")
             && normalized.contains("loaded")
+    }
+
+    fn request_id_key(id: &Value) -> String {
+        match id {
+            Value::String(s) => format!("s:{}", s),
+            Value::Number(n) => format!("n:{}", n),
+            _ => format!("j:{}", id),
+        }
+    }
+
+    fn build_question_from_permission_request(
+        request_id: &Value,
+        params: &Value,
+    ) -> Option<AiQuestionRequest> {
+        let session_id = params.get("sessionId")?.as_str()?.to_string();
+        let tool_call = params.get("toolCall")?;
+        let tool_call_id = tool_call.get("toolCallId").and_then(|v| v.as_str()).map(String::from);
+        let raw_input = tool_call.get("rawInput").cloned().unwrap_or(Value::Null);
+
+        let questions = if let Some(qs) = raw_input.get("questions").and_then(|v| v.as_array()) {
+            qs.iter()
+                .filter_map(|q| {
+                    let question = q.get("question")?.as_str()?.to_string();
+                    let header = q
+                        .get("header")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let options = q
+                        .get("options")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|opt| {
+                                    Some(AiQuestionOption {
+                                        label: opt.get("label")?.as_str()?.to_string(),
+                                        description: opt
+                                            .get("description")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let multiple = q.get("multiple").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let custom = q.get("custom").and_then(|v| v.as_bool()).unwrap_or(true);
+                    Some(AiQuestionInfo {
+                        question,
+                        header,
+                        options,
+                        multiple,
+                        custom,
+                    })
+                })
+                .collect()
+        } else {
+            let title = tool_call.get("title").and_then(|v| v.as_str()).unwrap_or("Permission required");
+            vec![AiQuestionInfo {
+                question: title.to_string(),
+                header: "Permission".to_string(),
+                options: params
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|opt| {
+                                Some(AiQuestionOption {
+                                    label: opt.get("name")?.as_str()?.to_string(),
+                                    description: opt
+                                        .get("kind")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                multiple: false,
+                custom: false,
+            }]
+        };
+
+        Some(AiQuestionRequest {
+            id: Self::request_id_key(request_id),
+            session_id,
+            questions,
+            tool_message_id: tool_call_id.clone(),
+            tool_call_id,
+        })
     }
 
     fn extract_update(event: &Value) -> Option<(String, String, String)> {
@@ -321,12 +423,14 @@ impl AiAgent for CopilotAcpAgent {
 
         let (tx, rx) = mpsc::unbounded_channel::<Result<AiEvent, String>>();
         let mut notifications = self.client.subscribe_notifications();
+        let mut requests = self.client.subscribe_requests();
         let client = self.client.clone();
         let directory = directory.to_string();
         let session_id = session_id.to_string();
         let original_text = message.to_string();
-        let assistant_message_id = format!("copilot-assistant-{}", Uuid::new_v4());
-        let user_message_id = format!("copilot-user-{}", Uuid::new_v4());
+        let assistant_message_id = format!("copilot-assistant-{}", uuid::Uuid::new_v4());
+        let user_message_id = format!("copilot-user-{}", uuid::Uuid::new_v4());
+        let pending_permissions = self.pending_permissions.clone();
 
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
@@ -422,6 +526,26 @@ impl AiAgent for CopilotAcpAgent {
                             field: "text".to_string(),
                             delta: text,
                         }));
+                    }
+                    recv = requests.recv() => {
+                        let Ok(req) = recv else { continue };
+                        if req.method != "session/request_permission" {
+                            continue;
+                        }
+                        let params = req.params.unwrap_or(Value::Null);
+                        let event_session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+                        if event_session_id != session_id {
+                            continue;
+                        }
+                        if let Some(question_request) = Self::build_question_from_permission_request(&req.id, &params) {
+                            let request_key = question_request.id.clone();
+                            pending_permissions.lock().await.insert(request_key.clone(), PendingPermission {
+                                request_id: req.id.clone(),
+                                session_id: question_request.session_id.clone(),
+                                tool_call_id: question_request.tool_call_id.clone(),
+                            });
+                            let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question_request }));
+                        }
                     }
                 }
             }
@@ -554,5 +678,40 @@ impl AiAgent for CopilotAcpAgent {
             description: "新建会话".to_string(),
             action: "client".to_string(),
         }])
+    }
+
+    async fn reply_question(
+        &self,
+        _directory: &str,
+        request_id: &str,
+        _answers: Vec<Vec<String>>,
+    ) -> Result<(), String> {
+        let pending = self
+            .pending_permissions
+            .lock()
+            .await
+            .remove(request_id)
+            .ok_or_else(|| format!("Unknown permission request: {}", request_id))?;
+
+        self.client
+            .respond_to_permission_request(pending.request_id, "allow-once")
+            .await
+    }
+
+    async fn reject_question(
+        &self,
+        _directory: &str,
+        request_id: &str,
+    ) -> Result<(), String> {
+        let pending = self
+            .pending_permissions
+            .lock()
+            .await
+            .remove(request_id)
+            .ok_or_else(|| format!("Unknown permission request: {}", request_id))?;
+
+        self.client
+            .reject_permission_request(pending.request_id)
+            .await
     }
 }
