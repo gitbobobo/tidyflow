@@ -5,11 +5,11 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::ai::{
-    AiAgent, AiEvent, CodexAppServerAgent, CodexAppServerManager, CopilotAcpAgent, OpenCodeAgent,
-    OpenCodeManager,
-};
 use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
+use crate::ai::{
+    AiAgent, AiEvent, AiSessionSelectionHint, CodexAppServerAgent, CodexAppServerManager,
+    CopilotAcpAgent, OpenCodeAgent, OpenCodeManager,
+};
 use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
@@ -121,6 +121,7 @@ fn ai_session_messages_encoded_len(
     ai_tool: &str,
     session_id: &str,
     messages: Vec<crate::server::protocol::ai::MessageInfo>,
+    selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
 ) -> Result<usize, String> {
     let payload = crate::server::protocol::ServerMessage::AISessionMessages {
         project_name: project_name.to_string(),
@@ -128,6 +129,7 @@ fn ai_session_messages_encoded_len(
         ai_tool: ai_tool.to_string(),
         session_id: session_id.to_string(),
         messages,
+        selection_hint,
     };
     rmp_serde::to_vec_named(&payload)
         .map(|buf| buf.len())
@@ -149,6 +151,203 @@ fn ai_session_messages_stats(
             .sum::<usize>();
     }
     (parts_count, text_bytes)
+}
+
+fn canonical_meta_key(raw: &str) -> String {
+    raw.chars()
+        .filter(|ch| *ch != '_' && *ch != '-')
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>()
+}
+
+fn json_value_to_trimmed_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn find_scalar_by_keys(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    let target = keys
+        .iter()
+        .map(|key| canonical_meta_key(key))
+        .collect::<Vec<_>>();
+    let mut stack = vec![value];
+    let mut visited = 0usize;
+    const MAX_VISITS: usize = 400;
+
+    while let Some(node) = stack.pop() {
+        if visited >= MAX_VISITS {
+            break;
+        }
+        visited += 1;
+        match node {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    let canonical = canonical_meta_key(k);
+                    if target.iter().any(|key| key == &canonical) {
+                        if let Some(found) = json_value_to_trimmed_string(v) {
+                            return Some(found);
+                        }
+                    }
+                    if matches!(
+                        v,
+                        serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                    ) {
+                        stack.push(v);
+                    }
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    if matches!(
+                        item,
+                        serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                    ) {
+                        stack.push(item);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn normalize_agent_hint(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.contains("#plan") {
+        return Some("plan".to_string());
+    }
+    if normalized.contains("#agent") {
+        return Some("agent".to_string());
+    }
+    Some(normalized)
+}
+
+fn normalize_optional_token(raw: Option<String>) -> Option<String> {
+    let token = raw?;
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn infer_hint_from_json(value: &serde_json::Value) -> AiSessionSelectionHint {
+    let mut hint = AiSessionSelectionHint::default();
+
+    // mode/agent 只采纳语义清晰的键，避免误把通用 `mode` 字段识别为 agent。
+    let agent_keys = [
+        "agent",
+        "agent_name",
+        "selected_agent",
+        "current_agent",
+        "collaboration_mode",
+        "current_mode_id",
+        "mode_id",
+    ];
+    if let Some(agent) = find_scalar_by_keys(value, &agent_keys) {
+        hint.agent = normalize_agent_hint(&agent);
+    }
+
+    let provider_keys = [
+        "model_provider_id",
+        "model_provider",
+        "modelProvider",
+        "provider_id",
+        "providerID",
+        "modelProviderID",
+    ];
+    hint.model_provider_id = normalize_optional_token(find_scalar_by_keys(value, &provider_keys));
+
+    let model_keys = [
+        "model_id",
+        "modelID",
+        "selected_model",
+        "current_model_id",
+        "model",
+    ];
+    hint.model_id = normalize_optional_token(find_scalar_by_keys(value, &model_keys));
+
+    hint
+}
+
+fn merge_session_selection_hint(
+    preferred: AiSessionSelectionHint,
+    fallback: AiSessionSelectionHint,
+) -> Option<crate::server::protocol::ai::SessionSelectionHint> {
+    let agent = preferred
+        .agent
+        .or(fallback.agent)
+        .and_then(|v| normalize_agent_hint(&v));
+    let model_provider_id = preferred
+        .model_provider_id
+        .or(fallback.model_provider_id)
+        .and_then(|v| normalize_optional_token(Some(v)));
+    let model_id = preferred
+        .model_id
+        .or(fallback.model_id)
+        .and_then(|v| normalize_optional_token(Some(v)));
+
+    if agent.is_none() && model_provider_id.is_none() && model_id.is_none() {
+        None
+    } else {
+        Some(crate::server::protocol::ai::SessionSelectionHint {
+            agent,
+            model_provider_id,
+            model_id,
+        })
+    }
+}
+
+fn infer_selection_hint_from_messages(
+    messages: &[crate::server::protocol::ai::MessageInfo],
+) -> AiSessionSelectionHint {
+    let mut resolved = AiSessionSelectionHint::default();
+    for message in messages.iter().rev() {
+        for part in message.parts.iter().rev() {
+            let mut candidates: Vec<&serde_json::Value> = Vec::new();
+            if let Some(source) = part.source.as_ref() {
+                candidates.push(source);
+            }
+            if let Some(metadata) = part.tool_part_metadata.as_ref() {
+                candidates.push(metadata);
+            }
+            if let Some(state) = part.tool_state.as_ref() {
+                candidates.push(state);
+            }
+            for candidate in candidates {
+                let hint = infer_hint_from_json(candidate);
+                if resolved.agent.is_none() {
+                    resolved.agent = hint.agent;
+                }
+                if resolved.model_provider_id.is_none() {
+                    resolved.model_provider_id = hint.model_provider_id;
+                }
+                if resolved.model_id.is_none() {
+                    resolved.model_id = hint.model_id;
+                }
+                if resolved.agent.is_some() && resolved.model_id.is_some() {
+                    return resolved;
+                }
+            }
+        }
+    }
+    resolved
 }
 
 async fn ensure_agent(ai_state: &SharedAIState, tool: &str) -> Result<Arc<dyn AiAgent>, String> {
@@ -1499,12 +1698,46 @@ async fn try_handle_ai_session_messages(
                 .collect(),
         })
         .collect();
+    let adapter_hint = agent
+        .session_selection_hint(&directory, session_id)
+        .await
+        .map_err(|e| {
+            warn!(
+                "AISessionMessages hint failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                project_name, workspace_name, ai_tool, session_id, e
+            );
+            e
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let inferred_hint = infer_selection_hint_from_messages(&messages);
+    // 真实接口数据优先，消息元数据推断仅作兜底。
+    let selection_hint = merge_session_selection_hint(adapter_hint, inferred_hint);
+    if let Some(hint) = selection_hint.as_ref() {
+        info!(
+            "AISessionMessages selection_hint: project={}, workspace={}, ai_tool={}, session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            hint.agent,
+            hint.model_provider_id,
+            hint.model_id
+        );
+    } else {
+        warn!(
+            "AISessionMessages selection_hint empty: project={}, workspace={}, ai_tool={}, session_id={}",
+            project_name, workspace_name, ai_tool, session_id
+        );
+    }
     let mut payload_bytes = ai_session_messages_encoded_len(
         project_name,
         workspace_name,
         &ai_tool,
         session_id,
         messages.clone(),
+        selection_hint.clone(),
     )?;
     let mut dropped_count = 0usize;
     while payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES && messages.len() > 1 {
@@ -1516,6 +1749,7 @@ async fn try_handle_ai_session_messages(
             &ai_tool,
             session_id,
             messages.clone(),
+            selection_hint.clone(),
         )?;
     }
     if dropped_count > 0 {
@@ -1533,7 +1767,7 @@ async fn try_handle_ai_session_messages(
     }
     let (parts_count, text_bytes) = ai_session_messages_stats(&messages);
     info!(
-        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}",
+        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}, has_selection_hint={}",
         project_name,
         workspace_name,
         ai_tool,
@@ -1541,7 +1775,8 @@ async fn try_handle_ai_session_messages(
         messages.len(),
         parts_count,
         text_bytes,
-        payload_bytes
+        payload_bytes,
+        selection_hint.is_some()
     );
 
     send_message(
@@ -1552,6 +1787,7 @@ async fn try_handle_ai_session_messages(
             ai_tool,
             session_id: session_id.clone(),
             messages,
+            selection_hint,
         },
     )
     .await?;
@@ -1640,10 +1876,7 @@ async fn try_handle_ai_session_status(
         .get_status(&ai_tool, &directory, session_id)
         .unwrap_or(AiSessionStatus::Idle);
 
-    if store
-        .get_status(&ai_tool, &directory, session_id)
-        .is_none()
-    {
+    if store.get_status(&ai_tool, &directory, session_id).is_none() {
         if let Ok(s) = agent.get_session_status(&directory, session_id).await {
             status = s;
         }

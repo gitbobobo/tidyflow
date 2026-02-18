@@ -1159,6 +1159,8 @@ pub enum ServerMessage {
         ai_tool: String,
         session_id: String,
         messages: Vec<ai::MessageInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_hint: Option<ai::SessionSelectionHint>,
     },
     #[serde(rename = "ai_session_status_result")]
     AISessionStatusResult {

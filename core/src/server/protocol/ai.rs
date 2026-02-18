@@ -97,6 +97,17 @@ pub struct MessageInfo {
     pub parts: Vec<PartInfo>,
 }
 
+/// 历史会话最近一次输入选择提示（用于前端恢复输入框的 model/agent）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSelectionHint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+}
+
 /// AI Provider 信息（模型列表按 provider 分组）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderInfo {
