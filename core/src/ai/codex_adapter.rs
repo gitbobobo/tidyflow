@@ -327,7 +327,13 @@ impl CodexAppServerAgent {
         let options = Self::parse_question_options(node.pointer("/options"));
         let multiple = Self::first_string_by_pointers(
             node,
-            &["/multiple", "/multi", "/allowMultiple", "/allow_multiple", "/selectMany"],
+            &[
+                "/multiple",
+                "/multi",
+                "/allowMultiple",
+                "/allow_multiple",
+                "/selectMany",
+            ],
         )
         .and_then(|raw| {
             if raw.eq_ignore_ascii_case("true") || raw == "1" {
@@ -348,7 +354,13 @@ impl CodexAppServerAgent {
         });
         let custom = Self::first_string_by_pointers(
             node,
-            &["/custom", "/isOther", "/is_other", "/allowOther", "/allow_other"],
+            &[
+                "/custom",
+                "/isOther",
+                "/is_other",
+                "/allowOther",
+                "/allow_other",
+            ],
         )
         .and_then(|raw| {
             if raw.eq_ignore_ascii_case("true") || raw == "1" {
@@ -466,10 +478,148 @@ impl CodexAppServerAgent {
         normalized.contains("thread not found")
     }
 
+    fn first_field<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
+        keys.iter().find_map(|key| value.get(*key))
+    }
+
+    fn value_to_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(v) => Some(v.to_string()),
+            Value::Number(v) => Some(v.to_string()),
+            Value::Bool(v) => Some(v.to_string()),
+            Value::Object(_) | Value::Array(_) => serde_json::to_string(value).ok(),
+            _ => None,
+        }
+    }
+
+    fn normalize_tool_status(raw: &str) -> Option<&'static str> {
+        let normalized = Self::canonical_method(raw);
+        match normalized.as_str() {
+            "pending" | "queued" => Some("pending"),
+            "running" | "inprogress" => Some("running"),
+            "completed" | "success" | "succeeded" | "done" => Some("completed"),
+            "failed" | "error" | "declined" | "cancelled" | "canceled" => Some("error"),
+            _ => None,
+        }
+    }
+
+    fn extract_tool_status(default_status: &str, item: &Value) -> String {
+        if let Some(status) = item.get("status").and_then(|v| v.as_str()) {
+            if let Some(mapped) = Self::normalize_tool_status(status) {
+                return mapped.to_string();
+            }
+        }
+        Self::normalize_tool_status(default_status)
+            .unwrap_or("unknown")
+            .to_string()
+    }
+
+    fn infer_command_execution_tool_name(item: &Value) -> Option<String> {
+        let first_action = item
+            .get("commandActions")
+            .and_then(|v| v.as_array())
+            .and_then(|actions| actions.first())?;
+        let action_type = first_action.get("type").and_then(|v| v.as_str())?;
+        match Self::canonical_method(action_type).as_str() {
+            "read" => Some("read".to_string()),
+            "listfiles" => Some("list".to_string()),
+            "search" => Some("grep".to_string()),
+            _ => None,
+        }
+    }
+
+    fn extract_file_change_metadata(item: &Value) -> Value {
+        let mut metadata = item.as_object().cloned().unwrap_or_default();
+        let mut file_paths = Vec::new();
+        let mut diffs = Vec::new();
+        if let Some(changes) = item.get("changes").and_then(|v| v.as_array()) {
+            for change in changes {
+                if let Some(path) = change.get("path").and_then(|v| v.as_str()) {
+                    file_paths.push(Value::String(path.to_string()));
+                }
+                if let Some(diff) = change
+                    .get("diff")
+                    .and_then(Self::value_to_string)
+                    .filter(|text| !text.is_empty())
+                {
+                    diffs.push(diff);
+                }
+            }
+        }
+        if !file_paths.is_empty() {
+            metadata.insert("file_paths".to_string(), Value::Array(file_paths));
+        }
+        // ToolCardView 会展示 metadata.files 为“文件列表”；按产品要求，编辑卡片不显示该区块。
+        metadata.remove("files");
+        if !diffs.is_empty() && !metadata.contains_key("diff") {
+            metadata.insert("diff".to_string(), Value::String(diffs.join("\n\n")));
+        }
+        Value::Object(metadata)
+    }
+
+    fn extract_tool_metadata(tool_type: &str, tool_name: &str, item: &Value) -> Value {
+        match tool_type {
+            "filechange" => Self::extract_file_change_metadata(item),
+            "commandexecution" if tool_name == "list" => Value::Object(serde_json::Map::new()),
+            _ => item.clone(),
+        }
+    }
+
+    fn extract_tool_title(tool_name: &str, input: &Value, item: &Value) -> Option<String> {
+        if tool_name == "list" {
+            let command = item
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())?;
+            return Some(format!("list({})", command));
+        }
+        let path = input
+            .get("path")
+            .and_then(|v| v.as_str())
+            .or_else(|| input.get("filePath").and_then(|v| v.as_str()))
+            .filter(|v| !v.is_empty())?;
+        match tool_name {
+            "read" => Some(format!("read({})", path)),
+            "write" | "edit" | "apply_patch" | "multiedit" => Some(format!("write({})", path)),
+            _ => None,
+        }
+    }
+
+    fn is_known_tool_for_card(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "read"
+                | "grep"
+                | "edit"
+                | "write"
+                | "apply_patch"
+                | "multiedit"
+                | "lsp_diagnostics"
+                | "lsp"
+                | "bash"
+                | "glob"
+                | "list"
+                | "websearch"
+                | "codesearch"
+                | "webfetch"
+                | "task"
+                | "skill"
+                | "question"
+                | "plan_enter"
+                | "plan_exit"
+                | "todowrite"
+                | "todoread"
+                | "batch"
+        )
+    }
+
     /// 将 Codex item type 映射为与前端 ToolCardView 对齐的统一工具名
-    fn normalize_codex_tool_name(raw_type: &str) -> String {
+    fn normalize_codex_tool_name(raw_type: &str, item: &Value) -> String {
         match raw_type {
-            "commandexecution" => "bash".to_string(),
+            "commandexecution" => {
+                Self::infer_command_execution_tool_name(item).unwrap_or_else(|| "bash".to_string())
+            }
             "filechange" => "write".to_string(),
             "fileread" => "read".to_string(),
             "codeexecution" => "code_execution".to_string(),
@@ -480,15 +630,78 @@ impl CodexAppServerAgent {
     }
 
     /// 从 Codex item 中提取结构化工具输入
-    fn extract_tool_input(tool_type: &str, item: &Value) -> Value {
+    fn extract_tool_input(tool_type: &str, tool_name: &str, item: &Value) -> Value {
         match tool_type {
             "commandexecution" => {
-                let command = item.get("command").cloned().unwrap_or(Value::Null);
-                serde_json::json!({ "command": command })
+                let mut input = serde_json::Map::new();
+                if tool_name == "bash" {
+                    if let Some(command) = Self::first_field(item, &["command"]) {
+                        input.insert("command".to_string(), command.clone());
+                    }
+                }
+
+                if tool_name == "read" {
+                    if let Some(path) = item
+                        .get("commandActions")
+                        .and_then(|v| v.as_array())
+                        .and_then(|actions| actions.first())
+                        .and_then(|action| action.get("path"))
+                        .and_then(|v| v.as_str())
+                    {
+                        input.insert("path".to_string(), Value::String(path.to_string()));
+                        input.insert("filePath".to_string(), Value::String(path.to_string()));
+                    }
+                } else if tool_name == "list" {
+                    // list 卡片内容区仅展示输出结果，输入留空。
+                } else if tool_name == "grep" {
+                    if let Some(action) = item
+                        .get("commandActions")
+                        .and_then(|v| v.as_array())
+                        .and_then(|actions| actions.first())
+                    {
+                        if let Some(query) = action.get("query").and_then(|v| v.as_str()) {
+                            input.insert("query".to_string(), Value::String(query.to_string()));
+                            input.insert("pattern".to_string(), Value::String(query.to_string()));
+                        }
+                        if let Some(path) = action.get("path").and_then(|v| v.as_str()) {
+                            input.insert("path".to_string(), Value::String(path.to_string()));
+                        }
+                    }
+                } else if let Some(command) = Self::first_field(item, &["command"]) {
+                    input.insert("command".to_string(), command.clone());
+                }
+
+                if input.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Object(input)
+                }
             }
             "filechange" => {
-                let path = item.get("path").cloned().unwrap_or(Value::Null);
-                serde_json::json!({ "path": path })
+                let paths = item
+                    .get("changes")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|change| change.get("path").and_then(|v| v.as_str()))
+                    .filter(|path| !path.is_empty())
+                    .map(|path| path.to_string())
+                    .collect::<Vec<_>>();
+                let mut input = serde_json::Map::new();
+                if let Some(first_path) = paths.first() {
+                    input.insert("path".to_string(), Value::String(first_path.clone()));
+                }
+                if !paths.is_empty() {
+                    input.insert(
+                        "paths".to_string(),
+                        Value::Array(paths.into_iter().map(Value::String).collect()),
+                    );
+                }
+                if input.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Object(input)
+                }
             }
             "fileread" => {
                 let path = item.get("path").cloned().unwrap_or(Value::Null);
@@ -517,23 +730,37 @@ impl CodexAppServerAgent {
     /// 从 Codex item 中提取工具输出（返回字符串，与前端 AIToolInvocationState.output: String? 对齐）
     fn extract_tool_output(tool_type: &str, item: &Value) -> Option<String> {
         match tool_type {
-            "commandexecution" => item
-                .get("output")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            "filechange" => item
-                .get("diff")
-                .or_else(|| item.get("changes"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            "fileread" => item
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            "codeexecution" => item
-                .get("output")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+            "commandexecution" => Self::first_field(item, &["aggregatedOutput", "output"])
+                .and_then(Self::value_to_string),
+            "filechange" => {
+                let direct = item
+                    .get("diff")
+                    .and_then(Self::value_to_string)
+                    .filter(|text| !text.is_empty());
+                if direct.is_some() {
+                    direct
+                } else {
+                    let diffs = item
+                        .get("changes")
+                        .and_then(|v| v.as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|change| {
+                            change
+                                .get("diff")
+                                .and_then(Self::value_to_string)
+                                .filter(|text| !text.is_empty())
+                        })
+                        .collect::<Vec<_>>();
+                    if diffs.is_empty() {
+                        None
+                    } else {
+                        Some(diffs.join("\n\n"))
+                    }
+                }
+            }
+            "fileread" => item.get("content").and_then(Self::value_to_string),
+            "codeexecution" => item.get("output").and_then(Self::value_to_string),
             "websearch" => {
                 // results 可能是数组/对象，序列化为 JSON 字符串
                 item.get("results").map(|v| v.to_string())
@@ -602,15 +829,27 @@ impl CodexAppServerAgent {
             }),
             "usermessage" => None,
             other => {
-                let tool_name = Self::normalize_codex_tool_name(other);
+                let tool_name = Self::normalize_codex_tool_name(other, item);
                 let tool_call_id = item.get("id").and_then(|v| v.as_str()).map(String::from);
-                let output = Self::extract_tool_output(other, item);
-                let tool_state = serde_json::json!({
-                    "status": status,
-                    "input": Self::extract_tool_input(other, item),
+                let output = if tool_name == "read" {
+                    None
+                } else {
+                    Self::extract_tool_output(other, item)
+                };
+                let input = Self::extract_tool_input(other, &tool_name, item);
+                let mut tool_state = serde_json::json!({
+                    "status": Self::extract_tool_status(status, item),
+                    "input": input,
                     "output": output,
-                    "metadata": item.clone(),
+                    "metadata": Self::extract_tool_metadata(other, &tool_name, item),
                 });
+                if let Some(title) = Self::extract_tool_title(&tool_name, &tool_state["input"], item)
+                {
+                    tool_state["title"] = Value::String(title);
+                }
+                if !Self::is_known_tool_for_card(&tool_name) {
+                    tool_state["raw"] = Value::String(item.to_string());
+                }
                 Some(AiPart {
                     id: part_id,
                     part_type: "tool".to_string(),
@@ -841,10 +1080,7 @@ impl CodexAppServerAgent {
             ))
         } else if Self::method_in(
             method,
-            &[
-                "item/tool/requestUserInput",
-                "item/tool/request_user_input",
-            ],
+            &["item/tool/requestUserInput", "item/tool/request_user_input"],
         ) {
             let questions = Self::extract_question_nodes(params);
             let mut mapped = Vec::new();
@@ -1534,10 +1770,7 @@ impl AiAgent for CodexAppServerAgent {
             serde_json::json!({ "decision": decision })
         } else if Self::method_in(
             pending.method.as_str(),
-            &[
-                "item/tool/requestUserInput",
-                "item/tool/request_user_input",
-            ],
+            &["item/tool/requestUserInput", "item/tool/request_user_input"],
         ) {
             let mut answer_map = serde_json::Map::new();
             for (idx, qid) in pending.question_ids.iter().enumerate() {
@@ -1582,10 +1815,7 @@ impl AiAgent for CodexAppServerAgent {
             serde_json::json!({ "decision": "cancel" })
         } else if Self::method_in(
             pending.method.as_str(),
-            &[
-                "item/tool/requestUserInput",
-                "item/tool/request_user_input",
-            ],
+            &["item/tool/requestUserInput", "item/tool/request_user_input"],
         ) {
             serde_json::json!({ "answers": {} })
         } else {
@@ -1654,5 +1884,161 @@ mod tests {
         assert_eq!(request.session_id, "thread-2");
         assert_eq!(ids, vec!["decision".to_string()]);
         assert_eq!(request.questions.len(), 1);
+    }
+
+    #[test]
+    fn map_item_to_part_maps_command_execution_read_action() {
+        let item = serde_json::json!({
+            "id": "item-read-1",
+            "type": "commandExecution",
+            "command": "/bin/zsh -lc \"sed -n '1p' README.md\"",
+            "cwd": "/tmp/demo",
+            "status": "completed",
+            "aggregatedOutput": "hello\n",
+            "commandActions": [
+                { "type": "read", "path": "README.md", "name": "README.md", "command": "sed -n '1p' README.md" }
+            ]
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.tool_name.as_deref(), Some("read"));
+
+        let state = part.tool_state.expect("tool_state should exist");
+        assert_eq!(
+            state.get("status").and_then(|v| v.as_str()),
+            Some("completed")
+        );
+        assert_eq!(
+            state.pointer("/input/path").and_then(|v| v.as_str()),
+            Some("README.md")
+        );
+        assert!(state.get("output").map(|v| v.is_null()).unwrap_or(true));
+        assert_eq!(
+            state.get("title").and_then(|v| v.as_str()),
+            Some("read(README.md)")
+        );
+    }
+
+    #[test]
+    fn map_item_to_part_maps_file_change_changes_to_diff_and_files() {
+        let item = serde_json::json!({
+            "id": "item-change-1",
+            "type": "fileChange",
+            "status": "failed",
+            "changes": [
+                { "path": "a.txt", "kind": "update", "diff": "@@ -1 +1 @@\n-a\n+b\n" },
+                { "path": "b.txt", "kind": "create", "diff": "@@ -0,0 +1 @@\n+new\n" }
+            ]
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.tool_name.as_deref(), Some("write"));
+
+        let state = part.tool_state.expect("tool_state should exist");
+        assert_eq!(state.get("status").and_then(|v| v.as_str()), Some("error"));
+        assert_eq!(
+            state.pointer("/input/path").and_then(|v| v.as_str()),
+            Some("a.txt")
+        );
+        assert_eq!(
+            state
+                .pointer("/metadata/file_paths/0")
+                .and_then(|v| v.as_str()),
+            Some("a.txt")
+        );
+        assert!(state.pointer("/metadata/files").is_none());
+        assert!(state
+            .pointer("/metadata/diff")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .contains("@@ -1 +1 @@"));
+    }
+
+    #[test]
+    fn map_item_to_part_maps_command_execution_bash_with_minimal_input() {
+        let item = serde_json::json!({
+            "id": "item-bash-1",
+            "type": "commandExecution",
+            "status": "completed",
+            "command": "/bin/zsh -lc 'git status --short'",
+            "cwd": "/tmp/demo",
+            "processId": "93504",
+            "commandActions": [
+                { "type": "unknown", "command": "git status --short" }
+            ],
+            "aggregatedOutput": "M core/src/ai/codex_adapter.rs\n"
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.tool_name.as_deref(), Some("bash"));
+        let state = part.tool_state.expect("tool_state should exist");
+        assert_eq!(
+            state.pointer("/input/command").and_then(|v| v.as_str()),
+            Some("/bin/zsh -lc 'git status --short'")
+        );
+        assert!(state.pointer("/input/cwd").is_none());
+        assert!(state.pointer("/input/process_id").is_none());
+        assert!(state.pointer("/input/commandActions").is_none());
+    }
+
+    #[test]
+    fn map_item_to_part_maps_list_with_title_and_output_only() {
+        let item = serde_json::json!({
+            "id": "item-list-1",
+            "type": "commandExecution",
+            "status": "completed",
+            "command": "/bin/zsh -lc \"ls -la app/TidyFlow | sed -n '1,220p'\"",
+            "cwd": "/tmp/demo",
+            "commandActions": [
+                { "type": "listFiles", "command": "ls -la app/TidyFlow", "path": "app/TidyFlow" }
+            ],
+            "aggregatedOutput": "total 72\n-rw-r--r--  AppConfig.swift\n"
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.tool_name.as_deref(), Some("list"));
+        let state = part.tool_state.expect("tool_state should exist");
+        assert_eq!(
+            state.get("title").and_then(|v| v.as_str()),
+            Some("list(/bin/zsh -lc \"ls -la app/TidyFlow | sed -n '1,220p'\")")
+        );
+        assert_eq!(
+            state.get("output").and_then(|v| v.as_str()),
+            Some("total 72\n-rw-r--r--  AppConfig.swift\n")
+        );
+        assert!(state.pointer("/input/path").is_none());
+        assert!(state.pointer("/metadata/cwd").is_none());
+        assert_eq!(
+            state
+                .pointer("/metadata")
+                .and_then(|v| v.as_object())
+                .map(|m| m.len()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn map_item_to_part_keeps_raw_for_unknown_tool() {
+        let item = serde_json::json!({
+            "id": "item-unknown-1",
+            "type": "mcpToolCall",
+            "status": "completed",
+            "tool": "search_docs",
+            "arguments": { "q": "tidyflow" }
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.tool_name.as_deref(), Some("mcptoolcall"));
+        let state = part.tool_state.expect("tool_state should exist");
+        assert!(state
+            .get("raw")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .contains("\"mcpToolCall\""));
     }
 }
