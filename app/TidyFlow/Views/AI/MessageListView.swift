@@ -39,6 +39,8 @@ struct MessageListView: View {
     /// 过滤掉“无可见内容且非流式”的消息，避免空消息把相邻回复撑开。
     private var displayMessages: [AIChatMessage] {
         messages.filter { message in
+            // Codex 过程信息（仅 reasoning）不在聊天区显示。
+            if isProcessInfoMessage(message) { return false }
             if message.isStreaming { return true }
             return message.parts.contains { part in
                 switch part.kind {
@@ -51,6 +53,12 @@ struct MessageListView: View {
                 }
             }
         }
+    }
+
+    private func isProcessInfoMessage(_ message: AIChatMessage) -> Bool {
+        guard message.role == .assistant else { return false }
+        guard !message.parts.isEmpty else { return false }
+        return message.parts.allSatisfy { $0.kind == .reasoning }
     }
 
     private var fullRenderRange: ClosedRange<Int>? {

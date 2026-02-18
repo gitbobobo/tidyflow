@@ -265,6 +265,8 @@ final class AIChatStore: ObservableObject {
     private var pendingUserEchoAssistantMessageId: String?
     /// 进入 awaiting 前的消息数量快照；用于过滤“旧 user 消息更新”误触发收敛。
     private var awaitingUserEchoBaselineIndex: Int?
+    /// 已绑定 message_id 的本地 user 占位，等待首个服务端 part 到达后替换，避免同气泡双文本。
+    private var userPlaceholderMessageIdsPendingServerPart: Set<String> = []
 
     private var pendingStreamEvents: [AIChatStreamEvent] = []
     private var streamFlushWorkItem: DispatchWorkItem?
@@ -291,6 +293,7 @@ final class AIChatStore: ObservableObject {
         lastUserEchoMessageId = nil
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
+        userPlaceholderMessageIdsPendingServerPart = []
         pendingToolQuestions = snapshot.pendingToolQuestions
         questionRequestToCallId = snapshot.questionRequestToCallId
         clearAssistantStreaming()
@@ -330,6 +333,7 @@ final class AIChatStore: ObservableObject {
         suppressedActiveToolSessions = []
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
+        userPlaceholderMessageIdsPendingServerPart = []
     }
 
     func clearMessages() {
@@ -347,6 +351,7 @@ final class AIChatStore: ObservableObject {
         suppressedActiveToolSessions = []
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
+        userPlaceholderMessageIdsPendingServerPart = []
     }
 
     func replaceMessages(_ newMessages: [AIChatMessage]) {
@@ -357,6 +362,7 @@ final class AIChatStore: ObservableObject {
         lastUserEchoMessageId = nil
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
+        userPlaceholderMessageIdsPendingServerPart = []
         clearAssistantStreaming()
         isStreaming = false
         pendingToolQuestions = [:]
@@ -399,12 +405,22 @@ final class AIChatStore: ObservableObject {
 
     func setCurrentSessionId(_ sessionId: String?) {
         if currentSessionId != sessionId {
+            // 首次发送（尚无会话）时，可能先插入本地 user 占位，再收到 session_started。
+            // 此场景不能清空 awaitingUserEcho，否则后续 user echo 无法复用占位，产生重复气泡。
+            let isFirstSendSessionBinding = currentSessionId == nil &&
+                sessionId != nil &&
+                awaitingUserEcho &&
+                hasUnboundUserPlaceholder()
+
             pendingToolQuestions = [:]
             questionRequestToCallId = [:]
-            awaitingUserEcho = false
-            lastUserEchoMessageId = nil
-            pendingUserEchoAssistantMessageId = nil
-            awaitingUserEchoBaselineIndex = nil
+            if !isFirstSendSessionBinding {
+                awaitingUserEcho = false
+                lastUserEchoMessageId = nil
+                pendingUserEchoAssistantMessageId = nil
+                awaitingUserEchoBaselineIndex = nil
+                userPlaceholderMessageIdsPendingServerPart = []
+            }
         }
         currentSessionId = sessionId
     }
@@ -620,6 +636,13 @@ final class AIChatStore: ObservableObject {
                         TFLog.app.debug(
                             "AI role inferred (file part): message_id=\(messageId, privacy: .public), role=user, part_type=\(part.partType, privacy: .public)"
                         )
+                    } else if hasUnboundUserPlaceholder() {
+                        // 首次发送时若 user echo 先以 part.* 到达且缺少 role，
+                        // 优先绑定本地用户占位，避免产生重复 user 气泡。
+                        roleHint = .user
+                        TFLog.app.debug(
+                            "AI role inferred (user placeholder): message_id=\(messageId, privacy: .public), role=user, part_type=\(part.partType, privacy: .public)"
+                        )
                     } else if let anchorMessageId = pendingUserEchoAssistantMessageId {
                         roleHint = (anchorMessageId == messageId) ? .assistant : .user
                         TFLog.app.debug(
@@ -646,7 +669,9 @@ final class AIChatStore: ObservableObject {
             case .partDelta(let messageId, let partId, let partType, let field, let delta):
                 var roleHint = messageRoleByMessageId[messageId]
                 if roleHint == nil, awaitingUserEcho {
-                    if let anchorMessageId = pendingUserEchoAssistantMessageId {
+                    if hasUnboundUserPlaceholder() {
+                        roleHint = .user
+                    } else if let anchorMessageId = pendingUserEchoAssistantMessageId {
                         roleHint = (anchorMessageId == messageId) ? .assistant : .user
                     } else if hasUnboundAssistantPlaceholder() {
                         roleHint = .assistant
@@ -686,6 +711,7 @@ final class AIChatStore: ObservableObject {
             awaitingUserEchoBaselineIndex = nil
             lastUserEchoMessageId = "done-\(sessionId)-\(UUID().uuidString)"
         }
+        userPlaceholderMessageIdsPendingServerPart = []
         isStreaming = false
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
@@ -704,6 +730,7 @@ final class AIChatStore: ObservableObject {
         awaitingUserEcho = false
         awaitingUserEchoBaselineIndex = nil
         pendingUserEchoAssistantMessageId = nil
+        userPlaceholderMessageIdsPendingServerPart = []
         isStreaming = false
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
@@ -802,9 +829,13 @@ final class AIChatStore: ObservableObject {
         if resolvedRole == .user,
            awaitingUserEcho,
            let idx = messages.lastIndex(where: { $0.role == .user && $0.messageId == nil }) {
+            let hasLocalPlaceholderParts = !messages[idx].parts.isEmpty
             messages[idx].messageId = messageId
             messageIndexByMessageId[messageId] = idx
             messageRoleByMessageId[messageId] = resolvedRole
+            if hasLocalPlaceholderParts {
+                userPlaceholderMessageIdsPendingServerPart.insert(messageId)
+            }
             return idx
         }
 
@@ -884,8 +915,13 @@ final class AIChatStore: ObservableObject {
         messages.contains { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }
     }
 
+    private func hasUnboundUserPlaceholder() -> Bool {
+        messages.contains { $0.role == .user && $0.messageId == nil }
+    }
+
     private func upsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
+        replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: part.id)
         let kind = AIChatPartKind(rawValue: part.partType) ?? .text
 
         if let existing = partIndexByPartId[part.id], existing.msgIdx == msgIdx,
@@ -934,6 +970,7 @@ final class AIChatStore: ObservableObject {
     private func appendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
         guard field == "text" else { return }
         guard msgIdx >= 0, msgIdx < messages.count else { return }
+        replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: partId)
 
         if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
@@ -953,6 +990,23 @@ final class AIChatStore: ObservableObject {
         if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
             markUserEchoReceived(messageId: messageId)
         }
+    }
+
+    private func replaceUserPlaceholderPartsIfNeeded(msgIdx: Int, incomingPartId: String) {
+        guard msgIdx >= 0, msgIdx < messages.count else { return }
+        guard messages[msgIdx].role == .user,
+              let messageId = messages[msgIdx].messageId,
+              userPlaceholderMessageIdsPendingServerPart.contains(messageId) else { return }
+        // 若服务端 part_id 已存在，说明不是“首次覆盖”，仅清理标记。
+        if partIndexByPartId[incomingPartId]?.msgIdx == msgIdx {
+            userPlaceholderMessageIdsPendingServerPart.remove(messageId)
+            return
+        }
+        for part in messages[msgIdx].parts {
+            partIndexByPartId.removeValue(forKey: part.id)
+        }
+        messages[msgIdx].parts.removeAll(keepingCapacity: true)
+        userPlaceholderMessageIdsPendingServerPart.remove(messageId)
     }
 
     private func markOnlyStreamingAssistant(at msgIdx: Int) {
