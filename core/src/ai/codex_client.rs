@@ -30,6 +30,12 @@ pub struct CodexAgentInfo {
     pub is_default: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ParsedCollaborationMode {
+    name: String,
+    mode: String,
+}
+
 #[derive(Clone)]
 pub struct CodexAppServerClient {
     manager: Arc<CodexAppServerManager>,
@@ -352,24 +358,29 @@ impl CodexAppServerClient {
             }
         };
 
-        let mut ordered_names = Vec::new();
-        ordered_names.append(&mut discovered_modes);
-        ordered_names.push("default".to_string());
-        ordered_names.push("plan".to_string());
+        discovered_modes.push(ParsedCollaborationMode {
+            name: "Default".to_string(),
+            mode: "default".to_string(),
+        });
+        discovered_modes.push(ParsedCollaborationMode {
+            name: "Plan".to_string(),
+            mode: "plan".to_string(),
+        });
 
         let mut dedup = HashSet::new();
-        ordered_names.retain(|name| dedup.insert(name.clone()));
-        let default_mode = ordered_names
+        discovered_modes.retain(|item| dedup.insert(item.mode.clone()));
+        discovered_modes.sort_by_key(|item| Self::mode_priority(&item.mode));
+        let default_mode = discovered_modes
             .first()
-            .cloned()
+            .map(|item| item.mode.clone())
             .unwrap_or_else(|| "default".to_string());
 
-        Ok(ordered_names
+        Ok(discovered_modes
             .into_iter()
-            .map(|name| CodexAgentInfo {
-                collaboration_mode: name.clone(),
-                is_default: name == default_mode.as_str(),
-                name,
+            .map(|item| CodexAgentInfo {
+                collaboration_mode: item.mode.clone(),
+                is_default: item.mode == default_mode.as_str(),
+                name: item.name,
             })
             .collect())
     }
@@ -383,7 +394,15 @@ impl CodexAppServerClient {
         }
     }
 
-    fn parse_mode_list(value: &Value) -> Vec<String> {
+    fn mode_priority(name: &str) -> u8 {
+        match name {
+            "default" => 0,
+            "plan" => 1,
+            _ => 2,
+        }
+    }
+
+    fn parse_mode_list(value: &Value) -> Vec<ParsedCollaborationMode> {
         let list = value
             .get("data")
             .and_then(|v| v.as_array())
@@ -394,14 +413,29 @@ impl CodexAppServerClient {
         list.into_iter()
             .filter_map(|item| {
                 if let Some(name) = item.as_str() {
-                    return Self::normalize_mode_name(name);
+                    let normalized = Self::normalize_mode_name(name)?;
+                    return Some(ParsedCollaborationMode {
+                        name: name.trim().to_string(),
+                        mode: normalized,
+                    });
                 }
                 let obj = item.as_object()?;
-                obj.get("mode")
+                let mode = obj
+                    .get("mode")
                     .and_then(|v| v.as_str())
                     .or_else(|| obj.get("id").and_then(|v| v.as_str()))
                     .or_else(|| obj.get("name").and_then(|v| v.as_str()))
-                    .and_then(Self::normalize_mode_name)
+                    .and_then(Self::normalize_mode_name)?;
+                let display_name = obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| mode.clone());
+                Some(ParsedCollaborationMode {
+                    name: display_name,
+                    mode,
+                })
             })
             .collect()
     }
@@ -439,5 +473,28 @@ impl CodexAppServerClient {
             "text": text,
             "textElements": []
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CodexAppServerClient;
+
+    #[test]
+    fn mode_priority_should_keep_default_then_plan_first() {
+        let mut names = vec![
+            "plan".to_string(),
+            "custom".to_string(),
+            "default".to_string(),
+        ];
+        names.sort_by_key(|name| CodexAppServerClient::mode_priority(name));
+        assert_eq!(
+            names,
+            vec![
+                "default".to_string(),
+                "plan".to_string(),
+                "custom".to_string()
+            ]
+        );
     }
 }
