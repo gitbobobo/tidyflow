@@ -63,16 +63,5 @@ struct ProjectListView: View {
         .onAppear {
             appState.refreshProjectTree()
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    appState.disconnect()
-                    appState.navigationPath.removeLast(appState.navigationPath.count)
-                } label: {
-                    Text("断开")
-                        .foregroundColor(.red)
-                }
-            }
-        }
     }
 }
