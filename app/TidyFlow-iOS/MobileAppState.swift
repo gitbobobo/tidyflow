@@ -144,6 +144,8 @@ final class MobileAppState: ObservableObject {
     @Published var aiAgents: [AIAgentInfo] = []
     @Published var aiSelectedAgent: String?
     @Published var aiSlashCommands: [AISlashCommandInfo] = []
+    @Published var isAILoadingModels: Bool = false
+    @Published var isAILoadingAgents: Bool = false
     @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
 
     // AI Chat：按工具分桶存储会话
@@ -784,6 +786,8 @@ final class MobileAppState: ObservableObject {
         for tool in AIChatTool.allCases {
             wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: tool)
         }
+        isAILoadingModels = true
+        isAILoadingAgents = true
         wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
         wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
         wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
@@ -813,6 +817,8 @@ final class MobileAppState: ObservableObject {
             aiAgents = []
             aiSelectedAgent = nil
             aiSlashCommands = []
+            isAILoadingModels = true
+            isAILoadingAgents = true
             wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
             wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
             wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
@@ -2008,6 +2014,7 @@ final class MobileAppState: ObservableObject {
                     }
                 )
             }
+            self.isAILoadingModels = false
         }
 
         wsClient.onAIAgentList = { [weak self] ev in
@@ -2025,6 +2032,7 @@ final class MobileAppState: ObservableObject {
                     defaultModelID: a.defaultModelID
                 )
             }
+            self.isAILoadingAgents = false
             if self.aiSelectedAgent == nil {
                 let first = self.aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" }) ?? self.aiAgents.first
                 self.aiSelectedAgent = first?.name

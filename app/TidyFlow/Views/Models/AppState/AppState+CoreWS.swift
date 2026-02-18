@@ -762,6 +762,7 @@ extension AppState {
                 )
             }
             self.setAIProviders(providers, for: ev.aiTool)
+            self.isAILoadingModels = false
         }
 
         wsClient.onAIAgentList = { [weak self] ev in
@@ -780,7 +781,7 @@ extension AppState {
                 )
             }
             self.setAIAgents(agents, for: ev.aiTool)
-            // 默认选中第一个 primary/all agent，并自动选择其默认模型
+            self.isAILoadingAgents = false
             if self.selectedAgent(for: ev.aiTool) == nil {
                 let firstAgent = agents.first(where: { $0.mode == "primary" || $0.mode == "all" })
                     ?? agents.first

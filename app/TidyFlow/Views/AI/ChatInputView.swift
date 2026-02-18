@@ -414,6 +414,8 @@ struct ChatInputView: View {
     @Binding var selectedModel: AIModelSelection?
     var agents: [AIAgentInfo]
     @Binding var selectedAgent: String?
+    var isLoadingModels: Bool = false
+    var isLoadingAgents: Bool = false
 
     // 自动补全
     var autocomplete: AutocompleteState?
@@ -554,7 +556,7 @@ struct ChatInputView: View {
 
     @ViewBuilder
     private var iOSSelectorRow: some View {
-        if !agents.isEmpty || !providers.isEmpty {
+        if isLoadingAgents || isLoadingModels || !agents.isEmpty || !providers.isEmpty {
             HStack(spacing: 8) {
                 agentButton
                 modelButton
@@ -994,7 +996,9 @@ struct ChatInputView: View {
 
     private var agentButton: some View {
         Group {
-            if !agents.isEmpty {
+            if isLoadingAgents {
+                loadingPlaceholder
+            } else if !agents.isEmpty {
                 Menu {
                     ForEach(agents) { agent in
                         Button(action: {
@@ -1040,7 +1044,9 @@ struct ChatInputView: View {
 
     private var modelButton: some View {
         Group {
-            if !providers.isEmpty {
+            if isLoadingModels {
+                loadingPlaceholder
+            } else if !providers.isEmpty {
                 Menu {
                     if availableModelProviders.count <= 1 {
                         if let onlyProvider = availableModelProviders.first {
@@ -1104,6 +1110,22 @@ struct ChatInputView: View {
             }
         }
         return sel.modelID
+    }
+
+    private var loadingPlaceholder: some View {
+        HStack(spacing: 4) {
+            ProgressView()
+                .scaleEffect(0.6)
+                .frame(width: 12, height: 12)
+            Text("加载中...")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(6)
     }
 
     private func slashCommandIcon(_ name: String) -> String {

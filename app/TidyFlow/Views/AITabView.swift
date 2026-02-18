@@ -303,6 +303,8 @@ struct AITabView: View {
             selectedModel: $appState.aiSelectedModel,
             agents: appState.aiAgents,
             selectedAgent: $appState.aiSelectedAgent,
+            isLoadingModels: appState.isAILoadingModels,
+            isLoadingAgents: appState.isAILoadingAgents,
             autocomplete: autocomplete,
             onSelectAutocomplete: { item in
                 handleAutocompleteSelect(item)
@@ -466,7 +468,8 @@ struct AITabView: View {
         }
 
         let aiTool = appState.aiChatTool
-        // 同时加载 provider/agent/斜杠命令 列表
+        appState.isAILoadingModels = true
+        appState.isAILoadingAgents = true
         appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
         appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
         appState.wsClient.requestAISlashCommands(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)

@@ -140,6 +140,8 @@ class AppState: ObservableObject {
     @Published var aiSlashCommands: [AISlashCommandInfo] = [] {
         didSet { aiSlashCommandsByTool[aiChatTool] = aiSlashCommands }
     }
+    @Published var isAILoadingModels: Bool = false
+    @Published var isAILoadingAgents: Bool = false
     @Published var aiToolBadges: [AIChatTool: AIToolBadgeState] = [:]
     /// AI 会话状态缓存（按工具分桶；key: "projectName::workspaceName::sessionId"）
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]

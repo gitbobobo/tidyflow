@@ -214,6 +214,8 @@ struct MobileAIChatView: View {
                 selectedModel: $appState.aiSelectedModel,
                 agents: appState.aiAgents,
                 selectedAgent: $appState.aiSelectedAgent,
+                isLoadingModels: appState.isAILoadingModels,
+                isLoadingAgents: appState.isAILoadingAgents,
                 autocomplete: nil,
                 onSelectAutocomplete: nil,
                 slashCommands: appState.aiSlashCommands,
