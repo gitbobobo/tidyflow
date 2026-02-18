@@ -744,7 +744,7 @@ extension AppState {
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
             guard store.currentSessionId == ev.sessionId else { return }
-            store.clearQuestionRequest(requestId: ev.requestId)
+            store.completeQuestionRequestLocally(requestId: ev.requestId)
         }
 
         wsClient.onAIProviderList = { [weak self] ev in

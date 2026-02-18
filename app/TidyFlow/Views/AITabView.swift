@@ -681,8 +681,8 @@ struct AITabView: View {
             requestId: request.id,
             answers: answers
         )
-        // 先本地收敛，后端会再推送 ai_question_cleared 做最终一致。
-        aiChatStore.clearQuestionRequest(requestId: request.id)
+        // 先本地收敛（关闭交互并回显答案），后端会再推送 ai_question_cleared 做最终一致。
+        aiChatStore.completeQuestionRequestLocally(requestId: request.id, answers: answers)
     }
 
     private func handleQuestionReject(_ request: AIQuestionRequestInfo) {
@@ -694,8 +694,8 @@ struct AITabView: View {
             sessionId: request.sessionId,
             requestId: request.id
         )
-        // 先本地收敛，后端会再推送 ai_question_cleared 做最终一致。
-        aiChatStore.clearQuestionRequest(requestId: request.id)
+        // 先本地收敛（关闭交互），后端会再推送 ai_question_cleared 做最终一致。
+        aiChatStore.completeQuestionRequestLocally(requestId: request.id)
     }
 
     private func handleQuestionReplyAsMessage(_ rawText: String) {

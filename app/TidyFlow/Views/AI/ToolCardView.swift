@@ -132,10 +132,32 @@ struct ToolCardView: View {
     /// 已回答的问题从 metadata.answers 提取用户选择
     private var questionAnsweredSelections: [[String]]? {
         guard !questionPromptInteractive else { return nil }
-        guard let metadata = invocation?.metadata,
-              let answers = metadata["answers"] as? [[Any]] else { return nil }
-        return answers.map { group in
-            group.compactMap { $0 as? String }
+        guard let metadata = invocation?.metadata else { return nil }
+        if let answers = metadata["answers"] as? [[String]] {
+            return answers.map { group in
+                group
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            }
+        }
+        guard let rawAnswers = metadata["answers"] as? [Any] else { return nil }
+        return rawAnswers.map { group in
+            if let values = group as? [String] {
+                return values
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            }
+            if let values = group as? [Any] {
+                return values.compactMap { value in
+                    let text = stringValue(value)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (text?.isEmpty == false) ? text : nil
+                }
+            }
+            if let text = stringValue(group)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !text.isEmpty {
+                return [text]
+            }
+            return []
         }
     }
 

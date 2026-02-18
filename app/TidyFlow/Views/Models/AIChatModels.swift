@@ -504,6 +504,80 @@ final class AIChatStore: ObservableObject {
         }
     }
 
+    /// 本地收敛 question：立即关闭交互并写入已选答案（如有），等待后端事件做最终一致。
+    func completeQuestionRequestLocally(requestId: String, answers: [[String]]? = nil) {
+        let mappedKey = questionRequestToCallId[requestId]
+        let request = mappedKey.flatMap { pendingToolQuestions[$0] } ??
+            pendingToolQuestions.first(where: { $0.value.id == requestId })?.value
+
+        var candidateIDs: Set<String> = [requestId]
+        if let mappedKey, !mappedKey.isEmpty {
+            candidateIDs.insert(mappedKey)
+        }
+        if let toolCallId = request?.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !toolCallId.isEmpty {
+            candidateIDs.insert(toolCallId)
+        }
+        if let toolMessageId = request?.toolMessageId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !toolMessageId.isEmpty {
+            candidateIDs.insert(toolMessageId)
+        }
+
+        var updated = false
+        for msgIdx in messages.indices.reversed() {
+            for partIdx in messages[msgIdx].parts.indices.reversed() {
+                guard isQuestionPart(messages[msgIdx].parts[partIdx]) else { continue }
+                guard questionPartMatches(messages[msgIdx].parts[partIdx], candidateIDs: candidateIDs) else { continue }
+
+                var toolState = messages[msgIdx].parts[partIdx].toolState ?? [:]
+                toolState["status"] = "completed"
+
+                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
+                metadata["request_id"] = requestId
+                if let answers {
+                    metadata["answers"] = answers
+                }
+                toolState["metadata"] = metadata
+
+                messages[msgIdx].parts[partIdx].toolState = toolState
+                updated = true
+            }
+        }
+
+        // 兜底：若 ID 映射缺失但本地仍存在未完成 question，优先收敛最新一条，避免继续可点击。
+        if !updated, request != nil {
+            var fallback: (msgIdx: Int, partIdx: Int)?
+            for msgIdx in messages.indices.reversed() {
+                for partIdx in messages[msgIdx].parts.indices.reversed() {
+                    let part = messages[msgIdx].parts[partIdx]
+                    guard isQuestionPart(part), questionPartIsInteractive(part) else { continue }
+                    fallback = (msgIdx, partIdx)
+                    break
+                }
+                if fallback != nil {
+                    break
+                }
+            }
+            if let fallback {
+                var toolState = messages[fallback.msgIdx].parts[fallback.partIdx].toolState ?? [:]
+                toolState["status"] = "completed"
+                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
+                metadata["request_id"] = requestId
+                if let answers {
+                    metadata["answers"] = answers
+                }
+                toolState["metadata"] = metadata
+                messages[fallback.msgIdx].parts[fallback.partIdx].toolState = toolState
+                updated = true
+            }
+        }
+
+        clearQuestionRequest(requestId: requestId)
+        if updated {
+            recomputeIsStreaming()
+        }
+    }
+
     func questionRequest(forToolCallId callId: String?) -> AIQuestionRequestInfo? {
         guard let callId, !callId.isEmpty else { return nil }
         return pendingToolQuestions[callId]
@@ -909,6 +983,62 @@ final class AIChatStore: ObservableObject {
             return .assistant
         }
         return .assistant
+    }
+
+    private func isQuestionPart(_ part: AIChatPart) -> Bool {
+        guard part.kind == .tool else { return false }
+        let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return toolName == "question"
+    }
+
+    private func questionPartMatches(_ part: AIChatPart, candidateIDs: Set<String>) -> Bool {
+        if let callId = part.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !callId.isEmpty,
+           candidateIDs.contains(callId) {
+            return true
+        }
+        if candidateIDs.contains(part.id) {
+            return true
+        }
+
+        if let metadata = part.toolPartMetadata {
+            if let requestId = Self.normalizedString(metadata["request_id"]) ?? Self.normalizedString(metadata["requestId"]),
+               candidateIDs.contains(requestId) {
+                return true
+            }
+            if let toolCallId = Self.normalizedString(metadata["tool_call_id"]) ?? Self.normalizedString(metadata["toolCallId"]),
+               candidateIDs.contains(toolCallId) {
+                return true
+            }
+            if let toolMessageId = Self.normalizedString(metadata["tool_message_id"]) ?? Self.normalizedString(metadata["toolMessageId"]),
+               candidateIDs.contains(toolMessageId) {
+                return true
+            }
+        }
+
+        guard let toolState = part.toolState else { return false }
+        if let requestId = Self.normalizedString(toolState["request_id"]) ?? Self.normalizedString(toolState["requestId"]),
+           candidateIDs.contains(requestId) {
+            return true
+        }
+        if let metadata = toolState["metadata"] as? [String: Any],
+           let requestId = Self.normalizedString(metadata["request_id"]) ?? Self.normalizedString(metadata["requestId"]),
+           candidateIDs.contains(requestId) {
+            return true
+        }
+        return false
+    }
+
+    private func questionPartIsInteractive(_ part: AIChatPart) -> Bool {
+        let rawStatus = (part.toolState?["status"] as? String) ?? ""
+        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return status.isEmpty || status == "pending" || status == "running" || status == "unknown"
+    }
+
+    private static func normalizedString(_ value: Any?) -> String? {
+        guard let text = value as? String else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func hasUnboundAssistantPlaceholder() -> Bool {
