@@ -9,92 +9,87 @@ import UIKit
 /// 独立 Diff 渲染组件，视觉对齐 VS Code / GitHub 风格
 struct UnifiedDiffView: View {
     let diff: ParsedDiff
-    @State private var viewportWidth: CGFloat = 0
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            VStack(spacing: 0) {
-                ForEach(diff.rows) { row in
-                    rowView(row)
-                }
-            }
-            .fixedSize(horizontal: true, vertical: true)
-            .frame(minWidth: viewportWidth, alignment: .leading)
+        HStack(spacing: 0) {
+            lineNumberColumn
+                .frame(width: 64)
+                .background(Color.secondary.opacity(0.04))
+
+            codeContentColumn
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.04))
         .cornerRadius(8)
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear {
-                        viewportWidth = geo.size.width
-                    }
-                    .onChange(of: geo.size.width) { _, newValue in
-                        viewportWidth = newValue
-                    }
+        .textSelection(.enabled)
+    }
+
+    private var lineNumberColumn: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            ForEach(diff.rows) { row in
+                lineNumberRow(row)
             }
-        )
-    }
-
-    // MARK: - 单行渲染
-
-    private func rowView(_ row: DiffRow) -> some View {
-        HStack(spacing: 0) {
-            lineNumberColumn(row)
-            Rectangle()
-                .fill(Color.secondary.opacity(0.15))
-                .frame(width: 1)
-            contentColumn(row)
         }
-        .frame(minWidth: viewportWidth, alignment: .leading)
-        .frame(height: rowHeight)
-        .background(rowBackground(row.kind))
     }
 
-    private func lineNumberColumn(_ row: DiffRow) -> some View {
+    private func lineNumberRow(_ row: DiffRow) -> some View {
         HStack(spacing: 0) {
             Text(padNumber(row.oldLine))
-                .frame(width: 36, alignment: .trailing)
             Text(padNumber(row.newLine))
-                .frame(width: 36, alignment: .trailing)
         }
         .font(.system(size: 11, design: .monospaced))
         .foregroundColor(.secondary.opacity(0.55))
-        .frame(width: 76)
+        .frame(height: rowHeight)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.trailing, 8)
+        .background(rowBackground(row.kind))
     }
 
-    @ViewBuilder
-    private func contentColumn(_ row: DiffRow) -> some View {
-        if row.kind == .hunk || row.kind == .meta {
-            Text(row.text)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.secondary)
-                .padding(.leading, 6)
-        } else {
-            HStack(spacing: 0) {
-                Text(row.marker)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(markerColor(row.kind))
-                    .frame(width: 14)
-                inlineHighlightedText(row)
+    private var codeContentColumn: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(diff.rows) { row in
+                    contentRow(row)
+                }
             }
-            .padding(.leading, 2)
+            .fixedSize(horizontal: true, vertical: true)
         }
     }
 
-    // MARK: - 字符级高亮文本
+    private func contentRow(_ row: DiffRow) -> some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.15))
+                .frame(width: 1)
+
+            if row.kind == .hunk || row.kind == .meta {
+                Text(row.text)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 6)
+            } else {
+                HStack(spacing: 0) {
+                    Text(row.marker)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(markerColor(row.kind))
+                        .frame(width: 14)
+                    inlineHighlightedText(row)
+                }
+                .padding(.leading, 2)
+            }
+        }
+        .frame(height: rowHeight, alignment: .leading)
+        .background(rowBackground(row.kind))
+    }
 
     @ViewBuilder
     private func inlineHighlightedText(_ row: DiffRow) -> some View {
         if row.inlineRanges.isEmpty {
             Text(row.text)
-                .textSelection(.enabled)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.primary)
         } else {
             Text(buildAttributedString(row))
-                .textSelection(.enabled)
                 .font(.system(size: 11, design: .monospaced))
         }
     }
@@ -114,8 +109,6 @@ struct UnifiedDiffView: View {
         }
         return result
     }
-
-    // MARK: - 样式辅助
 
     private var rowHeight: CGFloat {
         #if os(macOS)
