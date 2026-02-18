@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct CodexThreadSummary {
@@ -112,50 +113,85 @@ impl CodexAppServerClient {
             .await
     }
 
+    pub async fn thread_read(&self, thread_id: &str, include_turns: bool) -> Result<Value, String> {
+        self.manager
+            .send_request(
+                "thread/read",
+                Some(serde_json::json!({
+                    "threadId": thread_id,
+                    "includeTurns": include_turns
+                })),
+            )
+            .await
+    }
+
     pub async fn thread_list(
         &self,
         directory: &str,
         limit: u32,
     ) -> Result<Vec<CodexThreadSummary>, String> {
-        let result = self
-            .manager
-            .send_request(
-                "thread/list",
-                Some(serde_json::json!({
-                    "cwd": directory,
-                    "limit": limit
-                })),
-            )
-            .await?;
-        let data = result
-            .get("data")
-            .and_then(|v| v.as_array())
-            .ok_or("thread/list response missing data")?;
+        const MAX_TOTAL: u32 = 500;
+        const PAGE_SIZE: u32 = 100;
 
-        let expected = directory.trim_end_matches('/');
+        let capped_limit = limit.min(MAX_TOTAL);
         let mut sessions = Vec::new();
-        for row in data {
-            let Some(id) = row.get("id").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let cwd = row
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if cwd.trim_end_matches('/') != expected {
-                continue;
+        let mut cursor: Option<String> = None;
+
+        while (sessions.len() as u32) < capped_limit {
+            let remaining = capped_limit.saturating_sub(sessions.len() as u32);
+            if remaining == 0 {
+                break;
             }
-            sessions.push(CodexThreadSummary {
-                id: id.to_string(),
-                preview: row
-                    .get("preview")
+
+            let mut params = serde_json::json!({
+                "cwd": directory,
+                "limit": remaining.min(PAGE_SIZE),
+                "sortKey": "updated_at"
+            });
+            if let Some(ref value) = cursor {
+                params["cursor"] = Value::String(value.clone());
+            }
+
+            let result = self
+                .manager
+                .send_request("thread/list", Some(params))
+                .await?;
+            let data = result
+                .get("data")
+                .and_then(|v| v.as_array())
+                .ok_or("thread/list response missing data")?;
+
+            for row in data {
+                let Some(id) = row.get("id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let cwd = row
+                    .get("cwd")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .to_string(),
-                updated_at_secs: row.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0),
-                cwd,
-            });
+                    .to_string();
+                sessions.push(CodexThreadSummary {
+                    id: id.to_string(),
+                    preview: row
+                        .get("preview")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    updated_at_secs: row.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0),
+                    cwd,
+                });
+                if (sessions.len() as u32) >= capped_limit {
+                    break;
+                }
+            }
+
+            cursor = result
+                .get("nextCursor")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if cursor.is_none() {
+                break;
+            }
         }
         Ok(sessions)
     }
@@ -279,13 +315,20 @@ impl CodexAppServerClient {
     }
 
     pub async fn agent_list(&self) -> Result<Vec<CodexAgentInfo>, String> {
-        let mut discovered_modes = self
+        let mut discovered_modes = match self
             .manager
-            .send_request("mode/list", Some(serde_json::json!({})))
+            .send_request("collaborationMode/list", Some(serde_json::json!({})))
             .await
-            .ok()
-            .map(|v| Self::parse_mode_list(&v))
-            .unwrap_or_default();
+        {
+            Ok(value) => Self::parse_mode_list(&value),
+            Err(err) => {
+                warn!(
+                    "collaborationMode/list failed, fallback to builtin modes: {}",
+                    err
+                );
+                Vec::new()
+            }
+        };
 
         let mut ordered_names = Vec::new();
         ordered_names.append(&mut discovered_modes);

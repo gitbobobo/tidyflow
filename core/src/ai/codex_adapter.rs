@@ -130,7 +130,7 @@ impl CodexAppServerAgent {
         }
     }
 
-    fn selection_hint_from_thread_resume(value: &Value) -> Option<AiSessionSelectionHint> {
+    fn selection_hint_from_thread_payload(value: &Value) -> Option<AiSessionSelectionHint> {
         // 优先读取 Codex turn_start 对齐字段。
         let collab_mode = value
             .pointer("/thread/collaborationMode/mode")
@@ -169,6 +169,18 @@ impl CodexAppServerAgent {
                 .or_else(|| {
                     value
                         .pointer("/model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value
+                        .pointer("/thread/collaborationMode/settings/model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value
+                        .pointer("/collaborationMode/settings/model")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                 })
@@ -930,7 +942,7 @@ impl AiAgent for CodexAppServerAgent {
             Ok(turn_id) => turn_id,
             Err(err) if Self::is_thread_not_found_error(&err) => {
                 let resume = self.client.thread_resume(directory, session_id).await?;
-                if let Some(hint) = Self::selection_hint_from_thread_resume(&resume) {
+                if let Some(hint) = Self::selection_hint_from_thread_payload(&resume) {
                     self.selection_hints
                         .lock()
                         .await
@@ -972,7 +984,7 @@ impl AiAgent for CodexAppServerAgent {
 
     async fn list_sessions(&self, directory: &str) -> Result<Vec<AiSession>, String> {
         self.client.ensure_started().await?;
-        let sessions = self.client.thread_list(directory, 200).await?;
+        let sessions = self.client.thread_list(directory, 500).await?;
         Ok(sessions
             .into_iter()
             .map(|s| AiSession {
@@ -995,22 +1007,22 @@ impl AiAgent for CodexAppServerAgent {
         &self,
         directory: &str,
         session_id: &str,
-        _limit: Option<u32>,
+        limit: Option<u32>,
     ) -> Result<Vec<AiMessage>, String> {
         self.client.ensure_started().await?;
-        let response = self.client.thread_resume(directory, session_id).await?;
-        if let Some(hint) = Self::selection_hint_from_thread_resume(&response) {
+        let response = self.client.thread_read(session_id, true).await?;
+        if let Some(hint) = Self::selection_hint_from_thread_payload(&response) {
             self.selection_hints
                 .lock()
                 .await
                 .insert(session_id.to_string(), hint.clone());
             info!(
-                "Codex session hint from thread/resume(history): session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+                "Codex session hint from thread/read(history): session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
                 session_id, hint.agent, hint.model_provider_id, hint.model_id
             );
         } else {
             debug!(
-                "Codex thread/resume(history) returned no selection hint: directory={}, session_id={}",
+                "Codex thread/read(history) returned no selection hint: directory={}, session_id={}",
                 directory, session_id
             );
         }
@@ -1063,6 +1075,14 @@ impl AiAgent for CodexAppServerAgent {
                 }
             }
         }
+        if let Some(limit) = limit {
+            let keep = limit as usize;
+            if keep == 0 {
+                messages.clear();
+            } else if messages.len() > keep {
+                messages = messages.split_off(messages.len() - keep);
+            }
+        }
         Ok(messages)
     }
 
@@ -1079,21 +1099,21 @@ impl AiAgent for CodexAppServerAgent {
             return Ok(Some(hint));
         }
         self.client.ensure_started().await?;
-        match self.client.thread_resume(directory, session_id).await {
-            Ok(resume_response) => {
-                let hint = Self::selection_hint_from_thread_resume(&resume_response);
+        match self.client.thread_read(session_id, false).await {
+            Ok(read_response) => {
+                let hint = Self::selection_hint_from_thread_payload(&read_response);
                 if let Some(ref value) = hint {
                     self.selection_hints
                         .lock()
                         .await
                         .insert(session_id.to_string(), value.clone());
                     info!(
-                        "Codex session hint resolved by thread/resume: session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+                        "Codex session hint resolved by thread/read: session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
                         session_id, value.agent, value.model_provider_id, value.model_id
                     );
                 } else {
                     debug!(
-                        "Codex thread/resume returned no selection hint: directory={}, session_id={}",
+                        "Codex thread/read returned no selection hint: directory={}, session_id={}",
                         directory, session_id
                     );
                 }
@@ -1101,7 +1121,7 @@ impl AiAgent for CodexAppServerAgent {
             }
             Err(err) => {
                 warn!(
-                    "Codex thread/resume for selection hint failed: directory={}, session_id={}, error={}",
+                    "Codex thread/read for selection hint failed: directory={}, session_id={}, error={}",
                     directory, session_id, err
                 );
                 Ok(None)
