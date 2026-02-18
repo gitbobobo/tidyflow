@@ -126,21 +126,11 @@ impl AiSessionStateStore {
         self.set_status_with_meta_inner(ai_tool, directory, session_id, status, None)
     }
 
-    pub fn set_status_with_meta(
-        &self,
-        meta: AiSessionStatusMeta,
-        status: AiSessionStatus,
-    ) -> bool {
+    pub fn set_status_with_meta(&self, meta: AiSessionStatusMeta, status: AiSessionStatus) -> bool {
         let ai_tool = meta.ai_tool.clone();
         let directory = meta.directory.clone();
         let session_id = meta.session_id.clone();
-        self.set_status_with_meta_inner(
-            &ai_tool,
-            &directory,
-            &session_id,
-            status,
-            Some(meta),
-        )
+        self.set_status_with_meta_inner(&ai_tool, &directory, &session_id, status, Some(meta))
     }
 
     fn set_status_with_meta_inner(

@@ -100,9 +100,8 @@ impl CodexAppServerClient {
         })
     }
 
-    pub async fn thread_resume(&self, directory: &str, thread_id: &str) -> Result<(), String> {
-        let _ = self
-            .manager
+    pub async fn thread_resume(&self, directory: &str, thread_id: &str) -> Result<Value, String> {
+        self.manager
             .send_request(
                 "thread/resume",
                 Some(serde_json::json!({
@@ -110,8 +109,7 @@ impl CodexAppServerClient {
                     "cwd": directory
                 })),
             )
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn thread_list(
@@ -160,18 +158,6 @@ impl CodexAppServerClient {
             });
         }
         Ok(sessions)
-    }
-
-    pub async fn thread_read(&self, thread_id: &str, include_turns: bool) -> Result<Value, String> {
-        self.manager
-            .send_request(
-                "thread/read",
-                Some(serde_json::json!({
-                    "threadId": thread_id,
-                    "includeTurns": include_turns
-                })),
-            )
-            .await
     }
 
     pub async fn thread_archive(&self, thread_id: &str) -> Result<(), String> {

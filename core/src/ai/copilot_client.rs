@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
 pub struct CopilotSessionSummary {
@@ -189,7 +190,11 @@ impl CopilotAcpClient {
     }
 
     fn parse_session_summary(value: Value) -> Option<CopilotSessionSummary> {
-        let id = value.get("sessionId")?.as_str()?.to_string();
+        let id = value
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("id").and_then(|v| v.as_str()))?
+            .to_string();
         let title = value
             .get("title")
             .and_then(|v| v.as_str())
@@ -220,54 +225,264 @@ impl CopilotAcpClient {
             .map(|dt| dt.with_timezone(&Utc).timestamp_millis())
     }
 
+    fn canonical_meta_key(raw: &str) -> String {
+        raw.chars()
+            .filter(|ch| *ch != '_' && *ch != '-')
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    }
+
+    fn json_value_to_trimmed_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    }
+
+    fn normalize_optional_token(raw: Option<String>) -> Option<String> {
+        let token = raw?;
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn find_scalar_by_keys(value: &Value, keys: &[&str]) -> Option<String> {
+        let target = keys
+            .iter()
+            .map(|key| Self::canonical_meta_key(key))
+            .collect::<Vec<_>>();
+        let mut stack = vec![value];
+        let mut visited = 0usize;
+        const MAX_VISITS: usize = 400;
+
+        while let Some(node) = stack.pop() {
+            if visited >= MAX_VISITS {
+                break;
+            }
+            visited += 1;
+            match node {
+                Value::Object(map) => {
+                    for (k, v) in map {
+                        let canonical = Self::canonical_meta_key(k);
+                        if target.iter().any(|key| key == &canonical) {
+                            if let Some(found) = Self::json_value_to_trimmed_string(v) {
+                                return Some(found);
+                            }
+                        }
+                        if matches!(v, Value::Object(_) | Value::Array(_)) {
+                            stack.push(v);
+                        }
+                    }
+                }
+                Value::Array(arr) => {
+                    for item in arr {
+                        if matches!(item, Value::Object(_) | Value::Array(_)) {
+                            stack.push(item);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn rows_from_key(root: &Value, key: &str) -> Vec<Value> {
+        if let Some(arr) = root.get(key).and_then(|v| v.as_array()) {
+            return arr.clone();
+        }
+        if let Some(obj) = root.get(key).and_then(|v| v.as_object()) {
+            return obj.values().cloned().collect();
+        }
+        Vec::new()
+    }
+
+    fn rows_from_candidates(root: &Value, keys: &[&str]) -> Vec<Value> {
+        for key in keys {
+            let rows = Self::rows_from_key(root, key);
+            if !rows.is_empty() {
+                return rows;
+            }
+        }
+        if let Some(arr) = root.as_array() {
+            return arr.clone();
+        }
+        Vec::new()
+    }
+
+    fn normalize_current_model_id(
+        raw: Option<String>,
+        models: &[CopilotModelInfo],
+    ) -> Option<String> {
+        let current = Self::normalize_optional_token(raw)?;
+        if models.is_empty() {
+            return Some(current);
+        }
+
+        if let Some(found) = models
+            .iter()
+            .find(|row| row.id == current || row.id.eq_ignore_ascii_case(&current))
+        {
+            return Some(found.id.clone());
+        }
+
+        if let Some((_, suffix)) = current.split_once('/') {
+            let normalized_suffix = suffix.trim();
+            if !normalized_suffix.is_empty() {
+                if let Some(found) = models.iter().find(|row| {
+                    row.id == normalized_suffix || row.id.eq_ignore_ascii_case(normalized_suffix)
+                }) {
+                    return Some(found.id.clone());
+                }
+            }
+        }
+
+        Some(current)
+    }
+
+    fn normalize_current_mode_id(raw: Option<String>, modes: &[CopilotModeInfo]) -> Option<String> {
+        let current = Self::normalize_optional_token(raw)?;
+        if modes.is_empty() {
+            return Some(current);
+        }
+
+        if let Some(found) = modes
+            .iter()
+            .find(|row| row.id == current || row.id.eq_ignore_ascii_case(&current))
+        {
+            return Some(found.id.clone());
+        }
+
+        Some(current)
+    }
+
     fn parse_session_metadata(value: &Value) -> CopilotSessionMetadata {
         let models_root = value.get("models").unwrap_or(value);
         let modes_root = value.get("modes").unwrap_or(value);
 
-        let models = models_root
-            .get("availableModels")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|row| {
-                let id = row.get("modelId").and_then(|v| v.as_str())?.to_string();
-                let name = row
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&id)
-                    .to_string();
-                let supports_image_input = row
-                    .get("inputModalities")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter().any(|it| {
-                            it.as_str()
-                                .map(|s| s.eq_ignore_ascii_case("image"))
-                                .unwrap_or(false)
+        let models =
+            Self::rows_from_candidates(models_root, &["availableModels", "available_models"])
+                .into_iter()
+                .filter_map(|row| {
+                    let id = row
+                        .get("modelId")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| row.get("model_id").and_then(|v| v.as_str()))
+                        .or_else(|| row.get("id").and_then(|v| v.as_str()))
+                        .or_else(|| row.get("model").and_then(|v| v.as_str()))?
+                        .to_string();
+                    let name = row
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| row.get("displayName").and_then(|v| v.as_str()))
+                        .or_else(|| row.get("display_name").and_then(|v| v.as_str()))
+                        .unwrap_or(&id)
+                        .to_string();
+                    let supports_image_input = row
+                        .get("inputModalities")
+                        .and_then(|v| v.as_array())
+                        .or_else(|| row.get("input_modalities").and_then(|v| v.as_array()))
+                        .or_else(|| {
+                            row.get("modalities")
+                                .and_then(|v| v.get("input"))
+                                .and_then(|v| v.as_array())
+                        })
+                        .map(|arr| {
+                            arr.iter().any(|it| {
+                                it.as_str()
+                                    .map(|s| s.eq_ignore_ascii_case("image"))
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(true);
+                    Some(CopilotModelInfo {
+                        id,
+                        name,
+                        supports_image_input,
+                    })
+                })
+                .collect::<Vec<_>>();
+        let current_model_id = Self::normalize_current_model_id(
+            models_root
+                .get("currentModelId")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    models_root
+                        .get("current_model_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    Self::find_scalar_by_keys(
+                        models_root,
+                        &[
+                            "currentModelId",
+                            "current_model_id",
+                            "selectedModelId",
+                            "selected_model_id",
+                        ],
+                    )
+                })
+                .or_else(|| {
+                    models_root
+                        .get("currentModel")
+                        .and_then(|v| {
+                            v.get("modelId")
+                                .or_else(|| v.get("modelID"))
+                                .or_else(|| v.get("id"))
+                        })
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value
+                        .get("currentModel")
+                        .and_then(|v| {
+                            v.get("modelId")
+                                .or_else(|| v.get("modelID"))
+                                .or_else(|| v.get("id"))
+                        })
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value.get("model").and_then(|v| {
+                        v.as_str().map(|s| s.to_string()).or_else(|| {
+                            v.get("modelId")
+                                .or_else(|| v.get("modelID"))
+                                .or_else(|| v.get("id"))
+                                .and_then(|it| it.as_str())
+                                .map(|s| s.to_string())
                         })
                     })
-                    .unwrap_or(true);
-                Some(CopilotModelInfo {
-                    id,
-                    name,
-                    supports_image_input,
-                })
-            })
-            .collect::<Vec<_>>();
-        let current_model_id = models_root
-            .get("currentModelId")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+                }),
+            &models,
+        );
 
-        let modes = modes_root
-            .get("availableModes")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
+        let modes = Self::rows_from_candidates(modes_root, &["availableModes", "available_modes"])
             .into_iter()
             .filter_map(|row| {
-                let id = row.get("id").and_then(|v| v.as_str())?.to_string();
+                let id = row
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| row.get("modeId").and_then(|v| v.as_str()))
+                    .or_else(|| row.get("mode_id").and_then(|v| v.as_str()))
+                    .or_else(|| row.get("mode").and_then(|v| v.as_str()))
+                    .or_else(|| row.get("name").and_then(|v| v.as_str()))?
+                    .to_string();
                 let name = row
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -284,10 +499,91 @@ impl CopilotAcpClient {
                 })
             })
             .collect::<Vec<_>>();
-        let current_mode_id = modes_root
-            .get("currentModeId")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let current_mode_id = Self::normalize_current_mode_id(
+            modes_root
+                .get("currentModeId")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    modes_root
+                        .get("current_mode_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    Self::find_scalar_by_keys(
+                        modes_root,
+                        &[
+                            "currentModeId",
+                            "current_mode_id",
+                            "selectedModeId",
+                            "selected_mode_id",
+                        ],
+                    )
+                })
+                .or_else(|| {
+                    modes_root
+                        .get("currentMode")
+                        .and_then(|v| {
+                            v.get("modeId")
+                                .or_else(|| v.get("modeID"))
+                                .or_else(|| v.get("id"))
+                        })
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value
+                        .get("currentMode")
+                        .and_then(|v| {
+                            v.get("modeId")
+                                .or_else(|| v.get("modeID"))
+                                .or_else(|| v.get("id"))
+                        })
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value.get("mode").and_then(|v| {
+                        v.as_str().map(|s| s.to_string()).or_else(|| {
+                            v.get("modeId")
+                                .or_else(|| v.get("modeID"))
+                                .or_else(|| v.get("id"))
+                                .and_then(|it| it.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    })
+                }),
+            &modes,
+        );
+
+        if models.is_empty()
+            && modes.is_empty()
+            && current_model_id.is_none()
+            && current_mode_id.is_none()
+        {
+            let top_keys = value
+                .as_object()
+                .map(|obj| obj.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let snippet = serde_json::to_string(value)
+                .unwrap_or_default()
+                .chars()
+                .take(600)
+                .collect::<String>();
+            warn!(
+                "Copilot session metadata parse empty: top_level_keys={:?}, raw_snippet={}",
+                top_keys, snippet
+            );
+        } else {
+            debug!(
+                "Copilot session metadata parsed: models_count={}, modes_count={}, current_model_id={:?}, current_mode_id={:?}",
+                models.len(),
+                modes.len(),
+                current_model_id,
+                current_mode_id
+            );
+        }
 
         CopilotSessionMetadata {
             models,

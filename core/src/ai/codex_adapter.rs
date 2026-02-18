@@ -4,7 +4,7 @@ use super::session_status::AiSessionStatus;
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption, AiQuestionRequest,
-    AiSession, AiSlashCommand,
+    AiSession, AiSessionSelectionHint, AiSlashCommand,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::warn;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -29,6 +29,7 @@ pub struct CodexAppServerAgent {
     client: CodexAppServerClient,
     pending_approvals: Arc<Mutex<HashMap<String, PendingApproval>>>,
     active_turns: Arc<Mutex<HashMap<String, String>>>,
+    selection_hints: Arc<Mutex<HashMap<String, AiSessionSelectionHint>>>,
 }
 
 impl CodexAppServerAgent {
@@ -37,6 +38,157 @@ impl CodexAppServerAgent {
             client: CodexAppServerClient::new(manager),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             active_turns: Arc::new(Mutex::new(HashMap::new())),
+            selection_hints: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn canonical_meta_key(raw: &str) -> String {
+        raw.chars()
+            .filter(|ch| *ch != '_' && *ch != '-')
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    }
+
+    fn json_value_to_trimmed_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    }
+
+    fn find_scalar_by_keys(value: &Value, keys: &[&str]) -> Option<String> {
+        let target = keys
+            .iter()
+            .map(|key| Self::canonical_meta_key(key))
+            .collect::<Vec<_>>();
+        let mut stack = vec![value];
+        let mut visited = 0usize;
+        const MAX_VISITS: usize = 400;
+
+        while let Some(node) = stack.pop() {
+            if visited >= MAX_VISITS {
+                break;
+            }
+            visited += 1;
+            match node {
+                Value::Object(map) => {
+                    for (k, v) in map {
+                        let canonical = Self::canonical_meta_key(k);
+                        if target.iter().any(|key| key == &canonical) {
+                            if let Some(found) = Self::json_value_to_trimmed_string(v) {
+                                return Some(found);
+                            }
+                        }
+                        if matches!(v, Value::Object(_) | Value::Array(_)) {
+                            stack.push(v);
+                        }
+                    }
+                }
+                Value::Array(arr) => {
+                    for item in arr {
+                        if matches!(item, Value::Object(_) | Value::Array(_)) {
+                            stack.push(item);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn normalize_agent_hint(raw: &str) -> Option<String> {
+        let normalized = raw.trim().to_lowercase();
+        if normalized.is_empty() {
+            return None;
+        }
+        if normalized.contains("#plan") {
+            return Some("plan".to_string());
+        }
+        if normalized.contains("#agent") {
+            return Some("agent".to_string());
+        }
+        Some(normalized)
+    }
+
+    fn normalize_optional_token(raw: Option<String>) -> Option<String> {
+        let token = raw?;
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn selection_hint_from_thread_resume(value: &Value) -> Option<AiSessionSelectionHint> {
+        // 优先读取 Codex turn_start 对齐字段。
+        let collab_mode = value
+            .pointer("/thread/collaborationMode/mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                value
+                    .pointer("/collaborationMode/mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .or_else(|| {
+                Self::find_scalar_by_keys(value, &["collaboration_mode", "collaborationMode"])
+            });
+        let agent = collab_mode.and_then(|v| Self::normalize_agent_hint(&v));
+
+        let model_provider_id = Self::normalize_optional_token(
+            value
+                .pointer("/thread/modelProvider")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    value
+                        .pointer("/modelProvider")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| Self::find_scalar_by_keys(value, &["model_provider", "modelProvider"])),
+        );
+
+        let model_id = Self::normalize_optional_token(
+            value
+                .pointer("/thread/model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    value
+                        .pointer("/model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    value
+                        .pointer("/thread/collaborationMode/modelSettings/model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| Self::find_scalar_by_keys(value, &["model_id", "modelID", "model"])),
+        );
+
+        if agent.is_none() && model_provider_id.is_none() && model_id.is_none() {
+            None
+        } else {
+            Some(AiSessionSelectionHint {
+                agent,
+                model_provider_id,
+                model_id,
+            })
         }
     }
 
@@ -112,21 +264,23 @@ impl CodexAppServerAgent {
     /// 从 Codex item 中提取工具输出（返回字符串，与前端 AIToolInvocationState.output: String? 对齐）
     fn extract_tool_output(tool_type: &str, item: &Value) -> Option<String> {
         match tool_type {
-            "commandexecution" => {
-                item.get("output").and_then(|v| v.as_str()).map(|s| s.to_string())
-            }
-            "filechange" => {
-                item.get("diff")
-                    .or_else(|| item.get("changes"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            }
-            "fileread" => {
-                item.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
-            }
-            "codeexecution" => {
-                item.get("output").and_then(|v| v.as_str()).map(|s| s.to_string())
-            }
+            "commandexecution" => item
+                .get("output")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            "filechange" => item
+                .get("diff")
+                .or_else(|| item.get("changes"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            "fileread" => item
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            "codeexecution" => item
+                .get("output")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             "websearch" => {
                 // results 可能是数组/对象，序列化为 JSON 字符串
                 item.get("results").map(|v| v.to_string())
@@ -301,7 +455,10 @@ impl CodexAppServerAgent {
                         "request_id".to_string(),
                         Value::String(request_id.to_string()),
                     );
-                    metadata.insert("tool_message_id".to_string(), Value::String(item_id.clone()));
+                    metadata.insert(
+                        "tool_message_id".to_string(),
+                        Value::String(item_id.clone()),
+                    );
                     part.tool_part_metadata = Some(Value::Object(metadata));
                 }
             }
@@ -490,10 +647,7 @@ impl CodexAppServerAgent {
         }));
         let _ = tx.send(Ok(AiEvent::PartUpdated {
             message_id: user_message_id.clone(),
-            part: AiPart::new_text(
-                format!("{}-text", user_message_id),
-                original_text,
-            ),
+            part: AiPart::new_text(format!("{}-text", user_message_id), original_text),
         }));
 
         tokio::spawn(async move {
@@ -757,6 +911,11 @@ impl AiAgent for CodexAppServerAgent {
 
         let (model_id, model_provider) = Self::parse_model_selection(model);
         let collaboration_mode = Self::parse_collaboration_mode(agent.as_deref());
+        let outbound_hint = AiSessionSelectionHint {
+            agent: collaboration_mode.clone(),
+            model_provider_id: model_provider.clone(),
+            model_id: model_id.clone(),
+        };
         let turn_id = match self
             .client
             .turn_start(
@@ -770,7 +929,17 @@ impl AiAgent for CodexAppServerAgent {
         {
             Ok(turn_id) => turn_id,
             Err(err) if Self::is_thread_not_found_error(&err) => {
-                self.client.thread_resume(directory, session_id).await?;
+                let resume = self.client.thread_resume(directory, session_id).await?;
+                if let Some(hint) = Self::selection_hint_from_thread_resume(&resume) {
+                    self.selection_hints
+                        .lock()
+                        .await
+                        .insert(session_id.to_string(), hint.clone());
+                    info!(
+                        "Codex session hint from thread/resume: session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+                        session_id, hint.agent, hint.model_provider_id, hint.model_id
+                    );
+                }
                 self.client
                     .turn_start(
                         session_id,
@@ -783,6 +952,15 @@ impl AiAgent for CodexAppServerAgent {
             }
             Err(err) => return Err(err),
         };
+        if outbound_hint.agent.is_some()
+            || outbound_hint.model_provider_id.is_some()
+            || outbound_hint.model_id.is_some()
+        {
+            self.selection_hints
+                .lock()
+                .await
+                .insert(session_id.to_string(), outbound_hint);
+        }
         self.active_turns
             .lock()
             .await
@@ -815,12 +993,27 @@ impl AiAgent for CodexAppServerAgent {
 
     async fn list_messages(
         &self,
-        _directory: &str,
+        directory: &str,
         session_id: &str,
         _limit: Option<u32>,
     ) -> Result<Vec<AiMessage>, String> {
         self.client.ensure_started().await?;
-        let response = self.client.thread_read(session_id, true).await?;
+        let response = self.client.thread_resume(directory, session_id).await?;
+        if let Some(hint) = Self::selection_hint_from_thread_resume(&response) {
+            self.selection_hints
+                .lock()
+                .await
+                .insert(session_id.to_string(), hint.clone());
+            info!(
+                "Codex session hint from thread/resume(history): session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+                session_id, hint.agent, hint.model_provider_id, hint.model_id
+            );
+        } else {
+            debug!(
+                "Codex thread/resume(history) returned no selection hint: directory={}, session_id={}",
+                directory, session_id
+            );
+        }
         let turns = response
             .get("thread")
             .and_then(|v| v.get("turns"))
@@ -871,6 +1064,49 @@ impl AiAgent for CodexAppServerAgent {
             }
         }
         Ok(messages)
+    }
+
+    async fn session_selection_hint(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionSelectionHint>, String> {
+        if let Some(hint) = self.selection_hints.lock().await.get(session_id).cloned() {
+            debug!(
+                "Codex session hint cache hit: session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+                session_id, hint.agent, hint.model_provider_id, hint.model_id
+            );
+            return Ok(Some(hint));
+        }
+        self.client.ensure_started().await?;
+        match self.client.thread_resume(directory, session_id).await {
+            Ok(resume_response) => {
+                let hint = Self::selection_hint_from_thread_resume(&resume_response);
+                if let Some(ref value) = hint {
+                    self.selection_hints
+                        .lock()
+                        .await
+                        .insert(session_id.to_string(), value.clone());
+                    info!(
+                        "Codex session hint resolved by thread/resume: session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
+                        session_id, value.agent, value.model_provider_id, value.model_id
+                    );
+                } else {
+                    debug!(
+                        "Codex thread/resume returned no selection hint: directory={}, session_id={}",
+                        directory, session_id
+                    );
+                }
+                Ok(hint)
+            }
+            Err(err) => {
+                warn!(
+                    "Codex thread/resume for selection hint failed: directory={}, session_id={}, error={}",
+                    directory, session_id, err
+                );
+                Ok(None)
+            }
+        }
     }
 
     async fn abort_session(&self, _directory: &str, session_id: &str) -> Result<(), String> {

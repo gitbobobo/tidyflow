@@ -201,6 +201,9 @@ pub struct SessionResponse {
     /// 旧版兼容字段（若存在则使用）；新版通常不返回 updatedAt。
     #[serde(default, alias = "updatedAt", alias = "updated_at")]
     pub updated_at: i64,
+    /// 透传未知字段，便于后续从真实接口数据里提取会话级配置（model/agent）。
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl SessionResponse {
@@ -543,8 +546,7 @@ impl OpenCodeClient {
             .await?;
 
         if response.status().is_success() {
-            let map: std::collections::HashMap<String, SessionStatusItem> =
-                response.json().await?;
+            let map: std::collections::HashMap<String, SessionStatusItem> = response.json().await?;
             Ok(map)
         } else {
             let status = response.status().as_u16();
@@ -998,6 +1000,26 @@ pub struct MessageInfo {
     pub role: String,
     #[serde(rename = "createdAt", default)]
     pub created_at: Option<i64>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default, rename = "providerID")]
+    pub provider_id: Option<String>,
+    #[serde(default, rename = "modelID")]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<MessageModelSelection>,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MessageModelSelection {
+    #[serde(default, rename = "providerID")]
+    pub provider_id: Option<String>,
+    #[serde(default, rename = "modelID")]
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1199,6 +1221,262 @@ impl OpenCodeAgent {
         }
         Ok(())
     }
+
+    fn canonical_meta_key(raw: &str) -> String {
+        raw.chars()
+            .filter(|ch| *ch != '_' && *ch != '-')
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    }
+
+    fn json_value_to_trimmed_string(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    }
+
+    fn find_scalar_by_keys(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+        let target = keys
+            .iter()
+            .map(|key| Self::canonical_meta_key(key))
+            .collect::<Vec<_>>();
+        let mut stack = vec![value];
+        let mut visited = 0usize;
+        const MAX_VISITS: usize = 300;
+
+        while let Some(node) = stack.pop() {
+            if visited >= MAX_VISITS {
+                break;
+            }
+            visited += 1;
+            match node {
+                serde_json::Value::Object(map) => {
+                    for (k, v) in map {
+                        let canonical = Self::canonical_meta_key(k);
+                        if target.iter().any(|key| key == &canonical) {
+                            if let Some(found) = Self::json_value_to_trimmed_string(v) {
+                                return Some(found);
+                            }
+                        }
+                        if matches!(
+                            v,
+                            serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                        ) {
+                            stack.push(v);
+                        }
+                    }
+                }
+                serde_json::Value::Array(arr) => {
+                    for item in arr {
+                        if matches!(
+                            item,
+                            serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                        ) {
+                            stack.push(item);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn normalize_agent_hint(raw: &str) -> Option<String> {
+        let normalized = raw.trim().to_lowercase();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
+    fn normalize_optional_token(raw: Option<String>) -> Option<String> {
+        let token = raw?;
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn selection_hint_from_session(
+        session: &SessionResponse,
+    ) -> Option<super::AiSessionSelectionHint> {
+        let mut root = serde_json::Map::<String, serde_json::Value>::new();
+        for (k, v) in &session.extra {
+            root.insert(k.clone(), v.clone());
+        }
+        // 把已知字段也放进统一搜索根，兼容不同服务端字段形态。
+        root.insert(
+            "id".to_string(),
+            serde_json::Value::String(session.id.clone()),
+        );
+        root.insert(
+            "title".to_string(),
+            serde_json::Value::String(session.title.clone()),
+        );
+        if let Some(directory) = &session.directory {
+            root.insert(
+                "directory".to_string(),
+                serde_json::Value::String(directory.clone()),
+            );
+        }
+        let value = serde_json::Value::Object(root);
+
+        let agent = Self::find_scalar_by_keys(
+            &value,
+            &[
+                "agent",
+                "agent_name",
+                "selected_agent",
+                "current_agent",
+                "mode",
+            ],
+        )
+        .and_then(|v| Self::normalize_agent_hint(&v));
+        let model_provider_id = Self::normalize_optional_token(Self::find_scalar_by_keys(
+            &value,
+            &[
+                "model_provider_id",
+                "model_provider",
+                "provider_id",
+                "providerID",
+                "modelProviderID",
+            ],
+        ));
+        let model_id = Self::normalize_optional_token(Self::find_scalar_by_keys(
+            &value,
+            &[
+                "model_id",
+                "modelID",
+                "selected_model",
+                "current_model_id",
+                "model",
+            ],
+        ));
+
+        if agent.is_none() && model_id.is_none() {
+            None
+        } else {
+            Some(super::AiSessionSelectionHint {
+                agent,
+                model_provider_id,
+                model_id,
+            })
+        }
+    }
+
+    fn message_info_selection_source(info: &MessageInfo) -> Option<serde_json::Value> {
+        let mut root = serde_json::Map::<String, serde_json::Value>::new();
+
+        if let Some(agent) = Self::normalize_optional_token(info.agent.clone()) {
+            root.insert("agent".to_string(), serde_json::Value::String(agent));
+        }
+        if let Some(mode) = Self::normalize_optional_token(info.mode.clone()) {
+            root.insert("mode".to_string(), serde_json::Value::String(mode));
+        }
+
+        let provider_id = Self::normalize_optional_token(
+            info.model
+                .as_ref()
+                .and_then(|m| m.provider_id.clone())
+                .or_else(|| info.provider_id.clone()),
+        );
+        if let Some(provider_id) = provider_id {
+            root.insert(
+                "providerID".to_string(),
+                serde_json::Value::String(provider_id.clone()),
+            );
+            root.insert(
+                "model_provider_id".to_string(),
+                serde_json::Value::String(provider_id),
+            );
+        }
+
+        let model_id = Self::normalize_optional_token(
+            info.model
+                .as_ref()
+                .and_then(|m| m.model_id.clone())
+                .or_else(|| info.model_id.clone()),
+        );
+        if let Some(model_id) = model_id {
+            root.insert(
+                "modelID".to_string(),
+                serde_json::Value::String(model_id.clone()),
+            );
+            root.insert("model_id".to_string(), serde_json::Value::String(model_id));
+        }
+
+        for (k, v) in &info.extra {
+            let canonical = Self::canonical_meta_key(k);
+            if matches!(
+                canonical.as_str(),
+                "agent"
+                    | "mode"
+                    | "model"
+                    | "modelid"
+                    | "providerid"
+                    | "modelprovider"
+                    | "modelproviderid"
+                    | "currentmodelid"
+                    | "currentmodeid"
+                    | "selectedmodel"
+                    | "selectedagent"
+            ) {
+                root.insert(k.clone(), v.clone());
+            }
+        }
+
+        if root.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(root))
+        }
+    }
+
+    fn merge_part_source_with_message_info(
+        part_source: Option<serde_json::Value>,
+        message_info_source: Option<&serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        let Some(message_info_source) = message_info_source else {
+            return part_source;
+        };
+        match part_source {
+            Some(serde_json::Value::Object(mut part_obj)) => {
+                if let serde_json::Value::Object(info_obj) = message_info_source {
+                    for (k, v) in info_obj {
+                        if !part_obj.contains_key(k) {
+                            part_obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                Some(serde_json::Value::Object(part_obj))
+            }
+            Some(other) => {
+                let mut wrapped = serde_json::Map::<String, serde_json::Value>::new();
+                wrapped.insert("source".to_string(), other);
+                if let serde_json::Value::Object(info_obj) = message_info_source {
+                    for (k, v) in info_obj {
+                        wrapped.insert(k.clone(), v.clone());
+                    }
+                }
+                Some(serde_json::Value::Object(wrapped))
+            }
+            None => Some(message_info_source.clone()),
+        }
+    }
 }
 
 #[async_trait]
@@ -1332,13 +1610,13 @@ impl AiAgent for OpenCodeAgent {
 
                             let part_call_id = part.get("callID").and_then(|v| v.as_str());
 
-                            let tool_call_id = part_call_id
-                                .map(|s| s.to_string())
-                                .or_else(|| {
-                                    tool_state.as_ref().and_then(|s| {
-                                        s.get("callID").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                    })
-                                });
+                            let tool_call_id = part_call_id.map(|s| s.to_string()).or_else(|| {
+                                tool_state.as_ref().and_then(|s| {
+                                    s.get("callID")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                })
+                            });
 
                             let text = part
                                 .get("text")
@@ -1719,7 +1997,9 @@ impl AiAgent for OpenCodeAgent {
                                 .map(|s| s.to_string())
                                 .or_else(|| {
                                     tool_state.as_ref().and_then(|s| {
-                                        s.get("callID").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                        s.get("callID")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
                                     })
                                 });
 
@@ -2040,32 +2320,69 @@ impl AiAgent for OpenCodeAgent {
 
         let messages = raw
             .into_iter()
-            .map(|m| AiMessage {
-                id: m.info.id,
-                role: m.info.role,
-                created_at: m.info.created_at,
-                parts: m
-                    .parts
-                    .into_iter()
-                    .map(|p| AiPart {
-                        id: p.id,
-                        part_type: p.part_type,
-                        text: p.text,
-                        mime: p.mime,
-                        filename: p.filename,
-                        url: p.url,
-                        synthetic: p.synthetic,
-                        ignored: p.ignored,
-                        source: p.source,
-                        tool_name: p.name.or(p.tool),
-                        tool_call_id: p.call_id,
-                        tool_state: p.state,
-                        tool_part_metadata: p.metadata,
-                    })
-                    .collect(),
+            .map(|m| {
+                let MessageEnvelope { info, parts } = m;
+                let info_source = Self::message_info_selection_source(&info);
+                AiMessage {
+                    id: info.id,
+                    role: info.role,
+                    created_at: info.created_at,
+                    parts: parts
+                        .into_iter()
+                        .map(|p| AiPart {
+                            id: p.id,
+                            part_type: p.part_type,
+                            text: p.text,
+                            mime: p.mime,
+                            filename: p.filename,
+                            url: p.url,
+                            synthetic: p.synthetic,
+                            ignored: p.ignored,
+                            source: Self::merge_part_source_with_message_info(
+                                p.source,
+                                info_source.as_ref(),
+                            ),
+                            tool_name: p.name.or(p.tool),
+                            tool_call_id: p.call_id,
+                            tool_state: p.state,
+                            tool_part_metadata: p.metadata,
+                        })
+                        .collect(),
+                }
             })
             .collect();
         Ok(messages)
+    }
+
+    async fn session_selection_hint(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<Option<super::AiSessionSelectionHint>, String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let session = client
+            .get_session(directory, session_id)
+            .await
+            .map_err(|e| format!("Failed to fetch session info for selection hint: {}", e))?;
+        let expected = directory.trim_end_matches('/');
+        let actual = session
+            .directory
+            .as_deref()
+            .unwrap_or("")
+            .trim_end_matches('/');
+        if !actual.is_empty() && actual != expected {
+            return Ok(None);
+        }
+        let hint = Self::selection_hint_from_session(&session);
+        if hint.is_none() {
+            tracing::debug!(
+                "OpenCode session_selection_hint empty from /session: directory={}, session_id={}, session_extra_keys={:?}",
+                directory,
+                session_id,
+                session.extra.keys().collect::<Vec<_>>()
+            );
+        }
+        Ok(hint)
     }
 
     async fn abort_session(&self, directory: &str, session_id: &str) -> Result<(), String> {
@@ -2253,6 +2570,7 @@ mod tests {
             directory: None,
             time: None,
             updated_at: 1234567890,
+            extra: std::collections::HashMap::new(),
         };
         let json = serde_json::to_string(&session).unwrap();
         assert!(json.contains("\"id\":\"ses_abc\""));

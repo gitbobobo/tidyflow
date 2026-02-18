@@ -2,8 +2,8 @@ use super::codex_manager::CodexAppServerManager;
 use super::copilot_client::{CopilotAcpClient, CopilotSessionMetadata, CopilotSessionSummary};
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
-    AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption,
-    AiQuestionRequest, AiSession, AiSlashCommand,
+    AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption, AiQuestionRequest,
+    AiSession, AiSessionSelectionHint, AiSlashCommand,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -24,6 +24,7 @@ struct PendingPermission {
 pub struct CopilotAcpAgent {
     client: CopilotAcpClient,
     metadata_by_directory: Arc<Mutex<HashMap<String, CopilotSessionMetadata>>>,
+    metadata_by_session: Arc<Mutex<HashMap<String, CopilotSessionMetadata>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
 }
 
@@ -32,6 +33,7 @@ impl CopilotAcpAgent {
         Self {
             client: CopilotAcpClient::new(manager),
             metadata_by_directory: Arc::new(Mutex::new(HashMap::new())),
+            metadata_by_session: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -40,11 +42,39 @@ impl CopilotAcpAgent {
         directory.trim_end_matches('/').to_string()
     }
 
+    fn session_cache_key(directory: &str, session_id: &str) -> String {
+        format!("{}::{}", Self::normalize_directory(directory), session_id)
+    }
+
     async fn cache_metadata(&self, directory: &str, metadata: CopilotSessionMetadata) {
         self.metadata_by_directory
             .lock()
             .await
             .insert(Self::normalize_directory(directory), metadata);
+    }
+
+    async fn cache_session_metadata(
+        &self,
+        directory: &str,
+        session_id: &str,
+        metadata: CopilotSessionMetadata,
+    ) {
+        self.metadata_by_session
+            .lock()
+            .await
+            .insert(Self::session_cache_key(directory, session_id), metadata);
+    }
+
+    async fn metadata_for_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Option<CopilotSessionMetadata> {
+        self.metadata_by_session
+            .lock()
+            .await
+            .get(&Self::session_cache_key(directory, session_id))
+            .cloned()
     }
 
     async fn metadata_for_directory(&self, directory: &str) -> CopilotSessionMetadata {
@@ -140,6 +170,40 @@ impl CopilotAcpAgent {
             .or_else(|| metadata.modes.first().map(|m| m.id.clone()))
     }
 
+    fn current_agent_name(metadata: &CopilotSessionMetadata) -> Option<String> {
+        let current_mode_id = metadata.current_mode_id.as_deref()?;
+        if let Some(mode) = metadata
+            .modes
+            .iter()
+            .find(|m| m.id == current_mode_id || m.id.eq_ignore_ascii_case(current_mode_id))
+        {
+            let normalized_name = Self::normalize_mode_name(&mode.name);
+            if !normalized_name.is_empty() {
+                return Some(normalized_name);
+            }
+            let fallback = Self::normalize_mode_name(&mode.id);
+            if !fallback.is_empty() {
+                return Some(fallback);
+            }
+        }
+
+        // 兜底：直接基于 mode id 粗略映射常见语义
+        let normalized = current_mode_id.to_lowercase();
+        if normalized.contains("#plan") {
+            return Some("plan".to_string());
+        }
+        if normalized.contains("#agent") {
+            return Some("agent".to_string());
+        }
+
+        let fallback = Self::normalize_mode_name(current_mode_id);
+        if fallback.is_empty() {
+            None
+        } else {
+            Some(fallback)
+        }
+    }
+
     fn compose_message(
         message: &str,
         file_refs: Option<Vec<String>>,
@@ -190,7 +254,10 @@ impl CopilotAcpAgent {
     ) -> Option<AiQuestionRequest> {
         let session_id = params.get("sessionId")?.as_str()?.to_string();
         let tool_call = params.get("toolCall")?;
-        let tool_call_id = tool_call.get("toolCallId").and_then(|v| v.as_str()).map(String::from);
+        let tool_call_id = tool_call
+            .get("toolCallId")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let raw_input = tool_call.get("rawInput").cloned().unwrap_or(Value::Null);
 
         let questions = if let Some(qs) = raw_input.get("questions").and_then(|v| v.as_array()) {
@@ -232,7 +299,10 @@ impl CopilotAcpAgent {
                 })
                 .collect()
         } else {
-            let title = tool_call.get("title").and_then(|v| v.as_str()).unwrap_or("Permission required");
+            let title = tool_call
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Permission required");
             vec![AiQuestionInfo {
                 question: title.to_string(),
                 header: "Permission".to_string(),
@@ -392,7 +462,9 @@ impl AiAgent for CopilotAcpAgent {
     async fn create_session(&self, directory: &str, title: &str) -> Result<AiSession, String> {
         self.client.ensure_started().await?;
         let (session_id, metadata) = self.client.session_new(directory).await?;
-        self.cache_metadata(directory, metadata).await;
+        self.cache_metadata(directory, metadata.clone()).await;
+        self.cache_session_metadata(directory, &session_id, metadata)
+            .await;
         Ok(AiSession {
             id: session_id,
             title: title.to_string(),
@@ -438,10 +510,7 @@ impl AiAgent for CopilotAcpAgent {
         }));
         let _ = tx.send(Ok(AiEvent::PartUpdated {
             message_id: user_message_id.clone(),
-            part: AiPart::new_text(
-                format!("{}-text", user_message_id),
-                original_text,
-            ),
+            part: AiPart::new_text(format!("{}-text", user_message_id), original_text),
         }));
 
         tokio::spawn(async move {
@@ -579,7 +648,9 @@ impl AiAgent for CopilotAcpAgent {
     ) -> Result<Vec<AiMessage>, String> {
         self.client.ensure_started().await?;
         let (mut messages, metadata) = self.collect_loaded_messages(directory, session_id).await?;
-        self.cache_metadata(directory, metadata).await;
+        self.cache_metadata(directory, metadata.clone()).await;
+        self.cache_session_metadata(directory, session_id, metadata)
+            .await;
 
         if let Some(limit) = limit {
             let limit = limit as usize;
@@ -588,6 +659,54 @@ impl AiAgent for CopilotAcpAgent {
             }
         }
         Ok(messages)
+    }
+
+    async fn session_selection_hint(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionSelectionHint>, String> {
+        let mut metadata =
+            if let Some(meta) = self.metadata_for_session(directory, session_id).await {
+                meta
+            } else {
+                self.metadata_for_directory(directory).await
+            };
+        if metadata.current_model_id.is_none()
+            && metadata.current_mode_id.is_none()
+            && metadata.models.is_empty()
+            && metadata.modes.is_empty()
+        {
+            if let Ok(refreshed) = self.client.session_load(directory, session_id).await {
+                self.cache_metadata(directory, refreshed.clone()).await;
+                self.cache_session_metadata(directory, session_id, refreshed.clone())
+                    .await;
+                metadata = refreshed;
+            }
+        }
+        let hint = AiSessionSelectionHint {
+            agent: Self::current_agent_name(&metadata),
+            model_provider_id: metadata
+                .current_model_id
+                .as_ref()
+                .map(|_| "copilot".to_string()),
+            model_id: metadata.current_model_id.clone(),
+        };
+        debug!(
+            "Copilot session_selection_hint: directory={}, session_id={}, models_count={}, modes_count={}, current_model_id={:?}, current_mode_id={:?}, resolved_agent={:?}",
+            directory,
+            session_id,
+            metadata.models.len(),
+            metadata.modes.len(),
+            metadata.current_model_id,
+            metadata.current_mode_id,
+            hint.agent
+        );
+        if hint.agent.is_none() && hint.model_id.is_none() {
+            Ok(None)
+        } else {
+            Ok(Some(hint))
+        }
     }
 
     async fn abort_session(&self, _directory: &str, _session_id: &str) -> Result<(), String> {
@@ -698,11 +817,7 @@ impl AiAgent for CopilotAcpAgent {
             .await
     }
 
-    async fn reject_question(
-        &self,
-        _directory: &str,
-        request_id: &str,
-    ) -> Result<(), String> {
+    async fn reject_question(&self, _directory: &str, request_id: &str) -> Result<(), String> {
         let pending = self
             .pending_permissions
             .lock()

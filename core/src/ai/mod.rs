@@ -167,6 +167,17 @@ pub struct AiModelSelection {
     pub model_id: String,
 }
 
+/// 会话最近一次使用的输入选择提示（用于历史会话加载后恢复输入框）
+#[derive(Debug, Clone, Default)]
+pub struct AiSessionSelectionHint {
+    /// 对应前端 agent/mode 选择
+    pub agent: Option<String>,
+    /// 对应前端 provider 选择
+    pub model_provider_id: Option<String>,
+    /// 对应前端 model 选择
+    pub model_id: Option<String>,
+}
+
 /// AI Provider 信息（通用模型）
 #[derive(Debug, Clone)]
 pub struct AiProviderInfo {
@@ -286,6 +297,17 @@ pub trait AiAgent: Send + Sync {
         session_id: &str,
         limit: Option<u32>,
     ) -> Result<Vec<AiMessage>, String>;
+
+    /// 获取会话级“最近输入选择”提示。
+    ///
+    /// 默认不提供，由具体后端按能力实现。
+    async fn session_selection_hint(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+    ) -> Result<Option<AiSessionSelectionHint>, String> {
+        Ok(None)
+    }
 
     /// 中止会话当前生成（若后端支持）
     async fn abort_session(&self, directory: &str, session_id: &str) -> Result<(), String>;
