@@ -234,12 +234,21 @@ struct AITabView: View {
         )
     }
 
+    private var isLoadingMessages: Bool {
+        aiChatStore.currentSessionId != nil && aiChatStore.messages.isEmpty
+    }
+
     private var messageArea: some View {
         ZStack {
             Color.clear
 
             if aiChatStore.messages.isEmpty {
-                emptyState
+                AIChatEmptyStateView(
+                    currentTool: appState.aiChatTool,
+                    selectedTool: $appState.aiChatTool,
+                    canSwitchTool: canSwitchAITool,
+                    isLoading: isLoadingMessages
+                )
             } else {
                 MessageListView(
                     messages: aiChatStore.messages,
@@ -250,41 +259,6 @@ struct AITabView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(appState.aiChatTool.iconAssetName)
-                .resizable()
-                .renderingMode(.original)
-                .scaledToFit()
-                .frame(width: 56, height: 56)
-                .padding(12)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            Picker("Agent Tool", selection: $appState.aiChatTool) {
-                ForEach(AIChatTool.allCases) { tool in
-                    Text(
-                        appState.shouldShowAIBadge(for: tool)
-                            ? "\(tool.displayName) •"
-                            : tool.displayName
-                    )
-                    .tag(tool)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 260)
-            .disabled(!canSwitchAITool)
-
-            Text("No messages yet")
-                .font(.title3)
-                .foregroundColor(.secondary)
-
-            Text("Start a new conversation")
-                .font(.subheadline)
-                .foregroundColor(.secondary.opacity(0.7))
-        }
     }
 
     private var inputArea: some View {

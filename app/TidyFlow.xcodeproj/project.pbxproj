@@ -59,6 +59,7 @@
 		AIC00014 /* DiffInlineHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00013 /* DiffInlineHighlighter.swift */; };
 		AIC00016 /* UnifiedDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00015 /* UnifiedDiffView.swift */; };
 		AIC00018 /* MarkdownTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00017 /* MarkdownTextView.swift */; };
+		AIC0001A /* AIChatEmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00019 /* AIChatEmptyStateView.swift */; };
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
@@ -208,6 +209,7 @@
 		AIC00013 /* DiffInlineHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/DiffInlineHighlighter.swift"; sourceTree = "<group>"; };
 		AIC00015 /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/UnifiedDiffView.swift"; sourceTree = "<group>"; };
 		AIC00017 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MarkdownTextView.swift"; sourceTree = "<group>"; };
+		AIC00019 /* AIChatEmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatEmptyStateView.swift"; sourceTree = "<group>"; };
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
@@ -338,6 +340,7 @@
 				AIC00011 /* DiffParser.swift */,
 				AIC00013 /* DiffInlineHighlighter.swift */,
 				AIC00015 /* UnifiedDiffView.swift */,
+				AIC00019 /* AIChatEmptyStateView.swift */,
 				B3A00013 /* TabStripView.swift */,
 				TST00012 /* ToastOverlayView.swift */,
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
@@ -718,6 +721,7 @@
 				AIC00012 /* DiffParser.swift in Sources */,
 				AIC00014 /* DiffInlineHighlighter.swift in Sources */,
 				AIC00016 /* UnifiedDiffView.swift in Sources */,
+				AIC0001A /* AIChatEmptyStateView.swift in Sources */,
 				B3A00008 /* NativeGitPanelView.swift in Sources */,
 				SPL00006 /* FloatingPanelController.swift in Sources */,
 				SPL00007 /* GitPanelSections.swift in Sources */,

@@ -154,36 +154,19 @@ struct MobileAIChatView: View {
         }
     }
 
+    private var isLoadingMessages: Bool {
+        appState.aiCurrentSessionId != nil && appState.aiChatMessages.isEmpty
+    }
+
     private var messageArea: some View {
         ZStack {
             if appState.aiChatMessages.isEmpty {
-                VStack(spacing: 16) {
-                    Image(appState.aiChatTool.iconAssetName)
-                        .resizable()
-                        .renderingMode(.original)
-                        .scaledToFit()
-                        .frame(width: 44, height: 44)
-                        .padding(10)
-                        .background(Color.secondary.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                    Picker("AI Tool", selection: aiToolBinding) {
-                        ForEach(AIChatTool.allCases) { tool in
-                            Text(tool.displayName).tag(tool)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 260)
-                    .disabled(!appState.canSwitchAIChatTool)
-
-                    Text("还没有消息")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                    Text("输入问题开始对话")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                AIChatEmptyStateView(
+                    currentTool: appState.aiChatTool,
+                    selectedTool: aiToolBinding,
+                    canSwitchTool: appState.canSwitchAIChatTool,
+                    isLoading: isLoadingMessages
+                )
             } else {
                 MessageListView(
                     messages: appState.aiChatMessages,
