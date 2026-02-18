@@ -48,7 +48,7 @@ struct WorkspaceTasksView: View {
                     Button {
                         appState.clearCompletedTasks(project: project, workspace: workspace)
                     } label: {
-                        Image(systemName: "broom")
+                        Image(systemName: "trash")
                     }
                 }
             }

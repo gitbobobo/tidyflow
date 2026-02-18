@@ -118,10 +118,10 @@ struct MobileAIChatView: View {
                 .toolbar {
                     #if os(iOS)
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button("关闭") {
-                            showSessionList = false
-                        }
-                    }
+                         Button(action: { showSessionList = false }) {
+                             Image(systemName: "xmark")
+                         }
+                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: createNewSession) {
                             Image(systemName: "plus")
@@ -129,8 +129,8 @@ struct MobileAIChatView: View {
                     }
                     #else
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("关闭") {
-                            showSessionList = false
+                        Button(action: { showSessionList = false }) {
+                            Image(systemName: "xmark")
                         }
                     }
                     ToolbarItem(placement: .automatic) {

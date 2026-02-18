@@ -139,7 +139,7 @@ struct ToolCardView: View {
         }
     }
 
-    private var shouldShowQuestionPrompt: Bool {
+    private var shouldShowQuestionPromptValue: Bool {
         shouldShowQuestionPrompt(
             toolID: normalizedToolID,
             invocation: invocation,
@@ -257,7 +257,7 @@ struct ToolCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if shouldShowQuestionPrompt {
+            if shouldShowQuestionPromptValue {
                 ToolQuestionPromptView(
                     items: questionPromptItems,
                     interactive: questionPromptInteractive,
@@ -452,7 +452,9 @@ struct ToolCardView: View {
             return buildLspSections(invocation)
         case "bash":
             return buildBashSections(invocation)
-        case "glob", "list", "websearch", "codesearch", "webfetch":
+        case "glob":
+            return buildGlobSections(invocation)
+        case "list", "websearch", "codesearch", "webfetch":
             return buildSearchSections(invocation)
         case "todowrite", "todoread":
             return buildTodoSections(invocation)
@@ -603,6 +605,15 @@ struct ToolCardView: View {
         return sections
     }
 
+    private func buildGlobSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "glob-error", title: "error", content: error, isCode: false))
+        }
+        return sections
+    }
+
     private func buildTaskSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
 
@@ -734,7 +745,9 @@ struct ToolCardView: View {
                 .joined(separator: " ")
         case "bash":
             return nil
-        case "glob", "list", "websearch", "codesearch", "webfetch":
+        case "glob":
+            return globStatsSummary(invocation)
+        case "list", "websearch", "codesearch", "webfetch":
             return stringValue(invocation.input["query"]) ??
                 stringValue(invocation.input["pattern"]) ??
                 stringValue(invocation.input["url"]) ??
@@ -1018,6 +1031,29 @@ struct ToolCardView: View {
         if stats == nil, let output = invocation.output {
             let lines = output.split(separator: "\n", omittingEmptySubsequences: true).map { String($0) }
             if let statsLine = lines.first(where: { $0.contains("match(es)") && $0.contains("file(s)") }) {
+                stats = statsLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let first = lines.first {
+                stats = first.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return stats
+    }
+
+    private func globStatsSummary(_ invocation: AIToolInvocationState) -> String? {
+        var stats: String?
+        if let metadata = invocation.metadata {
+            let fileCount =
+                intValue(metadata["files"]) ??
+                intValue(metadata["fileCount"]) ??
+                intValue(metadata["count"])
+            if let fileCount {
+                stats = "Found \(fileCount) file(s)"
+            }
+        }
+
+        if stats == nil, let output = invocation.output {
+            let lines = output.split(separator: "\n", omittingEmptySubsequences: true).map { String($0) }
+            if let statsLine = lines.first(where: { $0.contains("file(s)") }) {
                 stats = statsLine.trimmingCharacters(in: .whitespacesAndNewlines)
             } else if let first = lines.first {
                 stats = first.trimmingCharacters(in: .whitespacesAndNewlines)
