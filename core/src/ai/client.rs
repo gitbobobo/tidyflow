@@ -1326,10 +1326,20 @@ impl AiAgent for OpenCodeAgent {
                                 .and_then(|v| v.as_str())
                                 .or_else(|| part.get("tool").and_then(|v| v.as_str()))
                                 .map(|s| s.to_string());
+
+                            let tool_state = part.get("state").cloned();
+                            let tool_part_metadata = part.get("metadata").cloned();
+
+                            // 优先从 part.callID 获取，其次从 state.callID 获取
                             let tool_call_id = part
                                 .get("callID")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                                .map(|s| s.to_string())
+                                .or_else(|| {
+                                    tool_state.as_ref().and_then(|s| {
+                                        s.get("callID").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                    })
+                                });
 
                             let text = part
                                 .get("text")
@@ -1351,9 +1361,6 @@ impl AiAgent for OpenCodeAgent {
                             let synthetic = part.get("synthetic").and_then(|v| v.as_bool());
                             let ignored = part.get("ignored").and_then(|v| v.as_bool());
                             let source = part.get("source").cloned();
-
-                            let tool_state = part.get("state").cloned();
-                            let tool_part_metadata = part.get("metadata").cloned();
 
                             Some(Ok(AiEvent::PartUpdated {
                                 message_id: message_id_s,
@@ -1702,10 +1709,20 @@ impl AiAgent for OpenCodeAgent {
                                 .and_then(|v| v.as_str())
                                 .or_else(|| part.get("tool").and_then(|v| v.as_str()))
                                 .map(|s| s.to_string());
+
+                            let tool_state = part.get("state").cloned();
+                            let tool_part_metadata = part.get("metadata").cloned();
+
+                            // 优先从 part.callID 获取，其次从 state.callID 获取
                             let tool_call_id = part
                                 .get("callID")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                                .map(|s| s.to_string())
+                                .or_else(|| {
+                                    tool_state.as_ref().and_then(|s| {
+                                        s.get("callID").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                    })
+                                });
 
                             let text = part
                                 .get("text")
@@ -1727,9 +1744,6 @@ impl AiAgent for OpenCodeAgent {
                             let synthetic = part.get("synthetic").and_then(|v| v.as_bool());
                             let ignored = part.get("ignored").and_then(|v| v.as_bool());
                             let source = part.get("source").cloned();
-
-                            let tool_state = part.get("state").cloned();
-                            let tool_part_metadata = part.get("metadata").cloned();
 
                             Some(Ok(AiEvent::PartUpdated {
                                 message_id: message_id_s,

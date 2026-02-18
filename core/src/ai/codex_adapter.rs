@@ -373,8 +373,8 @@ impl CodexAppServerAgent {
                         id: request_id.to_string(),
                         session_id,
                         questions: vec![q],
-                        tool_message_id: item_id,
-                        tool_call_id: None,
+                        tool_message_id: item_id.clone(),
+                        tool_call_id: item_id,
                     },
                     vec!["decision".to_string()],
                 ))
@@ -405,8 +405,8 @@ impl CodexAppServerAgent {
                         id: request_id.to_string(),
                         session_id,
                         questions: vec![q],
-                        tool_message_id: item_id,
-                        tool_call_id: None,
+                        tool_message_id: item_id.clone(),
+                        tool_call_id: item_id,
                     },
                     vec!["decision".to_string()],
                 ))
@@ -461,8 +461,8 @@ impl CodexAppServerAgent {
                         id: request_id.to_string(),
                         session_id,
                         questions: mapped,
-                        tool_message_id: item_id,
-                        tool_call_id: None,
+                        tool_message_id: item_id.clone(),
+                        tool_call_id: item_id,
                     },
                     ids,
                 ))
