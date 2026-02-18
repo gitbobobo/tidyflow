@@ -638,6 +638,11 @@ extension AppState {
                 status: ev.status.status,
                 errorMessage: ev.status.errorMessage
             )
+            self.reconcileAIStreamStateFromSessionStatus(
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status
+            )
         }
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
@@ -986,6 +991,33 @@ extension AppState {
         default:
             return nil
         }
+    }
+
+    /// 会话状态兜底收敛：避免 done/error 事件丢失时，输入区长期停留在“停止中”。
+    private func reconcileAIStreamStateFromSessionStatus(
+        aiTool: AIChatTool,
+        sessionId: String,
+        status: String
+    ) {
+        let normalizedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedStatus == "busy" || normalizedStatus == "running" || normalizedStatus == "retry" {
+            return
+        }
+
+        let store = aiStore(for: aiTool)
+        guard store.currentSessionId == sessionId else { return }
+
+        let hasLocalStreamingState =
+            store.isStreaming ||
+            store.awaitingUserEcho ||
+            store.isAbortPending(for: sessionId)
+        guard hasLocalStreamingState else { return }
+
+        TFLog.app.warning(
+            "AI stream reconciled by session status: ai_tool=\(aiTool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public), status=\(normalizedStatus, privacy: .public)"
+        )
+        store.handleChatDone(sessionId: sessionId)
+        setBadgeRunning(false, for: aiTool)
     }
 
     // MARK: - 系统唤醒探活 + 自动重连
