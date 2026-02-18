@@ -120,6 +120,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 历史 `question` 卡片在缺少可回复 `request_id` 时，提交应降级为“将结构化答案整理成普通用户消息发送给当前 AI 会话”，避免 UI 可操作但业务链路断开。
 - 共享 SwiftUI 组件（macOS/iOS 共用）新增必填参数时，必须同步更新所有平台调用点（含移动端页面），避免单端编译通过、另一端报缺参。
 - 历史会话回放时，不应仅凭 tool part 的 `status=pending/running` 推导“当前仍在流式生成”；`isStreaming` 应以实时增量/assistant 流式态为准，否则会出现“会话已结束但一直显示终止按钮且无法收敛”。
+- 跨 WS 连接广播新事件（如 AI 会话状态更新）可复用现有 `TaskBroadcastTx`；若希望触发变更的连接也收到广播，`origin_conn_id` 不要填当前连接 ID，建议设为空字符串。
 
 ## Build Commands
 
