@@ -129,6 +129,16 @@ struct ToolCardView: View {
         questionPromptInteractive(toolID: normalizedToolID, invocation: invocation)
     }
 
+    /// 已回答的问题从 metadata.answers 提取用户选择
+    private var questionAnsweredSelections: [[String]]? {
+        guard !questionPromptInteractive else { return nil }
+        guard let metadata = invocation?.metadata,
+              let answers = metadata["answers"] as? [[Any]] else { return nil }
+        return answers.map { group in
+            group.compactMap { $0 as? String }
+        }
+    }
+
     private var shouldShowQuestionPrompt: Bool {
         shouldShowQuestionPrompt(
             toolID: normalizedToolID,
@@ -251,6 +261,7 @@ struct ToolCardView: View {
                 ToolQuestionPromptView(
                     items: questionPromptItems,
                     interactive: questionPromptInteractive,
+                    answeredSelections: questionAnsweredSelections,
                     onReply: onQuestionReply,
                     onReject: onQuestionReject,
                     onReplyAsMessage: onQuestionReplyAsMessage
@@ -624,16 +635,16 @@ struct ToolCardView: View {
             promptItems: promptItems
         )
 
-        // question 处于待回答阶段时，交互区已单独渲染；避免重复展示大段 input JSON。
+        // question 处于待回答/已回答阶段时，交互区已单独渲染；避免重复展示 input/output/metadata。
         if !showPrompt, !invocation.input.isEmpty {
             sections.append(section(id: "task-input", title: "input", any: invocation.input))
         }
 
-        if let output = invocation.output, !output.isEmpty {
+        if !showPrompt, let output = invocation.output, !output.isEmpty {
             sections.append(AIToolSection(id: "task-output", title: "output", content: output, isCode: true))
         }
 
-        if let metadata = invocation.metadata, !metadata.isEmpty {
+        if !showPrompt, let metadata = invocation.metadata, !metadata.isEmpty {
             sections.append(section(id: "task-metadata", title: "metadata", any: metadata))
         }
 
@@ -1316,11 +1327,8 @@ struct ToolCardView: View {
     ) -> Bool {
         guard toolID == "question" else { return false }
         guard !promptItems.isEmpty else { return false }
-        if questionPromptInteractive(toolID: toolID, invocation: invocation) {
-            return true
-        }
-        guard let invocation else { return false }
-        return invocation.status == .pending || invocation.status == .running
+        // 交互态和已完成态都展示问题组件（已完成时为只读模式）
+        return true
     }
 
     private func parseQuestionPromptItem(dict: [String: Any], index: Int) -> ToolQuestionPromptItem? {
@@ -1701,6 +1709,8 @@ private struct ToolQuestionPromptItem: Identifiable {
 private struct ToolQuestionPromptView: View {
     let items: [ToolQuestionPromptItem]
     let interactive: Bool
+    /// 已回答时从 metadata 传入的用户选择，用于只读渲染
+    let answeredSelections: [[String]]?
     let onReply: (([[String]]) -> Void)?
     let onReject: (() -> Void)?
     let onReplyAsMessage: ((String) -> Void)?
@@ -1709,9 +1719,10 @@ private struct ToolQuestionPromptView: View {
     @State private var answers: [Int: [String]] = [:]
     @State private var customInputs: [Int: String] = [:]
     @State private var editingCustom: Bool = false
+    @State private var didPopulateAnswers: Bool = false
 
     private var isSingleAutoSubmit: Bool {
-        items.count == 1 && !(items.first?.multiple ?? false)
+        interactive && items.count == 1 && !(items.first?.multiple ?? false)
     }
 
     private var currentItem: ToolQuestionPromptItem? {
@@ -1745,12 +1756,12 @@ private struct ToolQuestionPromptView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !isSingleAutoSubmit {
+            // 多问题 tab 栏：交互态和只读态都可切换查看
+            if items.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                             Button(item.header) {
-                                guard interactive else { return }
                                 tab = index
                                 editingCustom = false
                             }
@@ -1763,23 +1774,25 @@ private struct ToolQuestionPromptView: View {
                             .cornerRadius(6)
                         }
 
-                        Button("确认") {
-                            guard interactive else { return }
-                            tab = items.count
-                            editingCustom = false
+                        // 确认 tab 仅在交互态显示
+                        if interactive {
+                            Button("确认") {
+                                tab = items.count
+                                editingCustom = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(isConfirmStep ? .primary : .secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background((isConfirmStep ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)))
+                            .cornerRadius(6)
                         }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isConfirmStep ? .primary : .secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background((isConfirmStep ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)))
-                        .cornerRadius(6)
                     }
                 }
             }
 
-            if isConfirmStep {
+            if isConfirmStep && interactive {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("请确认你的选择")
                         .font(.system(size: 11, weight: .semibold))
@@ -1801,7 +1814,7 @@ private struct ToolQuestionPromptView: View {
                 }
             } else if let item = currentItem {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(item.question + (item.multiple ? "（可多选）" : ""))
+                    Text(item.question + (interactive && item.multiple ? "（可多选）" : ""))
                         .font(.system(size: 11))
                         .foregroundColor(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1839,9 +1852,32 @@ private struct ToolQuestionPromptView: View {
                         .disabled(!interactive)
                     }
 
-                    if item.custom {
+                    // 只读态：显示不在选项列表中的自定义答案
+                    if !interactive {
+                        let optionLabels = Set(item.options.map(\.label))
+                        let customAnswers = currentAnswers.filter { !optionLabels.contains($0) }
+                        if !customAnswers.isEmpty {
+                            ForEach(customAnswers, id: \.self) { answer in
+                                HStack(spacing: 6) {
+                                    Text(answer)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.accentColor)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 7)
+                                .background(Color.accentColor.opacity(0.12))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+
+                    // 交互态：自定义输入
+                    if interactive && item.custom {
                         Button {
-                            guard interactive else { return }
                             editingCustom = true
                         } label: {
                             HStack(spacing: 6) {
@@ -1870,10 +1906,9 @@ private struct ToolQuestionPromptView: View {
                             .cornerRadius(8)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!interactive)
                     }
 
-                    if editingCustom {
+                    if interactive && editingCustom {
                         HStack(spacing: 6) {
                             TextField("输入自定义答案", text: Binding(
                                 get: { customInputs[tab] ?? "" },
@@ -1943,6 +1978,19 @@ private struct ToolQuestionPromptView: View {
         .padding(.vertical, 6)
         .background(Color.secondary.opacity(0.05))
         .cornerRadius(8)
+        .onAppear {
+            populateAnsweredSelections()
+        }
+    }
+
+    /// 只读态：从 metadata 预填充用户已选答案
+    private func populateAnsweredSelections() {
+        guard !interactive, !didPopulateAnswers,
+              let selections = answeredSelections else { return }
+        didPopulateAnswers = true
+        for (index, group) in selections.enumerated() where index < items.count {
+            answers[index] = group
+        }
     }
 
     private func handleOptionTap(option: String, multiple: Bool) {
