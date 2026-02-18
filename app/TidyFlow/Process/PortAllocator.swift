@@ -79,4 +79,44 @@ enum PortAllocator {
 
         return bindResult == 0
     }
+
+    /// Check if a port is reachable (a server is listening)
+    static func isPortReachable(_ port: Int, timeout: TimeInterval = 0.3) -> Bool {
+        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            return false
+        }
+
+        let connection = NWConnection(host: "127.0.0.1", port: nwPort, using: .tcp)
+        let semaphore = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var settled = false
+        var reachable = false
+
+        func settle(_ ok: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !settled else { return }
+            settled = true
+            reachable = ok
+            semaphore.signal()
+        }
+
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                settle(true)
+            case .failed, .cancelled:
+                settle(false)
+            default:
+                break
+            }
+        }
+
+        connection.start(queue: DispatchQueue(label: "com.tidyflow.port.reachability"))
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            settle(false)
+        }
+        connection.cancel()
+        return reachable
+    }
 }

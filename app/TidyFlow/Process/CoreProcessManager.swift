@@ -487,17 +487,7 @@ class CoreProcessManager: ObservableObject {
             self.launchedBindAddress = bindAddress
             let pid = proc.processIdentifier
             TFLog.core.info("Process started with PID: \(pid, privacy: .public) on port \(port, privacy: .public)")
-
-            // Mark as running after a short delay to let it initialize
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self = self else { return }
-                // 仅当该 proc 仍是当前进程时，才更新 running 状态与回调。
-                if self.process === proc, proc.isRunning {
-                    self.status = .running(port: port, pid: pid)
-                    self.isStarting = false
-                    self.onCoreReady?(port)
-                }
-            }
+            waitForCoreReady(proc: proc, port: port, pid: pid, remainingChecks: 60)
         } catch {
             let msg = "Failed to start: \(error.localizedDescription)"
             TFLog.core.error("\(msg, privacy: .public)")
@@ -597,6 +587,33 @@ class CoreProcessManager: ObservableObject {
         stderrPipe = nil
         process = nil
         launchedBindAddress = nil
+    }
+
+    /// 等待 Core 端口可连接后再回调 ready，避免“进程已启动但 WS 尚未监听”导致首连失败。
+    private func waitForCoreReady(proc: Process, port: Int, pid: Int32, remainingChecks: Int) {
+        guard process === proc, proc.isRunning else { return }
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let reachable = PortAllocator.isPortReachable(port, timeout: 0.25)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard self.process === proc, proc.isRunning else { return }
+
+                if reachable || remainingChecks <= 0 {
+                    if !reachable {
+                        TFLog.core.warning("Core port not reachable in time, proceed with ready callback: \(port, privacy: .public)")
+                    }
+                    self.status = .running(port: port, pid: pid)
+                    self.isStarting = false
+                    self.onCoreReady?(port)
+                    return
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.waitForCoreReady(proc: proc, port: port, pid: pid, remainingChecks: remainingChecks - 1)
+                }
+            }
+        }
     }
 
     /// 轮询等待 stop 完成，再触发 start。
