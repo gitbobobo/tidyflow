@@ -212,6 +212,239 @@ impl CodexAppServerAgent {
         }
     }
 
+    fn canonical_method(method: &str) -> String {
+        method
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    }
+
+    fn method_in(method: &str, candidates: &[&str]) -> bool {
+        let canonical = Self::canonical_method(method);
+        candidates
+            .iter()
+            .any(|candidate| canonical == Self::canonical_method(candidate))
+    }
+
+    fn first_string_by_pointers(value: &Value, pointers: &[&str]) -> Option<String> {
+        pointers.iter().find_map(|pointer| {
+            value
+                .pointer(pointer)
+                .and_then(Self::json_value_to_trimmed_string)
+        })
+    }
+
+    fn extract_question_nodes(value: &Value) -> Vec<Value> {
+        let question_array_paths = [
+            "/questions",
+            "/input/questions",
+            "/request/questions",
+            "/toolInput/questions",
+            "/rawInput/questions",
+            "/schema/questions",
+        ];
+        for path in question_array_paths {
+            if let Some(items) = value.pointer(path).and_then(|v| v.as_array()) {
+                if !items.is_empty() {
+                    return items.to_vec();
+                }
+            }
+        }
+
+        let single_question_paths = [
+            "/question",
+            "/input/question",
+            "/request/question",
+            "/toolInput/question",
+            "/rawInput/question",
+        ];
+        for path in single_question_paths {
+            if let Some(question) = value.pointer(path) {
+                match question {
+                    Value::Object(_) => return vec![question.clone()],
+                    Value::String(text) => {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            return vec![serde_json::json!({ "question": trimmed })];
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn parse_question_options(value: Option<&Value>) -> Vec<AiQuestionOption> {
+        let Some(value) = value else {
+            return Vec::new();
+        };
+        let Some(options) = value.as_array() else {
+            return Vec::new();
+        };
+        options
+            .iter()
+            .filter_map(|option| match option {
+                Value::String(label) => {
+                    let normalized = label.trim();
+                    if normalized.is_empty() {
+                        None
+                    } else {
+                        Some(AiQuestionOption {
+                            label: normalized.to_string(),
+                            description: String::new(),
+                        })
+                    }
+                }
+                Value::Object(_) => {
+                    let label = Self::first_string_by_pointers(
+                        option,
+                        &["/label", "/value", "/name", "/id", "/text"],
+                    )?;
+                    let description = Self::first_string_by_pointers(
+                        option,
+                        &["/description", "/hint", "/detail"],
+                    )
+                    .unwrap_or_default();
+                    Some(AiQuestionOption { label, description })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn parse_question_info(node: &Value, index: usize) -> Option<(AiQuestionInfo, Option<String>)> {
+        let question_text = Self::first_string_by_pointers(
+            node,
+            &["/question", "/prompt", "/text", "/title", "/message"],
+        )?;
+        let question_id =
+            Self::first_string_by_pointers(node, &["/id", "/questionId", "/question_id", "/key"]);
+        let header = Self::first_string_by_pointers(node, &["/header", "/name", "/label"])
+            .unwrap_or_else(|| format!("问题{}", index + 1));
+        let options = Self::parse_question_options(node.pointer("/options"));
+        let multiple = Self::first_string_by_pointers(
+            node,
+            &["/multiple", "/multi", "/allowMultiple", "/allow_multiple", "/selectMany"],
+        )
+        .and_then(|raw| {
+            if raw.eq_ignore_ascii_case("true") || raw == "1" {
+                Some(true)
+            } else if raw.eq_ignore_ascii_case("false") || raw == "0" {
+                Some(false)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| {
+            node.pointer("/multiple")
+                .and_then(|v| v.as_bool())
+                .or_else(|| node.pointer("/allowMultiple").and_then(|v| v.as_bool()))
+                .or_else(|| node.pointer("/allow_multiple").and_then(|v| v.as_bool()))
+                .or_else(|| node.pointer("/selectMany").and_then(|v| v.as_bool()))
+                .unwrap_or(false)
+        });
+        let custom = Self::first_string_by_pointers(
+            node,
+            &["/custom", "/isOther", "/is_other", "/allowOther", "/allow_other"],
+        )
+        .and_then(|raw| {
+            if raw.eq_ignore_ascii_case("true") || raw == "1" {
+                Some(true)
+            } else if raw.eq_ignore_ascii_case("false") || raw == "0" {
+                Some(false)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| {
+            node.pointer("/custom")
+                .and_then(|v| v.as_bool())
+                .or_else(|| node.pointer("/isOther").and_then(|v| v.as_bool()))
+                .or_else(|| node.pointer("/is_other").and_then(|v| v.as_bool()))
+                .or_else(|| node.pointer("/allowOther").and_then(|v| v.as_bool()))
+                .or_else(|| node.pointer("/allow_other").and_then(|v| v.as_bool()))
+                .unwrap_or(true)
+        });
+
+        Some((
+            AiQuestionInfo {
+                question: question_text,
+                header,
+                options,
+                multiple,
+                custom,
+            },
+            question_id,
+        ))
+    }
+
+    fn question_infos_to_json(questions: &[AiQuestionInfo]) -> Value {
+        Value::Array(
+            questions
+                .iter()
+                .map(|q| {
+                    let options = q
+                        .options
+                        .iter()
+                        .map(|opt| {
+                            serde_json::json!({
+                                "label": opt.label,
+                                "description": opt.description
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    serde_json::json!({
+                        "question": q.question,
+                        "header": q.header,
+                        "options": options,
+                        "multiple": q.multiple,
+                        "custom": q.custom
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn build_question_prompt_part(request: &AiQuestionRequest) -> (String, AiPart) {
+        let message_id = request
+            .tool_message_id
+            .clone()
+            .or_else(|| request.tool_call_id.clone())
+            .unwrap_or_else(|| format!("question-{}", request.id.replace(':', "-")));
+        let tool_call_id = request
+            .tool_call_id
+            .clone()
+            .or_else(|| request.tool_message_id.clone())
+            .or_else(|| Some(request.id.clone()));
+        let questions = Self::question_infos_to_json(&request.questions);
+        let tool_state = serde_json::json!({
+            "status": "pending",
+            "input": {
+                "questions": questions
+            },
+            "metadata": {
+                "request_id": request.id,
+                "tool_message_id": message_id
+            }
+        });
+        let part = AiPart {
+            id: message_id.clone(),
+            part_type: "tool".to_string(),
+            tool_name: Some("question".to_string()),
+            tool_call_id,
+            tool_state: Some(tool_state),
+            tool_part_metadata: Some(serde_json::json!({
+                "request_id": request.id,
+                "tool_message_id": message_id
+            })),
+            ..Default::default()
+        };
+        (message_id, part)
+    }
+
     fn parse_model_selection(model: Option<AiModelSelection>) -> (Option<String>, Option<String>) {
         match model {
             Some(m) => (Some(m.model_id), Some(m.provider_id)),
@@ -268,6 +501,14 @@ impl CodexAppServerAgent {
             "websearch" => {
                 let query = item.get("query").cloned().unwrap_or(Value::Null);
                 serde_json::json!({ "query": query })
+            }
+            "question" => {
+                let questions = Self::extract_question_nodes(item);
+                if questions.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::json!({ "questions": questions })
+                }
             }
             _ => Value::Null,
         }
@@ -505,138 +746,150 @@ impl CodexAppServerAgent {
         request_id: &str,
         params: &Value,
     ) -> Option<(AiQuestionRequest, Vec<String>)> {
-        let session_id = params.get("threadId")?.as_str()?.to_string();
-        let item_id = params
-            .get("itemId")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let session_id = Self::first_string_by_pointers(
+            params,
+            &["/threadId", "/thread_id", "/sessionId", "/session_id"],
+        )?;
+        let item_id = Self::first_string_by_pointers(
+            params,
+            &[
+                "/itemId",
+                "/item_id",
+                "/item/id",
+                "/toolCall/toolCallId",
+                "/tool_call/tool_call_id",
+            ],
+        );
 
-        match method {
-            "item/commandExecution/requestApproval" => {
-                let command = params
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("command");
-                let q = AiQuestionInfo {
-                    question: format!("允许执行命令？\n{}", command),
-                    header: "Codex Approval".to_string(),
-                    options: vec![
-                        AiQuestionOption {
-                            label: "accept".to_string(),
-                            description: "允许本次执行".to_string(),
-                        },
-                        AiQuestionOption {
-                            label: "decline".to_string(),
-                            description: "拒绝本次执行".to_string(),
-                        },
-                        AiQuestionOption {
-                            label: "cancel".to_string(),
-                            description: "拒绝并中断本轮".to_string(),
-                        },
-                    ],
-                    multiple: false,
-                    custom: false,
-                };
-                Some((
-                    AiQuestionRequest {
-                        id: request_id.to_string(),
-                        session_id,
-                        questions: vec![q],
-                        tool_message_id: item_id.clone(),
-                        tool_call_id: item_id,
+        if Self::method_in(
+            method,
+            &[
+                "item/commandExecution/requestApproval",
+                "item/command_execution/request_approval",
+            ],
+        ) {
+            let command = params
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("command");
+            let q = AiQuestionInfo {
+                question: format!("允许执行命令？\n{}", command),
+                header: "Codex Approval".to_string(),
+                options: vec![
+                    AiQuestionOption {
+                        label: "accept".to_string(),
+                        description: "允许本次执行".to_string(),
                     },
-                    vec!["decision".to_string()],
-                ))
-            }
-            "item/fileChange/requestApproval" => {
-                let q = AiQuestionInfo {
-                    question: "允许应用文件修改？".to_string(),
-                    header: "Codex Approval".to_string(),
-                    options: vec![
-                        AiQuestionOption {
-                            label: "accept".to_string(),
-                            description: "允许本次修改".to_string(),
-                        },
-                        AiQuestionOption {
-                            label: "decline".to_string(),
-                            description: "拒绝本次修改".to_string(),
-                        },
-                        AiQuestionOption {
-                            label: "cancel".to_string(),
-                            description: "拒绝并中断本轮".to_string(),
-                        },
-                    ],
-                    multiple: false,
-                    custom: false,
-                };
-                Some((
-                    AiQuestionRequest {
-                        id: request_id.to_string(),
-                        session_id,
-                        questions: vec![q],
-                        tool_message_id: item_id.clone(),
-                        tool_call_id: item_id,
+                    AiQuestionOption {
+                        label: "decline".to_string(),
+                        description: "拒绝本次执行".to_string(),
                     },
-                    vec!["decision".to_string()],
-                ))
-            }
-            "item/tool/requestUserInput" => {
-                let questions = params
-                    .get("questions")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let mut mapped = Vec::new();
-                let mut ids = Vec::new();
-                for q in questions {
-                    let Some(id) = q.get("id").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
-                    ids.push(id.to_string());
-                    let options = q
-                        .get("options")
-                        .and_then(|v| v.as_array())
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|opt| {
-                            Some(AiQuestionOption {
-                                label: opt.get("label")?.as_str()?.to_string(),
-                                description: opt
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    mapped.push(AiQuestionInfo {
-                        question: q
-                            .get("question")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        header: q
-                            .get("header")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        options,
-                        multiple: false,
-                        custom: q.get("isOther").and_then(|v| v.as_bool()).unwrap_or(true),
-                    });
+                    AiQuestionOption {
+                        label: "cancel".to_string(),
+                        description: "拒绝并中断本轮".to_string(),
+                    },
+                ],
+                multiple: false,
+                custom: false,
+            };
+            Some((
+                AiQuestionRequest {
+                    id: request_id.to_string(),
+                    session_id,
+                    questions: vec![q],
+                    tool_message_id: item_id.clone(),
+                    tool_call_id: item_id,
+                },
+                vec!["decision".to_string()],
+            ))
+        } else if Self::method_in(
+            method,
+            &[
+                "item/fileChange/requestApproval",
+                "item/file_change/request_approval",
+            ],
+        ) {
+            let q = AiQuestionInfo {
+                question: "允许应用文件修改？".to_string(),
+                header: "Codex Approval".to_string(),
+                options: vec![
+                    AiQuestionOption {
+                        label: "accept".to_string(),
+                        description: "允许本次修改".to_string(),
+                    },
+                    AiQuestionOption {
+                        label: "decline".to_string(),
+                        description: "拒绝本次修改".to_string(),
+                    },
+                    AiQuestionOption {
+                        label: "cancel".to_string(),
+                        description: "拒绝并中断本轮".to_string(),
+                    },
+                ],
+                multiple: false,
+                custom: false,
+            };
+            Some((
+                AiQuestionRequest {
+                    id: request_id.to_string(),
+                    session_id,
+                    questions: vec![q],
+                    tool_message_id: item_id.clone(),
+                    tool_call_id: item_id,
+                },
+                vec!["decision".to_string()],
+            ))
+        } else if Self::method_in(
+            method,
+            &[
+                "item/tool/requestUserInput",
+                "item/tool/request_user_input",
+            ],
+        ) {
+            let questions = Self::extract_question_nodes(params);
+            let mut mapped = Vec::new();
+            let mut ids = Vec::new();
+            for (idx, q) in questions.iter().enumerate() {
+                let Some((question, question_id)) = Self::parse_question_info(q, idx) else {
+                    continue;
+                };
+                if let Some(question_id) = question_id {
+                    ids.push(question_id);
+                } else {
+                    ids.push(format!("question_{}", idx + 1));
                 }
-                Some((
-                    AiQuestionRequest {
-                        id: request_id.to_string(),
-                        session_id,
-                        questions: mapped,
-                        tool_message_id: item_id.clone(),
-                        tool_call_id: item_id,
-                    },
-                    ids,
-                ))
+                mapped.push(question);
             }
-            _ => None,
+
+            if mapped.is_empty() {
+                let fallback = Self::first_string_by_pointers(
+                    params,
+                    &["/prompt", "/question", "/message", "/title"],
+                )
+                .unwrap_or_else(|| "请提供输入".to_string());
+                mapped.push(AiQuestionInfo {
+                    question: fallback,
+                    header: "Question".to_string(),
+                    options: Vec::new(),
+                    multiple: false,
+                    custom: true,
+                });
+                if ids.is_empty() {
+                    ids.push("question_1".to_string());
+                }
+            }
+            Some((
+                AiQuestionRequest {
+                    id: request_id.to_string(),
+                    session_id,
+                    questions: mapped,
+                    tool_message_id: item_id.clone(),
+                    tool_call_id: item_id,
+                },
+                ids,
+            ))
+        } else {
+            None
         }
     }
 
@@ -670,8 +923,16 @@ impl CodexAppServerAgent {
                         match recv {
                             Ok(event) => {
                                 let params = event.params.unwrap_or(Value::Null);
-                                let thread_id = params.get("threadId").and_then(|v| v.as_str()).unwrap_or("");
-                                let event_turn_id = params.get("turnId").and_then(|v| v.as_str()).unwrap_or("");
+                                let thread_id = Self::first_string_by_pointers(
+                                    &params,
+                                    &["/threadId", "/thread_id", "/sessionId", "/session_id"],
+                                )
+                                .unwrap_or_default();
+                                let event_turn_id = Self::first_string_by_pointers(
+                                    &params,
+                                    &["/turnId", "/turn_id"],
+                                )
+                                .unwrap_or_default();
                                 if thread_id != session_id || (!event_turn_id.is_empty() && event_turn_id != turn_id) {
                                     continue;
                                 }
@@ -800,25 +1061,58 @@ impl CodexAppServerAgent {
                         match recv {
                             Ok(req) => {
                                 let params = req.params.unwrap_or(Value::Null);
-                                let thread_id = params.get("threadId").and_then(|v| v.as_str()).unwrap_or("");
-                                let request_turn_id = params.get("turnId").and_then(|v| v.as_str()).unwrap_or("");
-                                if thread_id != session_id || request_turn_id != turn_id {
+                                let thread_id = CodexAppServerAgent::first_string_by_pointers(
+                                    &params,
+                                    &["/threadId", "/thread_id", "/sessionId", "/session_id"],
+                                )
+                                .unwrap_or_default();
+                                let request_turn_id = CodexAppServerAgent::first_string_by_pointers(
+                                    &params,
+                                    &["/turnId", "/turn_id"],
+                                )
+                                .unwrap_or_default();
+                                if thread_id != session_id
+                                    || (!request_turn_id.is_empty() && request_turn_id != turn_id)
+                                {
                                     continue;
                                 }
                                 let request_key = CodexAppServerAgent::request_id_key(&req.id);
+                                debug!(
+                                    "Codex server request: method={}, request_key={}, thread_id={}, turn_id={}, params={}",
+                                    req.method,
+                                    request_key,
+                                    thread_id,
+                                    request_turn_id,
+                                    params
+                                );
                                 if let Some((question, question_ids)) = CodexAppServerAgent::build_question_from_request(&req.method, &request_key, &params) {
+                                    let (question_message_id, question_part) =
+                                        CodexAppServerAgent::build_question_prompt_part(&question);
+                                    let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                        message_id: question_message_id.clone(),
+                                        role: "assistant".to_string(),
+                                    }));
+                                    let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                        message_id: question_message_id.clone(),
+                                        part: question_part,
+                                    }));
                                     let pending = PendingApproval {
                                         id: req.id,
                                         method: req.method.clone(),
                                         question_ids,
                                         session_id: question.session_id.clone(),
-                                        tool_message_id: question.tool_message_id.clone(),
+                                        tool_message_id: Some(question_message_id),
                                     };
                                     approvals.lock().await.insert(
                                         request_key.clone(),
                                         pending,
                                     );
                                     let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question }));
+                                } else {
+                                    warn!(
+                                        "Codex approval request ignored: method={}, request_key={}",
+                                        req.method, request_key
+                                    );
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -1212,38 +1506,55 @@ impl AiAgent for CodexAppServerAgent {
             .remove(&key)
             .ok_or_else(|| format!("Unknown Codex approval request: {}", request_id))?;
 
-        let response = match pending.method.as_str() {
-            "item/commandExecution/requestApproval" => {
-                let decision = answers
-                    .first()
-                    .and_then(|a| a.first())
-                    .map(|s| s.to_lowercase())
-                    .unwrap_or_else(|| "accept".to_string());
-                serde_json::json!({ "decision": decision })
+        let response = if Self::method_in(
+            pending.method.as_str(),
+            &[
+                "item/commandExecution/requestApproval",
+                "item/command_execution/request_approval",
+            ],
+        ) {
+            let decision = answers
+                .first()
+                .and_then(|a| a.first())
+                .map(|s| s.to_lowercase())
+                .unwrap_or_else(|| "accept".to_string());
+            serde_json::json!({ "decision": decision })
+        } else if Self::method_in(
+            pending.method.as_str(),
+            &[
+                "item/fileChange/requestApproval",
+                "item/file_change/request_approval",
+            ],
+        ) {
+            let decision = answers
+                .first()
+                .and_then(|a| a.first())
+                .map(|s| s.to_lowercase())
+                .unwrap_or_else(|| "accept".to_string());
+            serde_json::json!({ "decision": decision })
+        } else if Self::method_in(
+            pending.method.as_str(),
+            &[
+                "item/tool/requestUserInput",
+                "item/tool/request_user_input",
+            ],
+        ) {
+            let mut answer_map = serde_json::Map::new();
+            for (idx, qid) in pending.question_ids.iter().enumerate() {
+                let ans = answers.get(idx).cloned().unwrap_or_default();
+                answer_map.insert(qid.clone(), serde_json::json!({ "answers": ans }));
             }
-            "item/fileChange/requestApproval" => {
-                let decision = answers
-                    .first()
-                    .and_then(|a| a.first())
-                    .map(|s| s.to_lowercase())
-                    .unwrap_or_else(|| "accept".to_string());
-                serde_json::json!({ "decision": decision })
-            }
-            "item/tool/requestUserInput" => {
-                let mut answer_map = serde_json::Map::new();
-                for (idx, qid) in pending.question_ids.iter().enumerate() {
-                    let ans = answers.get(idx).cloned().unwrap_or_default();
-                    answer_map.insert(qid.clone(), serde_json::json!({ "answers": ans }));
-                }
+            if answer_map.is_empty() {
+                serde_json::json!({ "answers": answers })
+            } else {
                 serde_json::json!({ "answers": answer_map })
             }
-            other => {
-                warn!(
-                    "Unsupported Codex request method in reply_question: {}",
-                    other
-                );
-                serde_json::json!({})
-            }
+        } else {
+            warn!(
+                "Unsupported Codex request method in reply_question: {}",
+                pending.method
+            );
+            serde_json::json!({})
         };
         self.client
             .send_approval_response(pending.id, response)
@@ -1259,15 +1570,89 @@ impl AiAgent for CodexAppServerAgent {
             .remove(&key)
             .ok_or_else(|| format!("Unknown Codex approval request: {}", request_id))?;
 
-        let response = match pending.method.as_str() {
-            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-                serde_json::json!({ "decision": "cancel" })
-            }
-            "item/tool/requestUserInput" => serde_json::json!({ "answers": {} }),
-            _ => serde_json::json!({}),
+        let response = if Self::method_in(
+            pending.method.as_str(),
+            &[
+                "item/commandExecution/requestApproval",
+                "item/command_execution/request_approval",
+                "item/fileChange/requestApproval",
+                "item/file_change/request_approval",
+            ],
+        ) {
+            serde_json::json!({ "decision": "cancel" })
+        } else if Self::method_in(
+            pending.method.as_str(),
+            &[
+                "item/tool/requestUserInput",
+                "item/tool/request_user_input",
+            ],
+        ) {
+            serde_json::json!({ "answers": {} })
+        } else {
+            serde_json::json!({})
         };
         self.client
             .send_approval_response(pending.id, response)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CodexAppServerAgent;
+
+    #[test]
+    fn build_question_from_request_supports_snake_case_user_input() {
+        let params = serde_json::json!({
+            "thread_id": "thread-1",
+            "item": { "id": "item-42" },
+            "request": {
+                "questions": [
+                    {
+                        "id": "math",
+                        "question": "1+1 等于几？",
+                        "header": "测试",
+                        "options": [
+                            { "label": "1" },
+                            { "label": "2", "description": "正确答案" }
+                        ],
+                        "allow_other": false
+                    }
+                ]
+            }
+        });
+
+        let (request, ids) = CodexAppServerAgent::build_question_from_request(
+            "item/tool/request_user_input",
+            "n:99",
+            &params,
+        )
+        .expect("should parse question request");
+
+        assert_eq!(request.session_id, "thread-1");
+        assert_eq!(request.tool_message_id.as_deref(), Some("item-42"));
+        assert_eq!(ids, vec!["math".to_string()]);
+        assert_eq!(request.questions.len(), 1);
+        assert_eq!(request.questions[0].question, "1+1 等于几？");
+        assert_eq!(request.questions[0].options.len(), 2);
+        assert!(!request.questions[0].custom);
+    }
+
+    #[test]
+    fn build_question_from_request_supports_snake_case_approval() {
+        let params = serde_json::json!({
+            "thread_id": "thread-2",
+            "command": "echo hello"
+        });
+        let (request, ids) = CodexAppServerAgent::build_question_from_request(
+            "item/command_execution/request_approval",
+            "n:7",
+            &params,
+        )
+        .expect("should parse approval request");
+
+        assert_eq!(request.session_id, "thread-2");
+        assert_eq!(ids, vec!["decision".to_string()]);
+        assert_eq!(request.questions.len(), 1);
     }
 }

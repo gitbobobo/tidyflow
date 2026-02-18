@@ -217,18 +217,40 @@ impl CodexAppServerClient {
         model_provider: Option<String>,
         collaboration_mode: Option<String>,
     ) -> Result<String, String> {
+        let explicit_model_id = model_id.clone();
         let mut params = serde_json::json!({
             "threadId": thread_id,
             "input": input
         });
-        if let Some(model_id) = model_id.clone() {
+        if let Some(model_id) = explicit_model_id.clone() {
             params["model"] = Value::String(model_id);
         }
         if let Some(provider) = model_provider {
             params["modelProvider"] = Value::String(provider);
         }
         if let Some(mode) = collaboration_mode {
-            let mode_model = model_id.unwrap_or_else(|| "default".to_string());
+            let mode_model = if let Some(model) = explicit_model_id.clone() {
+                model
+            } else {
+                match self.model_list().await {
+                    Ok(models) => models
+                        .iter()
+                        .find(|m| m.is_default && m.id != "default")
+                        .or_else(|| models.iter().find(|m| m.id != "default"))
+                        .map(|m| m.id.clone())
+                        .unwrap_or_else(|| "default".to_string()),
+                    Err(err) => {
+                        warn!(
+                            "turn_start fallback model_list failed, use `default` for collaboration mode: {}",
+                            err
+                        );
+                        "default".to_string()
+                    }
+                }
+            };
+            if explicit_model_id.is_none() && mode_model != "default" {
+                params["model"] = Value::String(mode_model.clone());
+            }
             params["collaborationMode"] = serde_json::json!({
                 "mode": mode,
                 "settings": {
