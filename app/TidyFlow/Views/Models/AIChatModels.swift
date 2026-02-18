@@ -1065,6 +1065,19 @@ struct AIModelSelection: Equatable {
     let modelID: String
 }
 
+/// 历史会话最近一次输入选择提示（后端 best-effort 下发）
+struct AISessionSelectionHint: Equatable {
+    let agent: String?
+    let modelProviderID: String?
+    let modelID: String?
+
+    var isEmpty: Bool {
+        let agentEmpty = agent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        let modelEmpty = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        return agentEmpty && modelEmpty
+    }
+}
+
 // MARK: - Agent
 
 struct AIAgentInfo: Identifiable {

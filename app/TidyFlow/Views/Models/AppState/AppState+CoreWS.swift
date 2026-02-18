@@ -600,6 +600,11 @@ extension AppState {
             )
             store.replaceMessages(mapped)
             store.replaceQuestionRequests(restoredQuestions)
+            self.applyAISessionSelectionHint(
+                ev.selectionHint,
+                sessionId: ev.sessionId,
+                for: ev.aiTool
+            )
             TFLog.app.info(
                 "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
             )
@@ -763,6 +768,7 @@ extension AppState {
             }
             self.setAIProviders(providers, for: ev.aiTool)
             self.isAILoadingModels = false
+            self.retryPendingAISessionSelectionHint(for: ev.aiTool)
         }
 
         wsClient.onAIAgentList = { [weak self] ev in
@@ -788,6 +794,7 @@ extension AppState {
                 self.setAISelectedAgent(firstAgent?.name, for: ev.aiTool)
                 self.applyAgentDefaultModel(firstAgent, for: ev.aiTool)
             }
+            self.retryPendingAISessionSelectionHint(for: ev.aiTool)
         }
 
         wsClient.onAISlashCommands = { [weak self] ev in

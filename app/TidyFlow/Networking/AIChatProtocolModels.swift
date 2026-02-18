@@ -49,6 +49,7 @@ struct AISessionMessagesV2 {
     let aiTool: AIChatTool
     let sessionId: String
     let messages: [AIProtocolMessageInfo]
+    let selectionHint: AISessionSelectionHint?
 
     static func from(json: [String: Any]) -> AISessionMessagesV2? {
         guard let projectName = json["project_name"] as? String,
@@ -56,7 +57,15 @@ struct AISessionMessagesV2 {
               let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
         let messages = (json["messages"] as? [[String: Any]] ?? []).compactMap { AIProtocolMessageInfo.from(json: $0) }
-        return AISessionMessagesV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, messages: messages)
+        let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
+        return AISessionMessagesV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            messages: messages,
+            selectionHint: selectionHint
+        )
     }
 }
 
@@ -411,6 +420,34 @@ struct AIQuestionClearedV2 {
 }
 
 // MARK: - Helpers
+
+private func parseOptionalString(_ any: Any?) -> String? {
+    switch any {
+    case let v as String:
+        let trimmed = v.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    case let v as NSNumber:
+        let text = v.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    default:
+        return nil
+    }
+}
+
+private extension AISessionSelectionHint {
+    static func from(json: [String: Any]?) -> AISessionSelectionHint? {
+        guard let json else { return nil }
+        let agent = parseOptionalString(json["agent"])?.lowercased()
+        let modelProviderID = parseOptionalString(json["model_provider_id"])
+        let modelID = parseOptionalString(json["model_id"])
+        let hint = AISessionSelectionHint(
+            agent: agent,
+            modelProviderID: modelProviderID,
+            modelID: modelID
+        )
+        return hint.isEmpty ? nil : hint
+    }
+}
 
 private func parseInt64(_ any: Any?) -> Int64 {
     switch any {

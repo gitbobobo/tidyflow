@@ -153,6 +153,8 @@ class AppState: ObservableObject {
     private var aiAgentsByTool: [AIChatTool: [AIAgentInfo]] = [:]
     private var aiSelectedAgentByTool: [AIChatTool: String?] = [:]
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
+    /// 历史会话自动恢复输入框选择的待应用提示（key: sessionId）
+    private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
@@ -323,6 +325,7 @@ class AppState: ObservableObject {
             aiAgentsByTool[tool] = []
             aiSelectedAgentByTool[tool] = nil
             aiSlashCommandsByTool[tool] = []
+            aiPendingSessionSelectionHintsByTool[tool] = [:]
             aiToolBadges[tool] = AIToolBadgeState()
             aiSessionStatusesByTool[tool] = [:]
         }
@@ -444,6 +447,77 @@ class AppState: ObservableObject {
         }
     }
 
+    /// 尝试应用历史会话的输入选择提示；若模型/代理列表尚未准备好则缓存待重试。
+    func applyAISessionSelectionHint(
+        _ hint: AISessionSelectionHint?,
+        sessionId: String,
+        for tool: AIChatTool
+    ) {
+        let trimmedSession = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSession.isEmpty else { return }
+
+        guard let hint, !hint.isEmpty else {
+            aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = nil
+            TFLog.app.debug(
+                "AI selection_hint skipped: empty hint, ai_tool=\(tool.rawValue, privacy: .public), session_id=\(trimmedSession, privacy: .public)"
+            )
+            return
+        }
+
+        guard aiStore(for: tool).currentSessionId == trimmedSession else {
+            // 只对当前会话生效，防止跨会话串台。
+            aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = nil
+            let currentSession = self.aiStore(for: tool).currentSessionId ?? ""
+            TFLog.app.debug(
+                "AI selection_hint skipped: session mismatch, ai_tool=\(tool.rawValue, privacy: .public), event_session_id=\(trimmedSession, privacy: .public), current_session_id=\(currentSession, privacy: .public)"
+            )
+            return
+        }
+
+        let unresolved = applyAISessionSelectionHintResolved(hint, for: tool)
+        if let unresolved, !unresolved.isEmpty {
+            aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = unresolved
+            TFLog.app.info(
+                "AI selection_hint pending: ai_tool=\(tool.rawValue, privacy: .public), session_id=\(trimmedSession, privacy: .public), unresolved_agent=\(unresolved.agent ?? "", privacy: .public), unresolved_provider=\(unresolved.modelProviderID ?? "", privacy: .public), unresolved_model=\(unresolved.modelID ?? "", privacy: .public)"
+            )
+        } else {
+            aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = nil
+            TFLog.app.info(
+                "AI selection_hint applied: ai_tool=\(tool.rawValue, privacy: .public), session_id=\(trimmedSession, privacy: .public), agent=\(hint.agent ?? "", privacy: .public), provider=\(hint.modelProviderID ?? "", privacy: .public), model=\(hint.modelID ?? "", privacy: .public)"
+            )
+        }
+    }
+
+    /// 在 provider/agent 列表刷新后重试待应用的会话选择提示。
+    func retryPendingAISessionSelectionHint(for tool: AIChatTool) {
+        guard var pending = aiPendingSessionSelectionHintsByTool[tool], !pending.isEmpty else { return }
+        let currentSessionId = aiStore(for: tool).currentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let currentSessionId, !currentSessionId.isEmpty else {
+            aiPendingSessionSelectionHintsByTool[tool] = [:]
+            return
+        }
+
+        for (sessionId, hint) in pending {
+            if sessionId != currentSessionId {
+                pending[sessionId] = nil
+                continue
+            }
+            let unresolved = applyAISessionSelectionHintResolved(hint, for: tool)
+            if let unresolved, !unresolved.isEmpty {
+                pending[sessionId] = unresolved
+                TFLog.app.debug(
+                    "AI selection_hint retry pending: ai_tool=\(tool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public), unresolved_agent=\(unresolved.agent ?? "", privacy: .public), unresolved_provider=\(unresolved.modelProviderID ?? "", privacy: .public), unresolved_model=\(unresolved.modelID ?? "", privacy: .public)"
+                )
+            } else {
+                pending[sessionId] = nil
+                TFLog.app.info(
+                    "AI selection_hint retry applied: ai_tool=\(tool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public)"
+                )
+            }
+        }
+        aiPendingSessionSelectionHintsByTool[tool] = pending
+    }
+
     func setAISlashCommands(_ commands: [AISlashCommandInfo], for tool: AIChatTool) {
         aiSlashCommandsByTool[tool] = commands
         if aiChatTool == tool {
@@ -486,6 +560,88 @@ class AppState: ObservableObject {
     /// 兼容旧调用：默认作用于当前工具
     func applyAgentDefaultModel(_ agent: AIAgentInfo?) {
         applyAgentDefaultModel(agent, for: aiChatTool)
+    }
+
+    private func applyAISessionSelectionHintResolved(
+        _ hint: AISessionSelectionHint,
+        for tool: AIChatTool
+    ) -> AISessionSelectionHint? {
+        var unresolvedAgent = hint.agent
+        var unresolvedProvider = hint.modelProviderID
+        var unresolvedModel = hint.modelID
+
+        if let rawAgent = hint.agent, let resolvedAgent = resolveAIAgentName(rawAgent, for: tool) {
+            setAISelectedAgent(resolvedAgent, for: tool)
+            unresolvedAgent = nil
+        }
+
+        if let rawModel = hint.modelID {
+            if let resolvedModel = resolveAIModelSelection(
+                modelID: rawModel,
+                providerHint: hint.modelProviderID,
+                for: tool
+            ) {
+                setAISelectedModel(resolvedModel, for: tool)
+                unresolvedProvider = nil
+                unresolvedModel = nil
+            }
+        }
+
+        let unresolved = AISessionSelectionHint(
+            agent: unresolvedAgent,
+            modelProviderID: unresolvedProvider,
+            modelID: unresolvedModel
+        )
+        return unresolved.isEmpty ? nil : unresolved
+    }
+
+    private func resolveAIAgentName(_ raw: String, for tool: AIChatTool) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let agents = aiAgentsByTool[tool] ?? []
+        if let exact = agents.first(where: { $0.name == trimmed }) {
+            return exact.name
+        }
+        if let caseInsensitive = agents.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return caseInsensitive.name
+        }
+        return nil
+    }
+
+    private func resolveAIModelSelection(
+        modelID rawModelID: String,
+        providerHint rawProviderHint: String?,
+        for tool: AIChatTool
+    ) -> AIModelSelection? {
+        let modelID = rawModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelID.isEmpty else { return nil }
+        let providers = aiProvidersByTool[tool] ?? []
+        guard !providers.isEmpty else { return nil }
+
+        let providerHint = rawProviderHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let providerHint, !providerHint.isEmpty {
+            let matchedProvider = providers.first {
+                $0.id == providerHint || $0.id.caseInsensitiveCompare(providerHint) == .orderedSame
+            }
+            guard let provider = matchedProvider else { return nil }
+            if let model = provider.models.first(where: {
+                $0.id == modelID || $0.id.caseInsensitiveCompare(modelID) == .orderedSame
+            }) {
+                return AIModelSelection(providerID: provider.id, modelID: model.id)
+            }
+            return nil
+        }
+
+        var matches: [AIModelSelection] = []
+        for provider in providers {
+            for model in provider.models where model.id == modelID || model.id.caseInsensitiveCompare(modelID) == .orderedSame {
+                matches.append(AIModelSelection(providerID: provider.id, modelID: model.id))
+            }
+        }
+        if matches.count == 1 {
+            return matches[0]
+        }
+        return nil
     }
 
     private func refreshMergedAISessions() {
