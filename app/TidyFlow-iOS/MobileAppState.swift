@@ -1066,7 +1066,7 @@ final class MobileAppState: ObservableObject {
     private func reloadCurrentAISessionIfNeeded() {
         guard let sessionId = aiCurrentSessionId,
               !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
-        // 兜底：避免“工具与 session_id 不匹配”时把请求发到错误后端（如 opencode + codex 线程 ID）。
+        // 兜底：避免"工具与 session_id 不匹配"时把请求发到错误后端（如 opencode + codex 线程 ID）。
         let currentToolSessions = aiSessionsByTool[aiChatTool] ?? []
         let existsInCurrentTool = currentToolSessions.contains { $0.id == sessionId }
         guard existsInCurrentTool else {
@@ -1084,6 +1084,34 @@ final class MobileAppState: ObservableObject {
             sessionId: sessionId,
             limit: 200
         )
+    }
+
+    private func reloadAISessionDataAfterReconnect() {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+
+        // 重连后补拉各工具会话列表
+        for tool in AIChatTool.allCases {
+            wsClient.requestAISessionList(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                aiTool: tool
+            )
+        }
+
+        // 若有选中会话，重新拉取详情以恢复流式状态
+        for tool in AIChatTool.allCases {
+            let sessions = aiSessionsByTool[tool] ?? []
+            guard let sessionId = (tool == aiChatTool ? aiCurrentSessionId : nil),
+                  !sessionId.isEmpty,
+                  sessions.contains(where: { $0.id == sessionId }) else { continue }
+            wsClient.requestAISessionMessages(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                aiTool: tool,
+                sessionId: sessionId,
+                limit: 200
+            )
+        }
     }
 
     private func aiContextKey(project: String, workspace: String) -> String {
@@ -1421,6 +1449,8 @@ final class MobileAppState: ObservableObject {
                 self.refreshProjectTree()
                 // 重连成功后重新附着终端输出订阅（后台期间订阅可能已丢失）
                 self.reattachTerminalIfNeeded()
+                // 重连后恢复 AI 会话数据（流式输出可能中断，需重新拉取）
+                self.reloadAISessionDataAfterReconnect()
                 // 恢复键盘焦点
                 self.terminalSink?.focusTerminal()
             } else {
