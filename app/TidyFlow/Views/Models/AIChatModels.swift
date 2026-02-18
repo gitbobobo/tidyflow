@@ -1169,15 +1169,7 @@ final class AIChatStore: ObservableObject {
     }
 
     private func recomputeIsStreaming() {
-        if let idx = streamingAssistantIndex,
-           idx >= 0, idx < messages.count,
-           messages[idx].role == .assistant,
-           messages[idx].isStreaming {
-            isStreaming = true
-            return
-        }
-        streamingAssistantIndex = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming })
-        if streamingAssistantIndex != nil {
+        if normalizeStreamingAssistantIfNeeded() != nil {
             isStreaming = true
             return
         }
@@ -1191,6 +1183,23 @@ final class AIChatStore: ObservableObject {
         }
 
         isStreaming = false
+    }
+
+    /// 流式消息理论上只会有一条；若出现多条并存，统一收敛到最新 assistant，避免历史气泡残留“加载中”。
+    @discardableResult
+    private func normalizeStreamingAssistantIfNeeded() -> Int? {
+        let latestStreamingIdx = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming })
+        guard let latestStreamingIdx else {
+            streamingAssistantIndex = nil
+            return nil
+        }
+
+        for idx in messages.indices where idx != latestStreamingIdx {
+            guard messages[idx].role == .assistant, messages[idx].isStreaming else { continue }
+            messages[idx].isStreaming = false
+        }
+        streamingAssistantIndex = latestStreamingIdx
+        return latestStreamingIdx
     }
 
     private func hasActiveAssistantTool() -> Bool {

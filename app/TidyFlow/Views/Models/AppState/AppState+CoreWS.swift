@@ -623,6 +623,11 @@ extension AppState {
                 status: ev.status.status,
                 errorMessage: ev.status.errorMessage
             )
+            self.reconcileAIStreamStateFromSessionStatus(
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status
+            )
         }
 
         wsClient.onAISessionStatusUpdate = { [weak self] ev in

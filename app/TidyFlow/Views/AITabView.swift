@@ -262,11 +262,34 @@ struct AITabView: View {
     }
 
     private var inputArea: some View {
-        ChatInputView(
+        let sessionStatus: AISessionStatusSnapshot? = {
+            guard let sessionId = aiChatStore.currentSessionId,
+                  let ws = appState.selectedWorkspaceKey else { return nil }
+            let session = AISessionInfo(
+                projectName: appState.selectedProjectName,
+                workspaceName: ws,
+                aiTool: appState.aiChatTool,
+                id: sessionId,
+                title: "",
+                updatedAt: 0
+            )
+            return appState.aiSessionStatus(for: session)
+        }()
+        let coreSaysNotBusy = sessionStatus?.isBusy == false
+        let localStreaming =
+            aiChatStore.isStreaming ||
+            aiChatStore.awaitingUserEcho
+        let effectiveStreaming =
+            aiChatStore.abortPendingSessionId != nil ||
+            (coreSaysNotBusy ? false : localStreaming)
+
+        return ChatInputView(
             text: $inputText,
             imageAttachments: $imageAttachments,
-            isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil || aiChatStore.awaitingUserEcho,
-            canStopStreaming: aiChatStore.currentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
+            isStreaming: effectiveStreaming,
+            canStopStreaming: aiChatStore.currentSessionId != nil &&
+                aiChatStore.abortPendingSessionId == nil &&
+                !coreSaysNotBusy,
             onSend: {
                 sendMessage()
             },
