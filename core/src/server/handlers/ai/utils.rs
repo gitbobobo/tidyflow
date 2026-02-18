@@ -14,6 +14,7 @@ use crate::server::protocol::ServerMessage;
 
 pub(crate) const IDLE_DISPOSE_TTL_MS: i64 = 15 * 60 * 1000;
 pub(crate) const MAINTENANCE_INTERVAL_SECS: u64 = 60;
+pub(crate) const PRELOAD_AI_TOOLS: [&str; 3] = ["opencode", "codex", "copilot"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
@@ -372,6 +373,17 @@ pub(crate) async fn ensure_agent(
     // start() 幂等：内部会 health check，失败才 spawn；event hub 也会 ensure_started。
     agent.start().await?;
     Ok(agent)
+}
+
+pub(crate) async fn preload_agents_on_startup(ai_state: &SharedAIState) {
+    ensure_maintenance(ai_state).await;
+
+    for tool in PRELOAD_AI_TOOLS {
+        match ensure_agent(ai_state, tool).await {
+            Ok(_) => info!("AI startup preload succeeded: tool={}", tool),
+            Err(e) => warn!("AI startup preload failed: tool={}, error={}", tool, e),
+        }
+    }
 }
 
 pub(crate) async fn ensure_maintenance(ai_state: &SharedAIState) {

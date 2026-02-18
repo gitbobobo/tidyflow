@@ -19,6 +19,10 @@ pub use ai_state::AIState;
 
 pub type SharedAIState = Arc<Mutex<AIState>>;
 
+pub async fn preload_agents_on_startup(ai_state: &SharedAIState) {
+    utils::preload_agents_on_startup(ai_state).await;
+}
+
 pub async fn handle_ai_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,

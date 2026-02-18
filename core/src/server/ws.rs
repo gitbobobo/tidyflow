@@ -16,8 +16,7 @@ use uuid::Uuid;
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
 
-use crate::server::handlers::ai::AIState;
-use crate::server::handlers::ai::SharedAIState;
+use crate::server::handlers::ai::{preload_agents_on_startup, AIState, SharedAIState};
 
 use crate::server::context::{
     ConnectionMeta, SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory,
@@ -110,6 +109,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     // 全局共享的 AI 状态
     let ai_state: SharedAIState = Arc::new(Mutex::new(AIState::new()));
+    preload_agents_on_startup(&ai_state).await;
 
     let ctx = AppContext {
         app_state: shared_state.clone(),
