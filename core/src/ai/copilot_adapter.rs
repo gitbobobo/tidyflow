@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::debug;
 use uuid::Uuid;
 
 pub struct CopilotAcpAgent {
@@ -182,9 +183,7 @@ impl CopilotAcpAgent {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if text.is_empty() {
-            return None;
-        }
+        // text 为空时仍返回 Some，由调用方按需过滤
         Some((session_update, content_type, text))
     }
 
@@ -206,25 +205,21 @@ impl CopilotAcpAgent {
         }
 
         let message_id = format!("copilot-history-{}", Uuid::new_v4());
-        messages.push(AiMessage {
-            id: message_id.clone(),
-            role: role.to_string(),
-            created_at: None,
-            parts: vec![AiPart {
+        let part = if part_type == "text" {
+            AiPart::new_text(format!("{}-{}", message_id, part_type), text.to_string())
+        } else {
+            AiPart {
                 id: format!("{}-{}", message_id, part_type),
                 part_type: part_type.to_string(),
                 text: Some(text.to_string()),
-                mime: None,
-                filename: None,
-                url: None,
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: None,
-                tool_call_id: None,
-                tool_state: None,
-                tool_part_metadata: None,
-            }],
+                ..Default::default()
+            }
+        };
+        messages.push(AiMessage {
+            id: message_id,
+            role: role.to_string(),
+            created_at: None,
+            parts: vec![part],
         });
     }
 
@@ -272,7 +267,9 @@ impl CopilotAcpAgent {
                         "user_message_chunk" => Self::push_chunk_message(&mut messages, "user", "text", &text),
                         "agent_thought_chunk" => Self::push_chunk_message(&mut messages, "assistant", "reasoning", &text),
                         "agent_message_chunk" => Self::push_chunk_message(&mut messages, "assistant", "text", &text),
-                        _ => {}
+                        other => {
+                            debug!("Copilot: unknown sessionUpdate type in history: {}", other);
+                        }
                     }
                 }
             }
@@ -337,21 +334,10 @@ impl AiAgent for CopilotAcpAgent {
         }));
         let _ = tx.send(Ok(AiEvent::PartUpdated {
             message_id: user_message_id.clone(),
-            part: AiPart {
-                id: format!("{}-text", user_message_id),
-                part_type: "text".to_string(),
-                text: Some(original_text),
-                mime: None,
-                filename: None,
-                url: None,
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: None,
-                tool_call_id: None,
-                tool_state: None,
-                tool_part_metadata: None,
-            },
+            part: AiPart::new_text(
+                format!("{}-text", user_message_id),
+                original_text,
+            ),
         }));
 
         tokio::spawn(async move {
@@ -411,9 +397,12 @@ impl AiAgent for CopilotAcpAgent {
                             "agent_thought_chunk" => ("reasoning", true),
                             "agent_message_chunk" => ("text", true),
                             "user_message_chunk" => ("text", false),
-                            _ => ("text", false),
+                            other => {
+                                debug!("Copilot: unknown sessionUpdate type in stream: {}", other);
+                                ("text", false)
+                            }
                         };
-                        if !should_emit {
+                        if !should_emit || text.is_empty() {
                             continue;
                         }
 

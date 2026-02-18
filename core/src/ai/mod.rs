@@ -57,7 +57,7 @@ pub enum AiEvent {
 }
 
 /// AI Part（通用模型，直接对应 OpenCode 的 part）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AiPart {
     pub id: String,
     /// "text" | "reasoning" | "tool" | "file"
@@ -84,6 +84,28 @@ pub struct AiPart {
     pub tool_state: Option<serde_json::Value>,
     /// tool part 上的 metadata（JSON 透传）
     pub tool_part_metadata: Option<serde_json::Value>,
+}
+
+impl AiPart {
+    /// 创建 text 类型的 part
+    pub fn new_text(id: String, text: String) -> Self {
+        Self {
+            id,
+            part_type: "text".to_string(),
+            text: Some(text),
+            ..Default::default()
+        }
+    }
+
+    /// 创建 tool 类型的 part（带统一 tool_state 信封）
+    pub fn new_tool(id: String, tool_name: String) -> Self {
+        Self {
+            id,
+            part_type: "tool".to_string(),
+            tool_name: Some(tool_name),
+            ..Default::default()
+        }
+    }
 }
 
 /// Question 选项

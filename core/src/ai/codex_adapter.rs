@@ -69,28 +69,83 @@ impl CodexAppServerAgent {
         normalized.contains("thread not found")
     }
 
-    fn map_item_to_part(item: &Value) -> Option<AiPart> {
+    /// 将 Codex item type 映射为与前端 ToolCardView 对齐的统一工具名
+    fn normalize_codex_tool_name(raw_type: &str) -> String {
+        match raw_type {
+            "commandexecution" => "bash".to_string(),
+            "filechange" => "write".to_string(),
+            "fileread" => "read".to_string(),
+            "codeexecution" => "code_execution".to_string(),
+            "websearch" => "websearch".to_string(),
+            "question" => "question".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// 从 Codex item 中提取结构化工具输入
+    fn extract_tool_input(tool_type: &str, item: &Value) -> Value {
+        match tool_type {
+            "commandexecution" => {
+                let command = item.get("command").cloned().unwrap_or(Value::Null);
+                serde_json::json!({ "command": command })
+            }
+            "filechange" => {
+                let path = item.get("path").cloned().unwrap_or(Value::Null);
+                serde_json::json!({ "path": path })
+            }
+            "fileread" => {
+                let path = item.get("path").cloned().unwrap_or(Value::Null);
+                serde_json::json!({ "path": path })
+            }
+            "codeexecution" => {
+                let code = item.get("code").cloned().unwrap_or(Value::Null);
+                serde_json::json!({ "code": code })
+            }
+            "websearch" => {
+                let query = item.get("query").cloned().unwrap_or(Value::Null);
+                serde_json::json!({ "query": query })
+            }
+            _ => Value::Null,
+        }
+    }
+
+    /// 从 Codex item 中提取工具输出（返回字符串，与前端 AIToolInvocationState.output: String? 对齐）
+    fn extract_tool_output(tool_type: &str, item: &Value) -> Option<String> {
+        match tool_type {
+            "commandexecution" => {
+                item.get("output").and_then(|v| v.as_str()).map(|s| s.to_string())
+            }
+            "filechange" => {
+                item.get("diff")
+                    .or_else(|| item.get("changes"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            }
+            "fileread" => {
+                item.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
+            }
+            "codeexecution" => {
+                item.get("output").and_then(|v| v.as_str()).map(|s| s.to_string())
+            }
+            "websearch" => {
+                // results 可能是数组/对象，序列化为 JSON 字符串
+                item.get("results").map(|v| v.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn map_item_to_part(item: &Value, status: &str) -> Option<AiPart> {
         let part_id = item.get("id")?.as_str()?.to_string();
         let kind = item.get("type")?.as_str()?.to_lowercase();
         match kind.as_str() {
-            "agentmessage" => Some(AiPart {
-                id: part_id,
-                part_type: "text".to_string(),
-                text: item
-                    .get("text")
+            "agentmessage" => Some(AiPart::new_text(
+                part_id,
+                item.get("text")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                mime: None,
-                filename: None,
-                url: None,
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: None,
-                tool_call_id: None,
-                tool_state: None,
-                tool_part_metadata: None,
-            }),
+                    .unwrap_or("")
+                    .to_string(),
+            )),
             "reasoning" | "plan" => {
                 let text = if kind == "plan" {
                     item.get("text")
@@ -126,52 +181,38 @@ impl CodexAppServerAgent {
                     id: part_id,
                     part_type: "reasoning".to_string(),
                     text: Some(text),
-                    mime: None,
-                    filename: None,
-                    url: None,
-                    synthetic: None,
-                    ignored: None,
-                    source: None,
-                    tool_name: None,
-                    tool_call_id: None,
-                    tool_state: None,
-                    tool_part_metadata: None,
+                    ..Default::default()
                 })
             }
             "imageview" => Some(AiPart {
                 id: part_id,
                 part_type: "file".to_string(),
-                text: None,
-                mime: None,
-                filename: None,
                 url: item
                     .get("path")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: None,
-                tool_call_id: None,
-                tool_state: None,
-                tool_part_metadata: None,
+                ..Default::default()
             }),
             "usermessage" => None,
-            other => Some(AiPart {
-                id: part_id,
-                part_type: "tool".to_string(),
-                text: None,
-                mime: None,
-                filename: None,
-                url: None,
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: Some(other.to_string()),
-                tool_call_id: None,
-                tool_state: Some(item.clone()),
-                tool_part_metadata: None,
-            }),
+            other => {
+                let tool_name = Self::normalize_codex_tool_name(other);
+                let tool_call_id = item.get("id").and_then(|v| v.as_str()).map(String::from);
+                let output = Self::extract_tool_output(other, item);
+                let tool_state = serde_json::json!({
+                    "status": status,
+                    "input": Self::extract_tool_input(other, item),
+                    "output": output,
+                    "metadata": item.clone(),
+                });
+                Some(AiPart {
+                    id: part_id,
+                    part_type: "tool".to_string(),
+                    tool_name: Some(tool_name),
+                    tool_call_id,
+                    tool_state: Some(tool_state),
+                    ..Default::default()
+                })
+            }
         }
     }
 
@@ -236,24 +277,13 @@ impl CodexAppServerAgent {
                 id: item_id.clone(),
                 role: "user".to_string(),
                 created_at: None,
-                parts: vec![AiPart {
-                    id: format!("{}-text", item_id),
-                    part_type: "text".to_string(),
-                    text: Some(Self::parse_user_text(item)),
-                    mime: None,
-                    filename: None,
-                    url: None,
-                    synthetic: None,
-                    ignored: None,
-                    source: None,
-                    tool_name: None,
-                    tool_call_id: None,
-                    tool_state: None,
-                    tool_part_metadata: None,
-                }],
+                parts: vec![AiPart::new_text(
+                    format!("{}-text", item_id),
+                    Self::parse_user_text(item),
+                )],
             });
         }
-        Self::map_item_to_part(item).map(|mut part| {
+        Self::map_item_to_part(item, "completed").map(|mut part| {
             if part.part_type == "tool"
                 && part
                     .tool_name
@@ -460,21 +490,10 @@ impl CodexAppServerAgent {
         }));
         let _ = tx.send(Ok(AiEvent::PartUpdated {
             message_id: user_message_id.clone(),
-            part: AiPart {
-                id: format!("{}-text", user_message_id),
-                part_type: "text".to_string(),
-                text: Some(original_text),
-                mime: None,
-                filename: None,
-                url: None,
-                synthetic: None,
-                ignored: None,
-                source: None,
-                tool_name: None,
-                tool_call_id: None,
-                tool_state: None,
-                tool_part_metadata: None,
-            },
+            part: AiPart::new_text(
+                format!("{}-text", user_message_id),
+                original_text,
+            ),
         }));
 
         tokio::spawn(async move {
@@ -557,7 +576,12 @@ impl CodexAppServerAgent {
                                                 role: "assistant".to_string(),
                                             }));
                                         }
-                                        if let Some(part) = CodexAppServerAgent::map_item_to_part(item) {
+                                        let status = if event.method == "item/started" {
+                                            "running"
+                                        } else {
+                                            "completed"
+                                        };
+                                        if let Some(part) = CodexAppServerAgent::map_item_to_part(item, status) {
                                             let _ = tx.send(Ok(AiEvent::PartUpdated {
                                                 message_id: message_id.to_string(),
                                                 part,

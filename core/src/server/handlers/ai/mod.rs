@@ -231,6 +231,54 @@ fn status_to_info(status: &AiSessionStatus) -> crate::server::protocol::ai::AiSe
     }
 }
 
+/// 将 AiPart 转换为协议层 PartInfo，并对 tool 类型做兜底规范化：
+/// - 确保 tool_state 至少有 status 字段
+/// - 确保 tool_name 不为 None
+fn normalize_part_for_wire(part: crate::ai::AiPart) -> crate::server::protocol::ai::PartInfo {
+    let mut tool_name = part.tool_name;
+    let mut tool_state = part.tool_state;
+
+    if part.part_type == "tool" {
+        // 确保 tool_name 不为 None
+        if tool_name.as_deref().map_or(true, |n| n.is_empty()) {
+            tool_name = Some("unknown".to_string());
+        }
+        // 确保 tool_state 至少有 status 字段
+        match &mut tool_state {
+            Some(state) if state.is_object() => {
+                let obj = state.as_object_mut().unwrap();
+                if !obj.contains_key("status") {
+                    obj.insert("status".to_string(), serde_json::json!("completed"));
+                }
+            }
+            Some(_) | None => {
+                // tool_state 不是对象或为 None，包装为统一信封
+                let original = tool_state.take();
+                tool_state = Some(serde_json::json!({
+                    "status": "completed",
+                    "metadata": original,
+                }));
+            }
+        }
+    }
+
+    crate::server::protocol::ai::PartInfo {
+        id: part.id,
+        part_type: part.part_type,
+        text: part.text,
+        mime: part.mime,
+        filename: part.filename,
+        url: part.url,
+        synthetic: part.synthetic,
+        ignored: part.ignored,
+        source: part.source,
+        tool_name,
+        tool_call_id: part.tool_call_id,
+        tool_state,
+        tool_part_metadata: part.tool_part_metadata,
+    }
+}
+
 async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx: &TaskBroadcastTx) {
     let (store, should_init) = {
         let mut guard = ai_state.lock().await;
@@ -598,21 +646,7 @@ async fn try_handle_ai_chat_send(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
-                                            part: crate::server::protocol::ai::PartInfo {
-                                                id: part.id,
-                                                part_type: part.part_type,
-                                                text: part.text,
-                                                mime: part.mime,
-                                                filename: part.filename,
-                                                url: part.url,
-                                                synthetic: part.synthetic,
-                                                ignored: part.ignored,
-                                                source: part.source,
-                                                tool_name: part.tool_name,
-                                                tool_call_id: part.tool_call_id,
-                                                tool_state: part.tool_state,
-                                                tool_part_metadata: part.tool_part_metadata,
-                                            },
+                                            part: normalize_part_for_wire(part),
                                         },
                                     )
                                     .await
@@ -987,21 +1021,7 @@ async fn try_handle_ai_chat_command(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             message_id,
-                                            part: crate::server::protocol::ai::PartInfo {
-                                                id: part.id,
-                                                part_type: part.part_type,
-                                                text: part.text,
-                                                mime: part.mime,
-                                                filename: part.filename,
-                                                url: part.url,
-                                                synthetic: part.synthetic,
-                                                ignored: part.ignored,
-                                                source: part.source,
-                                                tool_name: part.tool_name,
-                                                tool_call_id: part.tool_call_id,
-                                                tool_state: part.tool_state,
-                                                tool_part_metadata: part.tool_part_metadata,
-                                            },
+                                            part: normalize_part_for_wire(part),
                                         },
                                     )
                                     .await
@@ -1475,21 +1495,7 @@ async fn try_handle_ai_session_messages(
             parts: m
                 .parts
                 .into_iter()
-                .map(|p| crate::server::protocol::ai::PartInfo {
-                    id: p.id,
-                    part_type: p.part_type,
-                    text: p.text,
-                    mime: p.mime,
-                    filename: p.filename,
-                    url: p.url,
-                    synthetic: p.synthetic,
-                    ignored: p.ignored,
-                    source: p.source,
-                    tool_name: p.tool_name,
-                    tool_call_id: p.tool_call_id,
-                    tool_state: p.tool_state,
-                    tool_part_metadata: p.tool_part_metadata,
-                })
+                .map(normalize_part_for_wire)
                 .collect(),
         })
         .collect();
