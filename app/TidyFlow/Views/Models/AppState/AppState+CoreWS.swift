@@ -605,6 +605,36 @@ extension AppState {
             )
         }
 
+        wsClient.onAISessionStatusResult = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+
+            self.upsertAISessionStatus(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status,
+                errorMessage: ev.status.errorMessage
+            )
+        }
+
+        wsClient.onAISessionStatusUpdate = { [weak self] ev in
+            guard let self else { return }
+            guard self.selectedProjectName == ev.projectName,
+                  self.selectedWorkspaceKey == ev.workspaceName else { return }
+
+            self.upsertAISessionStatus(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status,
+                errorMessage: ev.status.errorMessage
+            )
+        }
+
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
             guard self.selectedProjectName == ev.projectName,

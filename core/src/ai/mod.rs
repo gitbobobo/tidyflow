@@ -11,6 +11,7 @@ pub mod copilot_adapter;
 pub mod copilot_client;
 pub mod event_hub;
 pub mod manager;
+pub mod session_status;
 
 pub use client::OpenCodeAgent;
 pub use client::OpenCodeClient;
@@ -269,6 +270,17 @@ pub trait AiAgent: Send + Sync {
 
     /// 释放某个 directory 的 instance 资源（节省占用）
     async fn dispose_instance(&self, directory: &str) -> Result<(), String>;
+
+    /// 获取会话状态（idle/busy/error）
+    ///
+    /// 默认实现返回 idle；具体后端可覆盖以提供更准确状态（如 OpenCode /session/status）。
+    async fn get_session_status(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+    ) -> Result<crate::ai::session_status::AiSessionStatus, String> {
+        Ok(crate::ai::session_status::AiSessionStatus::Idle)
+    }
 
     /// 获取 provider/模型列表（默认返回空）
     async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {

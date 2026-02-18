@@ -348,6 +348,16 @@ extension WSClient {
                 onAISessionMessages?(ev)
             }
 
+        case "ai_session_status_result":
+            if let ev = AISessionStatusResultV2.from(json: json) {
+                onAISessionStatusResult?(ev)
+            }
+
+        case "ai_session_status_update":
+            if let ev = AISessionStatusUpdateV2.from(json: json) {
+                onAISessionStatusUpdate?(ev)
+            }
+
         case "ai_chat_message_updated":
             if let ev = AIChatMessageUpdatedV2.from(json: json) {
                 onAIChatMessageUpdated?(ev)

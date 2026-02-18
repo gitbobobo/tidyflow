@@ -156,6 +156,9 @@ struct AITabView: View {
                 set: { appState.aiStore(for: appState.aiChatTool).setCurrentSessionId($0) }
             ),
             currentTool: appState.aiChatTool,
+            sessionStatusFor: { session in
+                appState.aiSessionStatus(for: session)
+            },
             onSelect: { session in
                 loadSession(session)
             },
@@ -391,6 +394,7 @@ struct AITabView: View {
         for tool in AIChatTool.allCases {
             appState.setAISessions([], for: tool)
         }
+        appState.clearAISessionStatuses()
         if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             aiChatStore.applySnapshot(snapshot)
             appState.aiSessions = snapshot.sessions
@@ -425,6 +429,7 @@ struct AITabView: View {
         for tool in AIChatTool.allCases {
             appState.setAISessions([], for: tool)
         }
+        appState.clearAISessionStatuses()
         if let newKey, let snapshot = aiChatStore.snapshot(forKey: newKey) {
             // 恢复缓存的快照
             aiChatStore.applySnapshot(snapshot)
@@ -450,6 +455,7 @@ struct AITabView: View {
             for tool in AIChatTool.allCases {
                 appState.setAISessions([], for: tool)
             }
+            appState.clearAISessionStatuses()
             return
         }
 
@@ -491,6 +497,12 @@ struct AITabView: View {
 
         if session.aiTool != appState.aiChatTool {
             // 先请求目标会话详情，再切换工具；避免首击空白。
+            appState.wsClient.requestAISessionStatus(
+                projectName: session.projectName,
+                workspaceName: session.workspaceName,
+                aiTool: session.aiTool,
+                sessionId: session.id
+            )
             appState.wsClient.requestAISessionMessages(
                 projectName: session.projectName,
                 workspaceName: session.workspaceName,
@@ -506,6 +518,12 @@ struct AITabView: View {
             return
         }
 
+        appState.wsClient.requestAISessionStatus(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            aiTool: session.aiTool,
+            sessionId: session.id
+        )
         appState.wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,

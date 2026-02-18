@@ -211,6 +211,16 @@ struct AISessionInfo: Identifiable {
     }
 }
 
+/// 会话状态（由 Rust Core 统一维护并推送）
+struct AISessionStatusSnapshot: Equatable {
+    /// "idle" | "busy" | "error"
+    let status: String
+    let errorMessage: String?
+
+    var isBusy: Bool { status.lowercased() == "busy" }
+    var isError: Bool { status.lowercased() == "error" }
+}
+
 // MARK: - 工作空间快照（切换时保留对话上下文）
 
 struct AIChatSnapshot {

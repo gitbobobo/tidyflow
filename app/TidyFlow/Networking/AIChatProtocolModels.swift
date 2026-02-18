@@ -60,6 +60,66 @@ struct AISessionMessagesV2 {
     }
 }
 
+struct AISessionStatusInfoV2 {
+    /// "idle" | "busy" | "error"
+    let status: String
+    let errorMessage: String?
+
+    static func from(json: [String: Any]) -> AISessionStatusInfoV2? {
+        guard let status = json["status"] as? String else { return nil }
+        let errorMessage = json["error_message"] as? String
+        return AISessionStatusInfoV2(status: status, errorMessage: errorMessage)
+    }
+}
+
+struct AISessionStatusResultV2 {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String
+    let status: AISessionStatusInfoV2
+
+    static func from(json: [String: Any]) -> AISessionStatusResultV2? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
+              let sessionId = json["session_id"] as? String,
+              let statusDict = json["status"] as? [String: Any],
+              let status = AISessionStatusInfoV2.from(json: statusDict) else { return nil }
+        return AISessionStatusResultV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            status: status
+        )
+    }
+}
+
+struct AISessionStatusUpdateV2 {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String
+    let status: AISessionStatusInfoV2
+
+    static func from(json: [String: Any]) -> AISessionStatusUpdateV2? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
+              let sessionId = json["session_id"] as? String,
+              let statusDict = json["status"] as? [String: Any],
+              let status = AISessionStatusInfoV2.from(json: statusDict) else { return nil }
+        return AISessionStatusUpdateV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            status: status
+        )
+    }
+}
+
 struct AIProtocolSessionInfo {
     let projectName: String
     let workspaceName: String

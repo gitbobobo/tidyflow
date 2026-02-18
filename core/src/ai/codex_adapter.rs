@@ -1,5 +1,6 @@
 use super::codex_client::{CodexAppServerClient, CodexModelInfo};
 use super::codex_manager::CodexAppServerManager;
+use super::session_status::AiSessionStatus;
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption, AiQuestionRequest,
@@ -858,6 +859,19 @@ impl AiAgent for CodexAppServerAgent {
 
     async fn dispose_instance(&self, _directory: &str) -> Result<(), String> {
         Ok(())
+    }
+
+    async fn get_session_status(
+        &self,
+        _directory: &str,
+        session_id: &str,
+    ) -> Result<AiSessionStatus, String> {
+        let is_busy = self.active_turns.lock().await.contains_key(session_id);
+        Ok(if is_busy {
+            AiSessionStatus::Busy
+        } else {
+            AiSessionStatus::Idle
+        })
     }
 
     async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {

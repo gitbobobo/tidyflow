@@ -233,6 +233,12 @@ pub struct SessionListResponse {
     pub sessions: Vec<SessionResponse>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionStatusItem {
+    #[serde(rename = "type")]
+    pub status_type: String,
+}
+
 pub struct OpenCodeClient {
     base_url: String,
     client: Client,
@@ -516,6 +522,30 @@ impl OpenCodeClient {
                 "Failed to parse session list: {}",
                 &body[..body.len().min(200)]
             )))
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(OpenCodeError::ServerError { status, message })
+        }
+    }
+
+    /// 获取会话状态（GET /session/status）
+    ///
+    /// OpenCode 返回 Record<sessionID, {type: "idle"|"busy"|"retry"|...}>
+    pub async fn get_session_statuses(
+        &self,
+        directory: &str,
+    ) -> Result<std::collections::HashMap<String, SessionStatusItem>, OpenCodeError> {
+        let url = format!("{}/session/status", self.base_url);
+        let response = self
+            .with_directory(self.client.get(&url), directory)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let map: std::collections::HashMap<String, SessionStatusItem> =
+                response.json().await?;
+            Ok(map)
         } else {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
@@ -1113,6 +1143,7 @@ impl tokio_stream::Stream for SseJsonStream {
 // ============================================================================
 
 use super::event_hub::OpenCodeEventHub;
+use super::session_status::AiSessionStatus;
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSlashCommand, OpenCodeManager,
@@ -2041,6 +2072,36 @@ impl AiAgent for OpenCodeAgent {
             .await
             .map_err(|e| format!("Failed to dispose instance: {}", e))?;
         Ok(())
+    }
+
+    async fn get_session_status(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<AiSessionStatus, String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let map = client
+            .get_session_statuses(directory)
+            .await
+            .map_err(|e| format!("Failed to get session status: {}", e))?;
+
+        let raw = map
+            .get(session_id)
+            .map(|item| item.status_type.trim().to_lowercase())
+            .unwrap_or_else(|| "idle".to_string());
+
+        let status = match raw.as_str() {
+            "idle" => AiSessionStatus::Idle,
+            // OpenCode 可能返回 busy/retry 等，统一映射为 busy
+            "busy" | "retry" | "running" => AiSessionStatus::Busy,
+            other => {
+                // 未知状态不视为 error，避免误伤；倾向认为仍在进行中。
+                tracing::debug!("Unknown OpenCode session status type: {}", other);
+                AiSessionStatus::Busy
+            }
+        };
+
+        Ok(status)
     }
 
     async fn list_providers(&self, directory: &str) -> Result<Vec<AiProviderInfo>, String> {

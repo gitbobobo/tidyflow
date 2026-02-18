@@ -537,6 +537,13 @@ pub enum ClientMessage {
         ai_tool: String,
         session_id: String,
     },
+    #[serde(rename = "ai_session_status")]
+    AISessionStatus {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+    },
 
     // vNext: AI Provider/Agent 列表
     #[serde(rename = "ai_provider_list")]
@@ -1152,6 +1159,22 @@ pub enum ServerMessage {
         ai_tool: String,
         session_id: String,
         messages: Vec<ai::MessageInfo>,
+    },
+    #[serde(rename = "ai_session_status_result")]
+    AISessionStatusResult {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        status: ai::AiSessionStatusInfo,
+    },
+    #[serde(rename = "ai_session_status_update")]
+    AISessionStatusUpdate {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        status: ai::AiSessionStatusInfo,
     },
     #[serde(rename = "ai_provider_list")]
     AIProviderListResult {

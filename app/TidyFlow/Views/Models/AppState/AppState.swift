@@ -141,6 +141,8 @@ class AppState: ObservableObject {
         didSet { aiSlashCommandsByTool[aiChatTool] = aiSlashCommands }
     }
     @Published var aiToolBadges: [AIChatTool: AIToolBadgeState] = [:]
+    /// AI 会话状态缓存（按工具分桶；key: "projectName::workspaceName::sessionId"）
+    @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
@@ -320,6 +322,7 @@ class AppState: ObservableObject {
             aiSelectedAgentByTool[tool] = nil
             aiSlashCommandsByTool[tool] = []
             aiToolBadges[tool] = AIToolBadgeState()
+            aiSessionStatusesByTool[tool] = [:]
         }
         refreshMergedAISessions()
     }
@@ -369,6 +372,42 @@ class AppState: ObservableObject {
         var sessions = aiSessionsByTool[tool] ?? []
         sessions.removeAll { $0.id == sessionId }
         setAISessions(sessions, for: tool)
+
+        // 同步清理状态缓存（仅按 sessionId 删除可能误删其他工作空间，因此这里做“全表扫描”）。
+        let prefix = "::\(sessionId)"
+        var dict = aiSessionStatusesByTool[tool] ?? [:]
+        dict = dict.filter { !$0.key.hasSuffix(prefix) }
+        aiSessionStatusesByTool[tool] = dict
+    }
+
+    // MARK: - AI 会话状态
+
+    private func aiSessionStatusKey(projectName: String, workspaceName: String, sessionId: String) -> String {
+        "\(projectName)::\(workspaceName)::\(sessionId)"
+    }
+
+    func aiSessionStatus(for session: AISessionInfo) -> AISessionStatusSnapshot? {
+        aiSessionStatusesByTool[session.aiTool]?[aiSessionStatusKey(projectName: session.projectName, workspaceName: session.workspaceName, sessionId: session.id)]
+    }
+
+    func upsertAISessionStatus(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        status: String,
+        errorMessage: String?
+    ) {
+        let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
+        var dict = aiSessionStatusesByTool[aiTool] ?? [:]
+        dict[key] = AISessionStatusSnapshot(status: status, errorMessage: errorMessage)
+        aiSessionStatusesByTool[aiTool] = dict
+    }
+
+    func clearAISessionStatuses() {
+        for tool in AIChatTool.allCases {
+            aiSessionStatusesByTool[tool] = [:]
+        }
     }
 
     func setAIProviders(_ providers: [AIProviderInfo], for tool: AIChatTool) {

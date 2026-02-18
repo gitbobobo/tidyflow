@@ -1397,6 +1397,7 @@ async fn handle_client_message(
         &ctx.app_state,
         &ctx.ai_state,
         &ctx.cmd_output_tx,
+        &ctx.task_broadcast_tx,
     )
     .await?
     {

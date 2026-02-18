@@ -883,6 +883,22 @@ extension WSClient {
         send(msg)
     }
 
+    /// 查询 AI 会话状态（idle/busy/error）
+    func requestAISessionStatus(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) {
+        send([
+            "type": "ai_session_status",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
+            "session_id": sessionId
+        ])
+    }
+
     /// 删除 AI 会话
     func requestAISessionDelete(
         projectName: String,

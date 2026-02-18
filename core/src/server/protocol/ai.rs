@@ -6,6 +6,44 @@
 
 use serde::{Deserialize, Serialize};
 
+/// AI 会话状态信息（用于协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionStatusInfo {
+    /// "idle" | "busy" | "error"
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+/// 查询 AI 会话状态请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionStatusRequest {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub ai_tool: String,
+    pub session_id: String,
+}
+
+/// 查询 AI 会话状态响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionStatusResult {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub ai_tool: String,
+    pub session_id: String,
+    pub status: AiSessionStatusInfo,
+}
+
+/// AI 会话状态变更推送事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSessionStatusUpdate {
+    pub project_name: String,
+    pub workspace_name: String,
+    pub ai_tool: String,
+    pub session_id: String,
+    pub status: AiSessionStatusInfo,
+}
+
 /// AI 会话信息（归属到某个 project/workspace）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {

@@ -9,7 +9,8 @@ use crate::ai::{
     AiAgent, AiEvent, CodexAppServerAgent, CodexAppServerManager, CopilotAcpAgent, OpenCodeAgent,
     OpenCodeManager,
 };
-use crate::server::context::SharedAppState;
+use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
+use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -223,13 +224,68 @@ async fn ensure_maintenance(ai_state: &SharedAIState) {
     });
 }
 
+fn status_to_info(status: &AiSessionStatus) -> crate::server::protocol::ai::AiSessionStatusInfo {
+    crate::server::protocol::ai::AiSessionStatusInfo {
+        status: status.status_str().to_string(),
+        error_message: status.error_message(),
+    }
+}
+
+async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx: &TaskBroadcastTx) {
+    let (store, should_init) = {
+        let mut guard = ai_state.lock().await;
+        if guard.status_push_initialized {
+            (guard.session_statuses.clone(), false)
+        } else {
+            guard.status_push_initialized = true;
+            (guard.session_statuses.clone(), true)
+        }
+    };
+
+    if !should_init {
+        return;
+    }
+
+    let tx = tx.clone();
+    store.set_on_change(std::sync::Arc::new(move |change| {
+        let Some(meta) = change.meta.clone() else {
+            return;
+        };
+
+        // 避免在“首次初始化为 idle”时刷屏推送。
+        if change.old_status.is_none() && matches!(change.new_status, AiSessionStatus::Idle) {
+            return;
+        }
+
+        let msg = ServerMessage::AISessionStatusUpdate {
+            project_name: meta.project_name.clone(),
+            workspace_name: meta.workspace_name.clone(),
+            ai_tool: meta.ai_tool.clone(),
+            session_id: meta.session_id.clone(),
+            status: crate::server::protocol::ai::AiSessionStatusInfo {
+                status: change.new_status.status_str().to_string(),
+                error_message: change.new_status.error_message(),
+            },
+        };
+
+        let _ = tx.send(TaskBroadcastEvent {
+            // 状态更新希望所有连接都收到（包括触发变更的连接）。
+            origin_conn_id: "".to_string(),
+            message: msg,
+        });
+    }));
+}
+
 pub async fn handle_ai_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
 ) -> Result<bool, String> {
+    ensure_status_push_initialized(ai_state, task_broadcast_tx).await;
+
     if try_handle_ai_chat_start(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
@@ -255,6 +311,9 @@ pub async fn handle_ai_message(
         return Ok(true);
     }
     if try_handle_ai_session_delete(client_msg, app_state, ai_state).await? {
+        return Ok(true);
+    }
+    if try_handle_ai_session_status(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
     if try_handle_ai_provider_list(client_msg, socket, app_state, ai_state).await? {
@@ -366,6 +425,19 @@ async fn try_handle_ai_chat_send(
     let agent = ensure_agent(ai_state, &ai_tool).await?;
     ensure_maintenance(ai_state).await;
 
+    let status_store: Arc<AiSessionStateStore> = {
+        let guard = ai_state.lock().await;
+        guard.session_statuses.clone()
+    };
+    let status_meta = AiSessionStatusMeta {
+        project_name: project_name.clone(),
+        workspace_name: workspace_name.clone(),
+        ai_tool: ai_tool.clone(),
+        directory: directory.clone(),
+        session_id: session_id.clone(),
+    };
+    status_store.set_status_with_meta(status_meta.clone(), AiSessionStatus::Busy);
+
     info!(
         "AIChatSend: project={}, workspace={}, session_id={}, message_len={}",
         project_name,
@@ -435,6 +507,8 @@ async fn try_handle_ai_chat_send(
 
     let output_tx = output_tx.clone();
     let ai_state_cloned = ai_state.clone();
+    let status_store_cloned = status_store.clone();
+    let status_meta_cloned = status_meta.clone();
     tokio::spawn(async move {
         let mut stream = match agent
             .send_message(
@@ -453,6 +527,10 @@ async fn try_handle_ai_chat_send(
                 warn!(
                     "AIChatSend: send_message failed, project={}, workspace={}, session_id={}, error={}",
                     project_name, workspace_name, session_id, e
+                );
+                status_store_cloned.set_status_with_meta(
+                    status_meta_cloned.clone(),
+                    AiSessionStatus::Error { message: e.clone() },
                 );
                 let _ = emit_server_message(
                     &output_tx,
@@ -490,6 +568,7 @@ async fn try_handle_ai_chat_send(
                         },
                     )
                     .await;
+                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                     break;
                 }
                 event = stream.next() => {
@@ -605,6 +684,10 @@ async fn try_handle_ai_chat_send(
                                     .await
                                 }
                                 AiEvent::Error { message } => {
+                                    status_store_cloned.set_status_with_meta(
+                                        status_meta_cloned.clone(),
+                                        AiSessionStatus::Error { message: message.clone() },
+                                    );
                                     let _ = emit_server_message(
                                         &output_tx,
                                         ServerMessage::AIChatErrorV2 {
@@ -619,6 +702,7 @@ async fn try_handle_ai_chat_send(
                                     false
                                 }
                                 AiEvent::Done => {
+                                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                                     let _ = emit_server_message(
                                         &output_tx,
                                         ServerMessage::AIChatDone {
@@ -637,6 +721,10 @@ async fn try_handle_ai_chat_send(
                             }
                         }
                         Some(Err(e)) => {
+                            status_store_cloned.set_status_with_meta(
+                                status_meta_cloned.clone(),
+                                AiSessionStatus::Error { message: e.clone() },
+                            );
                             let _ = emit_server_message(
                                 &output_tx,
                                 ServerMessage::AIChatErrorV2 {
@@ -652,6 +740,7 @@ async fn try_handle_ai_chat_send(
                         }
                         None => {
                             // Hub 断开等情况下可能出现 None，确保收敛
+                            status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                             let _ = emit_server_message(
                                 &output_tx,
                                 ServerMessage::AIChatDone {
@@ -724,6 +813,19 @@ async fn try_handle_ai_chat_command(
     let agent = ensure_agent(ai_state, &ai_tool).await?;
     ensure_maintenance(ai_state).await;
 
+    let status_store: Arc<AiSessionStateStore> = {
+        let guard = ai_state.lock().await;
+        guard.session_statuses.clone()
+    };
+    let status_meta = AiSessionStatusMeta {
+        project_name: project_name.clone(),
+        workspace_name: workspace_name.clone(),
+        ai_tool: ai_tool.clone(),
+        directory: directory.clone(),
+        session_id: session_id.clone(),
+    };
+    status_store.set_status_with_meta(status_meta.clone(), AiSessionStatus::Busy);
+
     info!(
         "AIChatCommand: project={}, workspace={}, session_id={}, command={}, arguments_len={}",
         project_name,
@@ -793,6 +895,8 @@ async fn try_handle_ai_chat_command(
 
     let output_tx = output_tx.clone();
     let ai_state_cloned = ai_state.clone();
+    let status_store_cloned = status_store.clone();
+    let status_meta_cloned = status_meta.clone();
     tokio::spawn(async move {
         let mut stream = match agent
             .send_command(
@@ -812,6 +916,10 @@ async fn try_handle_ai_chat_command(
                 warn!(
                     "AIChatCommand: send_command failed, project={}, workspace={}, session_id={}, command={}, error={}",
                     project_name, workspace_name, session_id, command, e
+                );
+                status_store_cloned.set_status_with_meta(
+                    status_meta_cloned.clone(),
+                    AiSessionStatus::Error { message: e.clone() },
                 );
                 let _ = emit_server_message(
                     &output_tx,
@@ -849,6 +957,7 @@ async fn try_handle_ai_chat_command(
                         },
                     )
                     .await;
+                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                     break;
                 }
                 event = stream.next() => {
@@ -916,6 +1025,10 @@ async fn try_handle_ai_chat_command(
                                 }
                                 AiEvent::QuestionAsked { .. } | AiEvent::QuestionCleared { .. } => true,
                                 AiEvent::Error { message } => {
+                                    status_store_cloned.set_status_with_meta(
+                                        status_meta_cloned.clone(),
+                                        AiSessionStatus::Error { message: message.clone() },
+                                    );
                                     let _ = emit_server_message(
                                         &output_tx,
                                         ServerMessage::AIChatErrorV2 {
@@ -930,6 +1043,7 @@ async fn try_handle_ai_chat_command(
                                     false
                                 }
                                 AiEvent::Done => {
+                                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                                     let _ = emit_server_message(
                                         &output_tx,
                                         ServerMessage::AIChatDone {
@@ -948,6 +1062,10 @@ async fn try_handle_ai_chat_command(
                             }
                         }
                         Some(Err(e)) => {
+                            status_store_cloned.set_status_with_meta(
+                                status_meta_cloned.clone(),
+                                AiSessionStatus::Error { message: e.clone() },
+                            );
                             let _ = emit_server_message(
                                 &output_tx,
                                 ServerMessage::AIChatErrorV2 {
@@ -962,6 +1080,7 @@ async fn try_handle_ai_chat_command(
                             break;
                         }
                         None => {
+                            status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                             let _ = emit_server_message(
                                 &output_tx,
                                 ServerMessage::AIChatDone {
@@ -1018,6 +1137,24 @@ async fn try_handle_ai_chat_abort(
         let mut ai = ai_state.lock().await;
         let dir_key = tool_directory_key(&ai_tool, &directory);
         ai.directory_last_used_ms.insert(dir_key, now_ms());
+    }
+
+    // best-effort：abort 代表前端应进入 idle（即使后端 abort 失败，也不应一直显示 busy）。
+    {
+        let store = {
+            let guard = ai_state.lock().await;
+            guard.session_statuses.clone()
+        };
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: project_name.clone(),
+                workspace_name: workspace_name.clone(),
+                ai_tool: ai_tool.clone(),
+                directory: directory.clone(),
+                session_id: session_id.clone(),
+            },
+            AiSessionStatus::Idle,
+        );
     }
 
     let abort_tx = {
@@ -1448,8 +1585,87 @@ async fn try_handle_ai_session_delete(
         let mut ai = ai_state.lock().await;
         ai.active_streams.remove(&key);
     }
+    {
+        let store = {
+            let guard = ai_state.lock().await;
+            guard.session_statuses.clone()
+        };
+        store.remove_status(&ai_tool, &directory, session_id);
+    }
 
     let _ = agent.delete_session(&directory, session_id).await;
+
+    Ok(true)
+}
+
+async fn try_handle_ai_session_status(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionStatus {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
+    }
+
+    let store = {
+        let guard = ai_state.lock().await;
+        guard.session_statuses.clone()
+    };
+
+    let mut status = store
+        .get_status(&ai_tool, &directory, session_id)
+        .unwrap_or(AiSessionStatus::Idle);
+
+    if store
+        .get_status(&ai_tool, &directory, session_id)
+        .is_none()
+    {
+        if let Ok(s) = agent.get_session_status(&directory, session_id).await {
+            status = s;
+        }
+    }
+
+    // 写入 meta，便于后续推送 update
+    store.set_status_with_meta(
+        AiSessionStatusMeta {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            ai_tool: ai_tool.clone(),
+            directory: directory.clone(),
+            session_id: session_id.clone(),
+        },
+        status.clone(),
+    );
+
+    send_message(
+        socket,
+        &ServerMessage::AISessionStatusResult {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            ai_tool,
+            session_id: session_id.clone(),
+            status: status_to_info(&status),
+        },
+    )
+    .await?;
 
     Ok(true)
 }

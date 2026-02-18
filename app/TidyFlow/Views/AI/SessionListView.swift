@@ -5,6 +5,7 @@ struct SessionListView: View {
     let sessions: [AISessionInfo]
     @Binding var currentSessionId: String?
     let currentTool: AIChatTool
+    let sessionStatusFor: (AISessionInfo) -> AISessionStatusSnapshot?
     var onSelect: (AISessionInfo) -> Void
     var onDelete: (AISessionInfo) -> Void
     var onCreateNew: () -> Void
@@ -29,7 +30,8 @@ struct SessionListView: View {
             List(sessions) { session in
                 SessionRow(
                     session: session,
-                    isSelected: session.id == currentSessionId && session.aiTool == currentTool
+                    isSelected: session.id == currentSessionId && session.aiTool == currentTool,
+                    status: sessionStatusFor(session)
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -56,6 +58,7 @@ struct SessionListView: View {
 struct SessionRow: View {
     let session: AISessionInfo
     let isSelected: Bool
+    let status: AISessionStatusSnapshot?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -82,6 +85,18 @@ struct SessionRow: View {
 
             Spacer(minLength: 4)
 
+            if let status {
+                if status.isBusy {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if status.isError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.red)
+                        .help(status.errorMessage ?? "error")
+                }
+            }
+
             if isSelected {
                 Circle()
                     .fill(Color.accentColor)
@@ -105,6 +120,7 @@ struct SessionRow: View {
         ],
         currentSessionId: .constant("1"),
         currentTool: .opencode,
+        sessionStatusFor: { _ in nil },
         onSelect: { _ in },
         onDelete: { _ in },
         onCreateNew: {}
