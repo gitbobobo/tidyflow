@@ -667,6 +667,8 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
+            // done 可能晚到；即使当前不在该会话，也要先清理 abort pending，避免输入区长期禁用。
+            store.clearAbortPendingIfMatches(ev.sessionId)
             guard store.currentSessionId == ev.sessionId else { return }
             TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
             store.handleChatDone(sessionId: ev.sessionId)
@@ -679,6 +681,8 @@ extension AppState {
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
+            // error 可能晚到；先清理 abort pending，避免 UI 卡住。
+            store.clearAbortPendingIfMatches(ev.sessionId)
             guard store.currentSessionId == ev.sessionId else { return }
             TFLog.app.error(
                 "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"

@@ -239,6 +239,13 @@ pub struct OpenCodeClient {
 }
 
 impl OpenCodeClient {
+    fn opencode_model_payload(model: &super::AiModelSelection) -> serde_json::Value {
+        serde_json::json!({
+            "providerID": model.provider_id,
+            "modelID": model.model_id,
+        })
+    }
+
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -338,12 +345,9 @@ impl OpenCodeClient {
 
         let mut body = serde_json::json!({ "parts": parts });
 
-        // 模型选择
+        // OpenCode v2: model 需要对象 { providerID, modelID }。
         if let Some(ref m) = model {
-            body["model"] = serde_json::json!({
-                "providerID": m.provider_id,
-                "modelID": m.model_id,
-            });
+            body["model"] = Self::opencode_model_payload(m);
         }
 
         // Agent 选择
@@ -420,10 +424,7 @@ impl OpenCodeClient {
         }
 
         if let Some(ref m) = model {
-            body["model"] = serde_json::json!({
-                "providerID": m.provider_id,
-                "modelID": m.model_id,
-            });
+            body["model"] = serde_json::json!(m.model_id);
         }
 
         if let Some(ref a) = agent {
@@ -2205,6 +2206,18 @@ mod tests {
         assert!(json.contains("\"parts\""));
         assert!(json.contains("\"type\":\"text\""));
         assert!(json.contains("\"type\":\"file\""));
+    }
+
+    #[test]
+    fn test_opencode_model_payload_shape() {
+        let model = super::super::AiModelSelection {
+            provider_id: "openrouter".to_string(),
+            model_id: "glm-5".to_string(),
+        };
+        let payload = OpenCodeClient::opencode_model_payload(&model);
+        assert!(payload.is_object());
+        assert_eq!(payload["providerID"], "openrouter");
+        assert_eq!(payload["modelID"], "glm-5");
     }
 
     #[test]

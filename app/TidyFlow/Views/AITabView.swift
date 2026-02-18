@@ -939,6 +939,17 @@ struct AITabView: View {
             sessionId: sessionId
         )
         aiChatStore.stopStreamingLocallyAndPrunePlaceholder()
+
+        // 兜底：若 done/error 丢失，2s 后解除 pending，避免输入区永久不可用。
+        let store = aiChatStore
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            if store.isAbortPending(for: sessionId) {
+                TFLog.app.warning(
+                    "AI Stop fallback timeout: clearing abort pending, session_id=\(sessionId, privacy: .public)"
+                )
+                store.clearAbortPendingIfMatches(sessionId)
+            }
+        }
     }
 }
 

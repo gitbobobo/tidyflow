@@ -248,6 +248,9 @@ final class AIChatStore: ObservableObject {
     private var partIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
     private var questionRequestToCallId: [String: String] = [:]
     private var streamingAssistantIndex: Int?
+    /// 用户主动终止后，对应会话的“tool running 推导流式”本地抑制集合。
+    /// 仅用于避免历史/陈旧 running 状态导致 UI 长期显示“终止中”。
+    private var suppressedActiveToolSessions: Set<String> = []
     /// 当前轮次中 assistant 首条消息的锚点（用于 user echo 晚到时插回 assistant 之前）。
     private var pendingUserEchoAssistantMessageId: String?
     /// 进入 awaiting 前的消息数量快照；用于过滤“旧 user 消息更新”误触发收敛。
@@ -314,6 +317,7 @@ final class AIChatStore: ObservableObject {
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
+        suppressedActiveToolSessions = []
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
     }
@@ -330,6 +334,7 @@ final class AIChatStore: ObservableObject {
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
+        suppressedActiveToolSessions = []
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
     }
@@ -392,10 +397,24 @@ final class AIChatStore: ObservableObject {
     }
 
     func beginAwaitingUserEcho() {
+        if let sessionId = currentSessionId {
+            suppressedActiveToolSessions.remove(sessionId)
+        }
         awaitingUserEcho = true
         lastUserEchoMessageId = nil
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = messages.count
+    }
+
+    func suppressActiveToolStreaming(for sessionId: String) {
+        guard !sessionId.isEmpty else { return }
+        suppressedActiveToolSessions.insert(sessionId)
+        recomputeIsStreaming()
+    }
+
+    func suppressActiveToolStreamingForCurrentSession() {
+        guard let sessionId = currentSessionId else { return }
+        suppressActiveToolStreaming(for: sessionId)
     }
 
     func markUserEchoReceived(messageId: String) {
@@ -480,6 +499,7 @@ final class AIChatStore: ObservableObject {
 
     func stopStreamingLocallyAndPrunePlaceholder() {
         flushPendingStreamEvents()
+        suppressActiveToolStreamingForCurrentSession()
         isStreaming = false
         clearAssistantStreaming()
         messages.removeAll { msg in
@@ -492,16 +512,25 @@ final class AIChatStore: ObservableObject {
     // MARK: - Streaming Batch Apply
 
     func enqueueMessageUpdated(messageId: String, role: String) {
+        if let sessionId = currentSessionId {
+            suppressedActiveToolSessions.remove(sessionId)
+        }
         pendingStreamEvents.append(.messageUpdated(messageId: messageId, role: role))
         scheduleStreamFlushIfNeeded()
     }
 
     func enqueuePartUpdated(messageId: String, part: AIProtocolPartInfo) {
+        if let sessionId = currentSessionId {
+            suppressedActiveToolSessions.remove(sessionId)
+        }
         pendingStreamEvents.append(.partUpdated(messageId: messageId, part: part))
         scheduleStreamFlushIfNeeded()
     }
 
     func enqueuePartDelta(messageId: String, partId: String, partType: String, field: String, delta: String) {
+        if let sessionId = currentSessionId {
+            suppressedActiveToolSessions.remove(sessionId)
+        }
         pendingStreamEvents.append(
             .partDelta(messageId: messageId, partId: partId, partType: partType, field: field, delta: delta)
         )
@@ -614,6 +643,7 @@ final class AIChatStore: ObservableObject {
     func handleChatDone(sessionId: String) {
         flushPendingStreamEvents()
         clearAbortPendingIfMatches(sessionId)
+        suppressActiveToolStreaming(for: sessionId)
         // 严格模式兜底：若 user echo 未回传，也要收敛输入状态，避免输入框长期不清空/禁用。
         if awaitingUserEcho {
             awaitingUserEcho = false
@@ -634,6 +664,7 @@ final class AIChatStore: ObservableObject {
     func handleChatError(sessionId: String, error: String) {
         flushPendingStreamEvents()
         clearAbortPendingIfMatches(sessionId)
+        suppressActiveToolStreaming(for: sessionId)
         awaitingUserEcho = false
         awaitingUserEchoBaselineIndex = nil
         pendingUserEchoAssistantMessageId = nil
@@ -921,8 +952,15 @@ final class AIChatStore: ObservableObject {
             return
         }
 
-        // 历史回放场景：若工具仍处于 pending/running，视为会话仍在进行中。
-        isStreaming = hasActiveAssistantTool()
+        let hasRunningTool = hasActiveAssistantTool()
+        if hasRunningTool,
+           let sessionId = currentSessionId,
+           !suppressedActiveToolSessions.contains(sessionId) {
+            isStreaming = true
+            return
+        }
+
+        isStreaming = false
     }
 
     private func hasActiveAssistantTool() -> Bool {

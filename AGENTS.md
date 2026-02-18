@@ -35,6 +35,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - OpenCode Desktop 的多路径会话通常通过请求头 `x-opencode-directory` 路由（而不是多开 `opencode serve`）；事件流使用 `/global/event` 单连接按 `directory` 分流；释放目录实例资源优先调用 `POST /instance/dispose`（同样依赖 `x-opencode-directory`）。
 - AI 聊天斜杠命令列表应优先通过 OpenCode `GET /command` 动态获取，并保留最小本地兜底（仅 `/new`），避免写死命令与 CLI 实际可用命令不一致。
 - 对接 OpenCode 的 `GET /session` 时不要假设服务端会按 `x-opencode-directory` 过滤会话列表；实际返回往往是“全局会话数组”，需要客户端/中间层基于 session 的 `directory` 字段自行过滤，才能做到按工作空间隔离。
+- 对接 OpenCode `prompt/prompt_async` 时，`model` 必须传对象 `{ providerID, modelID }`，不能只传字符串 `model_id`，否则会触发 400 `invalid_type`（expected object, received string）。
 - Git 面板展示分支领先/落后时，应复用 `git_status` 返回并基于项目 `default_branch` 做本地分支比较，避免硬编码 `main` 或依赖远端 `fetch` 导致慢/不稳定。
 - 多项目共存时，工作空间名（如 `"default"`）不具备全局唯一性；需要关联项目的场景必须显式传递 `projectName`，禁止通过遍历 `projects` 按工作空间名反查项目（会命中第一个匹配项而非实际所属项目）。
 - 跨分支入口触发但实际写入默认分支的操作（如 AI 合并到默认分支），其后台阻塞任务归属应绑定默认工作空间，避免错误地落在来源分支队列。
@@ -118,6 +119,7 @@ TidyFlow is a macOS-native multi-project development tool with VS Code-level ter
 - 历史会话打开时若需继续处理 `question`，不能只依赖实时 `ai_question_asked` 事件；需在 `ai_session_messages` 加载后从 tool part（`question` + `pending/running`）重建 pending question 状态并恢复交互。
 - 历史 `question` 卡片在缺少可回复 `request_id` 时，提交应降级为“将结构化答案整理成普通用户消息发送给当前 AI 会话”，避免 UI 可操作但业务链路断开。
 - 共享 SwiftUI 组件（macOS/iOS 共用）新增必填参数时，必须同步更新所有平台调用点（含移动端页面），避免单端编译通过、另一端报缺参。
+- 历史会话回放时，不应仅凭 tool part 的 `status=pending/running` 推导“当前仍在流式生成”；`isStreaming` 应以实时增量/assistant 流式态为准，否则会出现“会话已结束但一直显示终止按钮且无法收敛”。
 
 ## Build Commands
 
