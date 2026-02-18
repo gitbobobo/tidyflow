@@ -461,15 +461,21 @@ final class AIChatStore: ObservableObject {
     }
 
     func upsertQuestionRequest(_ request: AIQuestionRequestInfo) {
+        // 优先使用 toolCallId 作为 key（与 tool part 的 callID 匹配）
         if let callId = request.toolCallId, !callId.isEmpty {
             pendingToolQuestions[callId] = request
             questionRequestToCallId[request.id] = callId
             return
         }
+        // 其次使用 toolMessageId 作为 key
         if let messageId = request.toolMessageId, !messageId.isEmpty {
             pendingToolQuestions[messageId] = request
             questionRequestToCallId[request.id] = messageId
+            return
         }
+        // 最后使用 request.id 作为 key，确保 question 总是被存储
+        pendingToolQuestions[request.id] = request
+        questionRequestToCallId[request.id] = request.id
     }
 
     func clearQuestionRequest(requestId: String) {
@@ -504,10 +510,12 @@ final class AIChatStore: ObservableObject {
         toolPartId: String?,
         toolMessageId: String?
     ) -> AIQuestionRequestInfo? {
+        // 优先用 toolCallId 查找（对应 tool part 的 callID）
         if let callId, !callId.isEmpty, let request = pendingToolQuestions[callId] {
             return request
         }
 
+        // 用 toolPartId 查找（可能是 part.id 或 request.id）
         if let toolPartId, !toolPartId.isEmpty {
             if let request = pendingToolQuestions[toolPartId] {
                 return request
@@ -517,6 +525,7 @@ final class AIChatStore: ObservableObject {
             }
         }
 
+        // 用 toolMessageId 查找
         guard let toolMessageId, !toolMessageId.isEmpty else { return nil }
         if let request = pendingToolQuestions[toolMessageId] {
             return request

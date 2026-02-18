@@ -148,6 +148,8 @@ final class MobileAppState: ObservableObject {
     @Published var isAILoadingAgents: Bool = false
     @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
 
+    let aiChatStore = AIChatStore()
+
     // AI Chat：按工具分桶存储会话
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
 
@@ -744,6 +746,7 @@ final class MobileAppState: ObservableObject {
         aiPendingSendRequest = nil
         aiAbortPendingSessionId = nil
         aiCurrentSessionId = nil
+        aiChatStore.setCurrentSessionId(nil)
         aiChatMessages = []
         aiIsStreaming = false
         aiMessageIndexByMessageId = [:]
@@ -825,6 +828,7 @@ final class MobileAppState: ObservableObject {
         }
 
         aiCurrentSessionId = session.id
+        aiChatStore.setCurrentSessionId(session.id)
         aiChatMessages = []
         aiIsStreaming = false
         aiMessageIndexByMessageId = [:]
@@ -854,6 +858,7 @@ final class MobileAppState: ObservableObject {
         }
         if aiCurrentSessionId == session.id && aiChatTool == targetTool {
             aiCurrentSessionId = nil
+            aiChatStore.setCurrentSessionId(nil)
             aiChatMessages = []
             aiIsStreaming = false
             aiMessageIndexByMessageId = [:]
@@ -1025,6 +1030,29 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    func replyAIQuestion(requestId: String, sessionId: String, answers: [[String]]) {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        wsClient.requestAIQuestionReply(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
+            sessionId: sessionId,
+            requestId: requestId,
+            answers: answers
+        )
+    }
+
+    func rejectAIQuestion(requestId: String, sessionId: String) {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        wsClient.requestAIQuestionReject(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
+            sessionId: sessionId,
+            requestId: requestId
+        )
+    }
+
     /// 当前上下文的文件索引（用于 @ 自动补全）
     func aiCurrentFileItems() -> [String] {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return [] }
@@ -1071,6 +1099,7 @@ final class MobileAppState: ObservableObject {
         let existsInCurrentTool = currentToolSessions.contains { $0.id == sessionId }
         guard existsInCurrentTool else {
             aiCurrentSessionId = nil
+            aiChatStore.setCurrentSessionId(nil)
             aiChatMessages = []
             aiIsStreaming = false
             aiMessageIndexByMessageId = [:]
@@ -1137,6 +1166,7 @@ final class MobileAppState: ObservableObject {
         let key = aiContextKey(project: project, workspace: workspace)
         if let snapshot = aiChatSnapshotCache[key] {
             aiCurrentSessionId = snapshot.currentSessionId
+            aiChatStore.setCurrentSessionId(snapshot.currentSessionId)
             aiChatMessages = snapshot.messages
             aiIsStreaming = false
             aiSessions = snapshot.sessions
@@ -1145,6 +1175,7 @@ final class MobileAppState: ObservableObject {
             return
         }
         aiCurrentSessionId = nil
+        aiChatStore.setCurrentSessionId(nil)
         aiChatMessages = []
         aiIsStreaming = false
         aiSessions = []
@@ -1833,6 +1864,7 @@ final class MobileAppState: ObservableObject {
                   self.aiChatTool == ev.aiTool else { return }
 
             self.aiCurrentSessionId = ev.sessionId
+            self.aiChatStore.setCurrentSessionId(ev.sessionId)
             let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
             let session = AISessionInfo(
                 projectName: ev.projectName,
@@ -2078,6 +2110,24 @@ final class MobileAppState: ObservableObject {
             self.aiSlashCommands = ev.commands.map {
                 AISlashCommandInfo(name: $0.name, description: $0.description, action: $0.action)
             }
+        }
+
+        wsClient.onAIQuestionAsked = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool,
+                  self.aiChatStore.currentSessionId == ev.sessionId else { return }
+            self.aiChatStore.upsertQuestionRequest(ev.request)
+        }
+
+        wsClient.onAIQuestionCleared = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool,
+                  self.aiChatStore.currentSessionId == ev.sessionId else { return }
+            self.aiChatStore.clearQuestionRequest(requestId: ev.requestId)
         }
     }
 

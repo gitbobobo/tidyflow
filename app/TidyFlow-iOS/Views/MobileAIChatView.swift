@@ -10,9 +10,6 @@ struct MobileAIChatView: View {
     @State private var imageAttachments: [ImageAttachment] = []
     @State private var showSessionList = false
     @State private var referenceSearchTask: Task<Void, Never>?
-    /// MessageListView 依赖 @EnvironmentObject AIChatStore（用于 pending tool question 等）。
-    /// iOS 端目前由 MobileAppState 承载 AI 状态，因此这里注入一个轻量 store 作为兜底，避免缺失导致闪退。
-    @StateObject private var aiChatStore = AIChatStore()
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -170,13 +167,26 @@ struct MobileAIChatView: View {
             } else {
                 MessageListView(
                     messages: appState.aiChatMessages,
-                    onQuestionReply: { _, _ in },
-                    onQuestionReject: { _ in },
+                    onQuestionReply: { request, answers in
+                        appState.replyAIQuestion(
+                            requestId: request.id,
+                            sessionId: request.sessionId,
+                            answers: answers
+                        )
+                        appState.aiChatStore.clearQuestionRequest(requestId: request.id)
+                    },
+                    onQuestionReject: { request in
+                        appState.rejectAIQuestion(
+                            requestId: request.id,
+                            sessionId: request.sessionId
+                        )
+                        appState.aiChatStore.clearQuestionRequest(requestId: request.id)
+                    },
                     onQuestionReplyAsMessage: { text in
                         _ = appState.sendAIMessage(text: text, imageAttachments: [])
                     }
                 )
-                .environmentObject(aiChatStore)
+                .environmentObject(appState.aiChatStore)
             }
         }
         .background(systemGroupedBackgroundColor)

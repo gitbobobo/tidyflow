@@ -1330,10 +1330,9 @@ impl AiAgent for OpenCodeAgent {
                             let tool_state = part.get("state").cloned();
                             let tool_part_metadata = part.get("metadata").cloned();
 
-                            // 优先从 part.callID 获取，其次从 state.callID 获取
-                            let tool_call_id = part
-                                .get("callID")
-                                .and_then(|v| v.as_str())
+                            let part_call_id = part.get("callID").and_then(|v| v.as_str());
+
+                            let tool_call_id = part_call_id
                                 .map(|s| s.to_string())
                                 .or_else(|| {
                                     tool_state.as_ref().and_then(|s| {
