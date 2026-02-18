@@ -64,3 +64,4 @@ xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug
 - 流式聊天状态必须绑定 `message_id`；`done` 仅收敛对应气泡，`message.updated` 与 `part.*` 需先建角色映射再增量处理。
 - Markdown 聊天渲染采用“流式纯文本 + 完成后一次性 Markdown 化”。
 - `handle_client_message` 内不得同步阻塞长生命周期流任务；应转后台 task 并保证控制消息（如 abort）可及时处理。
+- 修改 Rust 端连接 AI 代理服务接口前，必须先写临时脚本发起真实请求，以响应结果作为改代码依据。
