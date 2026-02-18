@@ -39,19 +39,12 @@ struct MessageListView: View {
     /// 过滤掉“无可见内容且非流式”的消息，避免空消息把相邻回复撑开。
     private var displayMessages: [AIChatMessage] {
         messages.filter { message in
-            // Codex 过程信息（仅 reasoning）不在聊天区显示。
-            if isProcessInfoMessage(message) { return false }
-            if message.isStreaming { return true }
-            return message.parts.contains { part in
-                switch part.kind {
-                case .tool:
-                    return true
-                case .file:
-                    return true
-                case .text, .reasoning:
-                    return !(part.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-                }
+            // Codex 过程信息（仅 reasoning）：流式阶段展示；结束后若仍仅 reasoning 则隐藏。
+            if isProcessInfoMessage(message) {
+                return message.isStreaming && hasRenderablePartContent(message)
             }
+            if message.isStreaming { return true }
+            return hasRenderablePartContent(message)
         }
     }
 
@@ -59,6 +52,19 @@ struct MessageListView: View {
         guard message.role == .assistant else { return false }
         guard !message.parts.isEmpty else { return false }
         return message.parts.allSatisfy { $0.kind == .reasoning }
+    }
+
+    private func hasRenderablePartContent(_ message: AIChatMessage) -> Bool {
+        message.parts.contains { part in
+            switch part.kind {
+            case .tool:
+                return true
+            case .file:
+                return true
+            case .text, .reasoning:
+                return !(part.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+        }
     }
 
     private var fullRenderRange: ClosedRange<Int>? {
@@ -295,19 +301,11 @@ private struct MessageBubble: View, Equatable {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 if message.parts.isEmpty {
-                    if message.isStreaming {
-                        TypingIndicator()
-                    } else {
-                        EmptyView()
-                    }
+                    EmptyView()
                 } else {
                     ForEach(Array(message.parts.enumerated()), id: \.element.id) { _, part in
                         partContentView(part)
                     }
-                }
-
-                if message.isStreaming && !isUser && !message.parts.isEmpty {
-                    TypingIndicator()
                 }
             }
             .padding(.horizontal, 12)
@@ -389,13 +387,9 @@ private struct MessageBubble: View, Equatable {
         let summary = compactSummaryText()
         return VStack(alignment: .leading, spacing: 6) {
             if summary.isEmpty {
-                if message.isStreaming {
-                    TypingIndicator()
-                } else {
-                    Text("...")
-                        .font(.system(size: 12))
-                        .foregroundColor(isUser ? .white.opacity(0.9) : .secondary)
-                }
+                Text("...")
+                    .font(.system(size: 12))
+                    .foregroundColor(isUser ? .white.opacity(0.9) : .secondary)
             } else {
                 Text(summary)
                     .textSelection(.enabled)
@@ -649,30 +643,5 @@ private struct TypewriterText: View {
                 try? await Task.sleep(nanoseconds: tickNs)
             }
         }
-    }
-}
-
-private struct TypingIndicator: View {
-    @State private var phase: CGFloat = 0
-
-    var body: some View {
-        HStack(spacing: 6) {
-            dot(0)
-            dot(1)
-            dot(2)
-        }
-        .padding(.top, 2)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                phase = 1
-            }
-        }
-    }
-
-    private func dot(_ index: Int) -> some View {
-        Circle()
-            .fill(Color.secondary.opacity(0.55))
-            .frame(width: 6, height: 6)
-            .scaleEffect(phase == 0 ? 1 : (index == 1 ? 1.25 : 1.1))
     }
 }
