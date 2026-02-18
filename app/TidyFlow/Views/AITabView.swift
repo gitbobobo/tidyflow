@@ -108,11 +108,8 @@ struct AITabView: View {
                 reloadCurrentSessionIfNeeded(for: newTool)
             }
         }
-        .onChange(of: aiChatStore.lastUserEchoMessageId) { _, newMessageId in
-            guard newMessageId != nil else { return }
-            inputText = ""
-            imageAttachments = []
-            autocomplete.reset()
+        .onChange(of: aiChatStore.lastUserEchoMessageId) { _, _ in
+            // user echo 到达时不再需要清空输入——已在发送时立即清空。
         }
     }
 
@@ -873,6 +870,9 @@ struct AITabView: View {
         autocomplete.reset()
         aiChatStore.beginAwaitingUserEcho()
         aiChatStore.isStreaming = true
+
+        // 插入用户消息占位（无 messageId），等待服务端 user echo 绑定真实 ID。
+        aiChatStore.insertUserPlaceholder(text: text)
 
         // 发送请求已入队后立即清空输入区；消息展示以代理回传的 user message 为准。
         inputText = ""

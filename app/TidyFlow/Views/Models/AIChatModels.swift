@@ -380,6 +380,23 @@ final class AIChatStore: ObservableObject {
         }
     }
 
+    /// 发送后立即插入用户消息占位（无 messageId），等待服务端 user echo 绑定真实 ID。
+    func insertUserPlaceholder(text: String) {
+        let textPart = AIChatPart(
+            id: UUID().uuidString,
+            kind: .text,
+            text: text,
+            toolName: nil,
+            toolState: nil
+        )
+        let placeholder = AIChatMessage(
+            role: .user,
+            parts: [textPart],
+            isStreaming: false
+        )
+        appendMessage(placeholder)
+    }
+
     func setCurrentSessionId(_ sessionId: String?) {
         if currentSessionId != sessionId {
             pendingToolQuestions = [:]
@@ -767,6 +784,16 @@ final class AIChatStore: ObservableObject {
            let idx = messages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
             messages[idx].messageId = messageId
             messages[idx].role = resolvedRole
+            messageIndexByMessageId[messageId] = idx
+            messageRoleByMessageId[messageId] = resolvedRole
+            return idx
+        }
+
+        // user echo 到达时复用本地用户占位气泡（发送时通过 insertUserPlaceholder 插入）。
+        if resolvedRole == .user,
+           awaitingUserEcho,
+           let idx = messages.lastIndex(where: { $0.role == .user && $0.messageId == nil }) {
+            messages[idx].messageId = messageId
             messageIndexByMessageId[messageId] = idx
             messageRoleByMessageId[messageId] = resolvedRole
             return idx

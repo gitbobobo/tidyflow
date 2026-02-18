@@ -1877,12 +1877,16 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
-            guard ev.role == "assistant" else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
 
-            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
-            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
-            self.recomputeAIIsStreaming()
+            if ev.role == "user" {
+                // user echo 到达，绑定占位消息的真实 messageId
+                self.aiBindUserPlaceholder(messageId: ev.messageId)
+            } else {
+                let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
+                self.aiMarkOnlyStreamingAssistant(at: msgIdx)
+                self.recomputeAIIsStreaming()
+            }
         }
 
         wsClient.onAIChatPartUpdated = { [weak self] ev in
@@ -1892,6 +1896,13 @@ final class MobileAppState: ObservableObject {
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            // 若 messageId 已绑定到 user 占位消息，跳过 assistant 流式处理
+            if let idx = self.aiMessageIndexByMessageId[ev.messageId],
+               idx < self.aiChatMessages.count,
+               self.aiChatMessages[idx].role == .user {
+                return
+            }
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiUpsertPart(msgIdx: msgIdx, part: ev.part)
@@ -1906,6 +1917,13 @@ final class MobileAppState: ObservableObject {
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            // 若 messageId 已绑定到 user 占位消息，跳过 assistant 流式处理
+            if let idx = self.aiMessageIndexByMessageId[ev.messageId],
+               idx < self.aiChatMessages.count,
+               self.aiChatMessages[idx].role == .user {
+                return
+            }
 
             let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
             self.aiAppendDelta(
@@ -2070,6 +2088,21 @@ final class MobileAppState: ObservableObject {
         let idx = aiChatMessages.count - 1
         aiMessageIndexByMessageId[messageId] = idx
         return idx
+    }
+
+    /// user echo 到达时，绑定占位用户消息的真实 messageId
+    private func aiBindUserPlaceholder(messageId: String) {
+        // 已在索引中则跳过
+        if let idx = aiMessageIndexByMessageId[messageId],
+           idx < aiChatMessages.count,
+           aiChatMessages[idx].messageId == messageId {
+            return
+        }
+        // 查找最后一个无 messageId 的 user 占位消息
+        if let idx = aiChatMessages.lastIndex(where: { $0.role == .user && $0.messageId == nil }) {
+            aiChatMessages[idx].messageId = messageId
+            aiMessageIndexByMessageId[messageId] = idx
+        }
     }
 
     private func aiUpsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
