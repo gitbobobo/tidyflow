@@ -235,6 +235,24 @@ impl CodexAppServerAgent {
         })
     }
 
+    fn should_ignore_error_notification(params: &Value) -> bool {
+        if params
+            .pointer("/willRetry")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if params
+            .pointer("/will_retry")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        false
+    }
+
     fn extract_question_nodes(value: &Value) -> Vec<Value> {
         let question_array_paths = [
             "/questions",
@@ -1257,6 +1275,13 @@ impl CodexAppServerAgent {
                                             .and_then(|v| v.get("message"))
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("Codex app-server error");
+                                        if Self::should_ignore_error_notification(&params) {
+                                            info!(
+                                                "Codex transient stream warning ignored: session_id={}, turn_id={}, message={}",
+                                                session_id, turn_id, message
+                                            );
+                                            continue;
+                                        }
                                         let _ = tx.send(Ok(AiEvent::Error {
                                             message: message.to_string(),
                                         }));
@@ -1884,6 +1909,23 @@ mod tests {
         assert_eq!(request.session_id, "thread-2");
         assert_eq!(ids, vec!["decision".to_string()]);
         assert_eq!(request.questions.len(), 1);
+    }
+
+    #[test]
+    fn should_ignore_error_notification_rejects_without_will_retry() {
+        let params = serde_json::json!({
+            "error": { "message": "Reconnecting... 1/5" }
+        });
+        assert!(!CodexAppServerAgent::should_ignore_error_notification(&params));
+    }
+
+    #[test]
+    fn should_ignore_error_notification_when_will_retry_true() {
+        let params = serde_json::json!({
+            "error": { "message": "Connection dropped" },
+            "willRetry": true
+        });
+        assert!(CodexAppServerAgent::should_ignore_error_notification(&params));
     }
 
     #[test]
