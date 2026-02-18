@@ -17,8 +17,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 struct PendingPermission {
     request_id: Value,
-    session_id: String,
-    tool_call_id: Option<String>,
 }
 
 pub struct CopilotAcpAgent {
@@ -610,8 +608,6 @@ impl AiAgent for CopilotAcpAgent {
                             let request_key = question_request.id.clone();
                             pending_permissions.lock().await.insert(request_key.clone(), PendingPermission {
                                 request_id: req.id.clone(),
-                                session_id: question_request.session_id.clone(),
-                                tool_call_id: question_request.tool_call_id.clone(),
                             });
                             let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question_request }));
                         }

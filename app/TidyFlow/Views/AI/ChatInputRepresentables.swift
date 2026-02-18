@@ -17,6 +17,8 @@ func imeDebugLog(_ message: String) {
     #endif
 }
 
+#if os(macOS)
+
 // MARK: - 支持 IME 的聊天输入框（NSTextView 包装）
 
 struct ChatTextView: NSViewRepresentable {
@@ -357,6 +359,7 @@ private class IMEAwareTextView: NSTextView {
         super.doCommand(by: selector)
     }
 }
+#endif
 
 #if os(iOS)
 /// Sheet 内自动聚焦搜索框——绕过 @FocusState 与 UITextView 的 firstResponder 竞争

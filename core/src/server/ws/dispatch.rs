@@ -106,6 +106,7 @@ pub(super) async fn handle_client_message(
         &ctx.ai_state,
         &ctx.cmd_output_tx,
         &ctx.task_broadcast_tx,
+        &ctx.conn_meta.conn_id,
     )
     .await?
     {

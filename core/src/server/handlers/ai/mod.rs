@@ -26,25 +26,71 @@ pub async fn handle_ai_message(
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
     task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     utils::ensure_status_push_initialized(ai_state, task_broadcast_tx).await;
 
     if stream::try_handle_ai_chat_start(client_msg, socket, app_state, ai_state).await? {
         return Ok(true);
     }
-    if stream::try_handle_ai_chat_send(client_msg, app_state, ai_state, output_tx).await? {
+    if stream::try_handle_ai_chat_send(
+        client_msg,
+        app_state,
+        ai_state,
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+    )
+    .await?
+    {
         return Ok(true);
     }
-    if stream::try_handle_ai_chat_command(client_msg, app_state, ai_state, output_tx).await? {
+    if stream::try_handle_ai_chat_command(
+        client_msg,
+        app_state,
+        ai_state,
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+    )
+    .await?
+    {
         return Ok(true);
     }
-    if stream::try_handle_ai_chat_abort(client_msg, app_state, ai_state, output_tx).await? {
+    if stream::try_handle_ai_chat_abort(
+        client_msg,
+        app_state,
+        ai_state,
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+    )
+    .await?
+    {
         return Ok(true);
     }
-    if stream::try_handle_ai_question_reply(client_msg, app_state, ai_state, output_tx).await? {
+    if stream::try_handle_ai_question_reply(
+        client_msg,
+        app_state,
+        ai_state,
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+    )
+    .await?
+    {
         return Ok(true);
     }
-    if stream::try_handle_ai_question_reject(client_msg, app_state, ai_state, output_tx).await? {
+    if stream::try_handle_ai_question_reject(
+        client_msg,
+        app_state,
+        ai_state,
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+    )
+    .await?
+    {
         return Ok(true);
     }
     if session::try_handle_ai_session_list(client_msg, socket, app_state, ai_state).await? {

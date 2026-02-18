@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
 use crate::ai::AiEvent;
-use crate::server::context::SharedAppState;
+use crate::server::context::{SharedAppState, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -70,6 +70,8 @@ pub(crate) async fn try_handle_ai_chat_send(
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     let (
         project_name,
@@ -156,6 +158,8 @@ pub(crate) async fn try_handle_ai_chat_send(
         Err(e) => {
             let _ = emit_server_message(
                 output_tx,
+                task_broadcast_tx,
+                origin_conn_id,
                 ServerMessage::AIChatErrorV2 {
                     project_name: project_name.clone(),
                     workspace_name: workspace_name.clone(),
@@ -192,10 +196,14 @@ pub(crate) async fn try_handle_ai_chat_send(
     }
 
     let output_tx = output_tx.clone();
+    let task_broadcast_tx = task_broadcast_tx.clone();
+    let origin_conn_id = origin_conn_id.to_string();
     let ai_state_cloned = ai_state.clone();
     let status_store_cloned = status_store.clone();
     let status_meta_cloned = status_meta.clone();
     tokio::spawn(async move {
+        let task_broadcast_tx = &task_broadcast_tx;
+        let origin_conn_id = origin_conn_id.as_str();
         let mut stream = match agent
             .send_message(
                 &directory,
@@ -220,6 +228,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                 );
                 let _ = emit_server_message(
                     &output_tx,
+                    task_broadcast_tx,
+                    origin_conn_id,
                     ServerMessage::AIChatErrorV2 {
                         project_name: project_name.clone(),
                         workspace_name: workspace_name.clone(),
@@ -246,6 +256,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                     }
                     let _ = emit_server_message(
                         &output_tx,
+                        task_broadcast_tx,
+                        origin_conn_id,
                         ServerMessage::AIChatDone {
                             project_name: project_name.clone(),
                             workspace_name: workspace_name.clone(),
@@ -264,6 +276,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                 AiEvent::MessageUpdated { message_id, role } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatMessageUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -278,6 +292,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                 AiEvent::PartUpdated { message_id, part } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatPartUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -292,6 +308,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                 AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatPartDelta {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -309,6 +327,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                 AiEvent::QuestionAsked { request } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIQuestionAsked {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -345,6 +365,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                 AiEvent::QuestionCleared { request_id, .. } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIQuestionCleared {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -362,6 +384,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                     );
                                     let _ = emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatErrorV2 {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -377,6 +401,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                                     let _ = emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatDone {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -399,6 +425,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                             );
                             let _ = emit_server_message(
                                 &output_tx,
+                                task_broadcast_tx,
+                                origin_conn_id,
                                 ServerMessage::AIChatErrorV2 {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
@@ -415,6 +443,8 @@ pub(crate) async fn try_handle_ai_chat_send(
                             status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                             let _ = emit_server_message(
                                 &output_tx,
+                                task_broadcast_tx,
+                                origin_conn_id,
                                 ServerMessage::AIChatDone {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
@@ -441,6 +471,8 @@ pub(crate) async fn try_handle_ai_chat_command(
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     let (
         project_name,
@@ -530,6 +562,8 @@ pub(crate) async fn try_handle_ai_chat_command(
         Err(e) => {
             let _ = emit_server_message(
                 output_tx,
+                task_broadcast_tx,
+                origin_conn_id,
                 ServerMessage::AIChatErrorV2 {
                     project_name: project_name.clone(),
                     workspace_name: workspace_name.clone(),
@@ -566,10 +600,14 @@ pub(crate) async fn try_handle_ai_chat_command(
     }
 
     let output_tx = output_tx.clone();
+    let task_broadcast_tx = task_broadcast_tx.clone();
+    let origin_conn_id = origin_conn_id.to_string();
     let ai_state_cloned = ai_state.clone();
     let status_store_cloned = status_store.clone();
     let status_meta_cloned = status_meta.clone();
     tokio::spawn(async move {
+        let task_broadcast_tx = &task_broadcast_tx;
+        let origin_conn_id = origin_conn_id.as_str();
         let mut stream = match agent
             .send_command(
                 &directory,
@@ -595,6 +633,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                 );
                 let _ = emit_server_message(
                     &output_tx,
+                    task_broadcast_tx,
+                    origin_conn_id,
                     ServerMessage::AIChatErrorV2 {
                         project_name: project_name.clone(),
                         workspace_name: workspace_name.clone(),
@@ -621,6 +661,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                     }
                     let _ = emit_server_message(
                         &output_tx,
+                        task_broadcast_tx,
+                        origin_conn_id,
                         ServerMessage::AIChatDone {
                             project_name: project_name.clone(),
                             workspace_name: workspace_name.clone(),
@@ -639,6 +681,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                                 AiEvent::MessageUpdated { message_id, role } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatMessageUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -653,6 +697,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                                 AiEvent::PartUpdated { message_id, part } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatPartUpdated {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -667,6 +713,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                                 AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
                                     emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatPartDelta {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -689,6 +737,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                                     );
                                     let _ = emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatErrorV2 {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -704,6 +754,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                                     let _ = emit_server_message(
                                         &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
                                         ServerMessage::AIChatDone {
                                             project_name: project_name.clone(),
                                             workspace_name: workspace_name.clone(),
@@ -726,6 +778,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                             );
                             let _ = emit_server_message(
                                 &output_tx,
+                                task_broadcast_tx,
+                                origin_conn_id,
                                 ServerMessage::AIChatErrorV2 {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),
@@ -741,6 +795,8 @@ pub(crate) async fn try_handle_ai_chat_command(
                             status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                             let _ = emit_server_message(
                                 &output_tx,
+                                task_broadcast_tx,
+                                origin_conn_id,
                                 ServerMessage::AIChatDone {
                                     project_name: project_name.clone(),
                                     workspace_name: workspace_name.clone(),

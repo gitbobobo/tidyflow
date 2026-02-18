@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 use super::SharedAIState;
 use crate::ai::session_status::AiSessionStatus;
@@ -69,13 +69,28 @@ pub(crate) fn stream_key(tool: &str, directory: &str, session_id: &str) -> Strin
 
 pub(crate) async fn emit_server_message(
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
     msg: ServerMessage,
 ) -> bool {
-    if let Err(e) = output_tx.send(msg).await {
+    let mut delivered = false;
+    if let Err(e) = output_tx.send(msg.clone()).await {
         warn!("AI stream: failed to enqueue server message: {}", e);
-        return false;
+    } else {
+        delivered = true;
     }
-    true
+
+    let sent = task_broadcast_tx.send(TaskBroadcastEvent {
+        origin_conn_id: origin_conn_id.to_string(),
+        message: msg,
+    });
+    if sent.is_ok() {
+        delivered = true;
+    } else {
+        trace!("AI stream: failed to broadcast server message: {:?}", sent.err());
+    }
+
+    delivered
 }
 
 pub(crate) async fn cleanup_stream_state(

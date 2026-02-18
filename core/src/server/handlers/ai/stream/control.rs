@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::ai::session_status::{AiSessionStatus, AiSessionStatusMeta};
-use crate::server::context::SharedAppState;
+use crate::server::context::{SharedAppState, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 
 use super::super::utils::*;
@@ -13,6 +13,8 @@ pub(crate) async fn try_handle_ai_chat_abort(
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     let (project_name, workspace_name, session_id, ai_tool) = match msg {
         ClientMessage::AIChatAbort {
@@ -102,6 +104,8 @@ pub(crate) async fn try_handle_ai_chat_abort(
     if should_emit_done_now {
         let _ = emit_server_message(
             output_tx,
+            task_broadcast_tx,
+            origin_conn_id,
             ServerMessage::AIChatDone {
                 project_name,
                 workspace_name,
@@ -120,6 +124,8 @@ pub(crate) async fn try_handle_ai_question_reply(
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     let (project_name, workspace_name, session_id, request_id, answers, ai_tool) = match msg {
         ClientMessage::AIQuestionReply {
@@ -172,6 +178,8 @@ pub(crate) async fn try_handle_ai_question_reply(
 
     let _ = emit_server_message(
         output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
         ServerMessage::AIQuestionCleared {
             project_name,
             workspace_name,
@@ -190,6 +198,8 @@ pub(crate) async fn try_handle_ai_question_reject(
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
     output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     let (project_name, workspace_name, session_id, request_id, ai_tool) = match msg {
         ClientMessage::AIQuestionReject {
@@ -236,6 +246,8 @@ pub(crate) async fn try_handle_ai_question_reject(
 
     let _ = emit_server_message(
         output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
         ServerMessage::AIQuestionCleared {
             project_name,
             workspace_name,
