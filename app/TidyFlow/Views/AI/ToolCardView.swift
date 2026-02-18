@@ -297,15 +297,42 @@ struct ToolCardView: View {
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(.red)
             } else {
-                Text(presentation.statusText)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(statusColor)
+                statusIcon
             }
         }
     }
 
     private var isTodoTool: Bool {
         presentation.toolID == "todowrite" || presentation.toolID == "todoread"
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if let invocation, invocation.status == .running {
+            ProgressView()
+                .scaleEffect(0.7)
+                .progressViewStyle(CircularProgressViewStyle(tint: statusColor))
+        } else {
+            Image(systemName: statusIconName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(statusColor)
+        }
+    }
+
+    private var statusIconName: String {
+        guard let invocation else { return "questionmark.circle" }
+        switch invocation.status {
+        case .pending:
+            return "clock"
+        case .running:
+            return "play.circle"
+        case .completed:
+            return "checkmark.circle"
+        case .error:
+            return "xmark.circle"
+        case .unknown:
+            return "questionmark.circle"
+        }
     }
 
     private var statusColor: Color {

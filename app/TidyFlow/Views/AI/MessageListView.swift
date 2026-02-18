@@ -272,30 +272,12 @@ private struct MessageBubble: View, Equatable {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if isUser {
-                Spacer(minLength: 32)
-            } else {
-                Image(systemName: "cpu")
-                    .font(.system(size: 16))
-                    .foregroundColor(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(Circle())
-                    .padding(.top, 4)
-            }
-
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
-                bubble
-            }
-            .frame(maxWidth: 760, alignment: isUser ? .trailing : .leading)
-
-            if !isUser {
-                Spacer(minLength: 32)
-            }
+        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+            bubble
         }
-        .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .padding(.horizontal, 8)
+        .padding(.trailing, isUser ? 0 : 12)
     }
 
     @ViewBuilder
