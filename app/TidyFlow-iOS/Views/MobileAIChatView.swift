@@ -173,14 +173,19 @@ struct MobileAIChatView: View {
                             sessionId: request.sessionId,
                             answers: answers
                         )
-                        appState.aiChatStore.clearQuestionRequest(requestId: request.id)
+                        // 与 macOS 保持一致：先本地收敛并回显答案，再等待后端 cleared 事件最终一致
+                        appState.aiChatStore.completeQuestionRequestLocally(
+                            requestId: request.id,
+                            answers: answers
+                        )
                     },
                     onQuestionReject: { request in
                         appState.rejectAIQuestion(
                             requestId: request.id,
                             sessionId: request.sessionId
                         )
-                        appState.aiChatStore.clearQuestionRequest(requestId: request.id)
+                        // 与 macOS 保持一致：先本地收敛关闭交互，再等待后端 cleared 事件
+                        appState.aiChatStore.completeQuestionRequestLocally(requestId: request.id)
                     },
                     onQuestionReplyAsMessage: { text in
                         _ = appState.sendAIMessage(text: text, imageAttachments: [])

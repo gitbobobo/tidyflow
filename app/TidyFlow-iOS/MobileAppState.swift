@@ -2127,7 +2127,7 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool,
                   self.aiChatStore.currentSessionId == ev.sessionId else { return }
-            self.aiChatStore.clearQuestionRequest(requestId: ev.requestId)
+            self.aiChatStore.completeQuestionRequestLocally(requestId: ev.requestId)
         }
     }
 
