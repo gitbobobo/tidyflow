@@ -136,4 +136,7 @@ scripts/release_local.sh
 # Local upgrade helper
 scripts/upgrade.sh
 
+# TidyFlow runtime data
+.tidyflow/
+
 docs/product-requirements.md
