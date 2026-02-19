@@ -147,6 +147,16 @@ final class MobileAppState: ObservableObject {
     @Published var isAILoadingModels: Bool = false
     @Published var isAILoadingAgents: Bool = false
     @Published var aiFileIndexCache: [String: FileIndexCache] = [:]
+    // Evolution 状态
+    @Published var evolutionScheduler: EvolutionSchedulerInfoV2 = .empty
+    @Published var evolutionWorkspaceItems: [EvolutionWorkspaceItemV2] = []
+    @Published var evolutionStageProfilesByWorkspace: [String: [EvolutionStageProfileInfoV2]] = [:]
+    @Published var evolutionReplayTitle: String = ""
+    @Published var evolutionReplayMessages: [AIChatMessage] = []
+    @Published var evolutionReplayLoading: Bool = false
+    @Published var evolutionReplayError: String?
+    @Published private var evolutionProvidersByWorkspace: [String: [AIChatTool: [AIProviderInfo]]] = [:]
+    @Published private var evolutionAgentsByWorkspace: [String: [AIChatTool: [AIAgentInfo]]] = [:]
 
     let aiChatStore = AIChatStore()
 
@@ -210,6 +220,15 @@ final class MobileAppState: ObservableObject {
     private var projectCommandPendingTaskIdsByKey: [String: [String]] = [:]
     /// 项目命令 remote task_id -> 本地 taskId
     private var projectCommandTaskIdByRemoteTaskId: [String: String] = [:]
+    /// Evolution 阶段聊天回放请求
+    private var evolutionReplayRequest: (
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        cycleId: String,
+        stage: String
+    )?
     /// 当前详情页选中的项目名（兼容旧接口）
     private var selectedProjectName: String = ""
 
@@ -698,6 +717,133 @@ final class MobileAppState: ObservableObject {
         projectCommandPendingTaskIdsByKey[routingKey] = queue
 
         wsClient.requestRunProjectCommand(project: project, workspace: workspace, commandId: command.id)
+    }
+
+    // MARK: - Evolution
+
+    func openEvolution(project: String, workspace: String) {
+        refreshEvolution(project: project, workspace: workspace)
+    }
+
+    func refreshEvolution(project: String, workspace: String) {
+        wsClient.requestEvoSnapshot(project: project, workspace: workspace)
+        wsClient.requestEvoGetAgentProfile(project: project, workspace: workspace)
+        requestEvolutionSelectorResources(project: project, workspace: workspace)
+    }
+
+    func requestEvolutionSelectorResources(project: String, workspace: String) {
+        for tool in AIChatTool.allCases {
+            wsClient.requestAIProviderList(projectName: project, workspaceName: workspace, aiTool: tool)
+            wsClient.requestAIAgentList(projectName: project, workspaceName: workspace, aiTool: tool)
+        }
+    }
+
+    func evolutionProviders(project: String, workspace: String, aiTool: AIChatTool) -> [AIProviderInfo] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return evolutionProvidersByWorkspace[key]?[aiTool] ?? []
+    }
+
+    func evolutionAgents(project: String, workspace: String, aiTool: AIChatTool) -> [AIAgentInfo] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return evolutionAgentsByWorkspace[key]?[aiTool] ?? []
+    }
+
+    func startEvolution(
+        project: String,
+        workspace: String,
+        maxVerifyIterations: Int,
+        profiles: [EvolutionStageProfileInfoV2]
+    ) {
+        wsClient.requestEvoStartWorkspace(
+            project: project,
+            workspace: workspace,
+            priority: 0,
+            maxVerifyIterations: max(1, maxVerifyIterations),
+            stageProfiles: profiles
+        )
+    }
+
+    func stopEvolution(project: String, workspace: String) {
+        wsClient.requestEvoStopWorkspace(project: project, workspace: workspace)
+    }
+
+    func resumeEvolution(project: String, workspace: String) {
+        wsClient.requestEvoResumeWorkspace(project: project, workspace: workspace)
+    }
+
+    func updateEvolutionAgentProfile(project: String, workspace: String, profiles: [EvolutionStageProfileInfoV2]) {
+        wsClient.requestEvoUpdateAgentProfile(project: project, workspace: workspace, stageProfiles: profiles)
+    }
+
+    func evolutionProfiles(project: String, workspace: String) -> [EvolutionStageProfileInfoV2] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        if let profiles = evolutionStageProfilesByWorkspace[key], !profiles.isEmpty {
+            return profiles
+        }
+        return Self.defaultEvolutionProfiles()
+    }
+
+    func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
+        evolutionWorkspaceItems.first { $0.project == project && $0.workspace == workspace }
+    }
+
+    func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
+        evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
+        evolutionReplayMessages = []
+        evolutionReplayError = nil
+        evolutionReplayLoading = true
+        wsClient.requestEvoOpenStageChat(project: project, workspace: workspace, cycleID: cycleId, stage: stage)
+    }
+
+    func clearEvolutionReplay() {
+        evolutionReplayRequest = nil
+        evolutionReplayTitle = ""
+        evolutionReplayMessages = []
+        evolutionReplayError = nil
+        evolutionReplayLoading = false
+    }
+
+    private static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
+        ["direction", "plan", "implement", "verify", "judge", "report"].map {
+            EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil)
+        }
+    }
+
+    private func setEvolutionProviders(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        providers: [AIProviderInfo]
+    ) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var byTool = evolutionProvidersByWorkspace[key] ?? [:]
+        byTool[aiTool] = providers
+        evolutionProvidersByWorkspace[key] = byTool
+    }
+
+    private func setEvolutionAgents(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        agents: [AIAgentInfo]
+    ) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var byTool = evolutionAgentsByWorkspace[key] ?? [:]
+        byTool[aiTool] = agents
+        evolutionAgentsByWorkspace[key] = byTool
+    }
+
+    private func consumeEvolutionReplayMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
+        guard let request = evolutionReplayRequest else { return false }
+        guard request.project == ev.projectName,
+              request.workspace == ev.workspaceName,
+              request.aiTool == ev.aiTool,
+              request.sessionId == ev.sessionId else { return false }
+        evolutionReplayMessages = ev.toChatMessages()
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+        evolutionReplayRequest = nil
+        return true
     }
 
     // MARK: - AI 聊天
@@ -1478,6 +1624,7 @@ final class MobileAppState: ObservableObject {
                 self.connectionMessage = "连接成功"
                 self.errorMessage = ""
                 self.refreshProjectTree()
+                self.wsClient.requestEvoSnapshot()
                 // 重连成功后重新附着终端输出订阅（后台期间订阅可能已丢失）
                 self.reattachTerminalIfNeeded()
                 // 重连后恢复 AI 会话数据（流式输出可能中断，需重新拉取）
@@ -1843,6 +1990,58 @@ final class MobileAppState: ObservableObject {
             self.restoreTasksFromSnapshot(entries)
         }
 
+        // Evolution
+        wsClient.onEvoPulse = { [weak self] in
+            self?.wsClient.requestEvoSnapshot()
+        }
+
+        wsClient.onEvoSnapshot = { [weak self] snapshot in
+            guard let self else { return }
+            self.evolutionScheduler = snapshot.scheduler
+            self.evolutionWorkspaceItems = snapshot.workspaceItems.sorted {
+                ($0.project, $0.workspace) < ($1.project, $1.workspace)
+            }
+        }
+
+        wsClient.onEvoAgentProfile = { [weak self] ev in
+            guard let self else { return }
+            let key = self.globalWorkspaceKey(project: ev.project, workspace: ev.workspace)
+            self.evolutionStageProfilesByWorkspace[key] = ev.stageProfiles
+        }
+
+        wsClient.onEvoStageChatOpened = { [weak self] ev in
+            guard let self else { return }
+            guard let aiTool = ev.aiTool else {
+                self.evolutionReplayLoading = false
+                self.evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
+                return
+            }
+            self.evolutionReplayRequest = (
+                project: ev.project,
+                workspace: ev.workspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID,
+                cycleId: ev.cycleID,
+                stage: ev.stage
+            )
+            self.evolutionReplayTitle = "\(ev.workspace) · \(ev.stage) · \(ev.cycleID)"
+            self.evolutionReplayMessages = []
+            self.evolutionReplayError = nil
+            self.evolutionReplayLoading = true
+            self.wsClient.requestAISessionMessages(
+                projectName: ev.project,
+                workspaceName: ev.workspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID,
+                limit: 400
+            )
+        }
+
+        wsClient.onEvoError = { [weak self] message in
+            self?.evolutionReplayLoading = false
+            self?.evolutionReplayError = message
+        }
+
         // AI Chat: 文件索引（@ 自动补全）
         wsClient.onFileIndexResult = { [weak self] result in
             guard let self else { return }
@@ -1914,27 +2113,15 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
+            if self.consumeEvolutionReplayMessagesIfNeeded(ev) {
+                return
+            }
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
 
-            self.aiChatMessages = ev.messages.compactMap { m in
-                let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
-                let parts: [AIChatPart] = m.parts.compactMap { p in
-                    let kind = AIChatPartKind(rawValue: p.partType) ?? .text
-                    return AIChatPart(
-                        id: p.id,
-                        kind: kind,
-                        text: p.text,
-                        toolName: p.toolName,
-                        toolState: p.toolState,
-                        toolCallId: p.toolCallId,
-                        toolPartMetadata: p.toolPartMetadata
-                    )
-                }
-                return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
-            }
+            self.aiChatMessages = ev.toChatMessages()
             self.rebuildAIIndexes()
             self.aiIsStreaming = false
         }
@@ -2059,10 +2246,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAIProviderList = { [weak self] ev in
             guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            self.aiProviders = ev.providers.map { p in
+            let providers = ev.providers.map { p in
                 AIProviderInfo(
                     id: p.id,
                     name: p.name,
@@ -2076,15 +2260,22 @@ final class MobileAppState: ObservableObject {
                     }
                 )
             }
+            self.setEvolutionProviders(
+                project: ev.projectName,
+                workspace: ev.workspaceName,
+                aiTool: ev.aiTool,
+                providers: providers
+            )
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
+            self.aiProviders = providers
             self.isAILoadingModels = false
         }
 
         wsClient.onAIAgentList = { [weak self] ev in
             guard let self else { return }
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            self.aiAgents = ev.agents.map { a in
+            let agents = ev.agents.map { a in
                 AIAgentInfo(
                     name: a.name,
                     description: a.description,
@@ -2094,6 +2285,16 @@ final class MobileAppState: ObservableObject {
                     defaultModelID: a.defaultModelID
                 )
             }
+            self.setEvolutionAgents(
+                project: ev.projectName,
+                workspace: ev.workspaceName,
+                aiTool: ev.aiTool,
+                agents: agents
+            )
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
+            self.aiAgents = agents
             self.isAILoadingAgents = false
             if self.aiSelectedAgent == nil {
                 let first = self.aiAgents.first(where: { $0.mode == "primary" || $0.mode == "all" }) ?? self.aiAgents.first

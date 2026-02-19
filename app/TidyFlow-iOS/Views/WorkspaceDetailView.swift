@@ -134,6 +134,7 @@ struct WorkspaceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                evolutionButton
                 aiChatButton
                 moreActionsMenu
             }
@@ -143,6 +144,14 @@ struct WorkspaceDetailView: View {
         }
         .onAppear {
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
+        }
+    }
+
+    private var evolutionButton: some View {
+        Button {
+            appState.navigationPath.append(MobileRoute.evolution(project: project, workspace: workspace))
+        } label: {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
         }
     }
 
@@ -217,5 +226,357 @@ struct WorkspaceDetailView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+    }
+}
+
+private struct EvolutionProfileDraft: Identifiable {
+    let id: String
+    let stage: String
+    var aiTool: AIChatTool
+    var mode: String
+    var providerID: String
+    var modelID: String
+}
+
+struct MobileEvolutionView: View {
+    @EnvironmentObject var appState: MobileAppState
+
+    let project: String
+    let workspace: String
+
+    @State private var maxVerifyIterationsText: String = "3"
+    @State private var profiles: [EvolutionProfileDraft] = []
+    @StateObject private var replayStore = AIChatStore()
+
+    private var item: EvolutionWorkspaceItemV2? {
+        appState.evolutionItem(project: project, workspace: workspace)
+    }
+
+    var body: some View {
+        List {
+            Section("调度器状态") {
+                Text("激活状态: \(appState.evolutionScheduler.activationState)")
+                Text("并发上限: \(appState.evolutionScheduler.maxParallelWorkspaces)")
+                Text("运行中: \(appState.evolutionScheduler.runningCount)  排队: \(appState.evolutionScheduler.queuedCount)")
+            }
+
+            Section("工作空间控制") {
+                Text("当前: \(project)/\(workspace)")
+                if let item {
+                    Text("状态: \(item.status)")
+                    Text("当前阶段: \(item.currentStage)")
+                    Text("轮次: \(item.globalLoopRound)")
+                    Text("校验轮次: \(item.verifyIteration)/\(item.verifyIterationLimit)")
+                    Text("活跃代理: \(item.activeAgents.isEmpty ? "无" : item.activeAgents.joined(separator: ", "))")
+                } else {
+                    Text("状态: 未启动")
+                        .foregroundColor(.secondary)
+                }
+
+                HStack {
+                    Text("最大 verify 次数")
+                    Spacer()
+                    TextField("3", text: $maxVerifyIterationsText)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                }
+
+                HStack {
+                    Button("手动启动") {
+                        startEvolution()
+                    }
+                    Button("停止") {
+                        appState.stopEvolution(project: project, workspace: workspace)
+                    }
+                    Button("恢复") {
+                        appState.resumeEvolution(project: project, workspace: workspace)
+                    }
+                }
+            }
+
+            Section("代理配置（AI 工具 / mode / model）") {
+                Button("拉取配置") {
+                    appState.refreshEvolution(project: project, workspace: workspace)
+                    loadProfiles()
+                }
+                Button("保存配置") {
+                    saveProfiles()
+                }
+
+                ForEach($profiles) { $profile in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(profile.stage)
+                            .font(.system(.body, design: .monospaced))
+                        Picker("AI 工具", selection: $profile.aiTool) {
+                            ForEach(AIChatTool.allCases) { tool in
+                                Text(tool.displayName).tag(tool)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .onChange(of: profile.aiTool) { _, _ in
+                            sanitizeProfileSelection(profileID: profile.id)
+                        }
+
+                        Menu {
+                            Button("默认模式") {
+                                profile.mode = ""
+                            }
+                            let options = modeOptions(for: profile.aiTool)
+                            if options.isEmpty {
+                                Text("暂无可用模式")
+                            } else {
+                                ForEach(options, id: \.self) { mode in
+                                    Button(mode) {
+                                        profile.mode = mode
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text("模式")
+                                Spacer()
+                                Text(profile.mode.isEmpty ? "默认模式" : profile.mode)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Menu {
+                            Button("默认模型") {
+                                profile.providerID = ""
+                                profile.modelID = ""
+                            }
+                            let providers = modelProviders(for: profile.aiTool)
+                            if providers.isEmpty {
+                                Text("暂无可用模型")
+                            } else if providers.count == 1 {
+                                if let onlyProvider = providers.first {
+                                    ForEach(onlyProvider.models) { model in
+                                        Button(model.name) {
+                                            profile.providerID = onlyProvider.id
+                                            profile.modelID = model.id
+                                        }
+                                    }
+                                }
+                            } else {
+                                ForEach(providers) { provider in
+                                    Menu(provider.name) {
+                                        ForEach(provider.models) { model in
+                                            Button(model.name) {
+                                                profile.providerID = provider.id
+                                                profile.modelID = model.id
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text("模型")
+                                Spacer()
+                                Text(selectedModelDisplayName(for: profile))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
+            Section("代理列表") {
+                if let item {
+                    ForEach(item.agents, id: \.stage) { agent in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(agent.stage)
+                                    .font(.system(.body, design: .monospaced))
+                                Text(agent.agent)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Text(agent.status)
+                                .foregroundColor(agent.status == "running" ? .orange : .secondary)
+                            Button("聊天") {
+                                appState.openEvolutionStageChat(
+                                    project: item.project,
+                                    workspace: item.workspace,
+                                    cycleId: item.cycleID,
+                                    stage: agent.stage
+                                )
+                            }
+                            .disabled(!(agent.status == "running" || agent.status == "done"))
+                        }
+                    }
+                } else {
+                    Text("当前工作空间暂无轮次")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if appState.evolutionReplayLoading ||
+                !appState.evolutionReplayMessages.isEmpty ||
+                appState.evolutionReplayError != nil {
+                Section("阶段聊天") {
+                    if appState.evolutionReplayLoading {
+                        ProgressView("加载聊天记录中...")
+                    } else if let error = appState.evolutionReplayError, !error.isEmpty {
+                        Text(error)
+                            .foregroundColor(.red)
+                    } else {
+                        MessageListView(
+                            messages: appState.evolutionReplayMessages,
+                            onQuestionReply: { _, _ in },
+                            onQuestionReject: { _ in },
+                            onQuestionReplyAsMessage: { _ in }
+                        )
+                        .environmentObject(replayStore)
+                        .frame(minHeight: 320)
+                    }
+                    Button("关闭聊天") {
+                        appState.clearEvolutionReplay()
+                    }
+                }
+            }
+        }
+        .navigationTitle("自主进化")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("刷新") {
+                    appState.refreshEvolution(project: project, workspace: workspace)
+                    loadProfiles()
+                }
+            }
+        }
+        .onAppear {
+            appState.openEvolution(project: project, workspace: workspace)
+            loadProfiles()
+        }
+        .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
+            loadProfiles()
+        }
+        .onReceive(appState.$evolutionReplayMessages) { messages in
+            replayStore.replaceMessages(messages)
+        }
+    }
+
+    private func loadProfiles() {
+        let values = appState.evolutionProfiles(project: project, workspace: workspace)
+        profiles = values.map { profile in
+            EvolutionProfileDraft(
+                id: profile.stage,
+                stage: profile.stage,
+                aiTool: profile.aiTool,
+                mode: profile.mode ?? "",
+                providerID: profile.model?.providerID ?? "",
+                modelID: profile.model?.modelID ?? ""
+            )
+        }
+        let profileIDs = profiles.map(\.id)
+        for id in profileIDs {
+            sanitizeProfileSelection(profileID: id)
+        }
+    }
+
+    private func modeOptions(for tool: AIChatTool) -> [String] {
+        let values = appState.evolutionAgents(project: project, workspace: workspace, aiTool: tool)
+            .compactMap { $0.mode?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return Array(Set(values)).sorted()
+    }
+
+    private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
+        appState.evolutionProviders(project: project, workspace: workspace, aiTool: tool)
+            .filter { !$0.models.isEmpty }
+    }
+
+    private func selectedModelDisplayName(for profile: EvolutionProfileDraft) -> String {
+        guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else {
+            return "默认模型"
+        }
+        for provider in modelProviders(for: profile.aiTool) {
+            if provider.id == profile.providerID,
+               let model = provider.models.first(where: { $0.id == profile.modelID }) {
+                return model.name
+            }
+        }
+        return profile.modelID
+    }
+
+    private func sanitizeProfileSelection(profileID: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+        var profile = profiles[index]
+
+        if !profile.mode.isEmpty {
+            let modes = modeOptions(for: profile.aiTool)
+            if !modes.isEmpty, !modes.contains(profile.mode) {
+                profile.mode = ""
+            }
+        }
+
+        if !profile.providerID.isEmpty || !profile.modelID.isEmpty {
+            let providers = modelProviders(for: profile.aiTool)
+            let modelExists = providers.contains { provider in
+                provider.id == profile.providerID &&
+                    provider.models.contains(where: { $0.id == profile.modelID })
+            }
+            if !providers.isEmpty, !modelExists {
+                profile.providerID = ""
+                profile.modelID = ""
+            }
+        }
+
+        profiles[index] = profile
+    }
+
+    private func buildStageProfilesForSubmit() -> [EvolutionStageProfileInfoV2] {
+        profiles.map { profile in
+            var mode: String?
+            if !profile.mode.isEmpty {
+                let modes = modeOptions(for: profile.aiTool)
+                if modes.isEmpty || modes.contains(profile.mode) {
+                    mode = profile.mode
+                }
+            }
+
+            let model: EvolutionModelSelectionV2? = {
+                guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else { return nil }
+                let providers = modelProviders(for: profile.aiTool)
+                if providers.isEmpty {
+                    return EvolutionModelSelectionV2(providerID: profile.providerID, modelID: profile.modelID)
+                }
+                let exists = providers.contains { provider in
+                    provider.id == profile.providerID &&
+                        provider.models.contains(where: { $0.id == profile.modelID })
+                }
+                guard exists else { return nil }
+                return EvolutionModelSelectionV2(providerID: profile.providerID, modelID: profile.modelID)
+            }()
+
+            return EvolutionStageProfileInfoV2(
+                stage: profile.stage,
+                aiTool: profile.aiTool,
+                mode: mode,
+                model: model
+            )
+        }
+    }
+
+    private func saveProfiles() {
+        let values = buildStageProfilesForSubmit()
+        appState.updateEvolutionAgentProfile(project: project, workspace: workspace, profiles: values)
+    }
+
+    private func startEvolution() {
+        let verify = max(1, Int(maxVerifyIterationsText) ?? 3)
+        let values = buildStageProfilesForSubmit()
+        appState.startEvolution(
+            project: project,
+            workspace: workspace,
+            maxVerifyIterations: verify,
+            profiles: values
+        )
     }
 }

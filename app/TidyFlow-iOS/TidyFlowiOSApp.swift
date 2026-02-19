@@ -14,6 +14,7 @@ enum MobileRoute: Hashable {
     )
     case terminalAttach(project: String, workspace: String, termId: String)
     case aiChat(project: String, workspace: String)
+    case evolution(project: String, workspace: String)
 }
 
 @main
@@ -46,6 +47,8 @@ struct TidyFlowiOSApp: App {
                                 MobileTerminalView(project: project, workspace: workspace, termId: termId)
                             case .aiChat(let project, let workspace):
                                 MobileAIChatView(project: project, workspace: workspace)
+                            case .evolution(let project, let workspace):
+                                MobileEvolutionView(project: project, workspace: workspace)
                             }
                         }
                 }
