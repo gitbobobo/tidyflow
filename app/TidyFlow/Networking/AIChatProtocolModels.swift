@@ -586,3 +586,207 @@ struct AIProtocolSlashCommand {
         return AIProtocolSlashCommand(name: name, description: description, action: action)
     }
 }
+
+// MARK: - Evolution
+
+struct EvolutionModelSelectionV2 {
+    let providerID: String
+    let modelID: String
+
+    static func from(json: [String: Any]) -> EvolutionModelSelectionV2? {
+        guard let providerID = json["provider_id"] as? String,
+              let modelID = json["model_id"] as? String else { return nil }
+        return EvolutionModelSelectionV2(providerID: providerID, modelID: modelID)
+    }
+}
+
+struct EvolutionStageProfileInfoV2 {
+    let stage: String
+    let aiTool: AIChatTool
+    let mode: String?
+    let model: EvolutionModelSelectionV2?
+
+    static func from(json: [String: Any]) -> EvolutionStageProfileInfoV2? {
+        guard let stage = json["stage"] as? String else { return nil }
+        guard let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
+        let mode = parseOptionalString(json["mode"])
+        let model = (json["model"] as? [String: Any]).flatMap { EvolutionModelSelectionV2.from(json: $0) }
+        return EvolutionStageProfileInfoV2(stage: stage, aiTool: aiTool, mode: mode, model: model)
+    }
+
+    func toJSON() -> [String: Any] {
+        var json: [String: Any] = [
+            "stage": stage,
+            "ai_tool": aiTool.rawValue
+        ]
+        if let mode { json["mode"] = mode }
+        if let model {
+            json["model"] = [
+                "provider_id": model.providerID,
+                "model_id": model.modelID
+            ]
+        }
+        return json
+    }
+}
+
+struct EvolutionAgentInfoV2 {
+    let stage: String
+    let agent: String
+    let status: String
+
+    static func from(json: [String: Any]) -> EvolutionAgentInfoV2? {
+        guard let stage = json["stage"] as? String,
+              let agent = json["agent"] as? String,
+              let status = json["status"] as? String else { return nil }
+        return EvolutionAgentInfoV2(stage: stage, agent: agent, status: status)
+    }
+}
+
+struct EvolutionSchedulerInfoV2 {
+    let activationState: String
+    let maxParallelWorkspaces: Int
+    let runningCount: Int
+    let queuedCount: Int
+
+    static let empty = EvolutionSchedulerInfoV2(
+        activationState: "idle",
+        maxParallelWorkspaces: 0,
+        runningCount: 0,
+        queuedCount: 0
+    )
+
+    static func from(json: [String: Any]) -> EvolutionSchedulerInfoV2? {
+        guard let activationState = json["activation_state"] as? String else { return nil }
+        return EvolutionSchedulerInfoV2(
+            activationState: activationState,
+            maxParallelWorkspaces: Int(parseInt64(json["max_parallel_workspaces"])),
+            runningCount: Int(parseInt64(json["running_count"])),
+            queuedCount: Int(parseInt64(json["queued_count"]))
+        )
+    }
+}
+
+struct EvolutionWorkspaceItemV2 {
+    let project: String
+    let workspace: String
+    let cycleID: String
+    let status: String
+    let currentStage: String
+    let globalLoopRound: Int
+    let verifyIteration: Int
+    let verifyIterationLimit: Int
+    let agents: [EvolutionAgentInfoV2]
+    let activeAgents: [String]
+
+    var workspaceKey: String {
+        "\(project):\(workspace)"
+    }
+
+    static func from(json: [String: Any]) -> EvolutionWorkspaceItemV2? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let cycleID = json["cycle_id"] as? String,
+              let status = json["status"] as? String,
+              let currentStage = json["current_stage"] as? String else { return nil }
+
+        let agents = (json["agents"] as? [[String: Any]] ?? []).compactMap { EvolutionAgentInfoV2.from(json: $0) }
+        let activeAgents = json["active_agents"] as? [String] ?? []
+        return EvolutionWorkspaceItemV2(
+            project: project,
+            workspace: workspace,
+            cycleID: cycleID,
+            status: status,
+            currentStage: currentStage,
+            globalLoopRound: Int(parseInt64(json["global_loop_round"])),
+            verifyIteration: Int(parseInt64(json["verify_iteration"])),
+            verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
+            agents: agents,
+            activeAgents: activeAgents
+        )
+    }
+}
+
+struct EvolutionSnapshotV2 {
+    let scheduler: EvolutionSchedulerInfoV2
+    let workspaceItems: [EvolutionWorkspaceItemV2]
+
+    static func from(json: [String: Any]) -> EvolutionSnapshotV2? {
+        guard let schedulerDict = json["scheduler"] as? [String: Any],
+              let scheduler = EvolutionSchedulerInfoV2.from(json: schedulerDict) else { return nil }
+        let items = (json["workspace_items"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionWorkspaceItemV2.from(json: $0) }
+        return EvolutionSnapshotV2(scheduler: scheduler, workspaceItems: items)
+    }
+}
+
+struct EvolutionStageChatOpenedV2 {
+    let project: String
+    let workspace: String
+    let cycleID: String
+    let stage: String
+    let aiToolRaw: String
+    let sessionID: String
+
+    var aiTool: AIChatTool? {
+        AIChatTool(rawValue: aiToolRaw.lowercased())
+    }
+
+    static func from(json: [String: Any]) -> EvolutionStageChatOpenedV2? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let cycleID = json["cycle_id"] as? String,
+              let stage = json["stage"] as? String,
+              let aiToolRaw = json["ai_tool"] as? String,
+              let sessionID = json["session_id"] as? String else { return nil }
+        return EvolutionStageChatOpenedV2(
+            project: project,
+            workspace: workspace,
+            cycleID: cycleID,
+            stage: stage,
+            aiToolRaw: aiToolRaw,
+            sessionID: sessionID
+        )
+    }
+}
+
+struct EvolutionAgentProfileV2 {
+    let project: String
+    let workspace: String
+    let stageProfiles: [EvolutionStageProfileInfoV2]
+
+    static func from(json: [String: Any]) -> EvolutionAgentProfileV2? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String else { return nil }
+        let stageProfiles = (json["stage_profiles"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
+        return EvolutionAgentProfileV2(project: project, workspace: workspace, stageProfiles: stageProfiles)
+    }
+}
+
+extension AISessionMessagesV2 {
+    func toChatMessages() -> [AIChatMessage] {
+        messages.compactMap { message in
+            let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
+            let parts: [AIChatPart] = message.parts.compactMap { part in
+                let kind = AIChatPartKind(rawValue: part.partType) ?? .text
+                return AIChatPart(
+                    id: part.id,
+                    kind: kind,
+                    text: part.text,
+                    mime: part.mime,
+                    filename: part.filename,
+                    url: part.url,
+                    synthetic: part.synthetic,
+                    ignored: part.ignored,
+                    source: part.source,
+                    toolName: part.toolName,
+                    toolState: part.toolState,
+                    toolCallId: part.toolCallId,
+                    toolPartMetadata: part.toolPartMetadata
+                )
+            }
+            return AIChatMessage(messageId: message.id, role: role, parts: parts, isStreaming: false)
+        }
+    }
+}

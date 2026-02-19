@@ -944,4 +944,91 @@ extension WSClient {
             "ai_tool": aiTool.rawValue
         ])
     }
+
+    // MARK: - Evolution
+
+    /// 手动启动工作空间的自主进化循环（启动后自动调度）
+    func requestEvoStartWorkspace(
+        project: String,
+        workspace: String,
+        priority: Int = 0,
+        maxVerifyIterations: Int? = nil,
+        stageProfiles: [EvolutionStageProfileInfoV2] = []
+    ) {
+        var msg: [String: Any] = [
+            "type": "evo_start_workspace",
+            "project": project,
+            "workspace": workspace,
+            "priority": priority
+        ]
+        if let maxVerifyIterations {
+            msg["max_verify_iterations"] = maxVerifyIterations
+        }
+        if !stageProfiles.isEmpty {
+            msg["stage_profiles"] = stageProfiles.map { $0.toJSON() }
+        }
+        send(msg)
+    }
+
+    func requestEvoStopWorkspace(project: String, workspace: String, reason: String? = nil) {
+        var msg: [String: Any] = [
+            "type": "evo_stop_workspace",
+            "project": project,
+            "workspace": workspace
+        ]
+        if let reason, !reason.isEmpty {
+            msg["reason"] = reason
+        }
+        send(msg)
+    }
+
+    func requestEvoStopAll(reason: String? = nil) {
+        var msg: [String: Any] = ["type": "evo_stop_all"]
+        if let reason, !reason.isEmpty {
+            msg["reason"] = reason
+        }
+        send(msg)
+    }
+
+    func requestEvoResumeWorkspace(project: String, workspace: String) {
+        send([
+            "type": "evo_resume_workspace",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    func requestEvoSnapshot(project: String? = nil, workspace: String? = nil) {
+        var msg: [String: Any] = ["type": "evo_get_snapshot"]
+        if let project, !project.isEmpty { msg["project"] = project }
+        if let workspace, !workspace.isEmpty { msg["workspace"] = workspace }
+        send(msg)
+    }
+
+    func requestEvoOpenStageChat(project: String, workspace: String, cycleID: String, stage: String) {
+        send([
+            "type": "evo_open_stage_chat",
+            "project": project,
+            "workspace": workspace,
+            "cycle_id": cycleID,
+            "stage": stage
+        ])
+    }
+
+    func requestEvoUpdateAgentProfile(project: String, workspace: String, stageProfiles: [EvolutionStageProfileInfoV2]) {
+        send([
+            "type": "evo_update_agent_profile",
+            "project": project,
+            "workspace": workspace,
+            "stage_profiles": stageProfiles.map { $0.toJSON() }
+        ])
+    }
+
+    func requestEvoGetAgentProfile(project: String, workspace: String) {
+        send([
+            "type": "evo_get_agent_profile",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
 }

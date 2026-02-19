@@ -118,6 +118,12 @@ class WSClient: NSObject, ObservableObject {
     var onAIProviderList: ((AIProviderListResult) -> Void)?
     var onAIAgentList: ((AIAgentListResult) -> Void)?
     var onAISlashCommands: ((AISlashCommandsResult) -> Void)?
+    // Evolution
+    var onEvoPulse: (() -> Void)?
+    var onEvoSnapshot: ((EvolutionSnapshotV2) -> Void)?
+    var onEvoStageChatOpened: ((EvolutionStageChatOpenedV2) -> Void)?
+    var onEvoAgentProfile: ((EvolutionAgentProfileV2) -> Void)?
+    var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
 

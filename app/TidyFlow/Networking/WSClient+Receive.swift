@@ -408,6 +408,31 @@ extension WSClient {
                 onAISlashCommands?(ev)
             }
 
+        // Evolution
+        case "evo_scheduler_updated", "evo_scheduler_status",
+             "evo_workspace_started", "evo_workspace_stopped", "evo_workspace_resumed",
+             "evo_stage_changed", "evo_cycle_updated", "evo_judge_result":
+            onEvoPulse?()
+
+        case "evo_snapshot":
+            if let ev = EvolutionSnapshotV2.from(json: json) {
+                onEvoSnapshot?(ev)
+            }
+
+        case "evo_stage_chat_opened":
+            if let ev = EvolutionStageChatOpenedV2.from(json: json) {
+                onEvoStageChatOpened?(ev)
+            }
+
+        case "evo_agent_profile":
+            if let ev = EvolutionAgentProfileV2.from(json: json) {
+                onEvoAgentProfile?(ev)
+            }
+
+        case "evo_error":
+            let message = json["message"] as? String ?? "evolution error"
+            onEvoError?(message)
+
         case "clipboard_image_set":
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String
