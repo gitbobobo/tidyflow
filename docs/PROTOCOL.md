@@ -6,7 +6,7 @@
 
 - 实时通道：`WebSocket`（`/ws`）
 - 配对控制通道：`HTTP`（`/pair/*`）
-- 默认监听地址：`127.0.0.1:47999`
+- 默认监听地址：`127.0.0.1:47999`（安全默认）
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
@@ -26,9 +26,16 @@
   - `POST /pair/exchange`：移动端使用配对码换取短期 `ws_token`
   - `POST /pair/revoke`：吊销已签发 token（仅 loopback 请求允许）
 - 鉴权规则：
-  - 启用 `TIDYFLOW_WS_TOKEN` 时，`/ws` 需携带 `token` 查询参数
-  - `token` 可为启动 token，或 `/pair/exchange` 返回的配对 token
-  - 配对 token 过期后不可继续用于连接
+  - 当监听地址为非 loopback（例如 `0.0.0.0`）或设置了 `TIDYFLOW_WS_TOKEN` 时，`/ws` 需携带 `token` 查询参数；
+  - `token` 可为启动 token，或 `/pair/exchange` 返回的配对 token；
+  - `/pair/start` 与 `/pair/revoke` 仍仅允许 loopback 请求；
+  - 配对 token 过期后不可继续用于连接；
+  - 未携带 token 的远程连接将返回 `401 Unauthorized`。
+
+## 客户端设置扩展字段
+
+- `ClientSettingsResult` 新增 `remote_access_enabled`（`bool`），用于在 macOS 端展示局域网连接状态；
+- `SaveClientSettings` 请求新增 `remote_access_enabled`（`bool`），用于持久化用户在设置页的远程访问开关。
 
 ## 兼容策略
 
