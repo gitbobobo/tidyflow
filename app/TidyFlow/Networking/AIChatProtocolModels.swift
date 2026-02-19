@@ -674,6 +674,7 @@ struct EvolutionWorkspaceItemV2 {
     let status: String
     let currentStage: String
     let globalLoopRound: Int
+    let autoLoopEnabled: Bool
     let verifyIteration: Int
     let verifyIterationLimit: Int
     let agents: [EvolutionAgentInfoV2]
@@ -699,6 +700,7 @@ struct EvolutionWorkspaceItemV2 {
             status: status,
             currentStage: currentStage,
             globalLoopRound: Int(parseInt64(json["global_loop_round"])),
+            autoLoopEnabled: json["auto_loop_enabled"] as? Bool ?? true,
             verifyIteration: Int(parseInt64(json["verify_iteration"])),
             verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
             agents: agents,

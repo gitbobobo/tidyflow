@@ -576,6 +576,8 @@ pub enum ClientMessage {
         priority: i32,
         #[serde(default)]
         max_verify_iterations: Option<u32>,
+        #[serde(default = "default_auto_loop_enabled")]
+        auto_loop_enabled: bool,
         #[serde(default)]
         stage_profiles: Vec<EvolutionStageProfileInfo>,
     },
@@ -628,6 +630,10 @@ pub enum ClientMessage {
 
 fn default_diff_mode() -> String {
     "working".to_string()
+}
+
+fn default_auto_loop_enabled() -> bool {
+    true
 }
 
 fn default_git_scope() -> String {
@@ -1591,6 +1597,8 @@ pub struct EvolutionWorkspaceItem {
     pub status: String,
     pub current_stage: String,
     pub global_loop_round: u32,
+    #[serde(default = "default_auto_loop_enabled")]
+    pub auto_loop_enabled: bool,
     pub verify_iteration: u32,
     pub verify_iteration_limit: u32,
     pub agents: Vec<EvolutionAgentInfo>,
