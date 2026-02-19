@@ -43,6 +43,17 @@ struct TabStripView: View {
                 .buttonStyle(.borderless)
                 .help("AI Chat")
                 .padding(.horizontal, 4)
+
+                Button(action: {
+                    appState.addTab(workspaceKey: globalKey, kind: .evolution, title: "Evolution", payload: "")
+                }) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Evolution")
+                .padding(.horizontal, 4)
             } else {
                 Spacer()
             }
