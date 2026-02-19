@@ -332,10 +332,12 @@ private struct MessageBubble: View, Equatable {
                         .foregroundColor(.white)
                 } else if message.isStreaming,
                           let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                    TypewriterText(text: normalizedText, isStreaming: message.isStreaming)
-                        .textSelection(.enabled)
-                        .font(.system(size: 13))
-                        .foregroundColor(.primary)
+                    StreamingMarkdownText(
+                        text: normalizedText,
+                        isStreaming: message.isStreaming,
+                        baseFontSize: 13,
+                        textColor: .primary
+                    )
                 } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                     MarkdownTextView(
                         text: markdownText,
@@ -347,11 +349,13 @@ private struct MessageBubble: View, Equatable {
         case .reasoning:
             if let text = part.text, message.isStreaming,
                let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                TypewriterText(text: normalizedText, isStreaming: true)
-                    .textSelection(.enabled)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                StreamingMarkdownText(
+                    text: normalizedText,
+                    isStreaming: true,
+                    baseFontSize: 12,
+                    textColor: .secondary
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else if let text = part.text,
                       let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                 MarkdownTextView(
@@ -454,14 +458,20 @@ private struct MessageBubble: View, Equatable {
 
         var text = normalizedLineBreaks(raw)
 
-        // 去掉首尾纯空白行，避免流式分片带来的大段空行。
-        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
+        // 仅用于判空，不直接裁剪文本，避免吞掉“行完成”所需的尾部换行信号。
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
 
         // 连续 3 行以上空白压缩为最多 2 行，保留基本段落感。
         text = text.replacingOccurrences(
             of: #"\n{3,}"#,
             with: "\n\n",
+            options: .regularExpression
+        )
+
+        // 仅去掉首部空白行，保留尾部换行以便“行完成后立即触发 Markdown 渲染”。
+        text = text.replacingOccurrences(
+            of: #"^\n+"#,
+            with: "",
             options: .regularExpression
         )
 
@@ -561,6 +571,54 @@ private struct MessageBubble: View, Equatable {
                 .scaledToFit()
         }
         #endif
+    }
+}
+
+/// 流式 Markdown：已完成行实时走 Markdown，当前未完成尾行维持纯文本打字机。
+private struct StreamingMarkdownText: View {
+    let text: String
+    let isStreaming: Bool
+    let baseFontSize: CGFloat
+    let textColor: Color
+
+    private var segments: (completedMarkdown: String, tailPlainText: String) {
+        splitStreamingMarkdown(text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !segments.completedMarkdown.isEmpty {
+                MarkdownTextView(
+                    text: segments.completedMarkdown,
+                    baseFontSize: baseFontSize,
+                    textColor: textColor
+                )
+            }
+
+            if !segments.tailPlainText.isEmpty {
+                TypewriterText(text: segments.tailPlainText, isStreaming: isStreaming)
+                    .textSelection(.enabled)
+                    .font(.system(size: baseFontSize))
+                    .foregroundColor(textColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func splitStreamingMarkdown(_ source: String) -> (completedMarkdown: String, tailPlainText: String) {
+        guard !source.isEmpty else { return ("", "") }
+
+        let hasTrailingNewline = source.hasSuffix("\n")
+        let lines = source.components(separatedBy: "\n")
+        guard !lines.isEmpty else { return ("", "") }
+
+        let completedCount = hasTrailingNewline ? lines.count : max(0, lines.count - 1)
+        let completedMarkdown = completedCount > 0
+            ? lines.prefix(completedCount).joined(separator: "\n")
+            : ""
+        let tail = hasTrailingNewline ? "" : (lines.last ?? "")
+        return (completedMarkdown, tail)
     }
 }
 

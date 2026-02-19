@@ -343,7 +343,12 @@ struct ToolCardView: View {
     private var statusIcon: some View {
         if let invocation, invocation.status == .running {
             ProgressView()
+                #if os(macOS)
+                .controlSize(.small)
+                .scaleEffect(0.55)
+                #else
                 .scaleEffect(0.7)
+                #endif
                 .progressViewStyle(CircularProgressViewStyle(tint: statusColor))
         } else {
             Image(systemName: statusIconName)

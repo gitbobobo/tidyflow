@@ -22,13 +22,9 @@ struct AIChatEmptyStateView: View {
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                Text("还没有消息")
+                Text("使用 \(currentTool.displayName) 开始构建")
                     .font(.title3)
                     .foregroundColor(.secondary)
-
-                Text("使用 \(currentTool.displayName) 开始构建")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary.opacity(0.7))
 
                 toolGrid
             }
