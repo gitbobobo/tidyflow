@@ -247,6 +247,10 @@ struct MobileEvolutionView: View {
     @State private var maxVerifyIterationsText: String = "3"
     @State private var autoLoopEnabled: Bool = true
     @State private var profiles: [EvolutionProfileDraft] = []
+    @State private var isApplyingRemoteProfiles: Bool = false
+    @State private var lastSyncedProfileSignature: String = ""
+    @State private var pendingProfileSaveSignature: String?
+    @State private var pendingProfileSaveDate: Date?
     @StateObject private var replayStore = AIChatStore()
 
     private var item: EvolutionWorkspaceItemV2? {
@@ -256,27 +260,44 @@ struct MobileEvolutionView: View {
     var body: some View {
         List {
             Section("调度器状态") {
-                Text("激活状态: \(appState.evolutionScheduler.activationState)")
-                Text("并发上限: \(appState.evolutionScheduler.maxParallelWorkspaces)")
-                Text("运行中: \(appState.evolutionScheduler.runningCount)  排队: \(appState.evolutionScheduler.queuedCount)")
+                LabeledContent("激活状态") {
+                    Text(appState.evolutionScheduler.activationState)
+                }
+                LabeledContent("并发上限") {
+                    Text("\(appState.evolutionScheduler.maxParallelWorkspaces)")
+                }
+                LabeledContent("运行中 / 排队") {
+                    Text("\(appState.evolutionScheduler.runningCount) / \(appState.evolutionScheduler.queuedCount)")
+                }
             }
 
             Section("工作空间控制") {
-                Text("当前: \(project)/\(workspace)")
+                LabeledContent("当前工作空间") {
+                    Text("\(project)/\(workspace)")
+                }
                 if let item {
-                    Text("状态: \(item.status)")
-                    Text("当前阶段: \(item.currentStage)")
-                    Text("轮次: \(item.globalLoopRound)")
-                    Text("校验轮次: \(item.verifyIteration)/\(item.verifyIterationLimit)")
-                    Text("活跃代理: \(item.activeAgents.isEmpty ? "无" : item.activeAgents.joined(separator: ", "))")
+                    LabeledContent("状态") {
+                        Text(item.status)
+                    }
+                    LabeledContent("当前阶段") {
+                        Text(item.currentStage)
+                    }
+                    LabeledContent("轮次") {
+                        Text("\(item.globalLoopRound)")
+                    }
+                    LabeledContent("校验轮次") {
+                        Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
+                    }
+                    LabeledContent("活跃代理") {
+                        Text(item.activeAgents.isEmpty ? "无" : item.activeAgents.joined(separator: ", "))
+                            .lineLimit(1)
+                    }
                 } else {
                     Text("状态: 未启动")
                         .foregroundColor(.secondary)
                 }
 
-                HStack {
-                    Text("最大 verify 次数")
-                    Spacer()
+                LabeledContent("最大 verify 次数") {
                     TextField("3", text: $maxVerifyIterationsText)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
@@ -288,10 +309,11 @@ struct MobileEvolutionView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                HStack {
+                ControlGroup {
                     Button("手动启动") {
                         startEvolution()
                     }
+                    .buttonStyle(.borderedProminent)
                     Button("停止") {
                         appState.stopEvolution(project: project, workspace: workspace)
                     }
@@ -299,94 +321,101 @@ struct MobileEvolutionView: View {
                         appState.resumeEvolution(project: project, workspace: workspace)
                     }
                 }
+                .buttonStyle(.bordered)
             }
 
-            Section("代理配置（AI 工具 / mode / model）") {
-                Button("拉取配置") {
-                    appState.refreshEvolution(project: project, workspace: workspace)
-                    loadProfiles()
-                }
-                Button("保存配置") {
-                    saveProfiles()
-                }
+            Section("代理配置") {
+                Text("进入页面自动拉取配置，切换 AI 工具 / 模式 / 模型后自动保存。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
                 ForEach($profiles) { $profile in
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text(profile.stage)
                             .font(.system(.body, design: .monospaced))
-                        Picker("AI 工具", selection: $profile.aiTool) {
-                            ForEach(AIChatTool.allCases) { tool in
-                                Text(tool.displayName).tag(tool)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .onChange(of: profile.aiTool) { _, _ in
-                            sanitizeProfileSelection(profileID: profile.id)
-                        }
+                            .foregroundColor(.secondary)
 
-                        Menu {
-                            Button("默认模式") {
-                                profile.mode = ""
-                            }
-                            let options = modeOptions(for: profile.aiTool)
-                            if options.isEmpty {
-                                Text("暂无可用模式")
-                            } else {
-                                ForEach(options, id: \.self) { mode in
-                                    Button(mode) {
-                                        profile.mode = mode
-                                    }
+                        LabeledContent("AI 工具") {
+                            Picker("AI 工具", selection: $profile.aiTool) {
+                                ForEach(AIChatTool.allCases) { tool in
+                                    Text(tool.displayName).tag(tool)
                                 }
                             }
-                        } label: {
-                            HStack {
-                                Text("模式")
-                                Spacer()
+                            .pickerStyle(.menu)
+                            .onChange(of: profile.aiTool) { _, _ in
+                                sanitizeProfileSelection(profileID: profile.id)
+                                autoSaveProfilesIfNeeded()
+                            }
+                        }
+
+                        LabeledContent("模式") {
+                            Menu {
+                                Button("默认模式") {
+                                    profile.mode = ""
+                                    autoSaveProfilesIfNeeded()
+                                }
+                                let options = modeOptions(for: profile.aiTool)
+                                if options.isEmpty {
+                                    Text("暂无可用模式")
+                                } else {
+                                    ForEach(options, id: \.self) { mode in
+                                        Button(mode) {
+                                            profile.mode = mode
+                                            applyAgentDefaultModelIfAvailable(
+                                                profileID: profile.id,
+                                                agentName: mode
+                                            )
+                                            autoSaveProfilesIfNeeded()
+                                        }
+                                    }
+                                }
+                            } label: {
                                 Text(profile.mode.isEmpty ? "默认模式" : profile.mode)
                                     .foregroundColor(.secondary)
                             }
                         }
 
-                        Menu {
-                            Button("默认模型") {
-                                profile.providerID = ""
-                                profile.modelID = ""
-                            }
-                            let providers = modelProviders(for: profile.aiTool)
-                            if providers.isEmpty {
-                                Text("暂无可用模型")
-                            } else if providers.count == 1 {
-                                if let onlyProvider = providers.first {
-                                    ForEach(onlyProvider.models) { model in
-                                        Button(model.name) {
-                                            profile.providerID = onlyProvider.id
-                                            profile.modelID = model.id
+                        LabeledContent("模型") {
+                            Menu {
+                                Button("默认模型") {
+                                    profile.providerID = ""
+                                    profile.modelID = ""
+                                    autoSaveProfilesIfNeeded()
+                                }
+                                let providers = modelProviders(for: profile.aiTool)
+                                if providers.isEmpty {
+                                    Text("暂无可用模型")
+                                } else if providers.count == 1 {
+                                    if let onlyProvider = providers.first {
+                                        ForEach(onlyProvider.models) { model in
+                                            Button(model.name) {
+                                                profile.providerID = onlyProvider.id
+                                                profile.modelID = model.id
+                                                autoSaveProfilesIfNeeded()
+                                            }
                                         }
                                     }
-                                }
-                            } else {
-                                ForEach(providers) { provider in
-                                    Menu(provider.name) {
-                                        ForEach(provider.models) { model in
-                                            Button(model.name) {
-                                                profile.providerID = provider.id
-                                                profile.modelID = model.id
+                                } else {
+                                    ForEach(providers) { provider in
+                                        Menu(provider.name) {
+                                            ForEach(provider.models) { model in
+                                                Button(model.name) {
+                                                    profile.providerID = provider.id
+                                                    profile.modelID = model.id
+                                                    autoSaveProfilesIfNeeded()
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        } label: {
-                            HStack {
-                                Text("模型")
-                                Spacer()
+                            } label: {
                                 Text(selectedModelDisplayName(for: profile))
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                 }
             }
 
@@ -474,7 +503,7 @@ struct MobileEvolutionView: View {
 
     private func loadProfiles() {
         let values = appState.evolutionProfiles(project: project, workspace: workspace)
-        profiles = values.map { profile in
+        let loadedProfiles = values.map { profile in
             EvolutionProfileDraft(
                 id: profile.stage,
                 stage: profile.stage,
@@ -484,17 +513,59 @@ struct MobileEvolutionView: View {
                 modelID: profile.model?.modelID ?? ""
             )
         }
+        let incomingSignature = profileSignature(loadedProfiles)
+        if shouldIgnoreIncomingProfiles(signature: incomingSignature) {
+            return
+        }
+
+        isApplyingRemoteProfiles = true
+        profiles = loadedProfiles
         let profileIDs = profiles.map(\.id)
         for id in profileIDs {
             sanitizeProfileSelection(profileID: id)
         }
+        lastSyncedProfileSignature = profileSignature(profiles)
+        if pendingProfileSaveSignature == lastSyncedProfileSignature {
+            pendingProfileSaveSignature = nil
+            pendingProfileSaveDate = nil
+        }
+        DispatchQueue.main.async {
+            isApplyingRemoteProfiles = false
+        }
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
-        let values = appState.evolutionAgents(project: project, workspace: workspace, aiTool: tool)
-            .compactMap { $0.mode?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return Array(Set(values)).sorted()
+        // 与 macOS 端保持一致：mode 选项来自 agent.name。
+        var seen: Set<String> = []
+        var values: [String] = []
+        for agent in appState.evolutionAgents(project: project, workspace: workspace, aiTool: tool) {
+            let name = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            guard seen.insert(name).inserted else { continue }
+            values.append(name)
+        }
+        return values
+    }
+
+    private func applyAgentDefaultModelIfAvailable(profileID: String, agentName: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+        var profile = profiles[index]
+        let target = agentName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+
+        let agent = appState.evolutionAgents(project: project, workspace: workspace, aiTool: profile.aiTool)
+            .first { info in
+                info.name == target || info.name.caseInsensitiveCompare(target) == .orderedSame
+            }
+        guard let agent,
+              let providerID = agent.defaultProviderID,
+              let modelID = agent.defaultModelID,
+              !providerID.isEmpty,
+              !modelID.isEmpty else { return }
+
+        profile.providerID = providerID
+        profile.modelID = modelID
+        profiles[index] = profile
     }
 
     private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
@@ -577,6 +648,45 @@ struct MobileEvolutionView: View {
     private func saveProfiles() {
         let values = buildStageProfilesForSubmit()
         appState.updateEvolutionAgentProfile(project: project, workspace: workspace, profiles: values)
+    }
+
+    private func autoSaveProfilesIfNeeded() {
+        guard !isApplyingRemoteProfiles else { return }
+        let signature = profileSignature(profiles)
+        guard signature != lastSyncedProfileSignature else { return }
+        guard signature != pendingProfileSaveSignature else { return }
+        pendingProfileSaveSignature = signature
+        pendingProfileSaveDate = Date()
+        saveProfiles()
+    }
+
+    private func shouldIgnoreIncomingProfiles(signature: String) -> Bool {
+        guard let pending = pendingProfileSaveSignature else { return false }
+        guard pending != signature else { return false }
+
+        let timeout: TimeInterval = 3
+        if let date = pendingProfileSaveDate, Date().timeIntervalSince(date) < timeout {
+            return true
+        }
+
+        pendingProfileSaveSignature = nil
+        pendingProfileSaveDate = nil
+        return false
+    }
+
+    private func profileSignature(_ values: [EvolutionProfileDraft]) -> String {
+        values
+            .sorted { $0.stage < $1.stage }
+            .map {
+                [
+                    $0.stage,
+                    $0.aiTool.rawValue,
+                    $0.mode,
+                    $0.providerID,
+                    $0.modelID
+                ].joined(separator: "::")
+            }
+            .joined(separator: "||")
     }
 
     private func startEvolution() {
