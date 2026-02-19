@@ -29,6 +29,7 @@ enum TabKind: String, Codable {
     case diff
     case settings
     case aiChat
+    case evolution
     
     var iconName: String {
         switch self {
@@ -37,6 +38,7 @@ enum TabKind: String, Codable {
         case .diff: return "arrow.left.arrow.right"
         case .settings: return "gearshape"
         case .aiChat: return "sparkles"
+        case .evolution: return "point.3.connected.trianglepath.dotted"
         }
     }
 }
