@@ -960,6 +960,8 @@ pub enum ServerMessage {
         merge_ai_agent: Option<String>,
         fixed_port: u16,
         app_language: String,
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,
     },
     ClientSettingsSaved {
         ok: bool,

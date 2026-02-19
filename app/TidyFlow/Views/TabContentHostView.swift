@@ -634,6 +634,10 @@ struct EvolutionTabView: View {
     @State private var autoLoopEnabled: Bool = true
     @State private var editableProfiles: [EvolutionEditableProfile] = []
     @State private var isApplyingRemoteProfiles: Bool = false
+    @State private var lastSyncedProfileSignature: String = ""
+    @State private var pendingProfileSaveSignature: String?
+    @State private var pendingProfileSaveDate: Date?
+    @State private var hasPendingUserProfileEdit: Bool = false
 
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
@@ -652,8 +656,7 @@ struct EvolutionTabView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     schedulerCard
                     workspaceCard
-                    profilesCard
-                    agentsCard
+                    stageSectionsCard
                 }
                 .padding(16)
             }
@@ -669,6 +672,10 @@ struct EvolutionTabView: View {
         .onChange(of: appState.selectedProjectName) { _, _ in
             refreshData()
             syncStartOptionsFromCurrentItem()
+        }
+        .onChange(of: appState.connectionState) { _, state in
+            guard state == .connected else { return }
+            refreshData()
         }
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             syncProfilesFromState()
@@ -772,10 +779,10 @@ struct EvolutionTabView: View {
         }
     }
 
-    private var profilesCard: some View {
-        GroupBox("代理配置") {
+    private var stageSectionsCard: some View {
+        GroupBox("代理类型") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("进入页面自动拉取配置，切换 AI 工具 / 模式 / 模型后自动保存。")
+                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中的代理可进入聊天详情。")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -784,97 +791,7 @@ struct EvolutionTabView: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach($editableProfiles) { $profile in
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(profile.stage)
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-
-                            LabeledContent("AI 工具") {
-                                Picker("AI 工具", selection: $profile.aiTool) {
-                                    ForEach(AIChatTool.allCases) { tool in
-                                        Text(tool.displayName).tag(tool)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .onChange(of: profile.aiTool) { _, _ in
-                                    sanitizeProfileSelection(profileID: profile.id)
-                                    autoSaveProfilesIfNeeded()
-                                }
-                            }
-
-                            LabeledContent("模式") {
-                                Menu {
-                                    Button("默认模式") {
-                                        profile.mode = ""
-                                        autoSaveProfilesIfNeeded()
-                                    }
-                                    let options = modeOptions(for: profile.aiTool)
-                                    if options.isEmpty {
-                                        Text("暂无可用模式")
-                                    } else {
-                                        ForEach(options, id: \.self) { option in
-                                            Button(option) {
-                                                profile.mode = option
-                                                applyAgentDefaultModelIfAvailable(
-                                                    profileID: profile.id,
-                                                    agentName: option
-                                                )
-                                                autoSaveProfilesIfNeeded()
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    Text(profile.mode.isEmpty ? "默认模式" : profile.mode)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                }
-                                .menuStyle(.borderlessButton)
-                            }
-
-                            LabeledContent("模型") {
-                                Menu {
-                                    Button("默认模型") {
-                                        profile.providerID = ""
-                                        profile.modelID = ""
-                                        autoSaveProfilesIfNeeded()
-                                    }
-                                    let providers = modelProviders(for: profile.aiTool)
-                                    if providers.isEmpty {
-                                        Text("暂无可用模型")
-                                    } else if providers.count <= 1 {
-                                        if let onlyProvider = providers.first {
-                                            ForEach(onlyProvider.models) { model in
-                                                Button(model.name) {
-                                                    profile.providerID = onlyProvider.id
-                                                    profile.modelID = model.id
-                                                    autoSaveProfilesIfNeeded()
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        ForEach(providers) { provider in
-                                            Menu(provider.name) {
-                                                ForEach(provider.models) { model in
-                                                    Button(model.name) {
-                                                        profile.providerID = provider.id
-                                                        profile.modelID = model.id
-                                                        autoSaveProfilesIfNeeded()
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    Text(selectedModelDisplayName(for: profile))
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                }
-                                .menuStyle(.borderlessButton)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        stageSection(profile: $profile)
                     }
                 }
             }
@@ -882,57 +799,171 @@ struct EvolutionTabView: View {
         }
     }
 
-    private var agentsCard: some View {
-        GroupBox("代理列表") {
-            VStack(alignment: .leading, spacing: 8) {
-                if let item = currentItem {
-                    ForEach(item.agents, id: \.stage) { agent in
-                        HStack(spacing: 10) {
-                            Text(agent.stage)
-                                .frame(width: 90, alignment: .leading)
-                                .font(.system(.body, design: .monospaced))
-                            Text(agent.agent)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            Spacer()
-                            Text(agent.status)
-                                .foregroundColor(agent.status == "running" ? .orange : .secondary)
-                            Button("查看聊天") {
-                                appState.openEvolutionStageChat(
-                                    project: item.project,
-                                    workspace: item.workspace,
-                                    cycleId: item.cycleID,
-                                    stage: agent.stage
-                                )
-                                openWindow(id: "evolution-stage-chat")
-                            }
-                            .buttonStyle(.link)
-                            .disabled(!(agent.status == "running" || agent.status == "done"))
+    private func stageSection(profile: Binding<EvolutionEditableProfile>) -> some View {
+        let stage = profile.wrappedValue.stage
+        let runtime = runtimeAgent(for: stage)
+        let statusText = runtime?.status ?? "未启动"
+        let aiToolBinding = Binding<AIChatTool>(
+            get: { profile.wrappedValue.aiTool },
+            set: { newValue in
+                guard profile.wrappedValue.aiTool != newValue else { return }
+                hasPendingUserProfileEdit = true
+                profile.wrappedValue.aiTool = newValue
+                sanitizeProfileSelection(profileID: profile.wrappedValue.id)
+                autoSaveProfilesIfNeeded()
+            }
+        )
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(sectionTitle(for: profile.wrappedValue, runtime: runtime))
+                .font(.headline)
+
+            Text("代理类型: \(stage)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            LabeledContent("工作状态") {
+                if statusText == "running" {
+                    Button {
+                        openStageChat(stage: stage)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(statusText)
+                                .foregroundColor(stageStatusColor(statusText))
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
                     }
+                    .buttonStyle(.plain)
                 } else {
-                    Text("当前工作空间暂无轮次")
-                        .foregroundColor(.secondary)
+                    Text(statusText)
+                        .foregroundColor(stageStatusColor(statusText))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            LabeledContent("AI 工具") {
+                Picker("", selection: aiToolBinding) {
+                    ForEach(AIChatTool.allCases) { tool in
+                        Text(tool.displayName).tag(tool)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
+
+            LabeledContent("模式") {
+                Menu {
+                    Button("默认模式") {
+                        hasPendingUserProfileEdit = true
+                        profile.wrappedValue.mode = ""
+                        autoSaveProfilesIfNeeded()
+                    }
+                    let options = modeOptions(for: profile.wrappedValue.aiTool)
+                    if options.isEmpty {
+                        Text("暂无可用模式")
+                    } else {
+                        ForEach(options, id: \.self) { option in
+                            Button(option) {
+                                hasPendingUserProfileEdit = true
+                                profile.wrappedValue.mode = option
+                                applyAgentDefaultModelIfAvailable(
+                                    profileID: profile.wrappedValue.id,
+                                    agentName: option
+                                )
+                                autoSaveProfilesIfNeeded()
+                            }
+                        }
+                    }
+                } label: {
+                    Text(profile.wrappedValue.mode.isEmpty ? "默认模式" : profile.wrappedValue.mode)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .menuStyle(.borderlessButton)
+            }
+
+            LabeledContent("模型") {
+                Menu {
+                    Button("默认模型") {
+                        hasPendingUserProfileEdit = true
+                        profile.wrappedValue.providerID = ""
+                        profile.wrappedValue.modelID = ""
+                        autoSaveProfilesIfNeeded()
+                    }
+                    let providers = modelProviders(for: profile.wrappedValue.aiTool)
+                    if providers.isEmpty {
+                        Text("暂无可用模型")
+                    } else if providers.count <= 1 {
+                        if let onlyProvider = providers.first {
+                            ForEach(onlyProvider.models) { model in
+                                Button(model.name) {
+                                    hasPendingUserProfileEdit = true
+                                    profile.wrappedValue.providerID = onlyProvider.id
+                                    profile.wrappedValue.modelID = model.id
+                                    autoSaveProfilesIfNeeded()
+                                }
+                            }
+                        }
+                    } else {
+                        ForEach(providers) { provider in
+                            Menu(provider.name) {
+                                ForEach(provider.models) { model in
+                                    Button(model.name) {
+                                        hasPendingUserProfileEdit = true
+                                        profile.wrappedValue.providerID = provider.id
+                                        profile.wrappedValue.modelID = model.id
+                                        autoSaveProfilesIfNeeded()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(selectedModelDisplayName(for: profile.wrappedValue))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .menuStyle(.borderlessButton)
+            }
         }
+        .padding(10)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func refreshData() {
         appState.requestEvolutionSnapshot()
         if let workspace {
-            appState.requestEvolutionAgentProfile(project: project, workspace: workspace)
-            requestProfileSelectorData(workspace: workspace)
+            appState.requestEvolutionSelectorResourcesThenProfile(project: project, workspace: workspace)
         }
         syncProfilesFromState()
     }
 
-    private func requestProfileSelectorData(workspace: String) {
-        for tool in AIChatTool.allCases {
-            appState.wsClient.requestAIProviderList(projectName: project, workspaceName: workspace, aiTool: tool)
-            appState.wsClient.requestAIAgentList(projectName: project, workspaceName: workspace, aiTool: tool)
-        }
+    private func runtimeAgent(for stage: String) -> EvolutionAgentInfoV2? {
+        currentItem?.agents.first { $0.stage == stage }
+    }
+
+    private func stageStatusColor(_ status: String) -> Color {
+        status == "running" ? .orange : .secondary
+    }
+
+    private func sectionTitle(for profile: EvolutionEditableProfile, runtime: EvolutionAgentInfoV2?) -> String {
+        let runtimeAgent = runtime?.agent.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !runtimeAgent.isEmpty { return runtimeAgent }
+        let configuredMode = profile.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredMode.isEmpty { return configuredMode }
+        return profile.stage
+    }
+
+    private func openStageChat(stage: String) {
+        guard let item = currentItem else { return }
+        appState.openEvolutionStageChat(
+            project: item.project,
+            workspace: item.workspace,
+            cycleId: item.cycleID,
+            stage: stage
+        )
+        openWindow(id: "evolution-stage-chat")
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
@@ -1024,15 +1055,6 @@ struct EvolutionTabView: View {
 
             let model: EvolutionModelSelectionV2? = {
                 guard !item.providerID.isEmpty, !item.modelID.isEmpty else { return nil }
-                let providers = modelProviders(for: item.aiTool)
-                if providers.isEmpty {
-                    return EvolutionModelSelectionV2(providerID: item.providerID, modelID: item.modelID)
-                }
-                let exists = providers.contains { provider in
-                    provider.id == item.providerID &&
-                        provider.models.contains(where: { $0.id == item.modelID })
-                }
-                guard exists else { return nil }
                 return EvolutionModelSelectionV2(providerID: item.providerID, modelID: item.modelID)
             }()
 
@@ -1049,11 +1071,14 @@ struct EvolutionTabView: View {
         guard let workspace else {
             editableProfiles = []
             isApplyingRemoteProfiles = false
+            lastSyncedProfileSignature = ""
+            pendingProfileSaveSignature = nil
+            pendingProfileSaveDate = nil
+            hasPendingUserProfileEdit = false
             return
         }
-        isApplyingRemoteProfiles = true
         let profiles = appState.evolutionProfiles(project: project, workspace: workspace)
-        editableProfiles = profiles.map { profile in
+        let loadedProfiles = profiles.map { profile in
             EvolutionEditableProfile(
                 id: profile.stage,
                 stage: profile.stage,
@@ -1063,11 +1088,22 @@ struct EvolutionTabView: View {
                 modelID: profile.model?.modelID ?? ""
             )
         }
-        let profileIDs = editableProfiles.map(\.id)
-        for id in profileIDs {
-            sanitizeProfileSelection(profileID: id)
+        let incomingSignature = profileSignature(loadedProfiles)
+        if shouldIgnoreIncomingProfiles(signature: incomingSignature) {
+            return
         }
-        isApplyingRemoteProfiles = false
+
+        isApplyingRemoteProfiles = true
+        editableProfiles = loadedProfiles
+        lastSyncedProfileSignature = profileSignature(editableProfiles)
+        if pendingProfileSaveSignature == lastSyncedProfileSignature {
+            pendingProfileSaveSignature = nil
+            pendingProfileSaveDate = nil
+        }
+        hasPendingUserProfileEdit = false
+        DispatchQueue.main.async {
+            isApplyingRemoteProfiles = false
+        }
     }
 
     private func saveProfiles() {
@@ -1078,7 +1114,46 @@ struct EvolutionTabView: View {
 
     private func autoSaveProfilesIfNeeded() {
         guard workspaceReady, !isApplyingRemoteProfiles else { return }
+        guard hasPendingUserProfileEdit else { return }
+        let signature = profileSignature(editableProfiles)
+        guard signature != lastSyncedProfileSignature else {
+            hasPendingUserProfileEdit = false
+            return
+        }
+        guard signature != pendingProfileSaveSignature else { return }
+        pendingProfileSaveSignature = signature
+        pendingProfileSaveDate = Date()
+        hasPendingUserProfileEdit = false
         saveProfiles()
+    }
+
+    private func shouldIgnoreIncomingProfiles(signature: String) -> Bool {
+        guard let pending = pendingProfileSaveSignature else { return false }
+        guard pending != signature else { return false }
+
+        let timeout: TimeInterval = 3
+        if let date = pendingProfileSaveDate, Date().timeIntervalSince(date) < timeout {
+            return true
+        }
+
+        pendingProfileSaveSignature = nil
+        pendingProfileSaveDate = nil
+        return false
+    }
+
+    private func profileSignature(_ values: [EvolutionEditableProfile]) -> String {
+        values
+            .sorted { $0.stage < $1.stage }
+            .map {
+                [
+                    $0.stage,
+                    $0.aiTool.rawValue,
+                    $0.mode,
+                    $0.providerID,
+                    $0.modelID
+                ].joined(separator: "::")
+            }
+            .joined(separator: "||")
     }
 
     private func startCurrentWorkspace() {

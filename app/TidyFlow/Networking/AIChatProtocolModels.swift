@@ -434,6 +434,30 @@ private func parseOptionalString(_ any: Any?) -> String? {
     }
 }
 
+private func parseDictionary(_ any: Any?) -> [String: Any]? {
+    if let dict = any as? [String: Any] {
+        return dict
+    }
+    if let dict = any as? [AnyHashable: Any] {
+        var converted: [String: Any] = [:]
+        converted.reserveCapacity(dict.count)
+        for (key, value) in dict {
+            guard let text = key as? String else { continue }
+            converted[text] = value
+        }
+        return converted
+    }
+    return nil
+}
+
+private func parseArrayOfDictionaries(_ any: Any?) -> [[String: Any]] {
+    if let dicts = any as? [[String: Any]] {
+        return dicts
+    }
+    guard let items = any as? [Any] else { return [] }
+    return items.compactMap { parseDictionary($0) }
+}
+
 private extension AISessionSelectionHint {
     static func from(json: [String: Any]?) -> AISessionSelectionHint? {
         guard let json else { return nil }
@@ -468,7 +492,23 @@ private func parseInt64(_ any: Any?) -> Int64 {
 
 private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
     guard let raw = any as? String else { return nil }
-    return AIChatTool(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    let normalized = raw
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "_", with: "-")
+    let mapped = switch normalized {
+    case "open-code":
+        "opencode"
+    case "codex-app-server", "codex-app":
+        "codex"
+    case "copilot-acp", "github-copilot":
+        "copilot"
+    case "claude-code", "claude-cli":
+        "claude"
+    default:
+        normalized
+    }
+    return AIChatTool(rawValue: mapped)
 }
 
 // MARK: - Provider / Agent 列表
@@ -594,9 +634,32 @@ struct EvolutionModelSelectionV2 {
     let modelID: String
 
     static func from(json: [String: Any]) -> EvolutionModelSelectionV2? {
-        guard let providerID = json["provider_id"] as? String,
-              let modelID = json["model_id"] as? String else { return nil }
+        let providerID = parseOptionalString(json["provider_id"])
+            ?? parseOptionalString(json["providerId"])
+            ?? parseOptionalString(json["providerID"])
+            ?? parseOptionalString(json["model_provider_id"])
+            ?? parseOptionalString(json["modelProviderID"])
+            ?? parseOptionalString(json["modelProviderId"])
+        let modelID = parseOptionalString(json["model_id"])
+            ?? parseOptionalString(json["modelId"])
+            ?? parseOptionalString(json["modelID"])
+        guard let providerID, let modelID else { return nil }
         return EvolutionModelSelectionV2(providerID: providerID, modelID: modelID)
+    }
+
+    static func from(rawModel: String, providerHint: String?) -> EvolutionModelSelectionV2? {
+        let normalizedModel = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedModel.isEmpty else { return nil }
+        if let slash = normalizedModel.firstIndex(of: "/") {
+            let provider = normalizedModel[..<slash].trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = normalizedModel[normalizedModel.index(after: slash)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !provider.isEmpty, !model.isEmpty else { return nil }
+            return EvolutionModelSelectionV2(providerID: provider, modelID: model)
+        }
+        guard let providerHint = providerHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !providerHint.isEmpty else { return nil }
+        return EvolutionModelSelectionV2(providerID: providerHint, modelID: normalizedModel)
     }
 }
 
@@ -607,10 +670,20 @@ struct EvolutionStageProfileInfoV2 {
     let model: EvolutionModelSelectionV2?
 
     static func from(json: [String: Any]) -> EvolutionStageProfileInfoV2? {
-        guard let stage = json["stage"] as? String else { return nil }
-        guard let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
+        guard let stage = parseOptionalString(json["stage"])
+            ?? parseOptionalString(json["stage_name"])
+            ?? parseOptionalString(json["stageName"]) else { return nil }
+        let aiTool = parseAIChatTool(json["ai_tool"] ?? json["aiTool"]) ?? .codex
         let mode = parseOptionalString(json["mode"])
-        let model = (json["model"] as? [String: Any]).flatMap { EvolutionModelSelectionV2.from(json: $0) }
+        let providerHint = parseOptionalString(json["provider_id"])
+            ?? parseOptionalString(json["providerId"])
+            ?? parseOptionalString(json["providerID"])
+            ?? parseOptionalString(json["model_provider_id"])
+            ?? parseOptionalString(json["modelProviderId"])
+            ?? parseOptionalString(json["modelProviderID"])
+        let model = parseDictionary(json["model"]).flatMap { EvolutionModelSelectionV2.from(json: $0) }
+            ?? EvolutionModelSelectionV2.from(json: json)
+            ?? parseOptionalString(json["model"]).flatMap { EvolutionModelSelectionV2.from(rawModel: $0, providerHint: providerHint) }
         return EvolutionStageProfileInfoV2(stage: stage, aiTool: aiTool, mode: mode, model: model)
     }
 
@@ -760,7 +833,20 @@ struct EvolutionAgentProfileV2 {
     static func from(json: [String: Any]) -> EvolutionAgentProfileV2? {
         guard let project = json["project"] as? String,
               let workspace = json["workspace"] as? String else { return nil }
-        let stageProfiles = (json["stage_profiles"] as? [[String: Any]] ?? [])
+        let stageProfileSource = json["stage_profiles"] ?? json["stageProfiles"]
+        let stageProfileDicts: [[String: Any]] = {
+            let fromArray = parseArrayOfDictionaries(stageProfileSource)
+            if !fromArray.isEmpty { return fromArray }
+            guard let byStage = parseDictionary(stageProfileSource) else { return [] }
+            return byStage.compactMap { (key, value) in
+                guard var item = parseDictionary(value) else { return nil }
+                if parseOptionalString(item["stage"]) == nil {
+                    item["stage"] = key
+                }
+                return item
+            }
+        }()
+        let stageProfiles = stageProfileDicts
             .compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
         return EvolutionAgentProfileV2(project: project, workspace: workspace, stageProfiles: stageProfiles)
     }

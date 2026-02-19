@@ -239,7 +239,16 @@ extension WSClient {
             let mergeAIAgent = json["merge_ai_agent"] as? String
             let fixedPort = json["fixed_port"] as? Int ?? 0
             let appLanguage = json["app_language"] as? String ?? "system"
-            let settings = ClientSettings(customCommands: commands, workspaceShortcuts: workspaceShortcuts, commitAIAgent: commitAIAgent, mergeAIAgent: mergeAIAgent, fixedPort: fixedPort, appLanguage: appLanguage)
+            let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
+            let settings = ClientSettings(
+                customCommands: commands,
+                workspaceShortcuts: workspaceShortcuts,
+                commitAIAgent: commitAIAgent,
+                mergeAIAgent: mergeAIAgent,
+                fixedPort: fixedPort,
+                appLanguage: appLanguage,
+                evolutionAgentProfiles: evolutionAgentProfiles
+            )
             onClientSettingsResult?(settings)
 
         case "client_settings_saved":
@@ -427,6 +436,13 @@ extension WSClient {
         case "evo_agent_profile":
             if let ev = EvolutionAgentProfileV2.from(json: json) {
                 onEvoAgentProfile?(ev)
+            } else {
+                let project = json["project"] as? String ?? ""
+                let workspace = json["workspace"] as? String ?? ""
+                let stageProfilesType = String(describing: Swift.type(of: json["stage_profiles"] as Any))
+                TFLog.ws.warning(
+                    "Failed to parse evo_agent_profile: project=\(project, privacy: .public), workspace=\(workspace, privacy: .public), stage_profiles_type=\(stageProfilesType, privacy: .public)"
+                )
             }
 
         case "evo_error":
@@ -482,6 +498,43 @@ extension WSClient {
         default:
             break
         }
+    }
+
+    private func parseEvolutionProfilesFromClientSettings(_ raw: Any?) -> [String: [EvolutionStageProfileInfoV2]] {
+        guard let rawMap = raw as? [String: Any] else { return [:] }
+        var result: [String: [EvolutionStageProfileInfoV2]] = [:]
+        result.reserveCapacity(rawMap.count)
+
+        for (key, value) in rawMap {
+            let profiles = parseEvolutionStageProfiles(value)
+            if !profiles.isEmpty {
+                result[key] = profiles
+            }
+        }
+        return result
+    }
+
+    private func parseEvolutionStageProfiles(_ raw: Any?) -> [EvolutionStageProfileInfoV2] {
+        if let items = raw as? [[String: Any]] {
+            return items.compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
+        }
+        guard let array = raw as? [Any] else { return [] }
+        let dicts: [[String: Any]] = array.compactMap { item in
+            if let dict = item as? [String: Any] {
+                return dict
+            }
+            if let dict = item as? [AnyHashable: Any] {
+                var converted: [String: Any] = [:]
+                converted.reserveCapacity(dict.count)
+                for (k, v) in dict {
+                    guard let key = k as? String else { continue }
+                    converted[key] = v
+                }
+                return converted
+            }
+            return nil
+        }
+        return dicts.compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
     }
 }
 

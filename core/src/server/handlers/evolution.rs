@@ -8,7 +8,7 @@ use futures::StreamExt;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout, Duration};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::ai::AiModelSelection;
@@ -184,6 +184,21 @@ pub async fn handle_evolution_message(
             workspace,
             stage_profiles,
         } => {
+            let inbound_direction_model = stage_profiles
+                .iter()
+                .find(|item| item.stage == "direction")
+                .and_then(|item| item.model.as_ref())
+                .map(|m| format!("{}/{}", m.provider_id, m.model_id))
+                .unwrap_or_else(|| "default".to_string());
+            info!(
+                "Inbound EvoUpdateAgentProfile: conn_id={}, remote={}, project={}, workspace={}, stages={}, direction_model={}",
+                ctx.conn_meta.conn_id,
+                ctx.conn_meta.is_remote,
+                project,
+                workspace,
+                stage_profiles.len(),
+                inbound_direction_model
+            );
             let saved = manager
                 .update_agent_profile(project, workspace, stage_profiles.clone(), ctx)
                 .await?;
@@ -199,6 +214,13 @@ pub async fn handle_evolution_message(
             Ok(true)
         }
         ClientMessage::EvoGetAgentProfile { project, workspace } => {
+            info!(
+                "Inbound EvoGetAgentProfile: conn_id={}, remote={}, project={}, workspace={}",
+                ctx.conn_meta.conn_id,
+                ctx.conn_meta.is_remote,
+                project,
+                workspace
+            );
             let saved = manager.get_agent_profile(project, workspace, ctx).await;
             send_message(
                 socket,
@@ -529,12 +551,16 @@ impl EvolutionManager {
     ) -> Result<Vec<EvolutionStageProfileInfo>, String> {
         let normalized = normalize_profiles(stage_profiles)?;
         let storage_key = profile_key(project, workspace);
+        let legacy_keys = profile_legacy_keys(project, workspace);
         {
             let mut state = ctx.app_state.write().await;
             state
                 .client_settings
                 .evolution_agent_profiles
                 .insert(storage_key, to_persisted_profiles(&normalized));
+            for legacy in legacy_keys {
+                state.client_settings.evolution_agent_profiles.remove(&legacy);
+            }
         }
         let _ = ctx.save_tx.send(()).await;
 
@@ -549,6 +575,20 @@ impl EvolutionManager {
             }
         }
 
+        let direction_model = normalized
+            .iter()
+            .find(|item| item.stage == "direction")
+            .and_then(|item| item.model.as_ref())
+            .map(|m| format!("{}/{}", m.provider_id, m.model_id))
+            .unwrap_or_else(|| "default".to_string());
+        info!(
+            "evolution profile updated: project={}, workspace={}, stages={}, direction_model={}",
+            project,
+            workspace,
+            normalized.len(),
+            direction_model
+        );
+
         Ok(normalized)
     }
 
@@ -559,30 +599,48 @@ impl EvolutionManager {
         ctx: &HandlerContext,
     ) -> Vec<EvolutionStageProfileInfo> {
         let storage_key = profile_key(project, workspace);
-        let from_state = {
+        let legacy_keys = profile_legacy_keys(project, workspace);
+        let (profile_source, from_state) = {
             let state = ctx.app_state.read().await;
-            state
+            let canonical = state
                 .client_settings
                 .evolution_agent_profiles
                 .get(&storage_key)
-                .cloned()
-                .unwrap_or_default()
+                .cloned();
+            if let Some(found) = canonical {
+                ("canonical", found)
+            } else {
+                let legacy = legacy_keys
+                    .into_iter()
+                    .find_map(|key| state.client_settings.evolution_agent_profiles.get(&key).cloned())
+                    .unwrap_or_default();
+                let source = if legacy.is_empty() { "default" } else { "legacy" };
+                (source, legacy)
+            }
         };
 
-        if from_state.is_empty() {
+        let profiles = if from_state.is_empty() {
             default_stage_profiles()
         } else {
-            match normalize_profiles(from_persisted_profiles(from_state)) {
-                Ok(profiles) => profiles,
-                Err(err) => {
-                    warn!(
-                        "invalid persisted evolution profiles, fallback to default: project={}, workspace={}, error={}",
-                        project, workspace, err
-                    );
-                    default_stage_profiles()
-                }
-            }
-        }
+            normalize_profiles_lenient(from_persisted_profiles(from_state))
+        };
+
+        let direction_model = profiles
+            .iter()
+            .find(|item| item.stage == "direction")
+            .and_then(|item| item.model.as_ref())
+            .map(|m| format!("{}/{}", m.provider_id, m.model_id))
+            .unwrap_or_else(|| "default".to_string());
+        info!(
+            "evolution profile loaded: project={}, workspace={}, source={}, stages={}, direction_model={}",
+            project,
+            workspace,
+            profile_source,
+            profiles.len(),
+            direction_model
+        );
+
+        profiles
     }
 
     async fn build_snapshot(&self) -> SnapshotResult {
@@ -1397,7 +1455,7 @@ fn normalize_profiles(
     for profile in input {
         let stage = profile.stage.trim().to_lowercase();
         if STAGES.contains(&stage.as_str()) {
-            let ai_tool = normalize_ai_tool(&profile.ai_tool).map_err(|_| {
+            let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool).ok_or_else(|| {
                 format!("invalid ai_tool for stage '{}': {}", stage, profile.ai_tool)
             })?;
             by_stage.insert(
@@ -1422,6 +1480,39 @@ fn normalize_profiles(
         }));
     }
     Ok(result)
+}
+
+fn normalize_profiles_lenient(input: Vec<EvolutionStageProfileInfo>) -> Vec<EvolutionStageProfileInfo> {
+    let mut by_stage: HashMap<String, EvolutionStageProfileInfo> = HashMap::new();
+    for profile in input {
+        let stage = profile.stage.trim().to_lowercase();
+        if !STAGES.contains(&stage.as_str()) {
+            continue;
+        }
+        let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool)
+            .unwrap_or_else(default_evolution_ai_tool);
+        by_stage.insert(
+            stage.clone(),
+            EvolutionStageProfileInfo {
+                stage,
+                ai_tool,
+                mode: profile.mode,
+                model: profile.model,
+            },
+        );
+    }
+
+    STAGES
+        .iter()
+        .map(|stage| {
+            by_stage.remove(*stage).unwrap_or(EvolutionStageProfileInfo {
+                stage: stage.to_string(),
+                ai_tool: default_evolution_ai_tool(),
+                mode: None,
+                model: None,
+            })
+        })
+        .collect()
 }
 
 fn default_stage_profiles() -> Vec<EvolutionStageProfileInfo> {
@@ -1596,5 +1687,117 @@ fn workspace_key(project: &str, workspace: &str) -> String {
 }
 
 fn profile_key(project: &str, workspace: &str) -> String {
-    format!("{}/{}", project, workspace)
+    format!(
+        "{}/{}",
+        normalize_profile_project_name(project),
+        normalize_profile_workspace_name(workspace)
+    )
+}
+
+fn profile_legacy_keys(project: &str, workspace: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    let project_trimmed = project.trim();
+    let workspace_trimmed = workspace.trim();
+    let canonical = profile_key(project, workspace);
+
+    let raw = format!("{}/{}", project, workspace);
+    if raw != canonical {
+        keys.push(raw);
+    }
+
+    let trimmed = format!("{}/{}", project_trimmed, workspace_trimmed);
+    if trimmed != canonical && !keys.contains(&trimmed) {
+        keys.push(trimmed);
+    }
+
+    if normalize_profile_workspace_name(workspace) == "default" {
+        let legacy_default = format!("{}/(default)", normalize_profile_project_name(project));
+        if legacy_default != canonical && !keys.contains(&legacy_default) {
+            keys.push(legacy_default);
+        }
+    }
+
+    keys
+}
+
+fn normalize_profile_project_name(project: &str) -> String {
+    project.trim().to_string()
+}
+
+fn normalize_profile_workspace_name(workspace: &str) -> String {
+    let trimmed = workspace.trim();
+    if trimmed.eq_ignore_ascii_case("default") || trimmed.eq_ignore_ascii_case("(default)") {
+        "default".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_ai_tool_compatible(tool: &str) -> Option<String> {
+    if let Ok(v) = normalize_ai_tool(tool) {
+        return Some(v);
+    }
+
+    let normalized = tool.trim().to_lowercase().replace('_', "-");
+    let mapped = match normalized.as_str() {
+        "open-code" => "opencode",
+        "codex-app-server" | "codex-app" => "codex",
+        "copilot-acp" | "github-copilot" => "copilot",
+        "claude-code" | "claude-cli" => "claude",
+        _ => return None,
+    };
+    Some(mapped.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_key_should_normalize_default_workspace_alias() {
+        let canonical = profile_key("tidyflow", "default");
+        assert_eq!(canonical, "tidyflow/default");
+        assert_eq!(profile_key(" tidyflow ", "(default)"), canonical);
+    }
+
+    #[test]
+    fn normalize_ai_tool_compatible_should_map_legacy_values() {
+        assert_eq!(
+            normalize_ai_tool_compatible("claude-code").as_deref(),
+            Some("claude")
+        );
+        assert_eq!(
+            normalize_ai_tool_compatible("codex-app-server").as_deref(),
+            Some("codex")
+        );
+        assert_eq!(
+            normalize_ai_tool_compatible("github-copilot").as_deref(),
+            Some("copilot")
+        );
+        assert_eq!(
+            normalize_ai_tool_compatible("open-code").as_deref(),
+            Some("opencode")
+        );
+        assert_eq!(normalize_ai_tool_compatible("unknown-tool"), None);
+    }
+
+    #[test]
+    fn normalize_profiles_lenient_should_fallback_invalid_ai_tool_to_default() {
+        let profiles = vec![EvolutionStageProfileInfo {
+            stage: "direction".to_string(),
+            ai_tool: "claude-code".to_string(),
+            mode: Some("Default".to_string()),
+            model: Some(ai::ModelSelection {
+                provider_id: "codex".to_string(),
+                model_id: "gpt-5.3-codex".to_string(),
+            }),
+        }];
+
+        let normalized = normalize_profiles_lenient(profiles);
+        let direction = normalized
+            .into_iter()
+            .find(|item| item.stage == "direction")
+            .expect("missing direction stage");
+        assert_eq!(direction.ai_tool, "claude");
+    }
 }

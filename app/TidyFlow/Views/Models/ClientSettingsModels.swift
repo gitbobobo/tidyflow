@@ -31,6 +31,8 @@ struct ClientSettings: Codable {
     var fixedPort: Int
     /// 应用语言：system / en / zh-Hans
     var appLanguage: String
+    /// Evolution 代理配置（key: "project/workspace"）
+    var evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]]
 
     enum CodingKeys: String, CodingKey {
         case customCommands
@@ -39,17 +41,27 @@ struct ClientSettings: Codable {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case appLanguage = "app_language"
+        case evolutionAgentProfiles = "evolution_agent_profiles"
         // 旧字段，仅用于解码迁移
         case selectedAIAgent = "selected_ai_agent"
     }
 
-    init(customCommands: [CustomCommand] = [], workspaceShortcuts: [String: String] = [:], commitAIAgent: String? = nil, mergeAIAgent: String? = nil, fixedPort: Int = 0, appLanguage: String = "system") {
+    init(
+        customCommands: [CustomCommand] = [],
+        workspaceShortcuts: [String: String] = [:],
+        commitAIAgent: String? = nil,
+        mergeAIAgent: String? = nil,
+        fixedPort: Int = 0,
+        appLanguage: String = "system",
+        evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:]
+    ) {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
         self.commitAIAgent = commitAIAgent
         self.mergeAIAgent = mergeAIAgent
         self.fixedPort = fixedPort
         self.appLanguage = appLanguage
+        self.evolutionAgentProfiles = evolutionAgentProfiles
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +72,7 @@ struct ClientSettings: Codable {
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
         fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
         appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? "system"
+        evolutionAgentProfiles = [:]
         // 兼容旧字段迁移
         let oldAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
         if let old = oldAgent {

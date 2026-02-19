@@ -174,6 +174,12 @@ class AppState: ObservableObject {
         cycleId: String,
         stage: String
     )?
+    /// Evolution：按工作空间追踪 provider/agent 列表是否都已返回（用于串联 profile 请求时序）。
+    var evolutionSelectorLoadStateByWorkspace: [String: [AIChatTool: (providerLoaded: Bool, agentLoaded: Bool)]] = [:]
+    /// Evolution：等待在选择器资源就绪后发起 profile 请求的工作空间 key 集合。
+    var evolutionPendingProfileReloadWorkspaces: Set<String> = []
+    /// Evolution：profile 请求兜底定时器，防止某个列表事件丢失导致一直不拉配置。
+    var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]

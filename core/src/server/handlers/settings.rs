@@ -2,8 +2,11 @@ use axum::extract::ws::WebSocket;
 use tracing::info;
 
 use crate::server::context::SharedAppState;
-use crate::server::protocol::{ClientMessage, CustomCommandInfo, ServerMessage};
+use crate::server::protocol::{
+    ai::ModelSelection, ClientMessage, CustomCommandInfo, EvolutionStageProfileInfo, ServerMessage,
+};
 use crate::server::ws::send_message;
+use crate::workspace::state::EvolutionStageProfile;
 
 /// 处理设置相关的客户端消息
 pub async fn handle_settings_message(
@@ -27,6 +30,12 @@ pub async fn handle_settings_message(
                     command: c.command.clone(),
                 })
                 .collect();
+            let evolution_agent_profiles = state
+                .client_settings
+                .evolution_agent_profiles
+                .iter()
+                .map(|(key, profiles)| (key.clone(), to_protocol_profiles(profiles)))
+                .collect();
             send_message(
                 socket,
                 &ServerMessage::ClientSettingsResult {
@@ -36,6 +45,7 @@ pub async fn handle_settings_message(
                     merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
                     fixed_port: state.client_settings.fixed_port,
                     app_language: state.client_settings.app_language.clone(),
+                    evolution_agent_profiles,
                 },
             )
             .await?;
@@ -97,4 +107,19 @@ pub async fn handle_settings_message(
 
         _ => Ok(false), // 不处理的消息返回 false
     }
+}
+
+fn to_protocol_profiles(input: &[EvolutionStageProfile]) -> Vec<EvolutionStageProfileInfo> {
+    input
+        .iter()
+        .map(|profile| EvolutionStageProfileInfo {
+            stage: profile.stage.clone(),
+            ai_tool: profile.ai_tool.clone(),
+            mode: profile.mode.clone(),
+            model: profile.model.as_ref().map(|model| ModelSelection {
+                provider_id: model.provider_id.clone(),
+                model_id: model.model_id.clone(),
+            }),
+        })
+        .collect()
 }
