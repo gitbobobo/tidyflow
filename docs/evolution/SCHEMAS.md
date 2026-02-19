@@ -224,3 +224,8 @@
 - `evidence.index.json` 失败：禁止 judge，返回 `evo_evidence_index_invalid`。
 - `chat.map.json` 缺失目标 stage：允许调度继续，但 App 打开聊天时报 `evo_chat_session_not_found`。
 
+## 7. 验收与证据映射规范（w-3）
+
+- 验收标准建议统一命名为 `ac-1`、`ac-2`...
+- 每条验收标准必须至少映射到 `verification_plan.checks` 中一条或多条 check，且 `minimum_evidence` 至少一项；
+- 证据不足应显式标注为 `insufficient_evidence`，不得替代为通过。
