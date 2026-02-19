@@ -861,7 +861,8 @@ impl CodexAppServerAgent {
                     "output": output,
                     "metadata": Self::extract_tool_metadata(other, &tool_name, item),
                 });
-                if let Some(title) = Self::extract_tool_title(&tool_name, &tool_state["input"], item)
+                if let Some(title) =
+                    Self::extract_tool_title(&tool_name, &tool_state["input"], item)
                 {
                     tool_state["title"] = Value::String(title);
                 }
@@ -1916,7 +1917,9 @@ mod tests {
         let params = serde_json::json!({
             "error": { "message": "Reconnecting... 1/5" }
         });
-        assert!(!CodexAppServerAgent::should_ignore_error_notification(&params));
+        assert!(!CodexAppServerAgent::should_ignore_error_notification(
+            &params
+        ));
     }
 
     #[test]
@@ -1925,7 +1928,9 @@ mod tests {
             "error": { "message": "Connection dropped" },
             "willRetry": true
         });
-        assert!(CodexAppServerAgent::should_ignore_error_notification(&params));
+        assert!(CodexAppServerAgent::should_ignore_error_notification(
+            &params
+        ));
     }
 
     #[test]

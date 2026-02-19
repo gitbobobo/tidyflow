@@ -89,7 +89,10 @@ pub(crate) async fn emit_server_message(
     if sent.is_ok() {
         delivered = true;
     } else {
-        trace!("AI stream: failed to broadcast server message: {:?}", sent.err());
+        trace!(
+            "AI stream: failed to broadcast server message: {:?}",
+            sent.err()
+        );
     }
 
     delivered

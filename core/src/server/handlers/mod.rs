@@ -2,6 +2,8 @@
 // Contains handlers for workspace, terminal, git, file operations
 
 pub mod ai;
+pub mod evolution;
+pub mod evolution_prompts;
 pub mod file;
 pub mod git;
 pub mod log;

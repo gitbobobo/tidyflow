@@ -170,6 +170,13 @@ pub(super) async fn handle_client_message(
         return Ok(());
     }
 
+    // Evolution 消息
+    if crate::server::handlers::evolution::handle_evolution_message(&client_msg, socket, ctx)
+        .await?
+    {
+        return Ok(());
+    }
+
     // 内置消息处理
     match client_msg {
         ClientMessage::Ping => {
