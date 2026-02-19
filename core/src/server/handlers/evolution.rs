@@ -54,6 +54,7 @@ pub async fn handle_evolution_message(
             workspace,
             priority,
             max_verify_iterations,
+            auto_loop_enabled,
             stage_profiles,
         } => {
             let req = StartWorkspaceReq {
@@ -61,6 +62,7 @@ pub async fn handle_evolution_message(
                 workspace: workspace.clone(),
                 priority: *priority,
                 max_verify_iterations: max_verify_iterations.unwrap_or(DEFAULT_VERIFY_LIMIT),
+                auto_loop_enabled: *auto_loop_enabled,
                 stage_profiles: stage_profiles.clone(),
             };
             manager.start_workspace(req, ctx).await?;
@@ -241,6 +243,7 @@ struct WorkspaceRunState {
     cycle_id: String,
     current_stage: String,
     global_loop_round: u32,
+    auto_loop_enabled: bool,
     verify_iteration: u32,
     verify_iteration_limit: u32,
     stop_requested: bool,
@@ -261,6 +264,7 @@ struct StartWorkspaceReq {
     workspace: String,
     priority: i32,
     max_verify_iterations: u32,
+    auto_loop_enabled: bool,
     stage_profiles: Vec<EvolutionStageProfileInfo>,
 }
 
@@ -337,6 +341,7 @@ impl EvolutionManager {
                     cycle_id: cycle_id.clone(),
                     current_stage: "direction".to_string(),
                     global_loop_round: round,
+                    auto_loop_enabled: req.auto_loop_enabled,
                     verify_iteration: 0,
                     verify_iteration_limit: req.max_verify_iterations.max(1),
                     stop_requested: false,
@@ -600,6 +605,7 @@ impl EvolutionManager {
                 status: w.status.clone(),
                 current_stage: w.current_stage.clone(),
                 global_loop_round: w.global_loop_round,
+                auto_loop_enabled: w.auto_loop_enabled,
                 verify_iteration: w.verify_iteration,
                 verify_iteration_limit: w.verify_iteration_limit,
                 agents: build_agents(&w.stage_statuses),
@@ -724,14 +730,23 @@ impl EvolutionManager {
                 }
             }
 
-            let stop_now = {
+            let (stop_now, terminal_completed) = {
                 let state = self.state.lock().await;
-                state
+                let stop_now = state
                     .workspaces
                     .get(&key)
                     .map(|w| w.stop_requested)
-                    .unwrap_or(true)
+                    .unwrap_or(true);
+                let terminal_completed = state
+                    .workspaces
+                    .get(&key)
+                    .map(|w| w.status == "completed")
+                    .unwrap_or(true);
+                (stop_now, terminal_completed)
             };
+            if terminal_completed {
+                return;
+            }
             if stop_now {
                 self.mark_interrupted(&key, &ctx).await;
                 return;
@@ -884,32 +899,34 @@ impl EvolutionManager {
                 }
                 "report" => {
                     entry.status = "completed".to_string();
-                    // 自动续轮：人工启动后自动调度
-                    entry.global_loop_round += 1;
-                    entry.verify_iteration = 0;
-                    entry.cycle_id = format!(
-                        "{}_{}_{}_{}",
-                        Utc::now().format("%Y-%m-%dT%H-%M-%SZ"),
-                        sanitize_name(&entry.project),
-                        sanitize_name(&entry.workspace),
-                        Uuid::new_v4().simple()
-                    );
-                    entry.current_stage = "direction".to_string();
-                    entry.status = "queued".to_string();
-                    entry.stage_sessions.clear();
-                    entry.stage_statuses.clear();
-                    for s in STAGES {
-                        entry
-                            .stage_statuses
-                            .insert(s.to_string(), "pending".to_string());
+                    if entry.auto_loop_enabled {
+                        // 自动续轮：人工启动后自动调度
+                        entry.global_loop_round += 1;
+                        entry.verify_iteration = 0;
+                        entry.cycle_id = format!(
+                            "{}_{}_{}_{}",
+                            Utc::now().format("%Y-%m-%dT%H-%M-%SZ"),
+                            sanitize_name(&entry.project),
+                            sanitize_name(&entry.workspace),
+                            Uuid::new_v4().simple()
+                        );
+                        entry.current_stage = "direction".to_string();
+                        entry.status = "queued".to_string();
+                        entry.stage_sessions.clear();
+                        entry.stage_statuses.clear();
+                        for s in STAGES {
+                            entry
+                                .stage_statuses
+                                .insert(s.to_string(), "pending".to_string());
+                        }
+                        auto_next_cycle = true;
+                        stage_changed = Some((
+                            entry.project.clone(),
+                            entry.workspace.clone(),
+                            entry.cycle_id.clone(),
+                            entry.current_stage.clone(),
+                        ));
                     }
-                    auto_next_cycle = true;
-                    stage_changed = Some((
-                        entry.project.clone(),
-                        entry.workspace.clone(),
-                        entry.cycle_id.clone(),
-                        entry.current_stage.clone(),
-                    ));
                 }
                 _ => {}
             }
@@ -1200,6 +1217,7 @@ impl EvolutionManager {
             "verify_iteration": entry.verify_iteration,
             "verify_iteration_limit": entry.verify_iteration_limit,
             "global_loop_round": entry.global_loop_round,
+            "auto_loop_enabled": entry.auto_loop_enabled,
             "interrupt": {
                 "requested": entry.stop_requested,
                 "requested_by": if entry.stop_requested { "user" } else { "" },
