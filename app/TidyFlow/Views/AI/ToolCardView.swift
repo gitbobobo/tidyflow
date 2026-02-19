@@ -476,7 +476,9 @@ struct ToolCardView: View {
             return buildBashSections(invocation)
         case "glob":
             return buildGlobSections(invocation)
-        case "list", "websearch", "codesearch", "webfetch":
+        case "websearch":
+            return buildWebSearchSections(invocation)
+        case "list", "codesearch", "webfetch":
             return buildSearchSections(invocation)
         case "todowrite", "todoread":
             return buildTodoSections(invocation)
@@ -636,6 +638,12 @@ struct ToolCardView: View {
         return sections
     }
 
+    private func buildWebSearchSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        // websearch 卡片仅展示头部（标题 + 状态），不展示正文内容区
+        _ = invocation
+        return []
+    }
+
     private func buildTaskSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         var sections: [AIToolSection] = []
 
@@ -769,7 +777,9 @@ struct ToolCardView: View {
             return nil
         case "glob":
             return globStatsSummary(invocation)
-        case "list", "websearch", "codesearch", "webfetch":
+        case "websearch":
+            return nil
+        case "list", "codesearch", "webfetch":
             return stringValue(invocation.input["query"]) ??
                 stringValue(invocation.input["pattern"]) ??
                 stringValue(invocation.input["url"]) ??
@@ -785,6 +795,11 @@ struct ToolCardView: View {
         if toolID == "grep", let keyword = grepKeyword(invocation), !keyword.isEmpty {
             return "grep(\(keyword))"
         }
+        if toolID == "websearch",
+           let query = webSearchQuery(invocation),
+           !query.isEmpty {
+            return "websearch(\(query))"
+        }
         if toolID == "todowrite" || toolID == "todoread" {
             return todoSummary(invocation) ?? "任务列表"
         }
@@ -792,6 +807,13 @@ struct ToolCardView: View {
             return title
         }
         return toolDisplayName(toolID)
+    }
+
+    private func webSearchQuery(_ invocation: AIToolInvocationState) -> String? {
+        stringValue(invocation.input["query"]) ??
+            stringValue(invocation.input["pattern"]) ??
+            stringValue(invocation.input["url"]) ??
+            stringValue(invocation.input["path"])
     }
 
     private func toolDisplayName(_ toolID: String) -> String {
