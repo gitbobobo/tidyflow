@@ -635,6 +635,7 @@ extension AppState {
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
+            self.consumeEvolutionReplayMessageUpdatedIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -652,6 +653,7 @@ extension AppState {
 
         wsClient.onAIChatPartUpdated = { [weak self] ev in
             guard let self else { return }
+            self.consumeEvolutionReplayPartUpdatedIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -669,6 +671,7 @@ extension AppState {
 
         wsClient.onAIChatPartDelta = { [weak self] ev in
             guard let self else { return }
+            self.consumeEvolutionReplayPartDeltaIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -692,6 +695,7 @@ extension AppState {
 
         wsClient.onAIChatDone = { [weak self] ev in
             guard let self else { return }
+            self.consumeEvolutionReplayDoneIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -706,6 +710,7 @@ extension AppState {
 
         wsClient.onAIChatError = { [weak self] ev in
             guard let self else { return }
+            self.consumeEvolutionReplayErrorIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -835,7 +840,8 @@ extension AppState {
                 stage: ev.stage
             )
             self.evolutionReplayTitle = "\(ev.workspace) · \(ev.stage) · \(ev.cycleID)"
-            self.evolutionReplayMessages = []
+            self.evolutionReplayStore.clearMessages()
+            self.evolutionReplayStore.setCurrentSessionId(ev.sessionID)
             self.evolutionReplayError = nil
             self.evolutionReplayLoading = true
             self.wsClient.requestAISessionMessages(
@@ -911,7 +917,8 @@ extension AppState {
         evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
         evolutionReplayLoading = true
         evolutionReplayError = nil
-        evolutionReplayMessages = []
+        evolutionReplayRequest = nil
+        evolutionReplayStore.clearAll()
         wsClient.requestEvoOpenStageChat(project: project, workspace: workspace, cycleID: cycleId, stage: stage)
     }
 
@@ -920,7 +927,7 @@ extension AppState {
         evolutionReplayLoading = false
         evolutionReplayError = nil
         evolutionReplayTitle = ""
-        evolutionReplayMessages = []
+        evolutionReplayStore.clearAll()
     }
 
     func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
@@ -947,11 +954,106 @@ extension AppState {
               request.workspace == ev.workspaceName,
               request.aiTool == ev.aiTool,
               request.sessionId == ev.sessionId else { return false }
-        evolutionReplayMessages = ev.toChatMessages()
+        evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        evolutionReplayStore.replaceMessages(ev.toChatMessages())
         evolutionReplayLoading = false
         evolutionReplayError = nil
-        evolutionReplayRequest = nil
         return true
+    }
+
+    private func consumeEvolutionReplayMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
+        guard matchesEvolutionReplayContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if evolutionReplayStore.currentSessionId != ev.sessionId {
+            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        }
+        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return }
+        evolutionReplayStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+    }
+
+    private func consumeEvolutionReplayPartUpdatedIfNeeded(_ ev: AIChatPartUpdatedV2) {
+        guard matchesEvolutionReplayContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if evolutionReplayStore.currentSessionId != ev.sessionId {
+            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        }
+        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return }
+        evolutionReplayStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+    }
+
+    private func consumeEvolutionReplayPartDeltaIfNeeded(_ ev: AIChatPartDeltaV2) {
+        guard matchesEvolutionReplayContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if evolutionReplayStore.currentSessionId != ev.sessionId {
+            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        }
+        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return }
+        evolutionReplayStore.enqueuePartDelta(
+            messageId: ev.messageId,
+            partId: ev.partId,
+            partType: ev.partType,
+            field: ev.field,
+            delta: ev.delta
+        )
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+    }
+
+    private func consumeEvolutionReplayDoneIfNeeded(_ ev: AIChatDoneV2) {
+        guard matchesEvolutionReplayContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if evolutionReplayStore.currentSessionId != ev.sessionId {
+            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        }
+        evolutionReplayStore.handleChatDone(sessionId: ev.sessionId)
+        evolutionReplayLoading = false
+    }
+
+    private func consumeEvolutionReplayErrorIfNeeded(_ ev: AIChatErrorV2) {
+        guard matchesEvolutionReplayContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if evolutionReplayStore.currentSessionId != ev.sessionId {
+            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        }
+        evolutionReplayStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
+        evolutionReplayLoading = false
+    }
+
+    private func matchesEvolutionReplayContext(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> Bool {
+        guard let request = evolutionReplayRequest else { return false }
+        return request.project == project &&
+            request.workspace == workspace &&
+            request.aiTool == aiTool &&
+            request.sessionId == sessionId
     }
 
     func handleFileIndexResult(_ result: FileIndexResult) {

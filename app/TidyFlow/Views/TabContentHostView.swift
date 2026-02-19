@@ -629,10 +629,10 @@ private struct EvolutionEditableProfile: Identifiable {
 
 struct EvolutionTabView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openWindow) private var openWindow
     @State private var maxVerifyIterationsText: String = "3"
     @State private var autoLoopEnabled: Bool = true
     @State private var editableProfiles: [EvolutionEditableProfile] = []
-    @StateObject private var replayStore = AIChatStore()
 
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
@@ -653,7 +653,6 @@ struct EvolutionTabView: View {
                     workspaceCard
                     profilesCard
                     agentsCard
-                    replayCard
                 }
                 .padding(16)
             }
@@ -675,9 +674,6 @@ struct EvolutionTabView: View {
         }
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
             syncStartOptionsFromCurrentItem()
-        }
-        .onReceive(appState.$evolutionReplayMessages) { messages in
-            replayStore.replaceMessages(messages)
         }
     }
 
@@ -801,6 +797,10 @@ struct EvolutionTabView: View {
                             ForEach(options, id: \.self) { option in
                                 Button(option) {
                                     profile.mode = option
+                                    applyAgentDefaultModelIfAvailable(
+                                        profileID: profile.id,
+                                        agentName: option
+                                    )
                                 }
                             }
                         }
@@ -830,7 +830,7 @@ struct EvolutionTabView: View {
                         let providers = modelProviders(for: profile.aiTool)
                         if providers.isEmpty {
                             Text("暂无可用模型")
-                        } else if providers.count == 1 {
+                        } else if providers.count <= 1 {
                             if let onlyProvider = providers.first {
                                 ForEach(onlyProvider.models) { model in
                                     Button(model.name) {
@@ -897,6 +897,7 @@ struct EvolutionTabView: View {
                                 cycleId: item.cycleID,
                                 stage: agent.stage
                             )
+                            openWindow(id: "evolution-stage-chat")
                         }
                         .buttonStyle(.borderless)
                         .disabled(!(agent.status == "running" || agent.status == "done"))
@@ -908,45 +909,6 @@ struct EvolutionTabView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var replayCard: some View {
-        if appState.evolutionReplayLoading ||
-            !appState.evolutionReplayMessages.isEmpty ||
-            appState.evolutionReplayError != nil {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(appState.evolutionReplayTitle.isEmpty ? "阶段聊天" : appState.evolutionReplayTitle)
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Button("关闭") {
-                        appState.clearEvolutionReplay()
-                    }
-                    .buttonStyle(.borderless)
-                }
-
-                if appState.evolutionReplayLoading {
-                    ProgressView("加载聊天记录中...")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if let error = appState.evolutionReplayError, !error.isEmpty {
-                    Text(error)
-                        .foregroundColor(.red)
-                } else {
-                    MessageListView(
-                        messages: appState.evolutionReplayMessages,
-                        onQuestionReply: { _, _ in },
-                        onQuestionReject: { _ in },
-                        onQuestionReplyAsMessage: { _ in }
-                    )
-                    .environmentObject(replayStore)
-                    .frame(minHeight: 320)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(8)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 
     private func refreshData() {
@@ -966,10 +928,37 @@ struct EvolutionTabView: View {
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
-        let values = appState.aiAgents(for: tool)
-            .compactMap { $0.mode?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return Array(Set(values)).sorted()
+        // 与聊天输入框一致：mode 选择来自动态 agent.name 列表，而不是 agent.mode 分组字段。
+        var seen: Set<String> = []
+        var values: [String] = []
+        for agent in appState.aiAgents(for: tool) {
+            let name = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            guard seen.insert(name).inserted else { continue }
+            values.append(name)
+        }
+        return values
+    }
+
+    private func applyAgentDefaultModelIfAvailable(profileID: String, agentName: String) {
+        guard let index = editableProfiles.firstIndex(where: { $0.id == profileID }) else { return }
+        var profile = editableProfiles[index]
+        let target = agentName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+
+        let agent = appState.aiAgents(for: profile.aiTool).first { info in
+            info.name == target || info.name.caseInsensitiveCompare(target) == .orderedSame
+        }
+        guard let agent,
+              let providerID = agent.defaultProviderID,
+              let modelID = agent.defaultModelID,
+              !providerID.isEmpty,
+              !modelID.isEmpty else { return }
+
+        // 与聊天输入框保持一致：选中 agent 后直接切换到其默认模型。
+        profile.providerID = providerID
+        profile.modelID = modelID
+        editableProfiles[index] = profile
     }
 
     private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
@@ -1092,5 +1081,56 @@ struct EvolutionTabView: View {
     private func syncStartOptionsFromCurrentItem() {
         guard let item = currentItem else { return }
         autoLoopEnabled = item.autoLoopEnabled
+    }
+}
+
+struct EvolutionStageChatWindowView: View {
+    @EnvironmentObject var appState: AppState
+    @EnvironmentObject var replayStore: AIChatStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(appState.evolutionReplayTitle.isEmpty ? "阶段聊天" : appState.evolutionReplayTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+                Button("清空") {
+                    appState.clearEvolutionReplay()
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            Group {
+                if appState.evolutionReplayLoading {
+                    ProgressView("加载聊天记录中...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                } else if let error = appState.evolutionReplayError, !error.isEmpty {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .padding(20)
+                } else if replayStore.messages.isEmpty {
+                    Text("暂无阶段聊天内容")
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                } else {
+                    MessageListView(
+                        messages: replayStore.messages,
+                        onQuestionReply: { _, _ in },
+                        onQuestionReject: { _ in },
+                        onQuestionReplyAsMessage: { _ in }
+                    )
+                    .environmentObject(replayStore)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(NSColor.windowBackgroundColor))
+                }
+            }
+        }
+        .background(Color(NSColor.windowBackgroundColor))
     }
 }

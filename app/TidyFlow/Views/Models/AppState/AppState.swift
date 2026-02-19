@@ -91,6 +91,7 @@ class AppState: ObservableObject {
     let taskManager = BackgroundTaskManager()
     private var taskManagerCancellable: AnyCancellable?
     private var coreProcessManagerCancellable: AnyCancellable?
+    private var evolutionReplayStoreCancellable: AnyCancellable?
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]
@@ -153,6 +154,7 @@ class AppState: ObservableObject {
     @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
+    @Published var evolutionReplayStore: AIChatStore = AIChatStore()
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
@@ -317,6 +319,13 @@ class AppState: ObservableObject {
         editorStoreCancellable = editorStore.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
+
+        // 转发阶段聊天回放 store 的消息，兼容旧的数组状态读取路径。
+        evolutionReplayStoreCancellable = evolutionReplayStore.$messages
+            .receive(on: RunLoop.main)
+            .sink { [weak self] messages in
+                self?.evolutionReplayMessages = messages
+            }
 
         // 接线 GitCacheState 依赖
         setupGitCache()
