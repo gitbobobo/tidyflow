@@ -50,6 +50,63 @@ pub(super) async fn handle_client_message(
         "Parsed client message: {:?}",
         std::mem::discriminant(&client_msg)
     );
+    match &client_msg {
+        ClientMessage::AIChatAbort {
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+        } => {
+            info!(
+                "Inbound AIChatAbort: conn_id={}, remote={}, project={}, workspace={}, ai_tool={}, session_id={}",
+                ctx.conn_meta.conn_id,
+                ctx.conn_meta.is_remote,
+                project_name,
+                workspace_name,
+                ai_tool,
+                session_id
+            );
+        }
+        ClientMessage::AIQuestionReply {
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            request_id,
+            answers,
+        } => {
+            info!(
+                "Inbound AIQuestionReply: conn_id={}, remote={}, project={}, workspace={}, ai_tool={}, session_id={}, request_id={}, answers_count={}",
+                ctx.conn_meta.conn_id,
+                ctx.conn_meta.is_remote,
+                project_name,
+                workspace_name,
+                ai_tool,
+                session_id,
+                request_id,
+                answers.len()
+            );
+        }
+        ClientMessage::AIQuestionReject {
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            request_id,
+        } => {
+            info!(
+                "Inbound AIQuestionReject: conn_id={}, remote={}, project={}, workspace={}, ai_tool={}, session_id={}, request_id={}",
+                ctx.conn_meta.conn_id,
+                ctx.conn_meta.is_remote,
+                project_name,
+                workspace_name,
+                ai_tool,
+                session_id,
+                request_id
+            );
+        }
+        _ => {}
+    }
 
     // 按领域分发，handler 返回 Option<ServerMessage>，由此处统一发送
     // 终端消息需要特殊处理（可能返回多条消息），沿用旧模式
