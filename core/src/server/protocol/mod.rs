@@ -567,6 +567,61 @@ pub enum ClientMessage {
         ai_tool: String,
     },
 
+    // vNext: Evolution 自主进化
+    #[serde(rename = "evo_start_workspace")]
+    EvoStartWorkspace {
+        project: String,
+        workspace: String,
+        #[serde(default)]
+        priority: i32,
+        #[serde(default)]
+        max_verify_iterations: Option<u32>,
+        #[serde(default)]
+        stage_profiles: Vec<EvolutionStageProfileInfo>,
+    },
+    #[serde(rename = "evo_stop_workspace")]
+    EvoStopWorkspace {
+        project: String,
+        workspace: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "evo_stop_all")]
+    EvoStopAll {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "evo_resume_workspace")]
+    EvoResumeWorkspace {
+        project: String,
+        workspace: String,
+    },
+    #[serde(rename = "evo_get_snapshot")]
+    EvoGetSnapshot {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace: Option<String>,
+    },
+    #[serde(rename = "evo_open_stage_chat")]
+    EvoOpenStageChat {
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        stage: String,
+    },
+    #[serde(rename = "evo_update_agent_profile")]
+    EvoUpdateAgentProfile {
+        project: String,
+        workspace: String,
+        stage_profiles: Vec<EvolutionStageProfileInfo>,
+    },
+    #[serde(rename = "evo_get_agent_profile")]
+    EvoGetAgentProfile {
+        project: String,
+        workspace: String,
+    },
+
     // v1.40: 查询任务历史（iOS 重连恢复）
     ListTasks,
 }
@@ -1199,6 +1254,139 @@ pub enum ServerMessage {
         ai_tool: String,
         commands: Vec<ai::SlashCommandInfo>,
     },
+
+    // vNext: Evolution 自主进化
+    #[serde(rename = "evo_scheduler_updated")]
+    EvoSchedulerUpdated {
+        activation_state: String,
+        max_parallel_workspaces: u32,
+        running_count: u32,
+        queued_count: u32,
+    },
+    #[serde(rename = "evo_scheduler_status")]
+    EvoSchedulerStatus {
+        activation_state: String,
+        max_parallel_workspaces: u32,
+        running_count: u32,
+        queued_count: u32,
+    },
+    #[serde(rename = "evo_workspace_started")]
+    EvoWorkspaceStarted {
+        event_id: String,
+        event_seq: u64,
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        ts: String,
+        source: String,
+        status: String,
+    },
+    #[serde(rename = "evo_workspace_stopped")]
+    EvoWorkspaceStopped {
+        event_id: String,
+        event_seq: u64,
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        ts: String,
+        source: String,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "evo_workspace_resumed")]
+    EvoWorkspaceResumed {
+        event_id: String,
+        event_seq: u64,
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        ts: String,
+        source: String,
+        status: String,
+    },
+    #[serde(rename = "evo_stage_changed")]
+    EvoStageChanged {
+        event_id: String,
+        event_seq: u64,
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        ts: String,
+        source: String,
+        from_stage: String,
+        to_stage: String,
+        verify_iteration: u32,
+    },
+    #[serde(rename = "evo_cycle_updated")]
+    EvoCycleUpdated {
+        event_id: String,
+        event_seq: u64,
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        ts: String,
+        source: String,
+        status: String,
+        current_stage: String,
+        global_loop_round: u32,
+        verify_iteration: u32,
+        verify_iteration_limit: u32,
+        agents: Vec<EvolutionAgentInfo>,
+        active_agents: Vec<String>,
+    },
+    #[serde(rename = "evo_judge_result")]
+    EvoJudgeResult {
+        event_id: String,
+        event_seq: u64,
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        ts: String,
+        source: String,
+        result: String,
+        reason: String,
+        next_action: String,
+    },
+    #[serde(rename = "evo_snapshot")]
+    EvoSnapshot {
+        scheduler: EvolutionSchedulerInfo,
+        workspace_items: Vec<EvolutionWorkspaceItem>,
+    },
+    #[serde(rename = "evo_stage_chat_opened")]
+    EvoStageChatOpened {
+        project: String,
+        workspace: String,
+        cycle_id: String,
+        stage: String,
+        ai_tool: String,
+        session_id: String,
+    },
+    #[serde(rename = "evo_agent_profile")]
+    EvoAgentProfile {
+        project: String,
+        workspace: String,
+        stage_profiles: Vec<EvolutionStageProfileInfo>,
+    },
+    #[serde(rename = "evo_error")]
+    EvoError {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        event_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cycle_id: Option<String>,
+        ts: String,
+        source: String,
+        code: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        context: Option<serde_json::Value>,
+    },
 }
 
 // ============================================================================
@@ -1366,6 +1554,49 @@ pub struct TaskSnapshotEntry {
     pub completed_at: Option<i64>,
 }
 
+/// Evolution 阶段代理配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionStageProfileInfo {
+    pub stage: String,
+    pub ai_tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ai::ModelSelection>,
+}
+
+/// Evolution 代理运行信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionAgentInfo {
+    pub stage: String,
+    pub agent: String,
+    pub status: String,
+}
+
+/// Evolution 调度器信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionSchedulerInfo {
+    pub activation_state: String,
+    pub max_parallel_workspaces: u32,
+    pub running_count: u32,
+    pub queued_count: u32,
+}
+
+/// Evolution 工作空间快照项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionWorkspaceItem {
+    pub project: String,
+    pub workspace: String,
+    pub cycle_id: String,
+    pub status: String,
+    pub current_stage: String,
+    pub global_loop_round: u32,
+    pub verify_iteration: u32,
+    pub verify_iteration_limit: u32,
+    pub agents: Vec<EvolutionAgentInfo>,
+    pub active_agents: Vec<String>,
+}
+
 // ============================================================================
 // v1 Capabilities
 // ============================================================================
@@ -1398,6 +1629,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "lsp_diagnostics".to_string(),
         "remote_term_tracking".to_string(),
         "task_history".to_string(),
+        "evolution".to_string(),
     ]
 }
 

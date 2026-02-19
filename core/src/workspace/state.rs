@@ -44,6 +44,25 @@ pub struct CustomCommand {
     pub command: String,
 }
 
+/// Evolution 阶段代理模型选择
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionModelSelection {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+/// Evolution 单阶段代理配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionStageProfile {
+    pub stage: String,
+    #[serde(default = "default_evolution_ai_tool")]
+    pub ai_tool: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub model: Option<EvolutionModelSelection>,
+}
+
 /// 客户端设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientSettings {
@@ -67,10 +86,17 @@ pub struct ClientSettings {
     /// 应用语言：system / en / zh-Hans
     #[serde(default = "default_app_language")]
     pub app_language: String,
+    /// Evolution 代理配置（key: "project/workspace"）
+    #[serde(default)]
+    pub evolution_agent_profiles: HashMap<String, Vec<EvolutionStageProfile>>,
 }
 
 fn default_app_language() -> String {
     "system".to_string()
+}
+
+fn default_evolution_ai_tool() -> String {
+    "codex".to_string()
 }
 
 impl ClientSettings {
