@@ -752,6 +752,7 @@ final class MobileAppState: ObservableObject {
         project: String,
         workspace: String,
         maxVerifyIterations: Int,
+        autoLoopEnabled: Bool,
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         wsClient.requestEvoStartWorkspace(
@@ -759,6 +760,7 @@ final class MobileAppState: ObservableObject {
             workspace: workspace,
             priority: 0,
             maxVerifyIterations: max(1, maxVerifyIterations),
+            autoLoopEnabled: autoLoopEnabled,
             stageProfiles: profiles
         )
     }

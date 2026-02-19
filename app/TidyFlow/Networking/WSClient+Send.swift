@@ -947,12 +947,13 @@ extension WSClient {
 
     // MARK: - Evolution
 
-    /// 手动启动工作空间的自主进化循环（启动后自动调度）
+    /// 手动启动工作空间的自主进化流程（可配置是否自动续轮）
     func requestEvoStartWorkspace(
         project: String,
         workspace: String,
         priority: Int = 0,
         maxVerifyIterations: Int? = nil,
+        autoLoopEnabled: Bool? = nil,
         stageProfiles: [EvolutionStageProfileInfoV2] = []
     ) {
         var msg: [String: Any] = [
@@ -963,6 +964,9 @@ extension WSClient {
         ]
         if let maxVerifyIterations {
             msg["max_verify_iterations"] = maxVerifyIterations
+        }
+        if let autoLoopEnabled {
+            msg["auto_loop_enabled"] = autoLoopEnabled
         }
         if !stageProfiles.isEmpty {
             msg["stage_profiles"] = stageProfiles.map { $0.toJSON() }

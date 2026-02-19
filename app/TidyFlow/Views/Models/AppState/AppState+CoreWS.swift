@@ -886,6 +886,7 @@ extension AppState {
         project: String,
         workspace: String,
         maxVerifyIterations: Int,
+        autoLoopEnabled: Bool,
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         wsClient.requestEvoStartWorkspace(
@@ -893,6 +894,7 @@ extension AppState {
             workspace: workspace,
             priority: 0,
             maxVerifyIterations: maxVerifyIterations,
+            autoLoopEnabled: autoLoopEnabled,
             stageProfiles: profiles
         )
     }

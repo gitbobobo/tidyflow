@@ -630,6 +630,7 @@ private struct EvolutionEditableProfile: Identifiable {
 struct EvolutionTabView: View {
     @EnvironmentObject var appState: AppState
     @State private var maxVerifyIterationsText: String = "3"
+    @State private var autoLoopEnabled: Bool = true
     @State private var editableProfiles: [EvolutionEditableProfile] = []
     @StateObject private var replayStore = AIChatStore()
 
@@ -659,15 +660,21 @@ struct EvolutionTabView: View {
         }
         .onAppear {
             refreshData()
+            syncStartOptionsFromCurrentItem()
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             refreshData()
+            syncStartOptionsFromCurrentItem()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             refreshData()
+            syncStartOptionsFromCurrentItem()
         }
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             syncProfilesFromState()
+        }
+        .onReceive(appState.$evolutionWorkspaceItems) { _ in
+            syncStartOptionsFromCurrentItem()
         }
         .onReceive(appState.$evolutionReplayMessages) { messages in
             replayStore.replaceMessages(messages)
@@ -721,6 +728,8 @@ struct EvolutionTabView: View {
                     TextField("最大 verify 次数", text: $maxVerifyIterationsText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 130)
+                    Toggle("循环续轮", isOn: $autoLoopEnabled)
+                        .toggleStyle(.switch)
                     Button("手动启动") {
                         startCurrentWorkspace()
                     }
@@ -734,6 +743,9 @@ struct EvolutionTabView: View {
                     }
                     .buttonStyle(.bordered)
                 }
+                Text(autoLoopEnabled ? "运行模式: 自动循环续轮" : "运行模式: 仅运行 1 轮后结束")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             } else {
                 Text("请先选择工作空间")
                     .foregroundColor(.secondary)
@@ -1072,7 +1084,13 @@ struct EvolutionTabView: View {
             project: project,
             workspace: workspace,
             maxVerifyIterations: verify,
+            autoLoopEnabled: autoLoopEnabled,
             profiles: profiles
         )
+    }
+
+    private func syncStartOptionsFromCurrentItem() {
+        guard let item = currentItem else { return }
+        autoLoopEnabled = item.autoLoopEnabled
     }
 }

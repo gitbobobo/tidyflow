@@ -245,6 +245,7 @@ struct MobileEvolutionView: View {
     let workspace: String
 
     @State private var maxVerifyIterationsText: String = "3"
+    @State private var autoLoopEnabled: Bool = true
     @State private var profiles: [EvolutionProfileDraft] = []
     @StateObject private var replayStore = AIChatStore()
 
@@ -281,6 +282,11 @@ struct MobileEvolutionView: View {
                         .multilineTextAlignment(.trailing)
                         .frame(width: 80)
                 }
+
+                Toggle("循环续轮", isOn: $autoLoopEnabled)
+                Text(autoLoopEnabled ? "运行模式: 自动循环续轮" : "运行模式: 仅运行 1 轮后结束")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
                 HStack {
                     Button("手动启动") {
@@ -453,9 +459,13 @@ struct MobileEvolutionView: View {
         .onAppear {
             appState.openEvolution(project: project, workspace: workspace)
             loadProfiles()
+            syncStartOptionsFromItem()
         }
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             loadProfiles()
+        }
+        .onReceive(appState.$evolutionWorkspaceItems) { _ in
+            syncStartOptionsFromItem()
         }
         .onReceive(appState.$evolutionReplayMessages) { messages in
             replayStore.replaceMessages(messages)
@@ -576,7 +586,13 @@ struct MobileEvolutionView: View {
             project: project,
             workspace: workspace,
             maxVerifyIterations: verify,
+            autoLoopEnabled: autoLoopEnabled,
             profiles: values
         )
+    }
+
+    private func syncStartOptionsFromItem() {
+        guard let item else { return }
+        autoLoopEnabled = item.autoLoopEnabled
     }
 }
