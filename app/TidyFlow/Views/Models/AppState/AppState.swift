@@ -145,6 +145,14 @@ class AppState: ObservableObject {
     @Published var aiToolBadges: [AIChatTool: AIToolBadgeState] = [:]
     /// AI 会话状态缓存（按工具分桶；key: "projectName::workspaceName::sessionId"）
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
+    // Evolution 状态
+    @Published var evolutionScheduler: EvolutionSchedulerInfoV2 = .empty
+    @Published var evolutionWorkspaceItems: [EvolutionWorkspaceItemV2] = []
+    @Published var evolutionStageProfilesByWorkspace: [String: [EvolutionStageProfileInfoV2]] = [:]
+    @Published var evolutionReplayTitle: String = ""
+    @Published var evolutionReplayMessages: [AIChatMessage] = []
+    @Published var evolutionReplayLoading: Bool = false
+    @Published var evolutionReplayError: String?
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
@@ -155,6 +163,15 @@ class AppState: ObservableObject {
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
     /// 历史会话自动恢复输入框选择的待应用提示（key: sessionId）
     private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
+    /// Evolution 阶段聊天回放请求
+    var evolutionReplayRequest: (
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        cycleId: String,
+        stage: String
+    )?
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
@@ -419,6 +436,8 @@ class AppState: ObservableObject {
         aiProvidersByTool[tool] = providers
         if aiChatTool == tool {
             aiProviders = providers
+        } else {
+            objectWillChange.send()
         }
     }
 
@@ -426,6 +445,8 @@ class AppState: ObservableObject {
         aiAgentsByTool[tool] = agents
         if aiChatTool == tool {
             aiAgents = agents
+        } else {
+            objectWillChange.send()
         }
     }
 
@@ -438,6 +459,14 @@ class AppState: ObservableObject {
 
     func selectedAgent(for tool: AIChatTool) -> String? {
         aiSelectedAgentByTool[tool] ?? nil
+    }
+
+    func aiProviders(for tool: AIChatTool) -> [AIProviderInfo] {
+        aiProvidersByTool[tool] ?? []
+    }
+
+    func aiAgents(for tool: AIChatTool) -> [AIAgentInfo] {
+        aiAgentsByTool[tool] ?? []
     }
 
     func setAISelectedModel(_ model: AIModelSelection?, for tool: AIChatTool) {

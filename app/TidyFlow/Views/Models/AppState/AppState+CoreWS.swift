@@ -278,6 +278,7 @@ extension AppState {
                 self?.wsClient.requestListProjects()
                 self?.wsClient.requestGetClientSettings()
                 self?.reloadAISessionDataAfterReconnect()
+                self?.wsClient.requestEvoSnapshot()
                 // 重连后尝试附着已有终端会话
                 self?.requestTerminalReattach()
                 if let self, let ws = self.selectedWorkspaceKey {
@@ -553,6 +554,9 @@ extension AppState {
 
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
+            if self.consumeEvolutionReplayMessagesIfNeeded(ev) {
+                return
+            }
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else {
                 TFLog.app.debug(
@@ -572,28 +576,7 @@ extension AppState {
                 "AI session_messages accepted: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), messages_count=\(ev.messages.count)"
             )
 
-            let mapped: [AIChatMessage] = ev.messages.compactMap { m in
-                let role: AIChatRole = (m.role == "assistant") ? .assistant : .user
-                let parts: [AIChatPart] = m.parts.compactMap { p in
-                    let kind = AIChatPartKind(rawValue: p.partType) ?? .text
-                    return AIChatPart(
-                        id: p.id,
-                        kind: kind,
-                        text: p.text,
-                        mime: p.mime,
-                        filename: p.filename,
-                        url: p.url,
-                        synthetic: p.synthetic,
-                        ignored: p.ignored,
-                        source: p.source,
-                        toolName: p.toolName,
-                        toolState: p.toolState,
-                        toolCallId: p.toolCallId,
-                        toolPartMetadata: p.toolPartMetadata
-                    )
-                }
-                return AIChatMessage(messageId: m.id, role: role, parts: parts, isStreaming: false)
-            }
+            let mapped = ev.toChatMessages()
             let restoredQuestions = Self.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: ev.messages
@@ -817,6 +800,58 @@ extension AppState {
             self.setAISlashCommands(commands, for: ev.aiTool)
         }
 
+        // Evolution
+        wsClient.onEvoPulse = { [weak self] in
+            self?.wsClient.requestEvoSnapshot()
+        }
+
+        wsClient.onEvoSnapshot = { [weak self] snapshot in
+            guard let self else { return }
+            self.evolutionScheduler = snapshot.scheduler
+            self.evolutionWorkspaceItems = snapshot.workspaceItems.sorted {
+                ($0.project, $0.workspace) < ($1.project, $1.workspace)
+            }
+        }
+
+        wsClient.onEvoAgentProfile = { [weak self] ev in
+            guard let self else { return }
+            let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: ev.workspace)
+            self.evolutionStageProfilesByWorkspace[key] = ev.stageProfiles
+        }
+
+        wsClient.onEvoStageChatOpened = { [weak self] ev in
+            guard let self else { return }
+            guard let aiTool = ev.aiTool else {
+                self.evolutionReplayLoading = false
+                self.evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
+                return
+            }
+            self.evolutionReplayRequest = (
+                project: ev.project,
+                workspace: ev.workspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID,
+                cycleId: ev.cycleID,
+                stage: ev.stage
+            )
+            self.evolutionReplayTitle = "\(ev.workspace) · \(ev.stage) · \(ev.cycleID)"
+            self.evolutionReplayMessages = []
+            self.evolutionReplayError = nil
+            self.evolutionReplayLoading = true
+            self.wsClient.requestAISessionMessages(
+                projectName: ev.project,
+                workspaceName: ev.workspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID,
+                limit: 400
+            )
+        }
+
+        wsClient.onEvoError = { [weak self] message in
+            self?.evolutionReplayLoading = false
+            self?.evolutionReplayError = message
+        }
+
         wsClient.onError = { [weak self] errorMsg in
             // Update cache with error if we were loading
             if let ws = self?.selectedWorkspaceKey {
@@ -831,6 +866,90 @@ extension AppState {
 
         // Connect to the dynamic port
         wsClient.connect(port: port)
+    }
+
+    // MARK: - Evolution
+
+    func requestEvolutionSnapshot(project: String? = nil, workspace: String? = nil) {
+        wsClient.requestEvoSnapshot(project: project, workspace: workspace)
+    }
+
+    func requestEvolutionAgentProfile(project: String, workspace: String) {
+        wsClient.requestEvoGetAgentProfile(project: project, workspace: workspace)
+    }
+
+    func updateEvolutionAgentProfile(project: String, workspace: String, profiles: [EvolutionStageProfileInfoV2]) {
+        wsClient.requestEvoUpdateAgentProfile(project: project, workspace: workspace, stageProfiles: profiles)
+    }
+
+    func startEvolution(
+        project: String,
+        workspace: String,
+        maxVerifyIterations: Int,
+        profiles: [EvolutionStageProfileInfoV2]
+    ) {
+        wsClient.requestEvoStartWorkspace(
+            project: project,
+            workspace: workspace,
+            priority: 0,
+            maxVerifyIterations: maxVerifyIterations,
+            stageProfiles: profiles
+        )
+    }
+
+    func stopEvolution(project: String, workspace: String) {
+        wsClient.requestEvoStopWorkspace(project: project, workspace: workspace)
+    }
+
+    func resumeEvolution(project: String, workspace: String) {
+        wsClient.requestEvoResumeWorkspace(project: project, workspace: workspace)
+    }
+
+    func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
+        evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
+        evolutionReplayLoading = true
+        evolutionReplayError = nil
+        evolutionReplayMessages = []
+        wsClient.requestEvoOpenStageChat(project: project, workspace: workspace, cycleID: cycleId, stage: stage)
+    }
+
+    func clearEvolutionReplay() {
+        evolutionReplayRequest = nil
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+        evolutionReplayTitle = ""
+        evolutionReplayMessages = []
+    }
+
+    func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
+        evolutionWorkspaceItems.first { $0.project == project && $0.workspace == workspace }
+    }
+
+    func evolutionProfiles(project: String, workspace: String) -> [EvolutionStageProfileInfoV2] {
+        let key = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        if let profiles = evolutionStageProfilesByWorkspace[key], !profiles.isEmpty {
+            return profiles
+        }
+        return Self.defaultEvolutionProfiles()
+    }
+
+    static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
+        ["direction", "plan", "implement", "verify", "judge", "report"].map {
+            EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil)
+        }
+    }
+
+    private func consumeEvolutionReplayMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
+        guard let request = evolutionReplayRequest else { return false }
+        guard request.project == ev.projectName,
+              request.workspace == ev.workspaceName,
+              request.aiTool == ev.aiTool,
+              request.sessionId == ev.sessionId else { return false }
+        evolutionReplayMessages = ev.toChatMessages()
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+        evolutionReplayRequest = nil
+        return true
     }
 
     func handleFileIndexResult(_ result: FileIndexResult) {
