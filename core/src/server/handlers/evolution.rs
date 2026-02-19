@@ -238,6 +238,7 @@ struct EvolutionState {
 struct WorkspaceRunState {
     project: String,
     workspace: String,
+    workspace_root: String,
     priority: i32,
     status: String,
     cycle_id: String,
@@ -293,6 +294,7 @@ impl EvolutionManager {
         ctx: &HandlerContext,
     ) -> Result<(), String> {
         let key = workspace_key(&req.project, &req.workspace);
+        let workspace_root = resolve_directory(&ctx.app_state, &req.project, &req.workspace).await?;
 
         {
             let workers = self.workers.lock().await;
@@ -336,6 +338,7 @@ impl EvolutionManager {
                 WorkspaceRunState {
                     project: req.project.clone(),
                     workspace: req.workspace.clone(),
+                    workspace_root: workspace_root.clone(),
                     priority: req.priority,
                     status: "queued".to_string(),
                     cycle_id: cycle_id.clone(),
@@ -1195,7 +1198,7 @@ impl EvolutionManager {
         let Some(entry) = state.workspaces.get(key) else {
             return Ok(());
         };
-        let cycle_dir = cycle_dir_path(&entry.project, &entry.workspace, &entry.cycle_id)?;
+        let cycle_dir = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)?;
         std::fs::create_dir_all(&cycle_dir).map_err(|e| e.to_string())?;
 
         let mut stage_files = serde_json::Map::new();
@@ -1259,7 +1262,7 @@ impl EvolutionManager {
         let Some(entry) = state.workspaces.get(key) else {
             return Ok(());
         };
-        let cycle_dir = cycle_dir_path(&entry.project, &entry.workspace, &entry.cycle_id)?;
+        let cycle_dir = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)?;
         std::fs::create_dir_all(&cycle_dir).map_err(|e| e.to_string())?;
 
         let payload = serde_json::json!({
@@ -1302,7 +1305,7 @@ impl EvolutionManager {
         let Some(entry) = state.workspaces.get(key) else {
             return Ok(());
         };
-        let cycle_dir = cycle_dir_path(&entry.project, &entry.workspace, &entry.cycle_id)?;
+        let cycle_dir = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)?;
         std::fs::create_dir_all(&cycle_dir).map_err(|e| e.to_string())?;
 
         let mut session_rows: Vec<(String, StageSession)> = entry
@@ -1346,15 +1349,19 @@ impl EvolutionManager {
         let prompt_body = prompt_template_for_stage(stage)
             .ok_or_else(|| format!("unknown stage prompt template: {}", stage))?;
 
-        let (verify_iteration, verify_iteration_limit) = {
+        let (verify_iteration, verify_iteration_limit, workspace_root) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
                 return Err("workspace state missing".to_string());
             };
-            (entry.verify_iteration, entry.verify_iteration_limit)
+            (
+                entry.verify_iteration,
+                entry.verify_iteration_limit,
+                entry.workspace_root.clone(),
+            )
         };
 
-        let cycle_dir = cycle_dir_path(project, workspace, cycle_id)?;
+        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let stage_file = cycle_dir.join(format!("stage.{}.json", stage));
         let context = serde_json::json!({
             "PROJECT": project,
@@ -1561,13 +1568,14 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     std::fs::write(path, data).map_err(|e| e.to_string())
 }
 
-fn cycle_dir_path(project: &str, workspace: &str, cycle_id: &str) -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "home directory not found".to_string())?;
-    Ok(home
+fn cycle_dir_path(workspace_root: &str, cycle_id: &str) -> Result<PathBuf, String> {
+    let root = workspace_root.trim();
+    if root.is_empty() {
+        return Err("workspace root is empty".to_string());
+    }
+    Ok(Path::new(root)
         .join(".tidyflow")
         .join("evolution")
-        .join(sanitize_name(project))
-        .join(sanitize_name(workspace))
         .join(cycle_id))
 }
 
