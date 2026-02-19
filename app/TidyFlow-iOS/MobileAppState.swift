@@ -155,8 +155,16 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
+    /// ClientSettings 下发的 Evolution 代理配置（key: "project/workspace"）
+    private var evolutionProfilesFromClientSettings: [String: [EvolutionStageProfileInfoV2]] = [:]
     @Published private var evolutionProvidersByWorkspace: [String: [AIChatTool: [AIProviderInfo]]] = [:]
     @Published private var evolutionAgentsByWorkspace: [String: [AIChatTool: [AIAgentInfo]]] = [:]
+    /// Evolution：按工作空间追踪 provider/agent 列表是否齐全，用于串联 profile 加载时序。
+    private var evolutionSelectorLoadStateByWorkspace: [String: [AIChatTool: (providerLoaded: Bool, agentLoaded: Bool)]] = [:]
+    /// Evolution：等待在列表齐全后拉取 profile 的工作空间 key 集合。
+    private var evolutionPendingProfileReloadWorkspaces: Set<String> = []
+    /// Evolution：profile 请求兜底定时器。
+    private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
 
     let aiChatStore = AIChatStore()
 
@@ -726,25 +734,43 @@ final class MobileAppState: ObservableObject {
     }
 
     func refreshEvolution(project: String, workspace: String) {
-        wsClient.requestEvoSnapshot(project: project, workspace: workspace)
-        wsClient.requestEvoGetAgentProfile(project: project, workspace: workspace)
-        requestEvolutionSelectorResources(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoSnapshot(project: project, workspace: normalizedWorkspace)
+        // 进入页面时先立即请求一次 profile；selectors 全量返回后还会再补拉一次兜底。
+        wsClient.requestEvoGetAgentProfile(project: project, workspace: normalizedWorkspace)
+        requestEvolutionSelectorResources(
+            project: project,
+            workspace: normalizedWorkspace,
+            requestProfileAfterLoaded: true
+        )
     }
 
-    func requestEvolutionSelectorResources(project: String, workspace: String) {
+    func requestEvolutionSelectorResources(
+        project: String,
+        workspace: String,
+        requestProfileAfterLoaded: Bool = false
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        beginEvolutionSelectorLoading(
+            project: project,
+            workspace: normalizedWorkspace,
+            requestProfileAfterLoaded: requestProfileAfterLoaded
+        )
         for tool in AIChatTool.allCases {
-            wsClient.requestAIProviderList(projectName: project, workspaceName: workspace, aiTool: tool)
-            wsClient.requestAIAgentList(projectName: project, workspaceName: workspace, aiTool: tool)
+            wsClient.requestAIProviderList(projectName: project, workspaceName: normalizedWorkspace, aiTool: tool)
+            wsClient.requestAIAgentList(projectName: project, workspaceName: normalizedWorkspace, aiTool: tool)
         }
     }
 
     func evolutionProviders(project: String, workspace: String, aiTool: AIChatTool) -> [AIProviderInfo] {
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         return evolutionProvidersByWorkspace[key]?[aiTool] ?? []
     }
 
     func evolutionAgents(project: String, workspace: String, aiTool: AIChatTool) -> [AIAgentInfo] {
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         return evolutionAgentsByWorkspace[key]?[aiTool] ?? []
     }
 
@@ -755,9 +781,10 @@ final class MobileAppState: ObservableObject {
         autoLoopEnabled: Bool,
         profiles: [EvolutionStageProfileInfoV2]
     ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         wsClient.requestEvoStartWorkspace(
             project: project,
-            workspace: workspace,
+            workspace: normalizedWorkspace,
             priority: 0,
             maxVerifyIterations: max(1, maxVerifyIterations),
             autoLoopEnabled: autoLoopEnabled,
@@ -766,35 +793,56 @@ final class MobileAppState: ObservableObject {
     }
 
     func stopEvolution(project: String, workspace: String) {
-        wsClient.requestEvoStopWorkspace(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoStopWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
     func resumeEvolution(project: String, workspace: String) {
-        wsClient.requestEvoResumeWorkspace(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
     func updateEvolutionAgentProfile(project: String, workspace: String, profiles: [EvolutionStageProfileInfoV2]) {
-        wsClient.requestEvoUpdateAgentProfile(project: project, workspace: workspace, stageProfiles: profiles)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoUpdateAgentProfile(project: project, workspace: normalizedWorkspace, stageProfiles: profiles)
     }
 
     func evolutionProfiles(project: String, workspace: String) -> [EvolutionStageProfileInfoV2] {
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         if let profiles = evolutionStageProfilesByWorkspace[key], !profiles.isEmpty {
+            if let fallback = resolveEvolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace),
+               shouldPreferEvolutionProfiles(candidate: fallback, over: profiles) {
+                return fallback
+            }
+            return profiles
+        }
+        if let profiles = resolveEvolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace) {
             return profiles
         }
         return Self.defaultEvolutionProfiles()
     }
 
     func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
-        evolutionWorkspaceItems.first { $0.project == project && $0.workspace == workspace }
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        return evolutionWorkspaceItems.first {
+            $0.project == project &&
+                normalizeEvolutionWorkspaceName($0.workspace) == normalizedWorkspace
+        }
     }
 
     func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
-        evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        evolutionReplayTitle = "\(normalizedWorkspace) · \(stage) · \(cycleId)"
         evolutionReplayMessages = []
         evolutionReplayError = nil
         evolutionReplayLoading = true
-        wsClient.requestEvoOpenStageChat(project: project, workspace: workspace, cycleID: cycleId, stage: stage)
+        wsClient.requestEvoOpenStageChat(
+            project: project,
+            workspace: normalizedWorkspace,
+            cycleID: cycleId,
+            stage: stage
+        )
     }
 
     func clearEvolutionReplay() {
@@ -817,7 +865,8 @@ final class MobileAppState: ObservableObject {
         aiTool: AIChatTool,
         providers: [AIProviderInfo]
     ) {
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         var byTool = evolutionProvidersByWorkspace[key] ?? [:]
         byTool[aiTool] = providers
         evolutionProvidersByWorkspace[key] = byTool
@@ -829,10 +878,105 @@ final class MobileAppState: ObservableObject {
         aiTool: AIChatTool,
         agents: [AIAgentInfo]
     ) {
-        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         var byTool = evolutionAgentsByWorkspace[key] ?? [:]
         byTool[aiTool] = agents
         evolutionAgentsByWorkspace[key] = byTool
+    }
+
+    private func beginEvolutionSelectorLoading(
+        project: String,
+        workspace: String,
+        requestProfileAfterLoaded: Bool
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        var byTool: [AIChatTool: (providerLoaded: Bool, agentLoaded: Bool)] = [:]
+        for tool in AIChatTool.allCases {
+            byTool[tool] = (providerLoaded: false, agentLoaded: false)
+        }
+        evolutionSelectorLoadStateByWorkspace[key] = byTool
+
+        if requestProfileAfterLoaded {
+            evolutionPendingProfileReloadWorkspaces.insert(key)
+            scheduleEvolutionProfileReloadFallback(project: project, workspace: normalizedWorkspace)
+        } else {
+            finishEvolutionProfileReloadTracking(project: project, workspace: normalizedWorkspace)
+        }
+    }
+
+    private func markEvolutionProviderListLoaded(project: String, workspace: String, aiTool: AIChatTool) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        guard var byTool = evolutionSelectorLoadStateByWorkspace[key] else { return }
+        var state = byTool[aiTool] ?? (providerLoaded: false, agentLoaded: false)
+        state.providerLoaded = true
+        byTool[aiTool] = state
+        evolutionSelectorLoadStateByWorkspace[key] = byTool
+        maybeRequestEvolutionProfileAfterSelectorsReady(project: project, workspace: normalizedWorkspace)
+    }
+
+    private func markEvolutionAgentListLoaded(project: String, workspace: String, aiTool: AIChatTool) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        guard var byTool = evolutionSelectorLoadStateByWorkspace[key] else { return }
+        var state = byTool[aiTool] ?? (providerLoaded: false, agentLoaded: false)
+        state.agentLoaded = true
+        byTool[aiTool] = state
+        evolutionSelectorLoadStateByWorkspace[key] = byTool
+        maybeRequestEvolutionProfileAfterSelectorsReady(project: project, workspace: normalizedWorkspace)
+    }
+
+    private func maybeRequestEvolutionProfileAfterSelectorsReady(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        guard evolutionPendingProfileReloadWorkspaces.contains(key) else { return }
+        guard let byTool = evolutionSelectorLoadStateByWorkspace[key] else { return }
+        let allReady = AIChatTool.allCases.allSatisfy { tool in
+            let state = byTool[tool]
+            return (state?.providerLoaded == true) && (state?.agentLoaded == true)
+        }
+        guard allReady else { return }
+        requestEvolutionProfileIfPending(project: project, workspace: normalizedWorkspace)
+    }
+
+    private func scheduleEvolutionProfileReloadFallback(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionProfileReloadFallbackTimers[key]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.requestEvolutionProfileIfPending(project: project, workspace: normalizedWorkspace)
+        }
+        evolutionProfileReloadFallbackTimers[key] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    private func requestEvolutionProfileIfPending(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        guard evolutionPendingProfileReloadWorkspaces.contains(key) else { return }
+        finishEvolutionProfileReloadTracking(project: project, workspace: normalizedWorkspace)
+        wsClient.requestEvoGetAgentProfile(project: project, workspace: normalizedWorkspace)
+    }
+
+    private func finishEvolutionProfileReloadTracking(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionPendingProfileReloadWorkspaces.remove(key)
+        if let work = evolutionProfileReloadFallbackTimers[key] {
+            work.cancel()
+            evolutionProfileReloadFallbackTimers[key] = nil
+        }
+    }
+
+    private func normalizeEvolutionWorkspaceName(_ workspace: String) -> String {
+        let trimmed = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.caseInsensitiveCompare("(default)") == .orderedSame ||
+            trimmed.caseInsensitiveCompare("default") == .orderedSame {
+            return "default"
+        }
+        return trimmed
     }
 
     private func consumeEvolutionReplayMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
@@ -1985,6 +2129,8 @@ final class MobileAppState: ObservableObject {
             self.workspaceShortcuts = settings.workspaceShortcuts
             self.commitAIAgent = settings.commitAIAgent
             self.mergeAIAgent = settings.mergeAIAgent
+            self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles
+            self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }
 
         wsClient.onTasksSnapshot = { [weak self] entries in
@@ -2007,8 +2153,30 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onEvoAgentProfile = { [weak self] ev in
             guard let self else { return }
-            let key = self.globalWorkspaceKey(project: ev.project, workspace: ev.workspace)
+            let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            let key = self.globalWorkspaceKey(project: ev.project, workspace: workspace)
+            if ev.stageProfiles.isEmpty {
+                NSLog(
+                    "[MobileAppState] Evolution profile ignored: empty stage_profiles, project=%@, workspace=%@",
+                    ev.project,
+                    workspace
+                )
+                self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
+                return
+            }
             self.evolutionStageProfilesByWorkspace[key] = ev.stageProfiles
+            let directionModel = ev.stageProfiles
+                .first(where: { $0.stage == "direction" })?
+                .model
+                .map { "\($0.providerID)/\($0.modelID)" } ?? "default"
+            NSLog(
+                "[MobileAppState] Evolution profile applied: project=%@, workspace=%@, stages=%d, direction_model=%@",
+                ev.project,
+                workspace,
+                ev.stageProfiles.count,
+                directionModel
+            )
+            self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
         }
 
         wsClient.onEvoStageChatOpened = { [weak self] ev in
@@ -2268,6 +2436,11 @@ final class MobileAppState: ObservableObject {
                 aiTool: ev.aiTool,
                 providers: providers
             )
+            self.markEvolutionProviderListLoaded(
+                project: ev.projectName,
+                workspace: self.normalizeEvolutionWorkspaceName(ev.workspaceName),
+                aiTool: ev.aiTool
+            )
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -2292,6 +2465,11 @@ final class MobileAppState: ObservableObject {
                 workspace: ev.workspaceName,
                 aiTool: ev.aiTool,
                 agents: agents
+            )
+            self.markEvolutionAgentListLoaded(
+                project: ev.projectName,
+                workspace: self.normalizeEvolutionWorkspaceName(ev.workspaceName),
+                aiTool: ev.aiTool
             )
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
@@ -2532,6 +2710,89 @@ final class MobileAppState: ObservableObject {
 
     private func globalWorkspaceKey(project: String, workspace: String) -> String {
         "\(project):\(workspace)"
+    }
+
+    private func applyEvolutionProfilesFromClientSettings(
+        _ profileMap: [String: [EvolutionStageProfileInfoV2]]
+    ) {
+        guard !profileMap.isEmpty else { return }
+        for (storageKey, profiles) in profileMap {
+            guard !profiles.isEmpty else { continue }
+            guard let parsed = parseEvolutionProfileStorageKey(storageKey) else { continue }
+            let workspace = normalizeEvolutionWorkspaceName(parsed.workspace)
+            let key = globalWorkspaceKey(project: parsed.project, workspace: workspace)
+            let current = evolutionStageProfilesByWorkspace[key] ?? []
+            if current.isEmpty || shouldPreferEvolutionProfiles(candidate: profiles, over: current) {
+                evolutionStageProfilesByWorkspace[key] = profiles
+            }
+        }
+    }
+
+    private func resolveEvolutionProfilesFromClientSettings(
+        project: String,
+        workspace: String
+    ) -> [EvolutionStageProfileInfoV2]? {
+        guard !evolutionProfilesFromClientSettings.isEmpty else { return nil }
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let candidateKeys = evolutionProfileStorageKeyCandidates(
+            project: project,
+            workspace: normalizedWorkspace
+        )
+        for key in candidateKeys {
+            if let profiles = evolutionProfilesFromClientSettings[key], !profiles.isEmpty {
+                return profiles
+            }
+        }
+        for (storageKey, profiles) in evolutionProfilesFromClientSettings {
+            guard !profiles.isEmpty else { continue }
+            guard let parsed = parseEvolutionProfileStorageKey(storageKey) else { continue }
+            let parsedWorkspace = normalizeEvolutionWorkspaceName(parsed.workspace)
+            if parsed.project == project && parsedWorkspace == normalizedWorkspace {
+                return profiles
+            }
+        }
+        return nil
+    }
+
+    private func evolutionProfileStorageKeyCandidates(project: String, workspace: String) -> [String] {
+        let projectTrimmed = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaceTrimmed = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        var keys: [String] = [
+            "\(project)/\(workspace)",
+            "\(projectTrimmed)/\(workspaceTrimmed)"
+        ]
+        if workspaceTrimmed.caseInsensitiveCompare("default") == .orderedSame {
+            keys.append("\(project)/(default)")
+            keys.append("\(projectTrimmed)/(default)")
+        }
+        var seen: Set<String> = []
+        return keys.filter { seen.insert($0).inserted }
+    }
+
+    private func parseEvolutionProfileStorageKey(_ key: String) -> (project: String, workspace: String)? {
+        let parts = key.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+        return (String(parts[0]), String(parts[1]))
+    }
+
+    private func shouldPreferEvolutionProfiles(
+        candidate: [EvolutionStageProfileInfoV2],
+        over existing: [EvolutionStageProfileInfoV2]
+    ) -> Bool {
+        if existing.isEmpty { return true }
+        return isDefaultEvolutionProfiles(existing) && !isDefaultEvolutionProfiles(candidate)
+    }
+
+    private func isDefaultEvolutionProfiles(_ profiles: [EvolutionStageProfileInfoV2]) -> Bool {
+        guard profiles.count == Self.defaultEvolutionProfiles().count else { return false }
+        for profile in profiles {
+            if profile.aiTool != .codex { return false }
+            if let mode = profile.mode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return false
+            }
+            if profile.model != nil { return false }
+        }
+        return true
     }
 
     private func projectEarliestTerminalTime(_ project: ProjectInfo) -> Date? {

@@ -251,7 +251,7 @@ struct MobileEvolutionView: View {
     @State private var lastSyncedProfileSignature: String = ""
     @State private var pendingProfileSaveSignature: String?
     @State private var pendingProfileSaveDate: Date?
-    @StateObject private var replayStore = AIChatStore()
+    @State private var hasPendingUserProfileEdit: Bool = false
 
     private var item: EvolutionWorkspaceItemV2? {
         appState.evolutionItem(project: project, workspace: workspace)
@@ -324,33 +324,61 @@ struct MobileEvolutionView: View {
                 .buttonStyle(.bordered)
             }
 
-            Section("代理配置") {
-                Text("进入页面自动拉取配置，切换 AI 工具 / 模式 / 模型后自动保存。")
+            Section("代理类型说明") {
+                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中的代理可进入聊天详情。")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
 
+            if profiles.isEmpty {
+                Section("代理类型") {
+                    Text("暂无阶段配置")
+                        .foregroundColor(.secondary)
+                }
+            } else {
                 ForEach($profiles) { $profile in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(profile.stage)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
+                    let stage = profile.stage
+                    let runtime = runtimeAgent(for: stage)
+                    let statusText = runtime?.status ?? "未启动"
+                    let aiToolBinding = Binding<AIChatTool>(
+                        get: { profile.aiTool },
+                        set: { newValue in
+                            guard profile.aiTool != newValue else { return }
+                            hasPendingUserProfileEdit = true
+                            profile.aiTool = newValue
+                            sanitizeProfileSelection(profileID: profile.id)
+                            autoSaveProfilesIfNeeded()
+                        }
+                    )
+                    Section(sectionTitle(for: profile, runtime: runtime)) {
+                        if statusText == "running", let route = stageChatRoute(for: stage) {
+                            NavigationLink(value: route) {
+                                LabeledContent("工作状态") {
+                                    Text(statusText)
+                                        .foregroundColor(stageStatusColor(statusText))
+                                }
+                            }
+                        } else {
+                            LabeledContent("工作状态") {
+                                Text(statusText)
+                                    .foregroundColor(stageStatusColor(statusText))
+                            }
+                        }
 
                         LabeledContent("AI 工具") {
-                            Picker("AI 工具", selection: $profile.aiTool) {
+                            Picker("", selection: aiToolBinding) {
                                 ForEach(AIChatTool.allCases) { tool in
                                     Text(tool.displayName).tag(tool)
                                 }
                             }
+                            .labelsHidden()
                             .pickerStyle(.menu)
-                            .onChange(of: profile.aiTool) { _, _ in
-                                sanitizeProfileSelection(profileID: profile.id)
-                                autoSaveProfilesIfNeeded()
-                            }
                         }
 
                         LabeledContent("模式") {
                             Menu {
                                 Button("默认模式") {
+                                    hasPendingUserProfileEdit = true
                                     profile.mode = ""
                                     autoSaveProfilesIfNeeded()
                                 }
@@ -360,6 +388,7 @@ struct MobileEvolutionView: View {
                                 } else {
                                     ForEach(options, id: \.self) { mode in
                                         Button(mode) {
+                                            hasPendingUserProfileEdit = true
                                             profile.mode = mode
                                             applyAgentDefaultModelIfAvailable(
                                                 profileID: profile.id,
@@ -378,6 +407,7 @@ struct MobileEvolutionView: View {
                         LabeledContent("模型") {
                             Menu {
                                 Button("默认模型") {
+                                    hasPendingUserProfileEdit = true
                                     profile.providerID = ""
                                     profile.modelID = ""
                                     autoSaveProfilesIfNeeded()
@@ -389,6 +419,7 @@ struct MobileEvolutionView: View {
                                     if let onlyProvider = providers.first {
                                         ForEach(onlyProvider.models) { model in
                                             Button(model.name) {
+                                                hasPendingUserProfileEdit = true
                                                 profile.providerID = onlyProvider.id
                                                 profile.modelID = model.id
                                                 autoSaveProfilesIfNeeded()
@@ -400,6 +431,7 @@ struct MobileEvolutionView: View {
                                         Menu(provider.name) {
                                             ForEach(provider.models) { model in
                                                 Button(model.name) {
+                                                    hasPendingUserProfileEdit = true
                                                     profile.providerID = provider.id
                                                     profile.modelID = model.id
                                                     autoSaveProfilesIfNeeded()
@@ -414,63 +446,6 @@ struct MobileEvolutionView: View {
                                     .lineLimit(1)
                             }
                         }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-
-            Section("代理列表") {
-                if let item {
-                    ForEach(item.agents, id: \.stage) { agent in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(agent.stage)
-                                    .font(.system(.body, design: .monospaced))
-                                Text(agent.agent)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Text(agent.status)
-                                .foregroundColor(agent.status == "running" ? .orange : .secondary)
-                            Button("聊天") {
-                                appState.openEvolutionStageChat(
-                                    project: item.project,
-                                    workspace: item.workspace,
-                                    cycleId: item.cycleID,
-                                    stage: agent.stage
-                                )
-                            }
-                            .disabled(!(agent.status == "running" || agent.status == "done"))
-                        }
-                    }
-                } else {
-                    Text("当前工作空间暂无轮次")
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            if appState.evolutionReplayLoading ||
-                !appState.evolutionReplayMessages.isEmpty ||
-                appState.evolutionReplayError != nil {
-                Section("阶段聊天") {
-                    if appState.evolutionReplayLoading {
-                        ProgressView("加载聊天记录中...")
-                    } else if let error = appState.evolutionReplayError, !error.isEmpty {
-                        Text(error)
-                            .foregroundColor(.red)
-                    } else {
-                        MessageListView(
-                            messages: appState.evolutionReplayMessages,
-                            onQuestionReply: { _, _ in },
-                            onQuestionReject: { _ in },
-                            onQuestionReplyAsMessage: { _ in }
-                        )
-                        .environmentObject(replayStore)
-                        .frame(minHeight: 320)
-                    }
-                    Button("关闭聊天") {
-                        appState.clearEvolutionReplay()
                     }
                 }
             }
@@ -496,8 +471,10 @@ struct MobileEvolutionView: View {
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
             syncStartOptionsFromItem()
         }
-        .onReceive(appState.$evolutionReplayMessages) { messages in
-            replayStore.replaceMessages(messages)
+        .onChange(of: appState.isConnected) { _, connected in
+            guard connected else { return }
+            appState.refreshEvolution(project: project, workspace: workspace)
+            loadProfiles()
         }
     }
 
@@ -520,15 +497,12 @@ struct MobileEvolutionView: View {
 
         isApplyingRemoteProfiles = true
         profiles = loadedProfiles
-        let profileIDs = profiles.map(\.id)
-        for id in profileIDs {
-            sanitizeProfileSelection(profileID: id)
-        }
         lastSyncedProfileSignature = profileSignature(profiles)
         if pendingProfileSaveSignature == lastSyncedProfileSignature {
             pendingProfileSaveSignature = nil
             pendingProfileSaveDate = nil
         }
+        hasPendingUserProfileEdit = false
         DispatchQueue.main.async {
             isApplyingRemoteProfiles = false
         }
@@ -545,6 +519,32 @@ struct MobileEvolutionView: View {
             values.append(name)
         }
         return values
+    }
+
+    private func runtimeAgent(for stage: String) -> EvolutionAgentInfoV2? {
+        item?.agents.first { $0.stage == stage }
+    }
+
+    private func stageStatusColor(_ status: String) -> Color {
+        status == "running" ? .orange : .secondary
+    }
+
+    private func sectionTitle(for profile: EvolutionProfileDraft, runtime: EvolutionAgentInfoV2?) -> String {
+        let runtimeAgent = runtime?.agent.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !runtimeAgent.isEmpty { return runtimeAgent }
+        let configuredMode = profile.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredMode.isEmpty { return configuredMode }
+        return profile.stage
+    }
+
+    private func stageChatRoute(for stage: String) -> MobileRoute? {
+        guard let item else { return nil }
+        return MobileRoute.evolutionStageChat(
+            project: item.project,
+            workspace: item.workspace,
+            cycleID: item.cycleID,
+            stage: stage
+        )
     }
 
     private func applyAgentDefaultModelIfAvailable(profileID: String, agentName: String) {
@@ -624,15 +624,6 @@ struct MobileEvolutionView: View {
 
             let model: EvolutionModelSelectionV2? = {
                 guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else { return nil }
-                let providers = modelProviders(for: profile.aiTool)
-                if providers.isEmpty {
-                    return EvolutionModelSelectionV2(providerID: profile.providerID, modelID: profile.modelID)
-                }
-                let exists = providers.contains { provider in
-                    provider.id == profile.providerID &&
-                        provider.models.contains(where: { $0.id == profile.modelID })
-                }
-                guard exists else { return nil }
                 return EvolutionModelSelectionV2(providerID: profile.providerID, modelID: profile.modelID)
             }()
 
@@ -652,11 +643,16 @@ struct MobileEvolutionView: View {
 
     private func autoSaveProfilesIfNeeded() {
         guard !isApplyingRemoteProfiles else { return }
+        guard hasPendingUserProfileEdit else { return }
         let signature = profileSignature(profiles)
-        guard signature != lastSyncedProfileSignature else { return }
+        guard signature != lastSyncedProfileSignature else {
+            hasPendingUserProfileEdit = false
+            return
+        }
         guard signature != pendingProfileSaveSignature else { return }
         pendingProfileSaveSignature = signature
         pendingProfileSaveDate = Date()
+        hasPendingUserProfileEdit = false
         saveProfiles()
     }
 
@@ -704,5 +700,58 @@ struct MobileEvolutionView: View {
     private func syncStartOptionsFromItem() {
         guard let item else { return }
         autoLoopEnabled = item.autoLoopEnabled
+    }
+}
+
+struct MobileEvolutionStageChatView: View {
+    @EnvironmentObject var appState: MobileAppState
+
+    let project: String
+    let workspace: String
+    let cycleID: String
+    let stage: String
+
+    @StateObject private var replayStore = AIChatStore()
+
+    var body: some View {
+        Group {
+            if appState.evolutionReplayLoading {
+                ProgressView("加载聊天记录中...")
+            } else if let error = appState.evolutionReplayError, !error.isEmpty {
+                Text(error)
+                    .foregroundColor(.red)
+                    .padding(16)
+            } else if replayStore.messages.isEmpty {
+                Text("暂无阶段聊天内容")
+                    .foregroundColor(.secondary)
+            } else {
+                MessageListView(
+                    messages: replayStore.messages,
+                    onQuestionReply: { _, _ in },
+                    onQuestionReject: { _ in },
+                    onQuestionReplyAsMessage: { _ in }
+                )
+                .environmentObject(replayStore)
+            }
+        }
+        .navigationTitle(appState.evolutionReplayTitle.isEmpty ? "\(workspace) · \(stage)" : appState.evolutionReplayTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("刷新") {
+                    appState.openEvolutionStageChat(project: project, workspace: workspace, cycleId: cycleID, stage: stage)
+                }
+                Button("清空") {
+                    appState.clearEvolutionReplay()
+                }
+            }
+        }
+        .onAppear {
+            appState.openEvolutionStageChat(project: project, workspace: workspace, cycleId: cycleID, stage: stage)
+            replayStore.replaceMessages(appState.evolutionReplayMessages)
+        }
+        .onReceive(appState.$evolutionReplayMessages) { messages in
+            replayStore.replaceMessages(messages)
+        }
     }
 }
