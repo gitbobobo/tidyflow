@@ -19,6 +19,7 @@ CYCLE_ID=""
 RUN_ID=""
 STEP="all"
 VERBOSE=0
+DRY_RUN=0
 
 # 日志前缀
 LOG_PREFIX="[evo][run]"
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
         --help|-h)
             echo "Evolution 统一执行入口"
             echo ""
@@ -53,6 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --run-id <id>      Run ID（默认：时间戳）"
             echo "  --step <step>      执行步骤：build|integration|all（默认：all）"
             echo "  --verbose, -v      详细输出"
+            echo "  --dry-run          模拟执行，不实际构建"
             echo "  --help, -h         显示帮助"
             exit 0
             ;;
@@ -108,6 +114,14 @@ fi
 run_build() {
     echo "$LOG_PREFIX [build] 开始构建..."
     echo "$LOG_PREFIX [build] 时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    
+    if [ "$DRY_RUN" = "1" ]; then
+        echo "$LOG_PREFIX [build] DRY RUN: 模拟执行构建步骤"
+        echo "[evo][build] DRY RUN 模拟" >> "$BUILD_LOG"
+        echo "BUILD SUCCESS (dry-run)" >> "$BUILD_LOG"
+        echo "$LOG_PREFIX [build] DRY RUN SUCCESS"
+        return 0
+    fi
     
     local BUILD_START=$(date +%s)
     local BUILD_EXIT=0
@@ -168,6 +182,18 @@ run_build() {
 run_integration() {
     echo "$LOG_PREFIX [integration] 开始集成测试..."
     echo "$LOG_PREFIX [integration] 时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    
+    if [ "$DRY_RUN" = "1" ]; then
+        echo "$LOG_PREFIX [integration] DRY RUN: 模拟执行集成测试"
+        echo "[evo][run] DRY RUN 模拟" >> "$TEST_LOG"
+        echo "[evo][run] app/core 启动测试开始 (dry-run)" >> "$TEST_LOG"
+        echo "[evo][run] Core 二进制就绪: (simulated)" >> "$TEST_LOG"
+        echo "[evo][run] App 产物就绪: (simulated)" >> "$TEST_LOG"
+        echo "[evo][ws] 连接测试 - 跳过（dry-run）" >> "$TEST_LOG"
+        echo "INTEGRATION SUCCESS (dry-run)" >> "$TEST_LOG"
+        echo "$LOG_PREFIX [integration] DRY RUN SUCCESS"
+        return 0
+    fi
     
     local TEST_START=$(date +%s)
     local TEST_EXIT=0
