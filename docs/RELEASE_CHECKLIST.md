@@ -40,6 +40,18 @@
   - [ ] 记录安全模式核对结论（默认本地监听 `127.0.0.1`，远程需显式 `remote_access_enabled`）
   - [ ] 识别兼容性风险：若本轮有 loopback/鉴权变更，补充回滚与恢复步骤
 
-## 5. 一键发布
+## 5. Evolution 证据回归检查
+
+> 本节用于确保 Evolution 系统的测试与证据链正常工作。
+
+- [ ] 执行统一入口：`./scripts/evo-run.sh --cycle <latest_cycle_id> --dry-run`（模拟执行）
+- [ ] 检查日志关键字：确保 `[evo][build]`、`[evo][run]`、`[evo][ws]`、`[evo][evidence]` 标记存在
+- [ ] 验证证据完整度：`evidence.index.json` 包含 build_log、test_log、screenshot、diff_summary
+- [ ] 失败可追溯：若存在失败，确认可通过 `failure_context` 定位日志关键字与截图
+- [ ] 兼容性说明：本次变更仅影响测试与证据链，不改变运行时对外行为
+
+**回滚策略**：若证据机制导致不稳定，退回原手工验证流程，关闭统一入口调用。
+
+## 6. 一键发布
 
 - [ ] 询问用户是否执行脚本上传产物到 GitHub Release；若用户确认，则执行：`./scripts/release_local.sh --upload-release`
