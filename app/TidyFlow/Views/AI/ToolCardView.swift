@@ -1401,6 +1401,10 @@ struct ToolCardView: View {
         invocation: AIToolInvocationState?
     ) -> Bool {
         guard toolID == "question" else { return false }
+        // 只要本地还挂着待答请求，就必须保持可交互。
+        if pendingQuestion != nil {
+            return true
+        }
         guard let invocation else { return true }
         return invocation.status == .pending || invocation.status == .running || invocation.status == .unknown
     }

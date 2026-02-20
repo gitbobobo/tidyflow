@@ -601,8 +601,22 @@ final class AIChatStore: ObservableObject {
     func questionRequest(
         forToolCallId callId: String?,
         toolPartId: String?,
-        toolMessageId: String?
+        toolMessageId: String?,
+        requestId: String? = nil
     ) -> AIQuestionRequestInfo? {
+        if let requestId, !requestId.isEmpty {
+            if let mappedKey = questionRequestToCallId[requestId],
+               let mapped = pendingToolQuestions[mappedKey] {
+                return mapped
+            }
+            if let direct = pendingToolQuestions[requestId] {
+                return direct
+            }
+            if let matched = pendingToolQuestions.first(where: { $0.value.id == requestId }) {
+                return matched.value
+            }
+        }
+
         // 优先用 toolCallId 查找（对应 tool part 的 callID）
         if let callId, !callId.isEmpty, let request = pendingToolQuestions[callId] {
             return request
