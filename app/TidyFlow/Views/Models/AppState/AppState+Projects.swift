@@ -110,6 +110,7 @@ extension AppState {
             workspaceDiagnostics.removeValue(forKey: globalKey)
             workspaceLspStatus.removeValue(forKey: globalKey)
             workspaceLspLoading.removeValue(forKey: globalKey)
+            workspaceSpecialPageByWorkspace.removeValue(forKey: globalKey)
         }
     }
 

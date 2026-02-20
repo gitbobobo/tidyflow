@@ -32,27 +32,25 @@ struct TabStripView: View {
                 NewTerminalButton(globalKey: globalKey)
                     .environmentObject(appState)
                     .padding(.horizontal, 4)
-                
-                Button(action: {
-                    appState.addTab(workspaceKey: globalKey, kind: .aiChat, title: "AI Chat", payload: "")
-                }) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("AI Chat")
+
+                WorkspaceSpecialPageButton(
+                    iconName: "bubble.left.and.bubble.right",
+                    helpText: "AI Chat",
+                    isSelected: appState.workspaceSpecialPageByWorkspace[globalKey] == .aiChat,
+                    onTap: {
+                        appState.toggleWorkspaceSpecialPage(workspaceKey: globalKey, page: .aiChat)
+                    }
+                )
                 .padding(.horizontal, 4)
 
-                Button(action: {
-                    appState.addTab(workspaceKey: globalKey, kind: .evolution, title: "Evolution", payload: "")
-                }) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Evolution")
+                WorkspaceSpecialPageButton(
+                    iconName: "point.3.connected.trianglepath.dotted",
+                    helpText: "Evolution",
+                    isSelected: appState.workspaceSpecialPageByWorkspace[globalKey] == .evolution,
+                    onTap: {
+                        appState.toggleWorkspaceSpecialPage(workspaceKey: globalKey, page: .evolution)
+                    }
+                )
                 .padding(.horizontal, 4)
             } else {
                 Spacer()
@@ -63,6 +61,32 @@ struct TabStripView: View {
         .overlay(
             Divider(), alignment: .bottom
         )
+    }
+}
+
+private struct WorkspaceSpecialPageButton: View {
+    let iconName: String
+    let helpText: String
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: iconName)
+                .font(.system(size: 12))
+                .foregroundColor(isSelected ? .primary : .secondary)
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(
+                            isSelected
+                                ? Color.accentColor.opacity(0.2)
+                                : Color.clear
+                        )
+                )
+        }
+        .buttonStyle(.borderless)
+        .help(helpText)
     }
 }
 

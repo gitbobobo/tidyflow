@@ -28,8 +28,6 @@ enum TabKind: String, Codable {
     case editor
     case diff
     case settings
-    case aiChat
-    case evolution
     
     var iconName: String {
         switch self {
@@ -37,10 +35,14 @@ enum TabKind: String, Codable {
         case .editor: return "doc.text"
         case .diff: return "arrow.left.arrow.right"
         case .settings: return "gearshape"
-        case .aiChat: return "sparkles"
-        case .evolution: return "point.3.connected.trianglepath.dotted"
         }
     }
+}
+
+/// 工作空间级主内容页面（不进入 Tab 列表）
+enum WorkspaceSpecialPage: String, Codable {
+    case aiChat
+    case evolution
 }
 
 struct TabModel: Identifiable, Codable, Equatable {

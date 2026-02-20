@@ -9,61 +9,64 @@ struct TabContentHostView: View {
     private var hasActiveContent: Bool {
         // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
         guard let globalKey = appState.currentGlobalWorkspaceKey,
+              appState.workspaceSpecialPageByWorkspace[globalKey] == nil,
               let activeId = appState.activeTabIdByWorkspace[globalKey],
               let tabs = appState.workspaceTabs[globalKey],
-              tabs.first(where: { $0.id == activeId }) != nil
+              let tab = tabs.first(where: { $0.id == activeId })
         else { return false }
-        return true
+        return tab.kind == .terminal || tab.kind == .editor || tab.kind == .diff
     }
 
     var body: some View {
         Group {
             // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
-            if let globalKey = appState.currentGlobalWorkspaceKey,
-               let activeId = appState.activeTabIdByWorkspace[globalKey],
-               let tabs = appState.workspaceTabs[globalKey],
-               let activeTab = tabs.first(where: { $0.id == activeId }) {
+            if let globalKey = appState.currentGlobalWorkspaceKey {
+                if let specialPage = appState.workspaceSpecialPageByWorkspace[globalKey] {
+                    switch specialPage {
+                    case .aiChat:
+                        AITabView()
+                            .environmentObject(appState)
+                            .environmentObject(appState.fileCache)
+                            .onAppear { webViewVisible = false }
+                    case .evolution:
+                        EvolutionTabView()
+                            .environmentObject(appState)
+                            .onAppear { webViewVisible = false }
+                    }
+                } else if let activeId = appState.activeTabIdByWorkspace[globalKey],
+                          let tabs = appState.workspaceTabs[globalKey],
+                          let activeTab = tabs.first(where: { $0.id == activeId }) {
 
-                switch activeTab.kind {
-                case .terminal:
-                    // Phase C1-1: Show WebView for terminal tabs
-                    TerminalContentView(
-                        webBridge: webBridge,
-                        webViewVisible: $webViewVisible
-                    )
-                case .editor:
-                    EditorContentView(
-                        path: activeTab.payload,
-                        webBridge: webBridge,
-                        webViewVisible: $webViewVisible
-                    )
-                    .id(activeTab.payload) // 不同 path 视为不同 View，确保切换时触发 onAppear
-                case .diff:
-                    DiffContentView(
-                        path: activeTab.payload,
-                        webBridge: webBridge,
-                        webViewVisible: $webViewVisible
-                    )
-                case .settings:
-                    // 设置页面不需要 WebView
-                    SettingsContentView()
-                        .environmentObject(appState)
-                        .onAppear { webViewVisible = false }
-                case .aiChat:
-                    // AI Chat Tab (Native SwiftUI)
-                    AITabView()
-                        .environmentObject(appState)
-                        .environmentObject(appState.fileCache)
-                        .onAppear { webViewVisible = false }
-                case .evolution:
-                    EvolutionTabView()
-                        .environmentObject(appState)
-                        .onAppear { webViewVisible = false }
+                    switch activeTab.kind {
+                    case .terminal:
+                        // Phase C1-1: Show WebView for terminal tabs
+                        TerminalContentView(
+                            webBridge: webBridge,
+                            webViewVisible: $webViewVisible
+                        )
+                    case .editor:
+                        EditorContentView(
+                            path: activeTab.payload,
+                            webBridge: webBridge,
+                            webViewVisible: $webViewVisible
+                        )
+                        .id(activeTab.payload) // 不同 path 视为不同 View，确保切换时触发 onAppear
+                    case .diff:
+                        DiffContentView(
+                            path: activeTab.payload,
+                            webBridge: webBridge,
+                            webViewVisible: $webViewVisible
+                        )
+                    case .settings:
+                        // 设置页面不需要 WebView
+                        SettingsContentView()
+                            .environmentObject(appState)
+                            .onAppear { webViewVisible = false }
+                    }
+                } else {
+                    // 已选择工作空间但没有活跃 Tab，显示快捷操作视图
+                    QuickActionsView()
                 }
-
-            } else if appState.currentGlobalWorkspaceKey != nil {
-                // 已选择工作空间但没有活跃 Tab，显示快捷操作视图
-                QuickActionsView()
             } else {
                 NoActiveTabView()
             }

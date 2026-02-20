@@ -2,6 +2,26 @@ import Foundation
 
 extension AppState {
     // MARK: - Tab Helpers
+
+    /// 打开工作空间级主页面（不新增 Tab）
+    func showWorkspaceSpecialPage(workspaceKey: String, page: WorkspaceSpecialPage) {
+        workspaceSpecialPageByWorkspace[workspaceKey] = page
+    }
+
+    /// 切换工作空间级主页面（再次点击同一按钮会关闭高亮并回到 Tab 内容）
+    func toggleWorkspaceSpecialPage(workspaceKey: String, page: WorkspaceSpecialPage) {
+        if workspaceSpecialPageByWorkspace[workspaceKey] == page {
+            workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+        } else {
+            workspaceSpecialPageByWorkspace[workspaceKey] = page
+        }
+    }
+
+    /// 当前工作空间正在展示的工作空间级主页面
+    var currentWorkspaceSpecialPage: WorkspaceSpecialPage? {
+        guard let globalKey = currentGlobalWorkspaceKey else { return nil }
+        return workspaceSpecialPageByWorkspace[globalKey]
+    }
     
     func ensureDefaultTab(for workspaceKey: String) {
         // 不再自动创建终端，仅确保字典有对应的键
@@ -12,6 +32,8 @@ extension AppState {
     
     func activateTab(workspaceKey: String, tabId: UUID) {
         activeTabIdByWorkspace[workspaceKey] = tabId
+        // 切回普通 Tab 时，退出工作空间级页面
+        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
     }
     
     func closeTab(workspaceKey: String, tabId: UUID) {
@@ -70,6 +92,8 @@ extension AppState {
         for tab in tabs {
             performCloseTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
+        // 工作空间被删除/结束工作时，同步清理工作空间级页面状态
+        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
     }
 
     /// 实际执行关闭 Tab（跳过 dirty 检查）
@@ -135,6 +159,8 @@ extension AppState {
         
         workspaceTabs[workspaceKey]?.append(newTab)
         activeTabIdByWorkspace[workspaceKey] = newTab.id
+        // 打开普通 Tab 后，退出工作空间级页面
+        workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
 
         // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
         if kind == .terminal && workspaceTerminalOpenTime[workspaceKey] == nil {

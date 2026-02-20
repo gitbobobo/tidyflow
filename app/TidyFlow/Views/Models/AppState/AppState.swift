@@ -18,6 +18,8 @@ class AppState: ObservableObject {
 
     @Published var workspaceTabs: [String: TabSet] = [:]
     @Published var activeTabIdByWorkspace: [String: UUID] = [:]
+    /// 工作空间级主内容页面（聊天/自主进化），不占用 Tab 栏
+    @Published var workspaceSpecialPageByWorkspace: [String: WorkspaceSpecialPage] = [:]
 
     // 命令面板状态（独立 ObservableObject，避免输入高频更新触发全局视图刷新）
     let paletteState = CommandPaletteState()
