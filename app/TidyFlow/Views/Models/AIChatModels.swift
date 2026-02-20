@@ -9,7 +9,6 @@ enum AIChatRole: String {
 }
 
 enum AIChatTool: String, CaseIterable, Identifiable {
-    case claude
     case opencode
     case codex
     case copilot
@@ -18,7 +17,6 @@ enum AIChatTool: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .claude: return "Claude Code"
         case .opencode: return "OpenCode"
         case .codex: return "Codex"
         case .copilot: return "Copilot"
@@ -27,7 +25,6 @@ enum AIChatTool: String, CaseIterable, Identifiable {
 
     var iconAssetName: String {
         switch self {
-        case .claude: return "claude-icon"
         case .opencode: return "opencode-icon"
         case .codex: return "codex-icon"
         case .copilot: return "copilot-icon"

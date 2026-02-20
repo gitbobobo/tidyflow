@@ -528,8 +528,6 @@ private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
         "codex"
     case "copilot-acp", "github-copilot":
         "copilot"
-    case "claude-code", "claude-cli":
-        "claude"
     default:
         normalized
     }

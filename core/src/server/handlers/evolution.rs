@@ -1743,7 +1743,6 @@ fn normalize_ai_tool_compatible(tool: &str) -> Option<String> {
         "open-code" => "opencode",
         "codex-app-server" | "codex-app" => "codex",
         "copilot-acp" | "github-copilot" => "copilot",
-        "claude-code" | "claude-cli" => "claude",
         _ => return None,
     };
     Some(mapped.to_string())
@@ -1763,10 +1762,6 @@ mod tests {
     #[test]
     fn normalize_ai_tool_compatible_should_map_legacy_values() {
         assert_eq!(
-            normalize_ai_tool_compatible("claude-code").as_deref(),
-            Some("claude")
-        );
-        assert_eq!(
             normalize_ai_tool_compatible("codex-app-server").as_deref(),
             Some("codex")
         );
@@ -1785,7 +1780,7 @@ mod tests {
     fn normalize_profiles_lenient_should_fallback_invalid_ai_tool_to_default() {
         let profiles = vec![EvolutionStageProfileInfo {
             stage: "direction".to_string(),
-            ai_tool: "claude-code".to_string(),
+            ai_tool: "legacy-unsupported-tool".to_string(),
             mode: Some("Default".to_string()),
             model: Some(ai::ModelSelection {
                 provider_id: "codex".to_string(),
@@ -1798,6 +1793,6 @@ mod tests {
             .into_iter()
             .find(|item| item.stage == "direction")
             .expect("missing direction stage");
-        assert_eq!(direction.ai_tool, "claude");
+        assert_eq!(direction.ai_tool, "codex");
     }
 }
