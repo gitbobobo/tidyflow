@@ -800,36 +800,46 @@ impl CodexAppServerAgent {
                     .unwrap_or("")
                     .to_string(),
             )),
-            "reasoning" | "plan" => {
-                let text = if kind == "plan" {
-                    item.get("text")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string()
+            "plan" => {
+                let text = item
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some(AiPart {
+                    id: part_id,
+                    part_type: "text".to_string(),
+                    text: Some(text),
+                    source: Some(serde_json::json!({
+                        "vendor": "codex",
+                        "item_type": "plan"
+                    })),
+                    ..Default::default()
+                })
+            }
+            "reasoning" => {
+                let summary = item
+                    .get("summary")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let content = item
+                    .get("content")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let text = if summary.is_empty() {
+                    content
+                } else if content.is_empty() {
+                    summary
                 } else {
-                    let summary = item
-                        .get("summary")
-                        .and_then(|v| v.as_array())
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|v| v.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let content = item
-                        .get("content")
-                        .and_then(|v| v.as_array())
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|v| v.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if summary.is_empty() {
-                        content
-                    } else if content.is_empty() {
-                        summary
-                    } else {
-                        format!("{}\n{}", summary, content)
-                    }
+                    format!("{}\n{}", summary, content)
                 };
                 Some(AiPart {
                     id: part_id,
@@ -921,6 +931,57 @@ impl CodexAppServerAgent {
             }
         }
         chunks.join("\n")
+    }
+
+    fn render_turn_plan_update(params: &Value) -> String {
+        let explanation = params
+            .get("explanation")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string);
+
+        let mut lines = Vec::new();
+        if let Some(explanation) = explanation {
+            lines.push(explanation);
+        }
+
+        let plan_items = params
+            .get("plan")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if !plan_items.is_empty() {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push("当前计划：".to_string());
+            for entry in plan_items {
+                let step = entry
+                    .get("step")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or("未命名步骤");
+                let status = entry
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending")
+                    .to_lowercase();
+                let badge = match status.as_str() {
+                    "completed" => "[x]",
+                    "inprogress" | "in_progress" => "[-]",
+                    _ => "[ ]",
+                };
+                lines.push(format!("- {} {}", badge, step));
+            }
+        }
+
+        if lines.is_empty() {
+            "计划已更新".to_string()
+        } else {
+            lines.join("\n")
+        }
     }
 
     fn map_turn_item_to_message(
@@ -1101,7 +1162,12 @@ impl CodexAppServerAgent {
             ))
         } else if Self::method_in(
             method,
-            &["item/tool/requestUserInput", "item/tool/request_user_input"],
+            &[
+                "item/tool/requestUserInput",
+                "item/tool/request_user_input",
+                "tool/requestUserInput",
+                "tool/request_user_input",
+            ],
         ) {
             let questions = Self::extract_question_nodes(params);
             let mut mapped = Vec::new();
@@ -1238,6 +1304,55 @@ impl CodexAppServerAgent {
                                             }));
                                         }
                                     }
+                                    "item/plan/delta" => {
+                                        let item_id = params
+                                            .get("itemId")
+                                            .or_else(|| params.get("item_id"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        if item_id.is_empty() {
+                                            continue;
+                                        }
+                                        if !known_assistant_messages.contains(item_id) {
+                                            known_assistant_messages.insert(item_id.to_string());
+                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                message_id: item_id.to_string(),
+                                                role: "assistant".to_string(),
+                                            }));
+                                        }
+                                        if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                message_id: item_id.to_string(),
+                                                part_id: item_id.to_string(),
+                                                part_type: "text".to_string(),
+                                                field: "text".to_string(),
+                                                delta: delta.to_string(),
+                                            }));
+                                        }
+                                    }
+                                    "turn/plan/updated" => {
+                                        let plan_turn_id = params
+                                            .get("turnId")
+                                            .or_else(|| params.get("turn_id"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or(turn_id.as_str());
+                                        let message_id = format!("codex-plan-{}", plan_turn_id);
+                                        let part_id = format!("{}-summary", message_id);
+                                        if !known_assistant_messages.contains(&message_id) {
+                                            known_assistant_messages.insert(message_id.clone());
+                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                message_id: message_id.clone(),
+                                                role: "assistant".to_string(),
+                                            }));
+                                        }
+                                        let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                            message_id,
+                                            part: AiPart::new_text(
+                                                part_id,
+                                                CodexAppServerAgent::render_turn_plan_update(&params),
+                                            ),
+                                        }));
+                                    }
                                     "item/started" | "item/completed" => {
                                         let Some(item) = params.get("item") else {
                                             continue;
@@ -1335,8 +1450,24 @@ impl CodexAppServerAgent {
                                     &["/turnId", "/turn_id"],
                                 )
                                 .unwrap_or_default();
-                                if thread_id != session_id
-                                    || (!request_turn_id.is_empty() && request_turn_id != turn_id)
+                                if thread_id != session_id {
+                                    continue;
+                                }
+                                if !request_turn_id.is_empty()
+                                    && request_turn_id != turn_id
+                                    && !CodexAppServerAgent::method_in(
+                                        req.method.as_str(),
+                                        &[
+                                            "item/tool/requestUserInput",
+                                            "item/tool/request_user_input",
+                                            "tool/requestUserInput",
+                                            "tool/request_user_input",
+                                            "item/commandExecution/requestApproval",
+                                            "item/command_execution/request_approval",
+                                            "item/fileChange/requestApproval",
+                                            "item/file_change/request_approval",
+                                        ],
+                                    )
                                 {
                                     continue;
                                 }
@@ -1373,6 +1504,20 @@ impl CodexAppServerAgent {
                                     );
                                     let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question }));
                                 } else {
+                                    if CodexAppServerAgent::method_in(
+                                        req.method.as_str(),
+                                        &[
+                                            "item/tool/requestUserInput",
+                                            "item/tool/request_user_input",
+                                            "tool/requestUserInput",
+                                            "tool/request_user_input",
+                                        ],
+                                    ) {
+                                        warn!(
+                                            "Codex request_user_input parse failed: request_key={}, params={}",
+                                            request_key, params
+                                        );
+                                    }
                                     warn!(
                                         "Codex approval request ignored: method={}, request_key={}",
                                         req.method, request_key
@@ -1798,7 +1943,12 @@ impl AiAgent for CodexAppServerAgent {
             serde_json::json!({ "decision": decision })
         } else if Self::method_in(
             pending.method.as_str(),
-            &["item/tool/requestUserInput", "item/tool/request_user_input"],
+            &[
+                "item/tool/requestUserInput",
+                "item/tool/request_user_input",
+                "tool/requestUserInput",
+                "tool/request_user_input",
+            ],
         ) {
             let mut answer_map = serde_json::Map::new();
             for (idx, qid) in pending.question_ids.iter().enumerate() {
@@ -1843,7 +1993,12 @@ impl AiAgent for CodexAppServerAgent {
             serde_json::json!({ "decision": "cancel" })
         } else if Self::method_in(
             pending.method.as_str(),
-            &["item/tool/requestUserInput", "item/tool/request_user_input"],
+            &[
+                "item/tool/requestUserInput",
+                "item/tool/request_user_input",
+                "tool/requestUserInput",
+                "tool/request_user_input",
+            ],
         ) {
             serde_json::json!({ "answers": {} })
         } else {
@@ -1895,6 +2050,45 @@ mod tests {
         assert_eq!(request.questions[0].question, "1+1 等于几？");
         assert_eq!(request.questions[0].options.len(), 2);
         assert!(!request.questions[0].custom);
+    }
+
+    #[test]
+    fn build_question_from_request_supports_app_server_v2_request_user_input_shape() {
+        let params = serde_json::json!({
+            "threadId": "thread-v2",
+            "turnId": "turn-v2",
+            "itemId": "call-v2",
+            "questions": [
+                {
+                    "id": "confirm_path",
+                    "header": "确认路径",
+                    "question": "是否继续？",
+                    "isOther": true,
+                    "isSecret": false,
+                    "options": [
+                        { "label": "继续", "description": "按当前路径继续" },
+                        { "label": "取消", "description": "停止当前流程" }
+                    ]
+                }
+            ]
+        });
+
+        let (request, ids) = CodexAppServerAgent::build_question_from_request(
+            "item/tool/requestUserInput",
+            "n:12",
+            &params,
+        )
+        .expect("should parse app-server v2 requestUserInput");
+
+        assert_eq!(request.session_id, "thread-v2");
+        assert_eq!(request.tool_message_id.as_deref(), Some("call-v2"));
+        assert_eq!(request.tool_call_id.as_deref(), Some("call-v2"));
+        assert_eq!(ids, vec!["confirm_path".to_string()]);
+        assert_eq!(request.questions.len(), 1);
+        assert_eq!(request.questions[0].header, "确认路径");
+        assert_eq!(request.questions[0].question, "是否继续？");
+        assert_eq!(request.questions[0].options.len(), 2);
+        assert!(request.questions[0].custom);
     }
 
     #[test]
@@ -1990,6 +2184,34 @@ mod tests {
         assert_eq!(
             state.get("title").and_then(|v| v.as_str()),
             Some("read(README.md)")
+        );
+    }
+
+    #[test]
+    fn map_item_to_part_marks_plan_source_metadata() {
+        let item = serde_json::json!({
+            "id": "item-plan-1",
+            "type": "plan",
+            "text": "- 第一步\n- 第二步"
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.part_type, "text");
+        assert_eq!(part.text.as_deref(), Some("- 第一步\n- 第二步"));
+        assert_eq!(
+            part.source
+                .as_ref()
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.as_str()),
+            Some("codex")
+        );
+        assert_eq!(
+            part.source
+                .as_ref()
+                .and_then(|v| v.get("item_type"))
+                .and_then(|v| v.as_str()),
+            Some("plan")
         );
     }
 
