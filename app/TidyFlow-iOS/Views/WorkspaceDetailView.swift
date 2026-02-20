@@ -351,12 +351,27 @@ struct MobileEvolutionView: View {
                         }
                     )
                     Section(sectionTitle(for: profile, runtime: runtime)) {
-                        if canOpenStageChat(statusText), let route = stageChatRoute(for: stage) {
-                            NavigationLink(value: route) {
-                                LabeledContent("工作状态") {
-                                    Text(statusText)
-                                        .foregroundColor(stageStatusColor(statusText))
+                        if canOpenStageChat(statusText) {
+                            LabeledContent("工作状态") {
+                                Button {
+                                    guard let currentItem = item else { return }
+                                    appState.openEvolutionStageChat(
+                                        project: project,
+                                        workspace: workspace,
+                                        cycleId: currentItem.cycleID,
+                                        stage: stage
+                                    )
+                                    appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(statusText)
+                                            .foregroundColor(stageStatusColor(statusText))
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
+                                .buttonStyle(.plain)
                             }
                         } else {
                             LabeledContent("工作状态") {
@@ -553,16 +568,6 @@ struct MobileEvolutionView: View {
         return profile.stage
     }
 
-    private func stageChatRoute(for stage: String) -> MobileRoute? {
-        guard let item else { return nil }
-        return MobileRoute.evolutionStageChat(
-            project: item.project,
-            workspace: item.workspace,
-            cycleID: item.cycleID,
-            stage: stage
-        )
-    }
-
     private func applyAgentDefaultModelIfAvailable(profileID: String, agentName: String) {
         guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
         var profile = profiles[index]
@@ -716,58 +721,5 @@ struct MobileEvolutionView: View {
     private func syncStartOptionsFromItem() {
         guard let item else { return }
         autoLoopEnabled = item.autoLoopEnabled
-    }
-}
-
-struct MobileEvolutionStageChatView: View {
-    @EnvironmentObject var appState: MobileAppState
-
-    let project: String
-    let workspace: String
-    let cycleID: String
-    let stage: String
-
-    @StateObject private var replayStore = AIChatStore()
-
-    var body: some View {
-        Group {
-            if appState.evolutionReplayLoading {
-                ProgressView("加载聊天记录中...")
-            } else if let error = appState.evolutionReplayError, !error.isEmpty {
-                Text(error)
-                    .foregroundColor(.red)
-                    .padding(16)
-            } else if replayStore.messages.isEmpty {
-                Text("暂无阶段聊天内容")
-                    .foregroundColor(.secondary)
-            } else {
-                MessageListView(
-                    messages: replayStore.messages,
-                    onQuestionReply: { _, _ in },
-                    onQuestionReject: { _ in },
-                    onQuestionReplyAsMessage: { _ in }
-                )
-                .environmentObject(replayStore)
-            }
-        }
-        .navigationTitle(appState.evolutionReplayTitle.isEmpty ? "\(workspace) · \(stage)" : appState.evolutionReplayTitle)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button("刷新") {
-                    appState.openEvolutionStageChat(project: project, workspace: workspace, cycleId: cycleID, stage: stage)
-                }
-                Button("清空") {
-                    appState.clearEvolutionReplay()
-                }
-            }
-        }
-        .onAppear {
-            appState.openEvolutionStageChat(project: project, workspace: workspace, cycleId: cycleID, stage: stage)
-            replayStore.replaceMessages(appState.evolutionReplayMessages)
-        }
-        .onReceive(appState.$evolutionReplayMessages) { messages in
-            replayStore.replaceMessages(messages)
-        }
     }
 }

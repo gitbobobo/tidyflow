@@ -834,6 +834,7 @@ final class MobileAppState: ObservableObject {
     func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         evolutionReplayTitle = "\(normalizedWorkspace) · \(stage) · \(cycleId)"
+        evolutionReplayRequest = nil
         evolutionReplayMessages = []
         evolutionReplayError = nil
         evolutionReplayLoading = true
@@ -2186,24 +2187,36 @@ final class MobileAppState: ObservableObject {
                 self.evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
                 return
             }
-            self.evolutionReplayRequest = (
-                project: ev.project,
-                workspace: ev.workspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID,
-                cycleId: ev.cycleID,
-                stage: ev.stage
-            )
-            self.evolutionReplayTitle = "\(ev.workspace) · \(ev.stage) · \(ev.cycleID)"
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            self.evolutionReplayRequest = nil
+            self.evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
             self.evolutionReplayMessages = []
             self.evolutionReplayError = nil
-            self.evolutionReplayLoading = true
-            self.wsClient.requestAISessionMessages(
+            self.evolutionReplayLoading = false
+
+            self.openAIChat(project: ev.project, workspace: normalizedWorkspace)
+
+            let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+            let session = AISessionInfo(
                 projectName: ev.project,
-                workspaceName: ev.workspace,
+                workspaceName: normalizedWorkspace,
                 aiTool: aiTool,
-                sessionId: ev.sessionID,
-                limit: 400
+                id: ev.sessionID,
+                title: "\(ev.stage) · \(ev.cycleID)",
+                updatedAt: updatedAt
+            )
+
+            var sessions = self.aiSessionsByTool[aiTool] ?? []
+            sessions.removeAll { $0.id == session.id }
+            sessions.insert(session, at: 0)
+            self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: aiTool)
+
+            self.loadAISession(session)
+            self.wsClient.requestAISessionStatus(
+                projectName: ev.project,
+                workspaceName: normalizedWorkspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID
             )
         }
 

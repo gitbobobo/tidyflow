@@ -232,16 +232,6 @@ struct TidyFlowApp: App {
         .defaultSize(width: 520, height: 400)
         .windowResizability(.contentSize)
 
-        Window("阶段聊天", id: "evolution-stage-chat") {
-            EvolutionStageChatWindowView()
-                .environmentObject(appState)
-                .environmentObject(appState.evolutionReplayStore)
-                .environmentObject(localizationManager)
-                .environment(\.locale, localizationManager.locale)
-                .preferredColorScheme(.dark)
-        }
-        .defaultSize(width: 900, height: 680)
-
         // 设置窗口（独立窗口，通过 ⌘, 或点击设置按钮打开）
         Settings {
             SettingsContentView()

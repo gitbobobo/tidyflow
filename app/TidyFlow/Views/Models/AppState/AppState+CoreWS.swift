@@ -859,22 +859,43 @@ extension AppState {
                 self.evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
                 return
             }
-            self.evolutionReplayRequest = (
-                project: ev.project,
-                workspace: ev.workspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID,
-                cycleId: ev.cycleID,
-                stage: ev.stage
-            )
-            self.evolutionReplayTitle = "\(ev.workspace) · \(ev.stage) · \(ev.cycleID)"
-            self.evolutionReplayStore.clearMessages()
-            self.evolutionReplayStore.setCurrentSessionId(ev.sessionID)
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            self.evolutionReplayRequest = nil
+            self.evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
             self.evolutionReplayError = nil
-            self.evolutionReplayLoading = true
+            self.evolutionReplayLoading = false
+
+            let workspaceKey = self.globalWorkspaceKey(projectName: ev.project, workspaceName: normalizedWorkspace)
+            self.showWorkspaceSpecialPage(workspaceKey: workspaceKey, page: .aiChat)
+
+            let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+            let session = AISessionInfo(
+                projectName: ev.project,
+                workspaceName: normalizedWorkspace,
+                aiTool: aiTool,
+                id: ev.sessionID,
+                title: "\(ev.stage) · \(ev.cycleID)",
+                updatedAt: updatedAt
+            )
+            self.upsertAISession(session, for: aiTool)
+
+            if self.aiChatTool != aiTool {
+                self.aiChatTool = aiTool
+            }
+            let targetStore = self.aiStore(for: aiTool)
+            targetStore.setAbortPendingSessionId(nil)
+            targetStore.setCurrentSessionId(ev.sessionID)
+            targetStore.clearMessages()
+
+            self.wsClient.requestAISessionStatus(
+                projectName: ev.project,
+                workspaceName: normalizedWorkspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID
+            )
             self.wsClient.requestAISessionMessages(
                 projectName: ev.project,
-                workspaceName: ev.workspace,
+                workspaceName: normalizedWorkspace,
                 aiTool: aiTool,
                 sessionId: ev.sessionID,
                 limit: 400

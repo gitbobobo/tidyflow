@@ -632,7 +632,6 @@ private struct EvolutionEditableProfile: Identifiable {
 
 struct EvolutionTabView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.openWindow) private var openWindow
     @State private var maxVerifyIterationsText: String = "3"
     @State private var autoLoopEnabled: Bool = true
     @State private var editableProfiles: [EvolutionEditableProfile] = []
@@ -982,7 +981,8 @@ struct EvolutionTabView: View {
             cycleId: item.cycleID,
             stage: stage
         )
-        openWindow(id: "evolution-stage-chat")
+        let workspaceKey = appState.globalWorkspaceKey(projectName: item.project, workspaceName: item.workspace)
+        appState.showWorkspaceSpecialPage(workspaceKey: workspaceKey, page: .aiChat)
     }
 
     private func modeOptions(for tool: AIChatTool) -> [String] {
@@ -1191,56 +1191,5 @@ struct EvolutionTabView: View {
     private func syncStartOptionsFromCurrentItem() {
         guard let item = currentItem else { return }
         autoLoopEnabled = item.autoLoopEnabled
-    }
-}
-
-struct EvolutionStageChatWindowView: View {
-    @EnvironmentObject var appState: AppState
-    @EnvironmentObject var replayStore: AIChatStore
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text(appState.evolutionReplayTitle.isEmpty ? "阶段聊天" : appState.evolutionReplayTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                Spacer()
-                Button("清空") {
-                    appState.clearEvolutionReplay()
-                }
-                .buttonStyle(.borderless)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
-            Divider()
-
-            Group {
-                if appState.evolutionReplayLoading {
-                    ProgressView("加载聊天记录中...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                } else if let error = appState.evolutionReplayError, !error.isEmpty {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                        .padding(20)
-                } else if replayStore.messages.isEmpty {
-                    Text("暂无阶段聊天内容")
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                } else {
-                    MessageListView(
-                        messages: replayStore.messages,
-                        onQuestionReply: { _, _ in },
-                        onQuestionReject: { _ in },
-                        onQuestionReplyAsMessage: { _ in }
-                    )
-                    .environmentObject(replayStore)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(NSColor.windowBackgroundColor))
-                }
-            }
-        }
-        .background(Color(NSColor.windowBackgroundColor))
     }
 }
