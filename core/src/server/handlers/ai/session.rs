@@ -327,6 +327,13 @@ pub(super) async fn try_handle_ai_session_status(
         }
     }
 
+    let context_remaining_percent = agent
+        .get_session_context_usage(&directory, session_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|usage| usage.context_remaining_percent);
+
     // 写入 meta，便于后续推送 update
     store.set_status_with_meta(
         AiSessionStatusMeta {
@@ -346,7 +353,7 @@ pub(super) async fn try_handle_ai_session_status(
             workspace_name: workspace_name.clone(),
             ai_tool,
             session_id: session_id.clone(),
-            status: status_to_info(&status),
+            status: status_to_info(&status, context_remaining_percent),
         },
     )
     .await?;

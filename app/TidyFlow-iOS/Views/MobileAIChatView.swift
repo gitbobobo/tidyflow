@@ -10,6 +10,7 @@ struct MobileAIChatView: View {
     @State private var imageAttachments: [ImageAttachment] = []
     @State private var showSessionList = false
     @State private var referenceSearchTask: Task<Void, Never>?
+    @State private var sessionStatusPollingTask: Task<Void, Never>?
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -144,10 +145,22 @@ struct MobileAIChatView: View {
         }
         .onAppear {
             appState.openAIChat(project: project, workspace: workspace)
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
         }
         .onDisappear {
             referenceSearchTask?.cancel()
+            sessionStatusPollingTask?.cancel()
+            sessionStatusPollingTask = nil
             appState.closeAIChat()
+        }
+        .onChange(of: appState.aiCurrentSessionId) { _, _ in
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
+        }
+        .onChange(of: appState.aiIsStreaming) { _, _ in
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
         }
     }
 
@@ -198,7 +211,20 @@ struct MobileAIChatView: View {
     }
 
     private var inputArea: some View {
-        VStack(spacing: 0) {
+        let contextRemainingPercent: Double? = {
+            guard let sessionId = appState.aiCurrentSessionId else { return nil }
+            let session = AISessionInfo(
+                projectName: appState.aiActiveProject,
+                workspaceName: appState.aiActiveWorkspace,
+                aiTool: appState.aiChatTool,
+                id: sessionId,
+                title: "",
+                updatedAt: 0
+            )
+            return appState.aiSessionStatus(for: session)?.contextRemainingPercent
+        }()
+
+        return VStack(spacing: 0) {
             Divider()
             ChatInputView(
                 text: $inputText,
@@ -210,6 +236,7 @@ struct MobileAIChatView: View {
                 onStop: { stopStreaming() },
                 providers: appState.aiProviders,
                 selectedModel: $appState.aiSelectedModel,
+                contextRemainingPercent: contextRemainingPercent,
                 agents: appState.aiAgents,
                 selectedAgent: $appState.aiSelectedAgent,
                 isLoadingModels: appState.isAILoadingModels,
@@ -259,6 +286,28 @@ struct MobileAIChatView: View {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             appState.searchAIFileReferences(query: query)
+        }
+    }
+
+    private func requestCurrentSessionStatus() {
+        appState.requestCurrentAISessionStatus()
+    }
+
+    private func restartSessionStatusPollingIfNeeded() {
+        sessionStatusPollingTask?.cancel()
+        sessionStatusPollingTask = nil
+        guard appState.aiCurrentSessionId != nil else { return }
+        let shouldPoll = appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil
+        guard shouldPoll else { return }
+
+        sessionStatusPollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if Task.isCancelled { break }
+                await MainActor.run {
+                    requestCurrentSessionStatus()
+                }
+            }
         }
     }
 }

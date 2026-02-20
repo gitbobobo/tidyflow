@@ -138,6 +138,8 @@ final class MobileAppState: ObservableObject {
             refreshMergedAISessions()
         }
     }
+    /// AI 会话状态缓存（按工具分桶；key: "project::workspace::sessionId"）
+    @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
     @Published var aiMergedSessions: [AISessionInfo] = []
     @Published var aiProviders: [AIProviderInfo] = []
     @Published var aiSelectedModel: AIModelSelection?
@@ -1134,6 +1136,12 @@ final class MobileAppState: ObservableObject {
             sessionId: session.id,
             limit: 200
         )
+        wsClient.requestAISessionStatus(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            aiTool: targetTool,
+            sessionId: session.id
+        )
     }
 
     /// 删除会话
@@ -1299,6 +1307,19 @@ final class MobileAppState: ObservableObject {
         return true
     }
 
+    func requestCurrentAISessionStatus() {
+        guard let sessionId = aiCurrentSessionId,
+              !sessionId.isEmpty,
+              !aiActiveProject.isEmpty,
+              !aiActiveWorkspace.isEmpty else { return }
+        wsClient.requestAISessionStatus(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
+            sessionId: sessionId
+        )
+    }
+
     /// 停止当前会话流式输出
     func stopAIStreaming() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty,
@@ -1406,6 +1427,12 @@ final class MobileAppState: ObservableObject {
             sessionId: sessionId,
             limit: 200
         )
+        wsClient.requestAISessionStatus(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
+            sessionId: sessionId
+        )
     }
 
     private func reloadAISessionDataAfterReconnect() {
@@ -1432,6 +1459,12 @@ final class MobileAppState: ObservableObject {
                 aiTool: tool,
                 sessionId: sessionId,
                 limit: 200
+            )
+            wsClient.requestAISessionStatus(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                aiTool: tool,
+                sessionId: sessionId
             )
         }
     }
@@ -1540,6 +1573,37 @@ final class MobileAppState: ObservableObject {
         } else {
             refreshMergedAISessions()
         }
+    }
+
+    private func aiSessionStatusKey(projectName: String, workspaceName: String, sessionId: String) -> String {
+        "\(projectName)::\(workspaceName)::\(sessionId)"
+    }
+
+    func aiSessionStatus(for session: AISessionInfo) -> AISessionStatusSnapshot? {
+        aiSessionStatusesByTool[session.aiTool]?[aiSessionStatusKey(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            sessionId: session.id
+        )]
+    }
+
+    func upsertAISessionStatus(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        status: String,
+        errorMessage: String?,
+        contextRemainingPercent: Double?
+    ) {
+        let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
+        var dict = aiSessionStatusesByTool[aiTool] ?? [:]
+        dict[key] = AISessionStatusSnapshot(
+            status: status,
+            errorMessage: errorMessage,
+            contextRemainingPercent: contextRemainingPercent
+        )
+        aiSessionStatusesByTool[aiTool] = dict
     }
 
     private func refreshMergedAISessions() {
@@ -2307,6 +2371,46 @@ final class MobileAppState: ObservableObject {
             self.aiChatMessages = ev.toChatMessages()
             self.rebuildAIIndexes()
             self.aiIsStreaming = false
+        }
+
+        wsClient.onAISessionStatusResult = { [weak self] ev in
+            guard let self else { return }
+            self.upsertAISessionStatus(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status,
+                errorMessage: ev.status.errorMessage,
+                contextRemainingPercent: ev.status.contextRemainingPercent
+            )
+            if self.aiActiveProject == ev.projectName,
+               self.aiActiveWorkspace == ev.workspaceName,
+               self.aiChatTool == ev.aiTool,
+               self.aiCurrentSessionId == ev.sessionId,
+               ev.status.status.lowercased() == "idle" {
+                self.aiIsStreaming = false
+            }
+        }
+
+        wsClient.onAISessionStatusUpdate = { [weak self] ev in
+            guard let self else { return }
+            self.upsertAISessionStatus(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status,
+                errorMessage: ev.status.errorMessage,
+                contextRemainingPercent: ev.status.contextRemainingPercent
+            )
+            if self.aiActiveProject == ev.projectName,
+               self.aiActiveWorkspace == ev.workspaceName,
+               self.aiChatTool == ev.aiTool,
+               self.aiCurrentSessionId == ev.sessionId,
+               ev.status.status.lowercased() == "idle" {
+                self.aiIsStreaming = false
+            }
         }
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in

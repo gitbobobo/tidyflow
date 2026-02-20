@@ -1,4 +1,5 @@
 use super::codex_manager::CodexAppServerManager;
+use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::copilot_client::{CopilotAcpClient, CopilotSessionMetadata, CopilotSessionSummary};
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
@@ -712,6 +713,17 @@ impl AiAgent for CopilotAcpAgent {
 
     async fn dispose_instance(&self, _directory: &str) -> Result<(), String> {
         Ok(())
+    }
+
+    async fn get_session_context_usage(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionContextUsage>, String> {
+        let raw = self.client.session_load_raw(directory, session_id).await?;
+        Ok(Some(AiSessionContextUsage {
+            context_remaining_percent: extract_context_remaining_percent(&raw),
+        }))
     }
 
     async fn list_providers(&self, directory: &str) -> Result<Vec<AiProviderInfo>, String> {

@@ -435,11 +435,16 @@ class AppState: ObservableObject {
         aiTool: AIChatTool,
         sessionId: String,
         status: String,
-        errorMessage: String?
+        errorMessage: String?,
+        contextRemainingPercent: Double?
     ) {
         let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
         var dict = aiSessionStatusesByTool[aiTool] ?? [:]
-        dict[key] = AISessionStatusSnapshot(status: status, errorMessage: errorMessage)
+        dict[key] = AISessionStatusSnapshot(
+            status: status,
+            errorMessage: errorMessage,
+            contextRemainingPercent: contextRemainingPercent
+        )
         aiSessionStatusesByTool[aiTool] = dict
     }
 

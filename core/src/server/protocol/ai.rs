@@ -13,6 +13,8 @@ pub struct AiSessionStatusInfo {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_remaining_percent: Option<f64>,
 }
 
 /// 查询 AI 会话状态请求

@@ -451,10 +451,12 @@ pub(crate) async fn ensure_maintenance(ai_state: &SharedAIState) {
 
 pub(crate) fn status_to_info(
     status: &AiSessionStatus,
+    context_remaining_percent: Option<f64>,
 ) -> crate::server::protocol::ai::AiSessionStatusInfo {
     crate::server::protocol::ai::AiSessionStatusInfo {
         status: status.status_str().to_string(),
         error_message: status.error_message(),
+        context_remaining_percent,
     }
 }
 
@@ -542,6 +544,7 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
             status: crate::server::protocol::ai::AiSessionStatusInfo {
                 status: change.new_status.status_str().to_string(),
                 error_message: change.new_status.error_message(),
+                context_remaining_percent: None,
             },
         };
 

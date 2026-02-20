@@ -78,6 +78,11 @@ impl CopilotAcpClient {
         directory: &str,
         session_id: &str,
     ) -> Result<CopilotSessionMetadata, String> {
+        let result = self.session_load_raw(directory, session_id).await?;
+        Ok(Self::parse_session_metadata(&result))
+    }
+
+    pub async fn session_load_raw(&self, directory: &str, session_id: &str) -> Result<Value, String> {
         let result = self
             .manager
             .send_request(
@@ -89,7 +94,7 @@ impl CopilotAcpClient {
                 })),
             )
             .await?;
-        Ok(Self::parse_session_metadata(&result))
+        Ok(result)
     }
 
     pub async fn session_list_page(

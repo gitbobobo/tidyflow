@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio_stream::Stream;
+use crate::ai::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 
 fn hex_upper(n: u8) -> char {
     match n {
@@ -240,6 +241,18 @@ pub struct SessionListResponse {
 pub struct SessionStatusItem {
     #[serde(rename = "type")]
     pub status_type: String,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl SessionStatusItem {
+    pub fn context_remaining_percent(&self) -> Option<f64> {
+        let value = serde_json::json!({
+            "type": self.status_type,
+            "extra": self.extra,
+        });
+        extract_context_remaining_percent(&value)
+    }
 }
 
 pub struct OpenCodeClient {
@@ -2432,6 +2445,24 @@ impl AiAgent for OpenCodeAgent {
         };
 
         Ok(status)
+    }
+
+    async fn get_session_context_usage(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionContextUsage>, String> {
+        let client = OpenCodeClient::from_manager(&self.manager);
+        let map = client
+            .get_session_statuses(directory)
+            .await
+            .map_err(|e| format!("Failed to get session status for context usage: {}", e))?;
+        let percent = map
+            .get(session_id)
+            .and_then(|item| item.context_remaining_percent());
+        Ok(Some(AiSessionContextUsage {
+            context_remaining_percent: percent,
+        }))
     }
 
     async fn list_providers(&self, directory: &str) -> Result<Vec<AiProviderInfo>, String> {

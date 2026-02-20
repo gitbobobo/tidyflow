@@ -5,6 +5,7 @@
 
 pub mod claude_adapter;
 pub mod client;
+pub mod context_usage;
 pub mod codex_adapter;
 pub mod codex_client;
 pub mod codex_manager;
@@ -326,6 +327,15 @@ pub trait AiAgent: Send + Sync {
         _session_id: &str,
     ) -> Result<crate::ai::session_status::AiSessionStatus, String> {
         Ok(crate::ai::session_status::AiSessionStatus::Idle)
+    }
+
+    /// 获取会话上下文窗口使用信息（用于前端展示剩余上下文）
+    async fn get_session_context_usage(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+    ) -> Result<Option<crate::ai::context_usage::AiSessionContextUsage>, String> {
+        Ok(None)
     }
 
     /// 获取 provider/模型列表（默认返回空）

@@ -604,7 +604,8 @@ extension AppState {
                 aiTool: ev.aiTool,
                 sessionId: ev.sessionId,
                 status: ev.status.status,
-                errorMessage: ev.status.errorMessage
+                errorMessage: ev.status.errorMessage,
+                contextRemainingPercent: ev.status.contextRemainingPercent
             )
             if self.selectedProjectName == ev.projectName,
                self.selectedWorkspaceKey == ev.workspaceName {
@@ -625,7 +626,8 @@ extension AppState {
                 aiTool: ev.aiTool,
                 sessionId: ev.sessionId,
                 status: ev.status.status,
-                errorMessage: ev.status.errorMessage
+                errorMessage: ev.status.errorMessage,
+                contextRemainingPercent: ev.status.contextRemainingPercent
             )
             if self.selectedProjectName == ev.projectName,
                self.selectedWorkspaceKey == ev.workspaceName {

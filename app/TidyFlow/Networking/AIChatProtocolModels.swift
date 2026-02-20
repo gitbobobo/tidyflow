@@ -73,11 +73,17 @@ struct AISessionStatusInfoV2 {
     /// "idle" | "busy" | "error"
     let status: String
     let errorMessage: String?
+    let contextRemainingPercent: Double?
 
     static func from(json: [String: Any]) -> AISessionStatusInfoV2? {
         guard let status = json["status"] as? String else { return nil }
         let errorMessage = json["error_message"] as? String
-        return AISessionStatusInfoV2(status: status, errorMessage: errorMessage)
+        let contextRemainingPercent = parseDouble(json["context_remaining_percent"])
+        return AISessionStatusInfoV2(
+            status: status,
+            errorMessage: errorMessage,
+            contextRemainingPercent: contextRemainingPercent
+        )
     }
 }
 
@@ -487,6 +493,25 @@ private func parseInt64(_ any: Any?) -> Int64 {
         return Int64(v) ?? 0
     default:
         return 0
+    }
+}
+
+private func parseDouble(_ any: Any?) -> Double? {
+    switch any {
+    case let v as Double:
+        return v
+    case let v as Float:
+        return Double(v)
+    case let v as Int:
+        return Double(v)
+    case let v as Int64:
+        return Double(v)
+    case let v as NSNumber:
+        return v.doubleValue
+    case let v as String:
+        return Double(v.trimmingCharacters(in: .whitespacesAndNewlines))
+    default:
+        return nil
     }
 }
 

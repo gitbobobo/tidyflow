@@ -22,6 +22,7 @@ struct ChatInputView: View {
     // 模型 / Agent 状态
     var providers: [AIProviderInfo]
     @Binding var selectedModel: AIModelSelection?
+    var contextRemainingPercent: Double?
     var agents: [AIAgentInfo]
     @Binding var selectedAgent: String?
     var isLoadingModels: Bool = false
@@ -170,6 +171,7 @@ struct ChatInputView: View {
             HStack(spacing: 8) {
                 agentButton
                 modelButton
+                contextRemainingRing
                 Spacer(minLength: 0)
             }
         }
@@ -592,6 +594,7 @@ struct ChatInputView: View {
             // 左侧：Agent 切换 + 模型选择
             agentButton
             modelButton
+            contextRemainingRing
 
             Spacer()
 
@@ -736,6 +739,22 @@ struct ChatInputView: View {
         .padding(.vertical, 4)
         .background(Color.secondary.opacity(0.1))
         .cornerRadius(6)
+    }
+
+    @ViewBuilder
+    private var contextRemainingRing: some View {
+        if let percent = normalizedContextRemainingPercent {
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: percent / 100.0)
+                    .stroke(contextRingColor(for: percent), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: contextRingSize, height: contextRingSize)
+            .accessibilityLabel("剩余上下文")
+        }
     }
 
     private func slashCommandIcon(_ name: String) -> String {
@@ -997,6 +1016,23 @@ struct ChatInputView: View {
         #endif
     }
 
+    private var normalizedContextRemainingPercent: Double? {
+        guard let contextRemainingPercent else { return nil }
+        guard contextRemainingPercent.isFinite else { return nil }
+        return min(max(contextRemainingPercent, 0), 100)
+    }
+
+    private func contextRingColor(for percent: Double) -> Color {
+        switch percent {
+        case ..<20:
+            return .red
+        case ..<50:
+            return .orange
+        default:
+            return .green
+        }
+    }
+
     private var dropdownSecondaryTextColor: Color {
         #if os(iOS)
         return .white.opacity(0.72)
@@ -1026,6 +1062,14 @@ struct ChatInputView: View {
         return 16
         #else
         return 13
+        #endif
+    }
+
+    private var contextRingSize: CGFloat {
+        #if os(iOS)
+        return 16
+        #else
+        return 14
         #endif
     }
 
@@ -1072,6 +1116,7 @@ struct ChatInputView: View {
             onStop: {},
             providers: [],
             selectedModel: .constant(nil),
+            contextRemainingPercent: nil,
             agents: [],
             selectedAgent: .constant(nil),
             autocomplete: nil,
@@ -1088,6 +1133,7 @@ struct ChatInputView: View {
             onStop: {},
             providers: [],
             selectedModel: .constant(nil),
+            contextRemainingPercent: nil,
             agents: [],
             selectedAgent: .constant(nil),
             autocomplete: nil,

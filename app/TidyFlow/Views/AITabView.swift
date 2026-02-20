@@ -22,6 +22,7 @@ struct AITabView: View {
     /// 当前轮是否检测到 Codex proposed plan（用于 turn 完成后弹出实现确认）
     @State private var sawCodexPlanProposalInCurrentTurn: Bool = false
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
+    @State private var sessionStatusPollingTask: Task<Void, Never>?
 
     private let planImplementationMessage = "Implement the plan."
 
@@ -58,8 +59,12 @@ struct AITabView: View {
         #endif
         .onAppear {
             restoreAIContextOnAppear()
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
         }
         .onDisappear {
+            sessionStatusPollingTask?.cancel()
+            sessionStatusPollingTask = nil
             // 用 previousSnapshotKey（onAppear 时记录的工作空间）而非 currentSnapshotKey，
             // 因为工作空间切换和视图移除可能在同一更新周期，此时 currentSnapshotKey 已指向新空间
             if let key = previousSnapshotKey {
@@ -73,6 +78,8 @@ struct AITabView: View {
             resetAIContext()
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
             guard let newSessionId else { return }
 
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
@@ -120,6 +127,8 @@ struct AITabView: View {
             observeCodexPlanProposal(messages)
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
             if isStreaming {
                 sawCodexPlanProposalInCurrentTurn = false
                 codexPlanProposalPartIDInCurrentTurn = nil
@@ -128,6 +137,10 @@ struct AITabView: View {
             maybeInsertPlanImplementationQuestionCard()
             sawCodexPlanProposalInCurrentTurn = false
             codexPlanProposalPartIDInCurrentTurn = nil
+        }
+        .onChange(of: aiChatStore.awaitingUserEcho) { _, _ in
+            requestCurrentSessionStatus()
+            restartSessionStatusPollingIfNeeded()
         }
     }
 
@@ -294,6 +307,7 @@ struct AITabView: View {
             return appState.aiSessionStatus(for: session)
         }()
         let coreSaysNotBusy = sessionStatus?.isBusy == false
+        let contextRemainingPercent = sessionStatus?.contextRemainingPercent
         let localStreaming =
             aiChatStore.isStreaming ||
             aiChatStore.awaitingUserEcho
@@ -316,6 +330,7 @@ struct AITabView: View {
             },
             providers: appState.aiProviders,
             selectedModel: $appState.aiSelectedModel,
+            contextRemainingPercent: contextRemainingPercent,
             agents: appState.aiAgents,
             selectedAgent: $appState.aiSelectedAgent,
             isLoadingModels: appState.isAILoadingModels,
@@ -1235,6 +1250,36 @@ struct AITabView: View {
                     "AI Stop fallback timeout: clearing abort pending, session_id=\(sessionId, privacy: .public)"
                 )
                 store.clearAbortPendingIfMatches(sessionId)
+            }
+        }
+    }
+
+    private func requestCurrentSessionStatus() {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
+              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return }
+        appState.wsClient.requestAISessionStatus(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: appState.aiChatTool,
+            sessionId: sessionId
+        )
+    }
+
+    private func restartSessionStatusPollingIfNeeded() {
+        sessionStatusPollingTask?.cancel()
+        sessionStatusPollingTask = nil
+        guard aiChatStore.currentSessionId != nil else { return }
+
+        let shouldPoll = aiChatStore.isStreaming || aiChatStore.awaitingUserEcho || aiChatStore.abortPendingSessionId != nil
+        guard shouldPoll else { return }
+
+        sessionStatusPollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if Task.isCancelled { break }
+                await MainActor.run {
+                    requestCurrentSessionStatus()
+                }
             }
         }
     }

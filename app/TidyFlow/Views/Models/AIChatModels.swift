@@ -219,6 +219,7 @@ struct AISessionStatusSnapshot: Equatable {
     /// "idle" | "busy" | "error"
     let status: String
     let errorMessage: String?
+    let contextRemainingPercent: Double?
 
     var isBusy: Bool { status.lowercased() == "busy" }
     var isError: Bool { status.lowercased() == "error" }

@@ -1,4 +1,5 @@
 use super::codex_client::{CodexAppServerClient, CodexModelInfo};
+use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::codex_manager::CodexAppServerManager;
 use super::session_status::AiSessionStatus;
 use super::{
@@ -1855,6 +1856,17 @@ impl AiAgent for CodexAppServerAgent {
         } else {
             AiSessionStatus::Idle
         })
+    }
+
+    async fn get_session_context_usage(
+        &self,
+        _directory: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionContextUsage>, String> {
+        let thread = self.client.thread_read(session_id, true).await?;
+        Ok(Some(AiSessionContextUsage {
+            context_remaining_percent: extract_context_remaining_percent(&thread),
+        }))
     }
 
     async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {
