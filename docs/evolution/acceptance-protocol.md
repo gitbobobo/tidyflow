@@ -1,65 +1,69 @@
 # Evolution 验收协议与证据基线
 
-> 文档版本：1.0 | 更新日期：2026-02-19
+> 文档版本：1.1 | 更新日期：2026-02-20
 > 
 > 本文档定义 Evolution 系统的最小验收标准、检查项与证据类型映射，确保 implement/verify/judge 阶段的证据闭环可判定。
 
 ## 1. 验收标准（Acceptance Criteria）
 
-### AC-1：执行成功
-**定义**：构建与集成测试通过，产出有效日志。
+> **与 plan.execution.json 对齐**：以下 AC 定义与 verification_plan.acceptance_mapping 严格一致。
+
+### AC-1：构建通过
+**定义**：构建成功，产出有效构建日志。
 
 | 字段 | 值 |
 |------|-----|
 | ID | ac-1 |
-| 描述 | 构建成功，核心链路可运行 |
-| 检查项 | v-1（构建）、v-2（集成） |
-| 最小证据 | `build_log`, `test_log` |
-| 缺失判定 | 任一证据缺失 → **失败** |
+| 描述 | 构建成功，xcodebuild 与 cargo test 通过 |
+| 检查项 | v-1（构建） |
+| 最小证据 | `build_log` |
+| 缺失判定 | build_log 缺失 → **失败** |
 
-### AC-2：失败可定位
-**定义**：失败时可快速定位根因。
+### AC-2：集成链路通过
+**定义**：run-app 与 core 联调链路正常，产出有效集成日志。
 
 | 字段 | 值 |
 |------|-----|
 | ID | ac-2 |
-| 描述 | 失败时可追溯日志关键字、截图与差异摘要 |
-| 检查项 | v-2（集成日志）、v-4（差异摘要） |
-| 最小证据 | `test_log`, `diff_summary` |
-| 缺失判定 | 任一证据缺失 → **不可判定** |
+| 描述 | 执行 run-app 与 core 联调链路，日志包含关键事件标记 |
+| 检查项 | v-2（集成） |
+| 最小证据 | `test_log` |
+| 缺失判定 | test_log 缺失 → **失败** |
 
-### AC-3：UI 证据可用
+### AC-3：UI 截图证据达标
 **定义**：关键界面状态有截图证据。
 
 | 字段 | 值 |
 |------|-----|
 | ID | ac-3 |
-| 描述 | 至少 3 个关键状态有截图 |
+| 描述 | 至少 3 个关键状态有截图，文件名含 cycle_id 与 check_id |
 | 检查项 | v-3（截图） |
 | 最小证据 | `screenshot` |
 | 缺失判定 | 截图数量 < 3 或无法关联 → **未达标** |
 
-### AC-4：证据索引可判定
-**定义**：所有证据可通过索引快速访问与校验。
+### AC-4：差异摘要可判定
+**定义**：证据差异摘要能解释新增/缺失证据，并与 check 执行结果一致。
 
 | 字段 | 值 |
 |------|-----|
 | ID | ac-4 |
-| 描述 | evidence.index.json 包含完整证据路径与元数据 |
-| 检查项 | v-1, v-2, v-3, v-4 |
-| 最小证据 | `build_log`, `test_log`, `screenshot`, `diff_summary` |
+| 描述 | diff_summary 能解释新增/缺失证据，且与 check 执行结果一致 |
+| 检查项 | v-4（差异摘要）、v-1、v-2 |
+| 最小证据 | `diff_summary`, `build_log`, `test_log` |
 | 缺失判定 | 任一证据路径无效或字段缺失 → **不可判定** |
 
 ---
 
 ## 2. 检查项定义（Verification Checks）
 
+> **与 plan.execution.json 对齐**：以下检查项定义与 verification_plan.checks 严格一致。
+
 ### V-1：构建检查
 ```yaml
 id: v-1
 kind: build
-command: xcodebuild / cargo build
-expected: 退出码 0，build_log 路径有效
+command_or_method: 执行 xcodebuild 与 cargo test 的构建/测试步骤并归档 build_log
+expected: 命令退出码为 0，且 evidence.index 存在 build_log 记录
 evidence_type: build_log
 ```
 
@@ -67,8 +71,8 @@ evidence_type: build_log
 ```yaml
 id: v-2
 kind: integration
-command: run-app.sh + 核心通信验证
-expected: 日志包含 [evo][run] 启动/连接/消息收发/退出码
+command_or_method: 执行 run-app 与 core 联调链路，采集 test_log 并校验关键日志关键字
+expected: 日志包含 build/run/ws/evidence 关键字，且链路可完成一次端到端会话
 evidence_type: test_log
 ```
 
@@ -76,8 +80,8 @@ evidence_type: test_log
 ```yaml
 id: v-3
 kind: manual
-method: 采集关键 UI 状态截图
-expected: ≥3 张截图，命名含 cycle_id/check_id
+command_or_method: 按 screenshot-strategy 采集关键状态截图并写入 evidence.index
+expected: 至少 3 张截图，文件名含 cycle_id 与 check_id
 evidence_type: screenshot
 ```
 
@@ -85,8 +89,8 @@ evidence_type: screenshot
 ```yaml
 id: v-4
 kind: manual
-method: 对比执行前后 evidence.index.json
-expected: diff_summary 说明新增/缺失证据及原因
+command_or_method: 生成证据差异摘要并核对缺失项与失败原因
+expected: diff_summary 能解释新增/缺失证据，且与 check 执行结果一致
 evidence_type: diff_summary
 ```
 
@@ -132,12 +136,14 @@ evidence_type: diff_summary
 
 ## 4. 验收-检查-证据映射表
 
+> **来源**：plan.execution.json verification_plan.acceptance_mapping
+
 | 验收标准 | 检查项 | 最小证据 | 缺失规则 |
 |---------|--------|---------|---------|
-| ac-1 | v-1, v-2 | build_log, test_log | 任一缺失 → 失败 |
-| ac-2 | v-2, v-4 | test_log, diff_summary | 任一缺失 → 不可判定 |
+| ac-1 | v-1 | build_log | 缺失 → 失败 |
+| ac-2 | v-2 | test_log | 缺失 → 失败 |
 | ac-3 | v-3 | screenshot | 不足 → 未达标 |
-| ac-4 | v-1, v-2, v-3, v-4 | 全部四种 | 任一路径无效 → 不可判定 |
+| ac-4 | v-4, v-1, v-2 | diff_summary, build_log, test_log | 任一路径无效 → 不可判定 |
 
 ---
 
@@ -151,6 +157,13 @@ evidence_type: diff_summary
 4. 全部证据有效 → 通过
 ```
 
+### 5.1 缺证据即失败原则
+
+为保证 judge 阶段的可判定性，采用**保守判定**策略：
+- ac-1/ac-2 缺失必需证据时立即判定为**失败**
+- ac-3 截图不足判定为**未达标**（不阻断）
+- ac-4 证据索引异常判定为**不可判定**
+
 ---
 
 ## 6. 与 Evolution 阶段集成
@@ -159,10 +172,23 @@ evidence_type: diff_summary
 - **verify**：依据本协议执行检查，更新 evidence.index.json
 - **judge**：基于验收标准和证据索引判定 cycle 结果
 
+### 6.1 阶段流转要求
+
+```
+implement → verify → judge
+    ↓           ↓         ↓
+  产证据     校证据     判定
+```
+
+- implement 完成后必须产出至少 build_log 和 test_log
+- verify 阶段必须校验所有证据路径有效性
+- judge 阶段基于本协议判定 ac-1~ac-4
+
 ---
 
 ## 变更日志
 
 | 日期 | 版本 | 变更 |
 |------|------|------|
+| 2026-02-20 | 1.1 | 对齐 plan.execution.json.verification_plan，更新 AC 映射 |
 | 2026-02-19 | 1.0 | 初始版本，定义 ac-1~ac-4 与证据协议 |
