@@ -491,6 +491,8 @@ struct ToolCardView: View {
             return buildQuestionSections(invocation)
         case "task", "skill", "plan_enter", "plan_exit", "batch":
             return buildTaskSections(invocation)
+        case "contextcompaction", "context_compaction":
+            return buildContextCompactionSections(invocation)
         default:
             return buildGenericSections(invocation)
         }
@@ -645,6 +647,12 @@ struct ToolCardView: View {
 
     private func buildWebSearchSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
         // websearch 卡片仅展示头部（标题 + 状态），不展示正文内容区
+        _ = invocation
+        return []
+    }
+
+    private func buildContextCompactionSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        // contextcompaction 卡片仅展示头部（标题 + 状态），不展示正文内容区
         _ = invocation
         return []
     }
@@ -844,6 +852,7 @@ struct ToolCardView: View {
         case "todowrite": return "todowrite"
         case "todoread": return "todoread"
         case "batch": return "batch"
+        case "contextcompaction", "context_compaction": return "contextcompaction"
         default: return toolID.isEmpty ? "tool" : toolID
         }
     }
@@ -870,6 +879,8 @@ struct ToolCardView: View {
             return "checklist"
         case "batch":
             return "square.stack.3d.up"
+        case "contextcompaction", "context_compaction":
+            return "rectangle.compress.vertical"
         default:
             return "wrench.and.screwdriver"
         }
