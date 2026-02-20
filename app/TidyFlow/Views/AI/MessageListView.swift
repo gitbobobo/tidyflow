@@ -5,6 +5,26 @@ import AppKit
 import UIKit
 #endif
 
+private func isInteractiveQuestionToolState(_ state: [String: Any]) -> Bool {
+    if let metadata = state["metadata"] as? [String: Any], metadata["answers"] != nil {
+        return false
+    }
+
+    let status = (state["status"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased() ?? ""
+    if status.isEmpty {
+        // 兼容旧数据：缺失状态时保守视为可交互
+        return true
+    }
+    switch status {
+    case "pending", "running", "unknown", "awaiting_input", "requires_input", "in_progress":
+        return true
+    default:
+        return false
+    }
+}
+
 struct MessageListView: View {
     @EnvironmentObject var aiChatStore: AIChatStore
     let messages: [AIChatMessage]
@@ -255,6 +275,7 @@ struct MessageListView: View {
         let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard toolName == "question" else { return nil }
         guard let state = part.toolState else { return nil }
+        guard isInteractiveQuestionToolState(state) else { return nil }
 
         let input = state["input"] as? [String: Any]
         let questionsValue = input?["questions"] ?? state["questions"]
@@ -514,6 +535,7 @@ private struct MessageBubble: View, Equatable {
         let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard toolName == "question" else { return nil }
         guard let state = part.toolState else { return nil }
+        guard isInteractiveQuestionToolState(state) else { return nil }
 
         let input = state["input"] as? [String: Any]
         let questionsValue = input?["questions"] ?? state["questions"]
