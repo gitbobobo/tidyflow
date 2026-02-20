@@ -1,6 +1,6 @@
 use super::codex_client::{CodexAppServerClient, CodexModelInfo};
-use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::codex_manager::CodexAppServerManager;
+use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::session_status::AiSessionStatus;
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
@@ -31,6 +31,7 @@ pub struct CodexAppServerAgent {
     pending_approvals: Arc<Mutex<HashMap<String, PendingApproval>>>,
     active_turns: Arc<Mutex<HashMap<String, String>>>,
     selection_hints: Arc<Mutex<HashMap<String, AiSessionSelectionHint>>>,
+    context_usage_by_session: Arc<Mutex<HashMap<String, AiSessionContextUsage>>>,
 }
 
 impl CodexAppServerAgent {
@@ -40,6 +41,81 @@ impl CodexAppServerAgent {
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             active_turns: Arc::new(Mutex::new(HashMap::new())),
             selection_hints: Arc::new(Mutex::new(HashMap::new())),
+            context_usage_by_session: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn compute_remaining_percent(total_tokens: f64, context_window: f64) -> Option<f64> {
+        if !total_tokens.is_finite() || !context_window.is_finite() || context_window <= 0.0 {
+            return None;
+        }
+        let remaining = ((context_window - total_tokens) / context_window) * 100.0;
+        Some(remaining.clamp(0.0, 100.0))
+    }
+
+    fn json_value_to_f64(value: Option<&Value>) -> Option<f64> {
+        match value {
+            Some(Value::Number(n)) => n.as_f64(),
+            Some(Value::String(s)) => s.trim().parse::<f64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn extract_context_usage_from_notification(
+        method: &str,
+        params: &Value,
+    ) -> Option<(String, AiSessionContextUsage)> {
+        match method {
+            "thread/tokenUsage/updated" => {
+                let session_id = params.get("threadId")?.as_str()?.to_string();
+                let total_tokens = Self::json_value_to_f64(
+                    params
+                        .pointer("/tokenUsage/total/totalTokens")
+                        .or_else(|| params.pointer("/tokenUsage/last/totalTokens")),
+                )?;
+                let context_window =
+                    Self::json_value_to_f64(params.pointer("/tokenUsage/modelContextWindow"))?;
+                let percent = Self::compute_remaining_percent(total_tokens, context_window)?;
+                Some((
+                    session_id,
+                    AiSessionContextUsage {
+                        context_remaining_percent: Some(percent),
+                    },
+                ))
+            }
+            "codex/event/token_count" => {
+                let session_id = params.get("conversationId")?.as_str()?.to_string();
+                let total_tokens = Self::json_value_to_f64(
+                    params
+                        .pointer("/msg/info/total_token_usage/total_tokens")
+                        .or_else(|| params.pointer("/msg/info/last_token_usage/total_tokens")),
+                )?;
+                let context_window = Self::json_value_to_f64(
+                    params
+                        .pointer("/msg/info/model_context_window")
+                        .or_else(|| params.pointer("/msg/model_context_window")),
+                )?;
+                let percent = Self::compute_remaining_percent(total_tokens, context_window)?;
+                Some((
+                    session_id,
+                    AiSessionContextUsage {
+                        context_remaining_percent: Some(percent),
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    async fn update_context_usage_cache(
+        cache: &Arc<Mutex<HashMap<String, AiSessionContextUsage>>>,
+        method: &str,
+        params: &Value,
+    ) {
+        if let Some((session_id, usage)) =
+            Self::extract_context_usage_from_notification(method, params)
+        {
+            cache.lock().await.insert(session_id, usage);
         }
     }
 
@@ -1228,6 +1304,7 @@ impl CodexAppServerAgent {
         let mut requests = self.client.subscribe_requests();
         let approvals = self.pending_approvals.clone();
         let active_turns = self.active_turns.clone();
+        let context_usage_by_session = self.context_usage_by_session.clone();
 
         let user_message_id = format!("codex-user-{}-{}", session_id, turn_id);
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
@@ -1247,6 +1324,12 @@ impl CodexAppServerAgent {
                         match recv {
                             Ok(event) => {
                                 let params = event.params.unwrap_or(Value::Null);
+                                Self::update_context_usage_cache(
+                                    &context_usage_by_session,
+                                    &event.method,
+                                    &params,
+                                )
+                                .await;
                                 let thread_id = Self::first_string_by_pointers(
                                     &params,
                                     &["/threadId", "/thread_id", "/sessionId", "/session_id"],
@@ -1863,10 +1946,27 @@ impl AiAgent for CodexAppServerAgent {
         _directory: &str,
         session_id: &str,
     ) -> Result<Option<AiSessionContextUsage>, String> {
+        if let Some(cached) = self
+            .context_usage_by_session
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
+        {
+            return Ok(Some(cached));
+        }
+
         let thread = self.client.thread_read(session_id, true).await?;
-        Ok(Some(AiSessionContextUsage {
+        let usage = AiSessionContextUsage {
             context_remaining_percent: extract_context_remaining_percent(&thread),
-        }))
+        };
+        if usage.context_remaining_percent.is_some() {
+            self.context_usage_by_session
+                .lock()
+                .await
+                .insert(session_id.to_string(), usage.clone());
+        }
+        Ok(Some(usage))
     }
 
     async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {
