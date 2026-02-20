@@ -67,6 +67,323 @@ struct AIChatPart: Identifiable {
     var toolPartMetadata: [String: Any]? = nil
 }
 
+enum AIPlanImplementationQuestion {
+    static let messageText = "Implement the plan."
+    static let yesOption = "是，开始实现该计划"
+    static let noOption = "否，保持计划模式"
+    static let requestPrefix = "codex-plan-implementation-"
+
+    static func isPlanAgentSelected(_ agentName: String?) -> Bool {
+        let token = (agentName ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !token.isEmpty else { return false }
+        return token == "plan" || token.contains("plan")
+    }
+
+    static func isCodexPlanProposalPart(_ part: AIChatPart) -> Bool {
+        guard let source = part.source else { return false }
+        let itemType = (source["item_type"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let vendor = (source["vendor"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return itemType == "plan" && vendor == "codex"
+    }
+
+    static func requestId(sessionId: String, planPartId: String) -> String {
+        "\(requestPrefix)\(sessionId)-\(planPartId)"
+    }
+
+    static func isPlanImplementationQuestionRequest(_ requestID: String) -> Bool {
+        requestID.hasPrefix(requestPrefix)
+    }
+
+    static func shouldStartImplementation(_ answers: [[String]]) -> Bool {
+        let choice = answers.first?.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return choice == yesOption
+    }
+
+    static func hasCard(
+        messages: [AIChatMessage],
+        pendingQuestions: [String: AIQuestionRequestInfo],
+        requestID: String
+    ) -> Bool {
+        if pendingQuestions.values.contains(where: { $0.id == requestID }) {
+            return true
+        }
+        for message in messages {
+            for part in message.parts where part.kind == .tool {
+                let partRequestID =
+                    (part.toolPartMetadata?["request_id"] as? String) ??
+                    ((part.toolState?["metadata"] as? [String: Any])?["request_id"] as? String)
+                if partRequestID == requestID {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    static func buildRequest(requestID: String, sessionID: String, planPartID: String) -> AIQuestionRequestInfo {
+        let question = AIQuestionInfo(
+            question: "实现这个计划？",
+            header: "计划已就绪",
+            options: [
+                AIQuestionOptionInfo(
+                    label: yesOption,
+                    description: "切换到 Default 模式并开始编码"
+                ),
+                AIQuestionOptionInfo(
+                    label: noOption,
+                    description: "继续完善计划，不开始实现"
+                ),
+            ],
+            multiple: false,
+            custom: false
+        )
+
+        let messageID = "codex-plan-action-msg-\(sessionID)-\(planPartID)"
+        let callID = "codex-plan-action-call-\(sessionID)-\(planPartID)"
+        return AIQuestionRequestInfo(
+            id: requestID,
+            sessionId: sessionID,
+            questions: [question],
+            toolMessageId: messageID,
+            toolCallId: callID
+        )
+    }
+
+    static func buildQuestionMessage(request: AIQuestionRequestInfo, planPartID: String) -> AIChatMessage {
+        let messageID = request.toolMessageId ?? "codex-plan-action-msg-\(request.sessionId)-\(planPartID)"
+        let callID = request.toolCallId ?? "codex-plan-action-call-\(request.sessionId)-\(planPartID)"
+        let toolState: [String: Any] = [
+            "status": "pending",
+            "input": [
+                "questions": [
+                    [
+                        "question": "实现这个计划？",
+                        "header": "计划已就绪",
+                        "options": [
+                            ["label": yesOption, "description": "切换到 Default 模式并开始编码"],
+                            ["label": noOption, "description": "继续完善计划，不开始实现"],
+                        ],
+                        "multiple": false,
+                        "custom": false,
+                    ],
+                ],
+            ],
+            "metadata": [
+                "request_id": request.id,
+                "tool_message_id": messageID,
+                "source": "codex_plan_implementation",
+                "plan_part_id": planPartID,
+            ],
+        ]
+        let part = AIChatPart(
+            id: "codex-plan-action-part-\(request.sessionId)-\(planPartID)",
+            kind: .tool,
+            text: nil,
+            mime: nil,
+            filename: nil,
+            url: nil,
+            synthetic: nil,
+            ignored: nil,
+            source: ["vendor": "tidyflow", "type": "plan_implementation_question"],
+            toolName: "question",
+            toolState: toolState,
+            toolCallId: callID,
+            toolPartMetadata: [
+                "request_id": request.id,
+                "tool_message_id": messageID,
+                "source": "codex_plan_implementation",
+                "plan_part_id": planPartID,
+            ]
+        )
+        return AIChatMessage(
+            messageId: messageID,
+            role: .assistant,
+            parts: [part],
+            isStreaming: false
+        )
+    }
+}
+
+enum AIAgentSelectionPolicy {
+    static func defaultAgentName(from agents: [AIAgentInfo]) -> String {
+        if let exact = agents.first(where: { $0.name.caseInsensitiveCompare("default") == .orderedSame }) {
+            return exact.name
+        }
+        if let contains = agents.first(where: { $0.name.lowercased().contains("default") }) {
+            return contains.name
+        }
+        if let nonPlan = agents.first(where: { !$0.name.lowercased().contains("plan") }) {
+            return nonPlan.name
+        }
+        return "default"
+    }
+}
+
+enum AIQuestionPartMatcher {
+    static func candidateIDs(
+        requestId: String,
+        mappedKey: String?,
+        request: AIQuestionRequestInfo?
+    ) -> Set<String> {
+        var ids: Set<String> = [requestId]
+        if let mappedKey = normalizedString(mappedKey) {
+            ids.insert(mappedKey)
+        }
+        if let toolCallId = normalizedString(request?.toolCallId) {
+            ids.insert(toolCallId)
+        }
+        if let toolMessageId = normalizedString(request?.toolMessageId) {
+            ids.insert(toolMessageId)
+        }
+        return ids
+    }
+
+    static func isQuestionPart(_ part: AIChatPart) -> Bool {
+        guard part.kind == .tool else { return false }
+        let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return toolName == "question"
+    }
+
+    static func partMatches(_ part: AIChatPart, candidateIDs: Set<String>) -> Bool {
+        if let callId = normalizedString(part.toolCallId),
+           candidateIDs.contains(callId) {
+            return true
+        }
+        if candidateIDs.contains(part.id) {
+            return true
+        }
+
+        if let metadata = part.toolPartMetadata {
+            if let requestId = normalizedString(metadata["request_id"]) ?? normalizedString(metadata["requestId"]),
+               candidateIDs.contains(requestId) {
+                return true
+            }
+            if let toolCallId = normalizedString(metadata["tool_call_id"]) ?? normalizedString(metadata["toolCallId"]),
+               candidateIDs.contains(toolCallId) {
+                return true
+            }
+            if let toolMessageId = normalizedString(metadata["tool_message_id"]) ?? normalizedString(metadata["toolMessageId"]),
+               candidateIDs.contains(toolMessageId) {
+                return true
+            }
+        }
+
+        guard let toolState = part.toolState else { return false }
+        if let requestId = normalizedString(toolState["request_id"]) ?? normalizedString(toolState["requestId"]),
+           candidateIDs.contains(requestId) {
+            return true
+        }
+        if let metadata = toolState["metadata"] as? [String: Any],
+           let requestId = normalizedString(metadata["request_id"]) ?? normalizedString(metadata["requestId"]),
+           candidateIDs.contains(requestId) {
+            return true
+        }
+        return false
+    }
+
+    private static func normalizedString(_ value: Any?) -> String? {
+        switch value {
+        case let value as String:
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let value as NSNumber:
+            return value.stringValue
+        default:
+            return nil
+        }
+    }
+}
+
+enum AIQuestionCompletionUpdater {
+    static func applyCompletedState(
+        to part: inout AIChatPart,
+        requestId: String,
+        answers: [[String]]?
+    ) {
+        var toolState = part.toolState ?? [:]
+        toolState["status"] = "completed"
+
+        var metadata = toolState["metadata"] as? [String: Any] ?? [:]
+        metadata["request_id"] = requestId
+        if let answers {
+            metadata["answers"] = answers
+        }
+        toolState["metadata"] = metadata
+        part.toolState = toolState
+    }
+}
+
+enum AIQuestionLocalCompletion {
+    @discardableResult
+    static func apply(
+        to messages: inout [AIChatMessage],
+        requestId: String,
+        mappedKey: String?,
+        request: AIQuestionRequestInfo?,
+        answers: [[String]]?,
+        allowFallback: Bool = true
+    ) -> Bool {
+        let candidateIDs = AIQuestionPartMatcher.candidateIDs(
+            requestId: requestId,
+            mappedKey: mappedKey,
+            request: request
+        )
+
+        var updated = false
+        for msgIdx in messages.indices.reversed() {
+            for partIdx in messages[msgIdx].parts.indices.reversed() {
+                guard AIQuestionPartMatcher.isQuestionPart(messages[msgIdx].parts[partIdx]) else { continue }
+                guard AIQuestionPartMatcher.partMatches(messages[msgIdx].parts[partIdx], candidateIDs: candidateIDs) else {
+                    continue
+                }
+                AIQuestionCompletionUpdater.applyCompletedState(
+                    to: &messages[msgIdx].parts[partIdx],
+                    requestId: requestId,
+                    answers: answers
+                )
+                updated = true
+            }
+        }
+
+        if !updated, allowFallback, request != nil {
+            var fallback: (msgIdx: Int, partIdx: Int)?
+            for msgIdx in messages.indices.reversed() {
+                for partIdx in messages[msgIdx].parts.indices.reversed() {
+                    let part = messages[msgIdx].parts[partIdx]
+                    guard AIQuestionPartMatcher.isQuestionPart(part), questionPartIsInteractive(part) else { continue }
+                    fallback = (msgIdx, partIdx)
+                    break
+                }
+                if fallback != nil {
+                    break
+                }
+            }
+            if let fallback {
+                AIQuestionCompletionUpdater.applyCompletedState(
+                    to: &messages[fallback.msgIdx].parts[fallback.partIdx],
+                    requestId: requestId,
+                    answers: answers
+                )
+                updated = true
+            }
+        }
+
+        return updated
+    }
+
+    private static func questionPartIsInteractive(_ part: AIChatPart) -> Bool {
+        let rawStatus = (part.toolState?["status"] as? String) ?? ""
+        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return status.isEmpty || status == "pending" || status == "running" || status == "unknown"
+    }
+}
+
 enum AIToolStatus: String {
     case pending
     case running
@@ -514,67 +831,13 @@ final class AIChatStore: ObservableObject {
         let request = mappedKey.flatMap { pendingToolQuestions[$0] } ??
             pendingToolQuestions.first(where: { $0.value.id == requestId })?.value
 
-        var candidateIDs: Set<String> = [requestId]
-        if let mappedKey, !mappedKey.isEmpty {
-            candidateIDs.insert(mappedKey)
-        }
-        if let toolCallId = request?.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !toolCallId.isEmpty {
-            candidateIDs.insert(toolCallId)
-        }
-        if let toolMessageId = request?.toolMessageId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !toolMessageId.isEmpty {
-            candidateIDs.insert(toolMessageId)
-        }
-
-        var updated = false
-        for msgIdx in messages.indices.reversed() {
-            for partIdx in messages[msgIdx].parts.indices.reversed() {
-                guard isQuestionPart(messages[msgIdx].parts[partIdx]) else { continue }
-                guard questionPartMatches(messages[msgIdx].parts[partIdx], candidateIDs: candidateIDs) else { continue }
-
-                var toolState = messages[msgIdx].parts[partIdx].toolState ?? [:]
-                toolState["status"] = "completed"
-
-                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
-                metadata["request_id"] = requestId
-                if let answers {
-                    metadata["answers"] = answers
-                }
-                toolState["metadata"] = metadata
-
-                messages[msgIdx].parts[partIdx].toolState = toolState
-                updated = true
-            }
-        }
-
-        // 兜底：若 ID 映射缺失但本地仍存在未完成 question，优先收敛最新一条，避免继续可点击。
-        if !updated, request != nil {
-            var fallback: (msgIdx: Int, partIdx: Int)?
-            for msgIdx in messages.indices.reversed() {
-                for partIdx in messages[msgIdx].parts.indices.reversed() {
-                    let part = messages[msgIdx].parts[partIdx]
-                    guard isQuestionPart(part), questionPartIsInteractive(part) else { continue }
-                    fallback = (msgIdx, partIdx)
-                    break
-                }
-                if fallback != nil {
-                    break
-                }
-            }
-            if let fallback {
-                var toolState = messages[fallback.msgIdx].parts[fallback.partIdx].toolState ?? [:]
-                toolState["status"] = "completed"
-                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
-                metadata["request_id"] = requestId
-                if let answers {
-                    metadata["answers"] = answers
-                }
-                toolState["metadata"] = metadata
-                messages[fallback.msgIdx].parts[fallback.partIdx].toolState = toolState
-                updated = true
-            }
-        }
+        let updated = AIQuestionLocalCompletion.apply(
+            to: &messages,
+            requestId: requestId,
+            mappedKey: mappedKey,
+            request: request,
+            answers: answers
+        )
 
         clearQuestionRequest(requestId: requestId)
         if updated {
@@ -1001,62 +1264,6 @@ final class AIChatStore: ObservableObject {
             return .assistant
         }
         return .assistant
-    }
-
-    private func isQuestionPart(_ part: AIChatPart) -> Bool {
-        guard part.kind == .tool else { return false }
-        let toolName = (part.toolName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return toolName == "question"
-    }
-
-    private func questionPartMatches(_ part: AIChatPart, candidateIDs: Set<String>) -> Bool {
-        if let callId = part.toolCallId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !callId.isEmpty,
-           candidateIDs.contains(callId) {
-            return true
-        }
-        if candidateIDs.contains(part.id) {
-            return true
-        }
-
-        if let metadata = part.toolPartMetadata {
-            if let requestId = Self.normalizedString(metadata["request_id"]) ?? Self.normalizedString(metadata["requestId"]),
-               candidateIDs.contains(requestId) {
-                return true
-            }
-            if let toolCallId = Self.normalizedString(metadata["tool_call_id"]) ?? Self.normalizedString(metadata["toolCallId"]),
-               candidateIDs.contains(toolCallId) {
-                return true
-            }
-            if let toolMessageId = Self.normalizedString(metadata["tool_message_id"]) ?? Self.normalizedString(metadata["toolMessageId"]),
-               candidateIDs.contains(toolMessageId) {
-                return true
-            }
-        }
-
-        guard let toolState = part.toolState else { return false }
-        if let requestId = Self.normalizedString(toolState["request_id"]) ?? Self.normalizedString(toolState["requestId"]),
-           candidateIDs.contains(requestId) {
-            return true
-        }
-        if let metadata = toolState["metadata"] as? [String: Any],
-           let requestId = Self.normalizedString(metadata["request_id"]) ?? Self.normalizedString(metadata["requestId"]),
-           candidateIDs.contains(requestId) {
-            return true
-        }
-        return false
-    }
-
-    private func questionPartIsInteractive(_ part: AIChatPart) -> Bool {
-        let rawStatus = (part.toolState?["status"] as? String) ?? ""
-        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return status.isEmpty || status == "pending" || status == "running" || status == "unknown"
-    }
-
-    private static func normalizedString(_ value: Any?) -> String? {
-        guard let text = value as? String else { return nil }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func hasUnboundAssistantPlaceholder() -> Bool {

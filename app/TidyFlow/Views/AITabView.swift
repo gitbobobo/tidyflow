@@ -24,7 +24,7 @@ struct AITabView: View {
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
     @State private var sessionStatusPollingTask: Task<Void, Never>?
 
-    private let planImplementationMessage = "Implement the plan."
+    private let planImplementationMessage = AIPlanImplementationQuestion.messageText
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -1003,14 +1003,7 @@ struct AITabView: View {
     }
 
     private func isCodexPlanProposalPart(_ part: AIChatPart) -> Bool {
-        guard let source = part.source else { return false }
-        let itemType = (source["item_type"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let vendor = (source["vendor"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return itemType == "plan" && vendor == "codex"
+        AIPlanImplementationQuestion.isCodexPlanProposalPart(part)
     }
 
     private func maybeInsertPlanImplementationQuestionCard() {
@@ -1022,7 +1015,7 @@ struct AITabView: View {
         guard aiChatStore.abortPendingSessionId == nil else { return }
         guard let sessionID = aiChatStore.currentSessionId, !sessionID.isEmpty else { return }
 
-        let requestID = "codex-plan-implementation-\(sessionID)-\(planPartID)"
+        let requestID = AIPlanImplementationQuestion.requestId(sessionId: sessionID, planPartId: planPartID)
         if hasPlanImplementationQuestionCard(requestID: requestID) {
             return
         }
@@ -1030,20 +1023,11 @@ struct AITabView: View {
     }
 
     private func hasPlanImplementationQuestionCard(requestID: String) -> Bool {
-        if aiChatStore.pendingToolQuestions.values.contains(where: { $0.id == requestID }) {
-            return true
-        }
-        for message in aiChatStore.messages {
-            for part in message.parts where part.kind == .tool {
-                let request =
-                    (part.toolPartMetadata?["request_id"] as? String) ??
-                    ((part.toolState?["metadata"] as? [String: Any])?["request_id"] as? String)
-                if request == requestID {
-                    return true
-                }
-            }
-        }
-        return false
+        AIPlanImplementationQuestion.hasCard(
+            messages: aiChatStore.messages,
+            pendingQuestions: aiChatStore.pendingToolQuestions,
+            requestID: requestID
+        )
     }
 
     private func insertPlanImplementationQuestionCard(
@@ -1051,86 +1035,17 @@ struct AITabView: View {
         sessionID: String,
         planPartID: String
     ) {
-        let question = AIQuestionInfo(
-            question: "实现这个计划？",
-            header: "计划已就绪",
-            options: [
-                AIQuestionOptionInfo(
-                    label: "是，开始实现该计划",
-                    description: "切换到 Default 模式并开始编码"
-                ),
-                AIQuestionOptionInfo(
-                    label: "否，保持计划模式",
-                    description: "继续完善计划，不开始实现"
-                ),
-            ],
-            multiple: false,
-            custom: false
-        )
-
-        let messageID = "codex-plan-action-msg-\(sessionID)-\(planPartID)"
-        let callID = "codex-plan-action-call-\(sessionID)-\(planPartID)"
-        let request = AIQuestionRequestInfo(
-            id: requestID,
-            sessionId: sessionID,
-            questions: [question],
-            toolMessageId: messageID,
-            toolCallId: callID
+        let request = AIPlanImplementationQuestion.buildRequest(
+            requestID: requestID,
+            sessionID: sessionID,
+            planPartID: planPartID
         )
         aiChatStore.upsertQuestionRequest(request)
-
-        let toolState: [String: Any] = [
-            "status": "pending",
-            "input": [
-                "questions": [
-                    [
-                        "question": question.question,
-                        "header": question.header,
-                        "options": question.options.map { ["label": $0.label, "description": $0.description] },
-                        "multiple": false,
-                        "custom": false,
-                    ],
-                ],
-            ],
-            "metadata": [
-                "request_id": requestID,
-                "tool_message_id": messageID,
-                "source": "codex_plan_implementation",
-                "plan_part_id": planPartID,
-            ],
-        ]
-        let part = AIChatPart(
-            id: "codex-plan-action-part-\(sessionID)-\(planPartID)",
-            kind: .tool,
-            text: nil,
-            mime: nil,
-            filename: nil,
-            url: nil,
-            synthetic: nil,
-            ignored: nil,
-            source: ["vendor": "tidyflow", "type": "plan_implementation_question"],
-            toolName: "question",
-            toolState: toolState,
-            toolCallId: callID,
-            toolPartMetadata: [
-                "request_id": requestID,
-                "tool_message_id": messageID,
-                "source": "codex_plan_implementation",
-                "plan_part_id": planPartID,
-            ]
-        )
-        aiChatStore.appendMessage(
-            AIChatMessage(
-                messageId: messageID,
-                role: .assistant,
-                parts: [part],
-                isStreaming: false
-            )
-        )
+        aiChatStore.appendMessage(AIPlanImplementationQuestion.buildQuestionMessage(request: request, planPartID: planPartID))
     }
 
     private func isPlanImplementationQuestionRequest(_ requestID: String) -> Bool {
-        requestID.hasPrefix("codex-plan-implementation-")
+        AIPlanImplementationQuestion.isPlanImplementationQuestionRequest(requestID)
     }
 
     private func handlePlanImplementationQuestionReply(
@@ -1138,33 +1053,17 @@ struct AITabView: View {
         answers: [[String]]
     ) {
         aiChatStore.completeQuestionRequestLocally(requestId: request.id, answers: answers)
-        let choice = answers.first?.first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if choice == "是，开始实现该计划" {
+        if AIPlanImplementationQuestion.shouldStartImplementation(answers) {
             startImplementingPlan()
         }
     }
 
     private func isPlanAgentSelected() -> Bool {
-        let token = (appState.aiSelectedAgent ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !token.isEmpty else { return false }
-        return token == "plan" || token.contains("plan")
+        AIPlanImplementationQuestion.isPlanAgentSelected(appState.aiSelectedAgent)
     }
 
     private func resolveDefaultAgentName() -> String {
-        let agents = appState.aiAgents
-        if let exact = agents.first(where: { $0.name.caseInsensitiveCompare("default") == .orderedSame }) {
-            return exact.name
-        }
-        if let contains = agents.first(where: { $0.name.lowercased().contains("default") }) {
-            return contains.name
-        }
-        if let nonPlan = agents.first(where: { !$0.name.lowercased().contains("plan") }) {
-            return nonPlan.name
-        }
-        return "default"
+        AIAgentSelectionPolicy.defaultAgentName(from: appState.aiAgents)
     }
 
     private func startImplementingPlan() {

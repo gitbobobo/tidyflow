@@ -1356,6 +1356,26 @@ final class MobileAppState: ObservableObject {
         )
     }
 
+    /// iOS 侧问题卡片本地收敛：同步更新 AIChatStore 与本地消息数组，避免卡片停留可交互态。
+    func completeAIQuestionRequestLocally(requestId: String, answers: [[String]]? = nil) {
+        let request = aiChatStore.questionRequest(
+            forToolCallId: nil,
+            toolPartId: nil,
+            toolMessageId: nil,
+            requestId: requestId
+        )
+
+        aiChatStore.completeQuestionRequestLocally(requestId: requestId, answers: answers)
+
+        _ = AIQuestionLocalCompletion.apply(
+            to: &aiChatMessages,
+            requestId: requestId,
+            mappedKey: nil,
+            request: request,
+            answers: answers
+        )
+    }
+
     func rejectAIQuestion(requestId: String, sessionId: String) {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
         wsClient.requestAIQuestionReject(
@@ -1365,6 +1385,40 @@ final class MobileAppState: ObservableObject {
             sessionId: sessionId,
             requestId: requestId
         )
+    }
+
+    func hasCodexPlanImplementationQuestionCard(requestId: String) -> Bool {
+        AIPlanImplementationQuestion.hasCard(
+            messages: aiChatMessages,
+            pendingQuestions: aiChatStore.pendingToolQuestions,
+            requestID: requestId
+        )
+    }
+
+    func insertCodexPlanImplementationQuestionCard(
+        requestID: String,
+        sessionID: String,
+        planPartID: String
+    ) {
+        let request = AIPlanImplementationQuestion.buildRequest(
+            requestID: requestID,
+            sessionID: sessionID,
+            planPartID: planPartID
+        )
+        aiChatStore.upsertQuestionRequest(request)
+        aiChatMessages.append(AIPlanImplementationQuestion.buildQuestionMessage(request: request, planPartID: planPartID))
+        rebuildAIIndexes()
+    }
+
+    func startImplementingCodexPlan() {
+        let defaultAgent = resolveDefaultAgentName()
+        if let agentInfo = aiAgents.first(where: { $0.name == defaultAgent }) {
+            aiSelectedAgent = agentInfo.name
+            applyAgentDefaultModel(agentInfo)
+        } else {
+            aiSelectedAgent = defaultAgent
+        }
+        _ = sendAIMessage(text: AIPlanImplementationQuestion.messageText, imageAttachments: [])
     }
 
     /// 当前上下文的文件索引（用于 @ 自动补全）
@@ -2625,7 +2679,7 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool,
                   self.aiChatStore.currentSessionId == ev.sessionId else { return }
-            self.aiChatStore.completeQuestionRequestLocally(requestId: ev.requestId)
+            self.completeAIQuestionRequestLocally(requestId: ev.requestId)
         }
     }
 
@@ -2762,6 +2816,10 @@ final class MobileAppState: ObservableObject {
             guard aiChatMessages[idx].role == .assistant else { continue }
             aiChatMessages[idx].isStreaming = false
         }
+    }
+
+    private func resolveDefaultAgentName() -> String {
+        AIAgentSelectionPolicy.defaultAgentName(from: aiAgents)
     }
 
     // MARK: - 排序/任务内部工具

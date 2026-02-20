@@ -11,6 +11,8 @@ struct MobileAIChatView: View {
     @State private var showSessionList = false
     @State private var referenceSearchTask: Task<Void, Never>?
     @State private var sessionStatusPollingTask: Task<Void, Never>?
+    @State private var sawCodexPlanProposalInCurrentTurn = false
+    @State private var codexPlanProposalPartIDInCurrentTurn: String?
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -162,6 +164,19 @@ struct MobileAIChatView: View {
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
         }
+        .onReceive(appState.$aiChatMessages) { messages in
+            observeCodexPlanProposal(messages)
+        }
+        .onChange(of: appState.aiIsStreaming) { _, isStreaming in
+            if isStreaming {
+                sawCodexPlanProposalInCurrentTurn = false
+                codexPlanProposalPartIDInCurrentTurn = nil
+                return
+            }
+            maybeInsertPlanImplementationQuestionCard()
+            sawCodexPlanProposalInCurrentTurn = false
+            codexPlanProposalPartIDInCurrentTurn = nil
+        }
     }
 
     private var isLoadingMessages: Bool {
@@ -181,24 +196,10 @@ struct MobileAIChatView: View {
                 MessageListView(
                     messages: appState.aiChatMessages,
                     onQuestionReply: { request, answers in
-                        appState.replyAIQuestion(
-                            requestId: request.id,
-                            sessionId: request.sessionId,
-                            answers: answers
-                        )
-                        // 与 macOS 保持一致：先本地收敛并回显答案，再等待后端 cleared 事件最终一致
-                        appState.aiChatStore.completeQuestionRequestLocally(
-                            requestId: request.id,
-                            answers: answers
-                        )
+                        handleQuestionReply(request: request, answers: answers)
                     },
                     onQuestionReject: { request in
-                        appState.rejectAIQuestion(
-                            requestId: request.id,
-                            sessionId: request.sessionId
-                        )
-                        // 与 macOS 保持一致：先本地收敛关闭交互，再等待后端 cleared 事件
-                        appState.aiChatStore.completeQuestionRequestLocally(requestId: request.id)
+                        handleQuestionReject(request: request)
                     },
                     onQuestionReplyAsMessage: { text in
                         _ = appState.sendAIMessage(text: text, imageAttachments: [])
@@ -291,6 +292,84 @@ struct MobileAIChatView: View {
 
     private func requestCurrentSessionStatus() {
         appState.requestCurrentAISessionStatus()
+    }
+
+    private func handleQuestionReply(request: AIQuestionRequestInfo, answers: [[String]]) {
+        if isPlanImplementationQuestionRequest(request.id) {
+            appState.completeAIQuestionRequestLocally(requestId: request.id, answers: answers)
+            if AIPlanImplementationQuestion.shouldStartImplementation(answers) {
+                appState.startImplementingCodexPlan()
+            }
+            return
+        }
+
+        appState.replyAIQuestion(
+            requestId: request.id,
+            sessionId: request.sessionId,
+            answers: answers
+        )
+        appState.completeAIQuestionRequestLocally(requestId: request.id, answers: answers)
+    }
+
+    private func handleQuestionReject(request: AIQuestionRequestInfo) {
+        if isPlanImplementationQuestionRequest(request.id) {
+            appState.completeAIQuestionRequestLocally(requestId: request.id)
+            return
+        }
+
+        appState.rejectAIQuestion(
+            requestId: request.id,
+            sessionId: request.sessionId
+        )
+        appState.completeAIQuestionRequestLocally(requestId: request.id)
+    }
+
+    private func observeCodexPlanProposal(_ messages: [AIChatMessage]) {
+        guard appState.aiIsStreaming else { return }
+        guard appState.aiChatTool == .codex else { return }
+        guard isPlanAgentSelected() else { return }
+        guard !sawCodexPlanProposalInCurrentTurn else { return }
+
+        for message in messages.reversed() where message.role == .assistant {
+            for part in message.parts where part.kind == .text {
+                if isCodexPlanProposalPart(part) {
+                    sawCodexPlanProposalInCurrentTurn = true
+                    codexPlanProposalPartIDInCurrentTurn = part.id
+                    return
+                }
+            }
+        }
+    }
+
+    private func isCodexPlanProposalPart(_ part: AIChatPart) -> Bool {
+        AIPlanImplementationQuestion.isCodexPlanProposalPart(part)
+    }
+
+    private func maybeInsertPlanImplementationQuestionCard() {
+        guard appState.aiChatTool == .codex else { return }
+        guard isPlanAgentSelected() else { return }
+        guard sawCodexPlanProposalInCurrentTurn else { return }
+        guard let planPartID = codexPlanProposalPartIDInCurrentTurn, !planPartID.isEmpty else { return }
+        guard appState.aiAbortPendingSessionId == nil else { return }
+        guard let sessionID = appState.aiCurrentSessionId, !sessionID.isEmpty else { return }
+
+        let requestID = AIPlanImplementationQuestion.requestId(sessionId: sessionID, planPartId: planPartID)
+        if appState.hasCodexPlanImplementationQuestionCard(requestId: requestID) {
+            return
+        }
+        appState.insertCodexPlanImplementationQuestionCard(
+            requestID: requestID,
+            sessionID: sessionID,
+            planPartID: planPartID
+        )
+    }
+
+    private func isPlanImplementationQuestionRequest(_ requestID: String) -> Bool {
+        AIPlanImplementationQuestion.isPlanImplementationQuestionRequest(requestID)
+    }
+
+    private func isPlanAgentSelected() -> Bool {
+        AIPlanImplementationQuestion.isPlanAgentSelected(appState.aiSelectedAgent)
     }
 
     private func restartSessionStatusPollingIfNeeded() {
