@@ -325,7 +325,7 @@ struct MobileEvolutionView: View {
             }
 
             Section("代理类型说明") {
-                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中的代理可进入聊天详情。")
+                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中或已完成的代理可进入聊天详情。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -351,7 +351,7 @@ struct MobileEvolutionView: View {
                         }
                     )
                     Section(sectionTitle(for: profile, runtime: runtime)) {
-                        if statusText == "running", let route = stageChatRoute(for: stage) {
+                        if canOpenStageChat(statusText), let route = stageChatRoute(for: stage) {
                             NavigationLink(value: route) {
                                 LabeledContent("工作状态") {
                                     Text(statusText)
@@ -526,7 +526,23 @@ struct MobileEvolutionView: View {
     }
 
     private func stageStatusColor(_ status: String) -> Color {
-        status == "running" ? .orange : .secondary
+        switch normalizedStageStatus(status) {
+        case "running":
+            return .orange
+        case "completed":
+            return .green
+        default:
+            return .secondary
+        }
+    }
+
+    private func canOpenStageChat(_ status: String) -> Bool {
+        let normalized = normalizedStageStatus(status)
+        return normalized == "running" || normalized == "completed"
+    }
+
+    private func normalizedStageStatus(_ status: String) -> String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func sectionTitle(for profile: EvolutionProfileDraft, runtime: EvolutionAgentInfoV2?) -> String {

@@ -782,7 +782,7 @@ struct EvolutionTabView: View {
     private var stageSectionsCard: some View {
         GroupBox("代理类型") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中的代理可进入聊天详情。")
+                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中或已完成的代理可进入聊天详情。")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -822,7 +822,7 @@ struct EvolutionTabView: View {
                 .foregroundColor(.secondary)
 
             LabeledContent("工作状态") {
-                if statusText == "running" {
+                if canOpenStageChat(statusText) {
                     Button {
                         openStageChat(stage: stage)
                     } label: {
@@ -944,7 +944,23 @@ struct EvolutionTabView: View {
     }
 
     private func stageStatusColor(_ status: String) -> Color {
-        status == "running" ? .orange : .secondary
+        switch normalizedStageStatus(status) {
+        case "running":
+            return .orange
+        case "completed":
+            return .green
+        default:
+            return .secondary
+        }
+    }
+
+    private func canOpenStageChat(_ status: String) -> Bool {
+        let normalized = normalizedStageStatus(status)
+        return normalized == "running" || normalized == "completed"
+    }
+
+    private func normalizedStageStatus(_ status: String) -> String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func sectionTitle(for profile: EvolutionEditableProfile, runtime: EvolutionAgentInfoV2?) -> String {
