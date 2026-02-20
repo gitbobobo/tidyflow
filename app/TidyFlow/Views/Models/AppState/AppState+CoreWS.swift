@@ -597,8 +597,6 @@ extension AppState {
 
         wsClient.onAISessionStatusResult = { [weak self] ev in
             guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
             self.upsertAISessionStatus(
                 projectName: ev.projectName,
@@ -608,17 +606,18 @@ extension AppState {
                 status: ev.status.status,
                 errorMessage: ev.status.errorMessage
             )
-            self.reconcileAIStreamStateFromSessionStatus(
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                status: ev.status.status
-            )
+            if self.selectedProjectName == ev.projectName,
+               self.selectedWorkspaceKey == ev.workspaceName {
+                self.reconcileAIStreamStateFromSessionStatus(
+                    aiTool: ev.aiTool,
+                    sessionId: ev.sessionId,
+                    status: ev.status.status
+                )
+            }
         }
 
         wsClient.onAISessionStatusUpdate = { [weak self] ev in
             guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
 
             self.upsertAISessionStatus(
                 projectName: ev.projectName,
@@ -628,11 +627,14 @@ extension AppState {
                 status: ev.status.status,
                 errorMessage: ev.status.errorMessage
             )
-            self.reconcileAIStreamStateFromSessionStatus(
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                status: ev.status.status
-            )
+            if self.selectedProjectName == ev.projectName,
+               self.selectedWorkspaceKey == ev.workspaceName {
+                self.reconcileAIStreamStateFromSessionStatus(
+                    aiTool: ev.aiTool,
+                    sessionId: ev.sessionId,
+                    status: ev.status.status
+                )
+            }
         }
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
