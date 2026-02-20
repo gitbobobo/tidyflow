@@ -35,7 +35,19 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             Ok(Arc::new(OpenCodeAgent::new(Arc::new(manager))))
         }
         "codex" => {
-            let manager = CodexAppServerManager::new(std::env::temp_dir());
+            // 需求：AI 聊天中的 codex 默认使用不受限权限模式。
+            let manager = CodexAppServerManager::new_with_command(
+                std::env::temp_dir(),
+                "codex",
+                vec![
+                    "-c".to_string(),
+                    "sandbox_mode=\"danger-full-access\"".to_string(),
+                    "-c".to_string(),
+                    "approval_policy=\"never\"".to_string(),
+                    "app-server".to_string(),
+                ],
+                "Codex app-server",
+            );
             Ok(Arc::new(CodexAppServerAgent::new(Arc::new(manager))))
         }
         "copilot" => {
