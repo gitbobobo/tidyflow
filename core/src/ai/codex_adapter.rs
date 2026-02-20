@@ -35,6 +35,8 @@ pub struct CodexAppServerAgent {
 }
 
 impl CodexAppServerAgent {
+    const CONTEXT_BASELINE_TOKENS: f64 = 12_000.0;
+
     pub fn new(manager: Arc<CodexAppServerManager>) -> Self {
         Self {
             client: CodexAppServerClient::new(manager),
@@ -45,12 +47,18 @@ impl CodexAppServerAgent {
         }
     }
 
-    fn compute_remaining_percent(total_tokens: f64, context_window: f64) -> Option<f64> {
-        if !total_tokens.is_finite() || !context_window.is_finite() || context_window <= 0.0 {
+    fn compute_remaining_percent(tokens_in_context_window: f64, context_window: f64) -> Option<f64> {
+        if !tokens_in_context_window.is_finite() || !context_window.is_finite() {
             return None;
         }
-        let remaining = ((context_window - total_tokens) / context_window) * 100.0;
-        Some(remaining.clamp(0.0, 100.0))
+        let baseline = Self::CONTEXT_BASELINE_TOKENS;
+        if context_window <= baseline {
+            return Some(0.0);
+        }
+        let effective_window = context_window - baseline;
+        let used = (tokens_in_context_window - baseline).max(0.0);
+        let remaining = (effective_window - used).max(0.0);
+        Some(((remaining / effective_window) * 100.0).clamp(0.0, 100.0))
     }
 
     fn json_value_to_f64(value: Option<&Value>) -> Option<f64> {
@@ -70,8 +78,8 @@ impl CodexAppServerAgent {
                 let session_id = params.get("threadId")?.as_str()?.to_string();
                 let total_tokens = Self::json_value_to_f64(
                     params
-                        .pointer("/tokenUsage/total/totalTokens")
-                        .or_else(|| params.pointer("/tokenUsage/last/totalTokens")),
+                        .pointer("/tokenUsage/last/totalTokens")
+                        .or_else(|| params.pointer("/tokenUsage/total/totalTokens")),
                 )?;
                 let context_window =
                     Self::json_value_to_f64(params.pointer("/tokenUsage/modelContextWindow"))?;
@@ -87,8 +95,8 @@ impl CodexAppServerAgent {
                 let session_id = params.get("conversationId")?.as_str()?.to_string();
                 let total_tokens = Self::json_value_to_f64(
                     params
-                        .pointer("/msg/info/total_token_usage/total_tokens")
-                        .or_else(|| params.pointer("/msg/info/last_token_usage/total_tokens")),
+                        .pointer("/msg/info/last_token_usage/total_tokens")
+                        .or_else(|| params.pointer("/msg/info/total_token_usage/total_tokens")),
                 )?;
                 let context_window = Self::json_value_to_f64(
                     params
