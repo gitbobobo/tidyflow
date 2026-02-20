@@ -53,7 +53,7 @@ enum AIChatPartKind: String {
 
 struct AIChatPart: Identifiable {
     let id: String
-    let kind: AIChatPartKind
+    var kind: AIChatPartKind
     var text: String?
     var mime: String? = nil
     var filename: String? = nil
@@ -1059,6 +1059,7 @@ final class AIChatStore: ObservableObject {
 
         if let existing = partIndexByPartId[part.id], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
+            messages[msgIdx].parts[existing.partIdx].kind = kind
             messages[msgIdx].parts[existing.partIdx].text = part.text
             messages[msgIdx].parts[existing.partIdx].mime = part.mime
             messages[msgIdx].parts[existing.partIdx].filename = part.filename

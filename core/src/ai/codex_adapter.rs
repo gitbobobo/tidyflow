@@ -444,6 +444,8 @@ impl CodexAppServerAgent {
             .clone()
             .or_else(|| request.tool_call_id.clone())
             .unwrap_or_else(|| format!("question-{}", request.id.replace(':', "-")));
+        // question part 需要稳定且与 message_id 解耦，避免覆盖同消息内已有 text part。
+        let part_id = format!("question-part-{}", request.id.replace(':', "-"));
         let tool_call_id = request
             .tool_call_id
             .clone()
@@ -461,7 +463,7 @@ impl CodexAppServerAgent {
             }
         });
         let part = AiPart {
-            id: message_id.clone(),
+            id: part_id,
             part_type: "tool".to_string(),
             tool_name: Some("question".to_string()),
             tool_call_id,
@@ -1856,6 +1858,7 @@ impl AiAgent for CodexAppServerAgent {
 #[cfg(test)]
 mod tests {
     use super::CodexAppServerAgent;
+    use crate::ai::{AiQuestionInfo, AiQuestionRequest};
 
     #[test]
     fn build_question_from_request_supports_snake_case_user_input() {
@@ -1910,6 +1913,29 @@ mod tests {
         assert_eq!(request.session_id, "thread-2");
         assert_eq!(ids, vec!["decision".to_string()]);
         assert_eq!(request.questions.len(), 1);
+    }
+
+    #[test]
+    fn build_question_prompt_part_uses_stable_part_id_without_overwriting_message_id() {
+        let request = AiQuestionRequest {
+            id: "n:123".to_string(),
+            session_id: "thread-3".to_string(),
+            questions: vec![AiQuestionInfo {
+                question: "允许执行命令？".to_string(),
+                header: "Codex Approval".to_string(),
+                options: vec![],
+                multiple: false,
+                custom: false,
+            }],
+            tool_message_id: Some("item-approval-1".to_string()),
+            tool_call_id: Some("item-approval-1".to_string()),
+        };
+
+        let (message_id, part) = CodexAppServerAgent::build_question_prompt_part(&request);
+        assert_eq!(message_id, "item-approval-1");
+        assert_eq!(part.part_type, "tool");
+        assert_eq!(part.id, "question-part-n-123");
+        assert_ne!(part.id, message_id);
     }
 
     #[test]
