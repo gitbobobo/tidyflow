@@ -1,5 +1,38 @@
 import Foundation
 
+private struct GetClientSettingsRequest: Encodable {
+    let type: String = "get_client_settings"
+}
+
+private struct SaveClientSettingsRequest: Encodable {
+    let type: String = "save_client_settings"
+    let customCommands: [CustomCommandPayload]
+    let workspaceShortcuts: [String: String]
+    let commitAIAgent: String?
+    let mergeAIAgent: String?
+    let fixedPort: Int
+    let appLanguage: String
+    let remoteAccessEnabled: Bool
+
+    struct CustomCommandPayload: Encodable {
+        let id: String
+        let name: String
+        let icon: String
+        let command: String
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case customCommands = "custom_commands"
+        case workspaceShortcuts = "workspace_shortcuts"
+        case commitAIAgent = "commit_ai_agent"
+        case mergeAIAgent = "merge_ai_agent"
+        case fixedPort = "fixed_port"
+        case appLanguage = "app_language"
+        case remoteAccessEnabled = "remote_access_enabled"
+    }
+}
+
 // MARK: - WSClient 发送消息扩展
 
 extension WSClient {
@@ -31,6 +64,22 @@ extension WSClient {
         } catch {
             TFLog.ws.error("MessagePack encode failed: \(error.localizedDescription, privacy: .public)")
             onError?("Failed to encode message: \(error.localizedDescription)")
+        }
+    }
+
+    /// 使用类型化请求体发送消息（包含统一请求包络）。
+    func sendTyped<Body: Encodable>(_ body: Body, requestId: String? = nil) {
+        do {
+            let data: Data
+            if let requestId {
+                data = try msgpackEncoder.encode(WSRequestEnvelope(id: requestId, body))
+            } else {
+                data = try msgpackEncoder.encode(WSRequestEnvelope(body))
+            }
+            sendBinary(data)
+        } catch {
+            TFLog.ws.error("MessagePack typed encode failed: \(error.localizedDescription, privacy: .public)")
+            onError?("Failed to encode typed message: \(error.localizedDescription)")
         }
     }
 
@@ -469,35 +518,28 @@ extension WSClient {
 
     /// 请求获取客户端设置
     func requestGetClientSettings() {
-        send([
-            "type": "get_client_settings"
-        ])
+        sendTyped(GetClientSettingsRequest(), requestId: UUID().uuidString)
     }
 
     /// 保存客户端设置
     func requestSaveClientSettings(settings: ClientSettings) {
-        let commandsData = settings.customCommands.map { cmd -> [String: Any] in
-            return [
-                "id": cmd.id,
-                "name": cmd.name,
-                "icon": cmd.icon,
-                "command": cmd.command
-            ]
-        }
-        var payload: [String: Any] = [
-            "type": "save_client_settings",
-            "custom_commands": commandsData,
-            "workspace_shortcuts": settings.workspaceShortcuts,
-            "fixed_port": settings.fixedPort,
-            "app_language": settings.appLanguage
-        ]
-        if let agent = settings.commitAIAgent {
-            payload["commit_ai_agent"] = agent
-        }
-        if let agent = settings.mergeAIAgent {
-            payload["merge_ai_agent"] = agent
-        }
-        send(payload)
+        let payload = SaveClientSettingsRequest(
+            customCommands: settings.customCommands.map { cmd in
+                SaveClientSettingsRequest.CustomCommandPayload(
+                    id: cmd.id,
+                    name: cmd.name,
+                    icon: cmd.icon,
+                    command: cmd.command
+                )
+            },
+            workspaceShortcuts: settings.workspaceShortcuts,
+            commitAIAgent: settings.commitAIAgent,
+            mergeAIAgent: settings.mergeAIAgent,
+            fixedPort: settings.fixedPort,
+            appLanguage: settings.appLanguage,
+            remoteAccessEnabled: settings.remoteAccessEnabled
+        )
+        sendTyped(payload, requestId: UUID().uuidString)
     }
 
     // MARK: - v1.22: 文件监控

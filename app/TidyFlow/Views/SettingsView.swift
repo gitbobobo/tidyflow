@@ -42,6 +42,7 @@ struct CustomCommandsSection: View {
     @State private var editingCommand: CustomCommand?
     @State private var showingAddSheet = false
     @State private var fixedPortText: String = ""
+    @State private var remoteAccessEnabled: Bool = false
 
     var body: some View {
         Form {
@@ -63,6 +64,12 @@ struct CustomCommandsSection: View {
             }
 
             Section {
+                Toggle("settings.mobile.remoteAccess".localized, isOn: $remoteAccessEnabled)
+                    .onChange(of: remoteAccessEnabled) { _, enabled in
+                        appState.clientSettings.remoteAccessEnabled = enabled
+                        appState.saveClientSettings()
+                    }
+
                 if appState.remoteAccessReady {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("settings.mobile.lanAddress".localized)
@@ -192,6 +199,7 @@ struct CustomCommandsSection: View {
         .onAppear {
             let val = appState.clientSettings.fixedPort
             fixedPortText = val > 0 ? "\(val)" : ""
+            remoteAccessEnabled = appState.clientSettings.remoteAccessEnabled
         }
     }
     

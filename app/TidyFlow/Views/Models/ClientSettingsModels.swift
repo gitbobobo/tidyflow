@@ -29,6 +29,8 @@ struct ClientSettings: Codable {
     var mergeAIAgent: String?
     /// 固定端口，0 表示动态分配
     var fixedPort: Int
+    /// 是否开启远程访问（开启后 Core 会监听 0.0.0.0）
+    var remoteAccessEnabled: Bool
     /// 应用语言：system / en / zh-Hans
     var appLanguage: String
     /// Evolution 代理配置（key: "project/workspace"）
@@ -40,6 +42,7 @@ struct ClientSettings: Codable {
         case commitAIAgent = "commit_ai_agent"
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
+        case remoteAccessEnabled = "remote_access_enabled"
         case appLanguage = "app_language"
         case evolutionAgentProfiles = "evolution_agent_profiles"
         // 旧字段，仅用于解码迁移
@@ -52,6 +55,7 @@ struct ClientSettings: Codable {
         commitAIAgent: String? = nil,
         mergeAIAgent: String? = nil,
         fixedPort: Int = 0,
+        remoteAccessEnabled: Bool = false,
         appLanguage: String = "system",
         evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:]
     ) {
@@ -60,6 +64,7 @@ struct ClientSettings: Codable {
         self.commitAIAgent = commitAIAgent
         self.mergeAIAgent = mergeAIAgent
         self.fixedPort = fixedPort
+        self.remoteAccessEnabled = remoteAccessEnabled
         self.appLanguage = appLanguage
         self.evolutionAgentProfiles = evolutionAgentProfiles
     }
@@ -71,6 +76,7 @@ struct ClientSettings: Codable {
         commitAIAgent = try container.decodeIfPresent(String.self, forKey: .commitAIAgent)
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
         fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
+        remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
         appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? "system"
         evolutionAgentProfiles = [:]
         // 兼容旧字段迁移
@@ -88,6 +94,7 @@ struct ClientSettings: Codable {
         try container.encodeIfPresent(commitAIAgent, forKey: .commitAIAgent)
         try container.encodeIfPresent(mergeAIAgent, forKey: .mergeAIAgent)
         try container.encode(fixedPort, forKey: .fixedPort)
+        try container.encode(remoteAccessEnabled, forKey: .remoteAccessEnabled)
         try container.encode(appLanguage, forKey: .appLanguage)
         // 不编码旧字段 selectedAIAgent
     }

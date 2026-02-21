@@ -66,6 +66,7 @@
 "settings.mobile.fixedPort.placeholder" = "Auto";
 "settings.mobile.fixedPort.hint" = "Set a fixed port for Core. Leave empty for auto-assign. Takes effect on next Core restart.";
 "settings.mobile.fixedPort.section" = "Port Settings";
+"settings.mobile.remoteAccess" = "Enable LAN Access";
 
 /* AI Agent Settings */
 "settings.aiAgent" = "AI Agent";

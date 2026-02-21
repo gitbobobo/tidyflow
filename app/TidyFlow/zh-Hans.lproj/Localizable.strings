@@ -66,6 +66,7 @@
 "settings.mobile.fixedPort.placeholder" = "自动";
 "settings.mobile.fixedPort.hint" = "为 Core 指定固定端口，留空则自动分配。下次重启 Core 生效。";
 "settings.mobile.fixedPort.section" = "端口设置";
+"settings.mobile.remoteAccess" = "开启局域网访问";
 
 /* AI Agent 设置 */
 "settings.aiAgent" = "AI Agent";
