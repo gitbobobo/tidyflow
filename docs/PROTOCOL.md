@@ -1,4 +1,4 @@
-# TidyFlow Protocol v5
+# TidyFlow Protocol v6
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -10,15 +10,15 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 5`
-- 协议 schema 权威源：`schema/protocol/v5/`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 6`
+- 协议 schema 权威源：`schema/protocol/v6/`
 
-## 消息模型（v5 包络）
+## 消息模型（v6 包络）
 
 - 客户端请求：
-- `ClientEnvelopeV5 { request_id, domain, action, payload, client_ts }`
+- `ClientEnvelopeV6 { request_id, domain, action, payload, client_ts }`
 - 服务端响应/事件：
-  - `ServerEnvelopeV5 { request_id?, seq, domain, action, kind, payload, server_ts }`
+  - `ServerEnvelopeV6 { request_id?, seq, domain, action, kind, payload, server_ts }`
   - `kind`：`result` / `event` / `error`
 - 业务消息体仍由 `ClientMessage` / `ServerMessage` 定义并映射到 `action + payload`
 - 定义位置：`core/src/server/protocol/mod.rs`
@@ -44,8 +44,8 @@
 
 ## 兼容策略
 
-- 本版本不向后兼容 v4。
-- 客户端必须发送 v5 包络；服务端统一返回 v5 包络。
+- 本版本不向后兼容 v5。
+- 客户端必须发送 v6 包络；服务端统一返回 v6 包络。
 
 ## 主要能力范围
 
