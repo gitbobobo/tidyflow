@@ -18,6 +18,11 @@ struct ServerEnvelopeMeta {
 /// Minimal WebSocket client for Core communication
 /// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v4 包络）
 class WSClient: NSObject, ObservableObject {
+    struct CoalescedEnvelope {
+        let domain: String
+        let action: String
+        let json: [String: Any]
+    }
     // MARK: - MessagePack 编解码器（跨 extension 文件访问）
     let msgpackEncoder = MessagePackEncoder()
     let msgpackDecoder = MessagePackDecoder()
@@ -143,8 +148,8 @@ class WSClient: NSObject, ObservableObject {
     // MARK: - 高频消息合并队列
     /// 合并窗口时长（秒），窗口内同 key 的消息只保留最后一条
     private let coalesceInterval: TimeInterval = 0.05 // 50ms
-    /// 合并队列：key 为 "消息类型:项目:工作空间"，value 为待处理的原始字典
-    private var coalesceQueue: [String: [String: Any]] = [:]
+    /// 合并队列：key 为 "消息类型:项目:工作空间"，value 为待处理的完整包络
+    private var coalesceQueue: [String: CoalescedEnvelope] = [:]
     /// 合并窗口定时器
     private var coalesceTimer: DispatchWorkItem?
 
@@ -314,17 +319,19 @@ class WSClient: NSObject, ObservableObject {
     }
 
     /// 生成合并队列的 key：类型 + 项目 + 工作空间，确保同一上下文的消息被合并
-    func coalesceKey(for json: [String: Any]) -> String {
-        let type = json["type"] as? String ?? ""
+    func coalesceKey(for envelope: CoalescedEnvelope) -> String {
+        let type = envelope.action
+        let json = envelope.json
         let project = json["project"] as? String ?? ""
         let workspace = json["workspace"] as? String ?? ""
         return "\(type):\(project):\(workspace)"
     }
 
     /// 将高频消息放入合并队列，在窗口到期后统一处理
-    func enqueueForCoalesce(_ json: [String: Any]) {
-        let key = coalesceKey(for: json)
-        coalesceQueue[key] = json
+    func enqueueForCoalesce(domain: String, action: String, json: [String: Any]) {
+        let envelope = CoalescedEnvelope(domain: domain, action: action, json: json)
+        let key = coalesceKey(for: envelope)
+        coalesceQueue[key] = envelope
 
         // 如果已有定时器在等待，不重复创建
         if coalesceTimer != nil { return }
@@ -342,8 +349,8 @@ class WSClient: NSObject, ObservableObject {
         let pending = coalesceQueue
         coalesceQueue.removeAll()
 
-        for (_, json) in pending {
-            dispatchCoalescedMessage(json)
+        for (_, envelope) in pending {
+            dispatchCoalescedMessage(envelope)
         }
     }
 }

@@ -3,7 +3,69 @@ import Foundation
 // MARK: - WSClient 分领域路由
 
 extension WSClient {
+    // BEGIN AUTO-GENERATED: protocol_receive_action_rules
+    private var receiveProtocolExactRules: [(domain: String, action: String)] {
+        [
+        ("system", "ping"),
+        ("terminal", "spawn_terminal"),
+        ("terminal", "kill_terminal"),
+        ("terminal", "input"),
+        ("terminal", "resize"),
+        ("file", "clipboard_image_upload"),
+        ("git", "cancel_ai_task"),
+        ]
+    }
+
+    private var receiveProtocolPrefixRules: [(domain: String, prefix: String)] {
+        [
+        ("terminal", "term_"),
+        ("file", "file_"),
+        ("file", "watch_"),
+        ("git", "git_"),
+        ("project", "list_"),
+        ("project", "select_"),
+        ("project", "import_"),
+        ("project", "create_"),
+        ("project", "remove_"),
+        ("project", "project_"),
+        ("project", "workspace_"),
+        ("project", "save_project_commands"),
+        ("project", "run_project_command"),
+        ("project", "cancel_project_command"),
+        ("lsp", "lsp_"),
+        ("log", "log_"),
+        ("ai", "ai_"),
+        ("evolution", "evo_"),
+        ]
+    }
+
+    private var receiveProtocolContainsRules: [(domain: String, needle: String)] {
+        [
+        ("settings", "client_settings"),
+        ]
+    }
+    // END AUTO-GENERATED: protocol_receive_action_rules
+
+    private static let receiveSupplementalExactRules: Set<String> = [
+        "system:hello",
+        "system:pong",
+        "terminal:output",
+        "terminal:exit",
+        "terminal:remote_term_changed",
+        "project:projects",
+        "project:workspaces",
+        "project:tasks_snapshot"
+    ]
+
+    private static let fallbackActionCatalog: Set<String> = ["clipboard_image_set", "error"]
+
     func routeByDomain(domain: String, action: String, json: [String: Any]) -> Bool {
+        if !isActionDeclaredInReceiveCatalog(domain: domain, action: action) {
+            TFLog.ws.warning(
+                "Action not declared in receive catalog: domain=\(domain, privacy: .public), action=\(action, privacy: .public)"
+            )
+        }
+
         switch domain {
         case "system":
             return handleSystemDomain(action, json: json)
@@ -28,17 +90,7 @@ extension WSClient {
         }
     }
 
-    func routeFallbackByAction(_ action: String, json: [String: Any]) -> Bool {
-        if handleSystemDomain(action, json: json) { return true }
-        if handleTerminalDomain(action, json: json) { return true }
-        if handleGitDomain(action, json: json) { return true }
-        if handleProjectDomain(action, json: json) { return true }
-        if handleFileDomain(action, json: json) { return true }
-        if handleSettingsDomain(action, json: json) { return true }
-        if handleLspDomain(action, json: json) { return true }
-        if handleAiDomain(action, json: json) { return true }
-        if handleEvolutionDomain(action, json: json) { return true }
-
+    func routeFallbackByAction(_ action: String, domain: String, json: [String: Any]) -> Bool {
         switch action {
         case "clipboard_image_set":
             let ok = json["ok"] as? Bool ?? false
@@ -50,7 +102,29 @@ extension WSClient {
             onError?(errorMsg)
             return true
         default:
+            TFLog.ws.warning(
+                "Unhandled server envelope: domain=\(domain, privacy: .public), action=\(action, privacy: .public)"
+            )
+            if Self.fallbackActionCatalog.contains(action) {
+                TFLog.ws.error("Fallback action declared but not handled: \(action, privacy: .public)")
+            }
             return false
         }
+    }
+
+    private func isActionDeclaredInReceiveCatalog(domain: String, action: String) -> Bool {
+        if receiveProtocolExactRules.contains(where: { $0.domain == domain && $0.action == action }) {
+            return true
+        }
+        if receiveProtocolPrefixRules.contains(where: { $0.domain == domain && action.hasPrefix($0.prefix) }) {
+            return true
+        }
+        if receiveProtocolContainsRules.contains(where: { $0.domain == domain && action.contains($0.needle) }) {
+            return true
+        }
+        if Self.receiveSupplementalExactRules.contains("\(domain):\(action)") {
+            return true
+        }
+        return false
     }
 }

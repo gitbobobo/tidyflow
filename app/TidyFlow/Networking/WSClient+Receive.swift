@@ -161,45 +161,23 @@ extension WSClient {
 
         // 高频消息走合并队列，避免淹没 UI 线程
         if isCoalescible(type) {
-            enqueueForCoalesce(json)
+            enqueueForCoalesce(domain: domain, action: type, json: json)
             return
         }
 
         if routeByDomain(domain: domain, action: type, json: json) {
             return
         }
-        _ = routeFallbackByAction(type, json: json)
+        _ = routeFallbackByAction(type, domain: domain, json: json)
     }
 
 
     /// 处理合并队列刷新后的高频消息（由 flushCoalesceQueue 调用）
-    func dispatchCoalescedMessage(_ json: [String: Any]) {
-        guard let type = json["type"] as? String else { return }
-
-        switch type {
-        case "file_changed":
-            if let notification = FileChangedNotification.from(json: json) {
-                onFileChanged?(notification)
-            }
-
-        case "git_status_changed":
-            if let notification = GitStatusChangedNotification.from(json: json) {
-                onGitStatusChanged?(notification)
-            }
-
-        case "file_index_result":
-            if let result = FileIndexResult.from(json: json) {
-                onFileIndexResult?(result)
-            }
-
-        case "file_list_result":
-            if let result = FileListResult.from(json: json) {
-                onFileListResult?(result)
-            }
-
-        default:
-            break
+    func dispatchCoalescedMessage(_ envelope: CoalescedEnvelope) {
+        if routeByDomain(domain: envelope.domain, action: envelope.action, json: envelope.json) {
+            return
         }
+        _ = routeFallbackByAction(envelope.action, domain: envelope.domain, json: envelope.json)
     }
 
 }

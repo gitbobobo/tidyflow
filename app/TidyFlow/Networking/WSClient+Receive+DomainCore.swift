@@ -134,6 +134,11 @@ extension WSClient {
                 onGitResetIntegrationWorktreeResult?(result)
             }
             return true
+        case "git_status_changed":
+            if let notification = GitStatusChangedNotification.from(json: json) {
+                onGitStatusChanged?(notification)
+            }
+            return true
         default:
             return false
         }
@@ -172,6 +177,21 @@ extension WSClient {
         case "file_write_result":
             if let result = FileWriteResult.from(json: json) {
                 onFileWriteResult?(result)
+            }
+            return true
+        case "file_changed":
+            if let notification = FileChangedNotification.from(json: json) {
+                onFileChanged?(notification)
+            }
+            return true
+        case "file_index_result":
+            if let result = FileIndexResult.from(json: json) {
+                onFileIndexResult?(result)
+            }
+            return true
+        case "file_list_result":
+            if let result = FileListResult.from(json: json) {
+                onFileListResult?(result)
             }
             return true
         default:
