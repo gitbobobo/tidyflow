@@ -6,7 +6,6 @@ pub const STAGE_BOOTSTRAP_PROMPT: &str = r####"
 
 【核心原则】
 - 本阶段是 cycle 最前置阶段，只负责打基础，不做业务功能开发。
-- 必须先检查已有阶段产物（如 `stage.*.json`、`*.result.json`、`handoff.md`），避免与 direction/plan/implement/verify/judge/report 职责重复。
 - 本阶段允许向用户提问，但仅限“项目运行所需外部服务环境信息”（例如 URL、账号、token、测试租户、回调地址）。
 - 提问必须最小化：优先读取已存在结构化文件，只有缺失必填项时才提问。
 - 提问后必须把答案结构化落盘，禁止只停留在聊天文本。

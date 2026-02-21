@@ -853,13 +853,14 @@ extension AppState {
                 self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
                 return
             }
-            self.evolutionStageProfilesByWorkspace[key] = ev.stageProfiles
-            let directionModel = ev.stageProfiles
+            let normalizedProfiles = Self.normalizedEvolutionProfiles(ev.stageProfiles)
+            self.evolutionStageProfilesByWorkspace[key] = normalizedProfiles
+            let directionModel = normalizedProfiles
                 .first(where: { $0.stage == "direction" })?
                 .model
                 .map { "\($0.providerID)/\($0.modelID)" } ?? "default"
             TFLog.app.info(
-                "Evolution profile applied: project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public), stages=\(ev.stageProfiles.count), direction_model=\(directionModel, privacy: .public)"
+                "Evolution profile applied: project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public), stages=\(normalizedProfiles.count), direction_model=\(directionModel, privacy: .public)"
             )
             self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
         }
@@ -1067,12 +1068,12 @@ extension AppState {
         if let profiles = evolutionStageProfilesByWorkspace[key], !profiles.isEmpty {
             if let fallback = evolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace),
                shouldPreferEvolutionProfiles(candidate: fallback, over: profiles) {
-                return fallback
+                return Self.normalizedEvolutionProfiles(fallback)
             }
-            return profiles
+            return Self.normalizedEvolutionProfiles(profiles)
         }
         if let profiles = evolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace) {
-            return profiles
+            return Self.normalizedEvolutionProfiles(profiles)
         }
         return Self.defaultEvolutionProfiles()
     }
@@ -1080,6 +1081,29 @@ extension AppState {
     static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
         ["bootstrap", "direction", "plan", "implement", "verify", "judge", "report"].map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil)
+        }
+    }
+
+    static func normalizedEvolutionProfiles(_ profiles: [EvolutionStageProfileInfoV2]) -> [EvolutionStageProfileInfoV2] {
+        if profiles.isEmpty {
+            return defaultEvolutionProfiles()
+        }
+
+        var byStage: [String: EvolutionStageProfileInfoV2] = [:]
+        for profile in profiles {
+            let stage = profile.stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !stage.isEmpty else { continue }
+            if byStage[stage] != nil { continue }
+            byStage[stage] = EvolutionStageProfileInfoV2(
+                stage: stage,
+                aiTool: profile.aiTool,
+                mode: profile.mode,
+                model: profile.model
+            )
+        }
+
+        return defaultEvolutionProfiles().map { item in
+            byStage[item.stage] ?? item
         }
     }
 
@@ -1123,8 +1147,9 @@ extension AppState {
             let workspace = normalizeEvolutionWorkspaceName(parsed.workspace)
             let key = globalWorkspaceKey(projectName: parsed.project, workspaceName: workspace)
             let current = evolutionStageProfilesByWorkspace[key] ?? []
-            if current.isEmpty || shouldPreferEvolutionProfiles(candidate: profiles, over: current) {
-                evolutionStageProfilesByWorkspace[key] = profiles
+            let normalized = Self.normalizedEvolutionProfiles(profiles)
+            if current.isEmpty || shouldPreferEvolutionProfiles(candidate: normalized, over: current) {
+                evolutionStageProfilesByWorkspace[key] = normalized
             }
         }
     }
@@ -1141,7 +1166,7 @@ extension AppState {
         )
         for key in candidateKeys {
             if let profiles = clientSettings.evolutionAgentProfiles[key], !profiles.isEmpty {
-                return profiles
+                return Self.normalizedEvolutionProfiles(profiles)
             }
         }
         for (storageKey, profiles) in clientSettings.evolutionAgentProfiles {
@@ -1149,7 +1174,7 @@ extension AppState {
             guard let parsed = parseEvolutionProfileStorageKey(storageKey) else { continue }
             let parsedWorkspace = normalizeEvolutionWorkspaceName(parsed.workspace)
             if parsed.project == project && parsedWorkspace == normalizedWorkspace {
-                return profiles
+                return Self.normalizedEvolutionProfiles(profiles)
             }
         }
         return nil
