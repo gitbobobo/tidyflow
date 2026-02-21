@@ -792,8 +792,15 @@ struct EvolutionTabView: View {
                     Text("暂无阶段配置")
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach($editableProfiles) { $profile in
-                        stageSection(profile: $profile)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 320, maximum: 420), spacing: 12, alignment: .top)],
+                        alignment: .leading,
+                        spacing: 12
+                    ) {
+                        ForEach($editableProfiles) { $profile in
+                            stageSection(profile: $profile)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
             }
@@ -816,30 +823,39 @@ struct EvolutionTabView: View {
             }
         )
         return VStack(alignment: .leading, spacing: 10) {
-            Text(sectionTitle(for: profile.wrappedValue, runtime: runtime))
-                .font(.headline)
-
-            Text("代理类型: \(stage)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            LabeledContent("工作状态") {
+            HStack(spacing: 8) {
+                Image(systemName: stageIconName(stage))
+                    .foregroundColor(.accentColor)
+                Text(stageDisplayName(stage))
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
                 if canOpenStageChat(statusText) {
                     Button {
                         openStageChat(stage: stage)
                     } label: {
                         HStack(spacing: 4) {
                             Text(statusText)
-                                .foregroundColor(stageStatusColor(statusText))
                             Image(systemName: "chevron.right")
                                 .font(.caption2)
-                                .foregroundColor(.secondary)
                         }
+                        .font(.caption)
+                        .foregroundColor(stageStatusColor(statusText))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(stageStatusColor(statusText).opacity(0.12))
+                        .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 } else {
                     Text(statusText)
+                        .font(.caption)
                         .foregroundColor(stageStatusColor(statusText))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(stageStatusColor(statusText).opacity(0.12))
+                        .clipShape(Capsule())
                 }
             }
 
@@ -928,9 +944,15 @@ struct EvolutionTabView: View {
                 .menuStyle(.borderlessButton)
             }
         }
-        .padding(10)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
     }
 
     private func refreshData() {
@@ -958,7 +980,12 @@ struct EvolutionTabView: View {
 
     private func canOpenStageChat(_ status: String) -> Bool {
         let normalized = normalizedStageStatus(status)
-        return normalized == "running" || normalized == "completed"
+        return normalized == "running" ||
+            normalized == "completed" ||
+            normalized == "已完成" ||
+            normalized == "完成" ||
+            normalized == "success" ||
+            normalized == "succeeded"
     }
 
     private func normalizedStageStatus(_ status: String) -> String {
@@ -970,7 +997,43 @@ struct EvolutionTabView: View {
         if !runtimeAgent.isEmpty { return runtimeAgent }
         let configuredMode = profile.mode.trimmingCharacters(in: .whitespacesAndNewlines)
         if !configuredMode.isEmpty { return configuredMode }
-        return profile.stage
+        return "未设置代理"
+    }
+
+    private func stageDisplayName(_ stage: String) -> String {
+        let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "未命名类型" }
+        switch trimmed.lowercased() {
+        case "plan":
+            return "plan"
+        case "bootstrap":
+            return "bootstrap"
+        case "direction":
+            return "direction"
+        case "implement":
+            return "implement"
+        case "verify":
+            return "verify"
+        case "judge":
+            return "judge"
+        case "report":
+            return "report"
+        default:
+            return trimmed
+        }
+    }
+
+    private func stageIconName(_ stage: String) -> String {
+        switch stage.lowercased() {
+        case "plan":
+            return "map"
+        case "code":
+            return "chevron.left.forwardslash.chevron.right"
+        case "verify":
+            return "checkmark.seal"
+        default:
+            return "person.crop.square"
+        }
     }
 
     private func openStageChat(stage: String) {
