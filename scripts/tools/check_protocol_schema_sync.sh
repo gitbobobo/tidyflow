@@ -6,20 +6,26 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-schema_file="schema/protocol/v3/domains.yaml"
 protocol_file="core/src/server/protocol/mod.rs"
 dispatch_file="core/src/server/ws/dispatch.rs"
 swift_send_file="app/TidyFlow/Networking/WSClient+Send.swift"
 
-for f in "$schema_file" "$protocol_file" "$dispatch_file" "$swift_send_file"; do
+for f in "$protocol_file" "$dispatch_file" "$swift_send_file"; do
     if [ ! -f "$f" ]; then
         echo "[check_schema_sync] ERROR: 未找到 $f"
         exit 1
     fi
 done
 
-schema_version="$(sed -n 's/^protocol_version:[[:space:]]*\([0-9][0-9]*\)$/\1/p' "$schema_file" | head -n1)"
 core_version="$(sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p' "$protocol_file" | head -n1)"
+schema_file="schema/protocol/v${core_version}/domains.yaml"
+
+if [ ! -f "$schema_file" ]; then
+    echo "[check_schema_sync] ERROR: 未找到 $schema_file"
+    exit 1
+fi
+
+schema_version="$(sed -n 's/^protocol_version:[[:space:]]*\([0-9][0-9]*\)$/\1/p' "$schema_file" | head -n1)"
 
 if [ -z "$schema_version" ] || [ -z "$core_version" ]; then
     echo "[check_schema_sync] ERROR: 无法解析协议版本 (schema/core)"
@@ -42,9 +48,9 @@ dispatch_domains="$(
 )"
 swift_domains="$(
     awk '
-        /private let protocolExactRules/ {mode=1; next}
-        /private let protocolPrefixRules/ {mode=1; next}
-        /private let protocolContainsRules/ {mode=1; next}
+        /private (let|var) protocolExactRules/ {mode=1; next}
+        /private (let|var) protocolPrefixRules/ {mode=1; next}
+        /private (let|var) protocolContainsRules/ {mode=1; next}
         mode == 1 && /\]/ {mode=0; next}
         mode == 1 && /\(".*", ".*"\)/ {
             line=$0

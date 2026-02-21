@@ -10,7 +10,11 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-schema_file="schema/protocol/v3/action_rules.csv"
+protocol_file="core/src/server/protocol/mod.rs"
+protocol_version="$(
+    sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p' "$protocol_file" | head -n1
+)"
+schema_file="schema/protocol/v${protocol_version}/action_rules.csv"
 core_file="core/src/server/protocol/action_table.rs"
 dispatch_file="core/src/server/ws/dispatch.rs"
 app_file="app/TidyFlow/Networking/WSClient+Send.swift"

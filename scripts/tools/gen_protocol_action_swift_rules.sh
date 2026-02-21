@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从 schema/protocol/v3/action_rules.csv 生成 Swift 侧 action 规则表
+# 从 schema/protocol/v{PROTOCOL_VERSION}/action_rules.csv 生成 Swift 侧 action 规则表
 #
 # 用法：
 #   ./scripts/tools/gen_protocol_action_swift_rules.sh
@@ -10,7 +10,11 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-SCHEMA_FILE="schema/protocol/v3/action_rules.csv"
+PROTOCOL_FILE="core/src/server/protocol/mod.rs"
+PROTOCOL_VERSION="$(
+    sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p' "$PROTOCOL_FILE" | head -n1
+)"
+SCHEMA_FILE="schema/protocol/v${PROTOCOL_VERSION}/action_rules.csv"
 TARGET_FILE="app/TidyFlow/Networking/WSClient+Send.swift"
 BEGIN_MARKER="// BEGIN AUTO-GENERATED: protocol_action_rules"
 END_MARKER="// END AUTO-GENERATED: protocol_action_rules"
@@ -79,17 +83,23 @@ done < "$SCHEMA_FILE"
 
 cat > "$block_file" <<EOF
     $BEGIN_MARKER
-    private let protocolExactRules: [(domain: String, action: String)] = [
+    private var protocolExactRules: [(domain: String, action: String)] {
+        [
 $(cat "$exact_rules")
-    ]
+        ]
+    }
 
-    private let protocolPrefixRules: [(domain: String, prefix: String)] = [
+    private var protocolPrefixRules: [(domain: String, prefix: String)] {
+        [
 $(cat "$prefix_rules")
-    ]
+        ]
+    }
 
-    private let protocolContainsRules: [(domain: String, needle: String)] = [
+    private var protocolContainsRules: [(domain: String, needle: String)] {
+        [
 $(cat "$contains_rules")
-    ]
+        ]
+    }
     $END_MARKER
 EOF
 

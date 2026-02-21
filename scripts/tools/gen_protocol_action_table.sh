@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从 schema/protocol/v3/action_rules.csv 生成 Core 协议规则表
+# 从 schema/protocol/v{PROTOCOL_VERSION}/action_rules.csv 生成 Core 协议规则表
 #
 # 用法：
 #   ./scripts/tools/gen_protocol_action_table.sh
@@ -10,7 +10,11 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-SCHEMA_FILE="schema/protocol/v3/action_rules.csv"
+PROTOCOL_FILE="core/src/server/protocol/mod.rs"
+PROTOCOL_VERSION="$(
+    sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p' "$PROTOCOL_FILE" | head -n1
+)"
+SCHEMA_FILE="schema/protocol/v${PROTOCOL_VERSION}/action_rules.csv"
 OUTPUT_FILE="core/src/server/protocol/action_table.rs"
 
 MODE="write"
@@ -70,11 +74,11 @@ while IFS= read -r line || [ -n "$line" ]; do
     esac
 done < "$SCHEMA_FILE"
 
-cat > "$generated" <<'EOF'
+cat > "$generated" <<EOF
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v3/action_rules.csv`
-//! 生成命令：`./scripts/tools/gen_protocol_action_table.sh`
+//! 来源：\`schema/protocol/v${PROTOCOL_VERSION}/action_rules.csv\`
+//! 生成命令：\`./scripts/tools/gen_protocol_action_table.sh\`
 
 EOF
 
