@@ -63,6 +63,10 @@ struct MessageListView: View {
             if isProcessInfoMessage(message) {
                 return message.isStreaming && hasRenderablePartContent(message)
             }
+            // Codex commentary 文本仅在流式阶段展示；完成后隐藏，减少对最终回答的干扰。
+            if isCodexCommentaryMessage(message) {
+                return message.isStreaming && hasRenderablePartContent(message)
+            }
             if message.isStreaming { return true }
             return hasRenderablePartContent(message)
         }
@@ -72,6 +76,31 @@ struct MessageListView: View {
         guard message.role == .assistant else { return false }
         guard !message.parts.isEmpty else { return false }
         return message.parts.allSatisfy { $0.kind == .reasoning }
+    }
+
+    private func isCodexCommentaryMessage(_ message: AIChatMessage) -> Bool {
+        guard message.role == .assistant else { return false }
+        guard !message.parts.isEmpty else { return false }
+        return message.parts.allSatisfy { part in
+            guard part.kind == .text else { return false }
+            guard let source = part.source else { return false }
+            let vendor = (source["vendor"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let phaseRaw = ((source["message_phase"] as? String) ?? (source["phase"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let normalizedPhase: String
+            switch phaseRaw {
+            case "commentary":
+                normalizedPhase = "commentary"
+            case "finalanswer", "final_answer":
+                normalizedPhase = "finalanswer"
+            default:
+                normalizedPhase = phaseRaw
+            }
+            return vendor == "codex" && normalizedPhase == "commentary"
+        }
     }
 
     private func hasRenderablePartContent(_ message: AIChatMessage) -> Bool {
