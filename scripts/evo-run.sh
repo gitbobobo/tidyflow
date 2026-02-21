@@ -95,6 +95,15 @@ mkdir -p "$EVIDENCE_DIR"
 BUILD_LOG="$EVIDENCE_DIR/build-$RUN_ID.log"
 TEST_LOG="$EVIDENCE_DIR/integration-$RUN_ID.log"
 DIFF_SUMMARY="$EVIDENCE_DIR/diff-$RUN_ID.md"
+EVIDENCE_INDEX="$CYCLE_DIR/evidence.index.json"
+
+RUN_COMMAND="$0 --cycle $CYCLE_ID --run-id $RUN_ID --step $STEP"
+if [ "$VERBOSE" = "1" ]; then
+    RUN_COMMAND="$RUN_COMMAND --verbose"
+fi
+if [ "$DRY_RUN" = "1" ]; then
+    RUN_COMMAND="$RUN_COMMAND --dry-run"
+fi
 
 echo "$LOG_PREFIX 开始执行"
 echo "$LOG_PREFIX Cycle: $CYCLE_ID"
@@ -111,6 +120,124 @@ fi
 # ============================================
 # Step: Build
 # ============================================
+update_evidence_index() {
+    local STEP_NAME="$1"
+    local OUTCOME="$2"
+    local EVIDENCE_LINES="${3:-}"
+    local INDEX_PATH="$EVIDENCE_INDEX"
+
+    if ! EVIDENCE_LINES="$EVIDENCE_LINES" python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$STEP_NAME" "$OUTCOME" "$RUN_COMMAND" <<'PY'
+import sys
+import json
+import os
+import hashlib
+from datetime import datetime, timezone
+
+cycle_dir, cycle_id, run_id, step, outcome, command = sys.argv[1:7]
+index_path = os.path.join(cycle_dir, "evidence.index.json")
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def load_index(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+data = load_index(index_path)
+if not isinstance(data, dict):
+    data = {}
+
+data["$schema_version"] = "1.0"
+data["cycle_id"] = cycle_id
+
+evidence_items = data.get("evidence_items", [])
+if not isinstance(evidence_items, list):
+    evidence_items = []
+
+index_by_path = {}
+for item in evidence_items:
+    if not isinstance(item, dict):
+        continue
+    path = item.get("path")
+    if path:
+        index_by_path[path] = item
+
+for raw_line in os.environ.get("EVIDENCE_LINES", "").splitlines():
+    line = raw_line.strip()
+    if not line:
+        continue
+    parts = line.split("\t", 4)
+    if len(parts) < 5:
+        continue
+    evidence_type, path, stage, criteria_csv, summary = parts
+    path = path.strip()
+    if not path:
+        continue
+    if os.path.isabs(path):
+        rel_path = os.path.relpath(path, cycle_dir)
+    else:
+        rel_path = path
+    rel_path = rel_path.replace("\\", "/")
+    evidence_id = "ev-" + hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:8]
+    linked_criteria_ids = [c for c in criteria_csv.split(",") if c]
+    item = {
+        "evidence_id": evidence_id,
+        "type": evidence_type,
+        "path": rel_path,
+        "generated_by_stage": stage,
+        "linked_criteria_ids": linked_criteria_ids,
+        "summary": summary,
+        "created_at": now,
+        "run_id": run_id,
+    }
+    existing = index_by_path.get(rel_path)
+    if isinstance(existing, dict) and existing.get("evidence_id"):
+        item["evidence_id"] = existing.get("evidence_id")
+    index_by_path[rel_path] = item
+
+data["evidence_items"] = sorted(index_by_path.values(), key=lambda x: x.get("path", ""))
+
+runs = data.get("runs", [])
+if not isinstance(runs, list):
+    runs = []
+
+run_map = {}
+for run in runs:
+    if not isinstance(run, dict):
+        continue
+    run_id_key = run.get("run_id")
+    if run_id_key:
+        run_map[run_id_key] = run
+
+run_map[run_id] = {
+    "run_id": run_id,
+    "executed_at": now,
+    "step": step,
+    "outcome": outcome,
+    "command": command,
+}
+
+data["runs"] = sorted(run_map.values(), key=lambda x: x.get("run_id", ""))
+data["updated_at"] = now
+
+with open(index_path, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+    then
+        echo "$LOG_PREFIX [index] FAILED 写入 evidence.index.json"
+        echo "$LOG_PREFIX [index] cycle=$CYCLE_ID run=$RUN_ID step=$STEP_NAME outcome=$OUTCOME"
+        echo "$LOG_PREFIX [index] 结果目录: $RESULT_DIR"
+        return 1
+    fi
+
+    echo "$LOG_PREFIX [index] 更新完成: $INDEX_PATH"
+    return 0
+}
+
 run_build() {
     echo "$LOG_PREFIX [build] 开始构建..."
     echo "$LOG_PREFIX [build] 时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -173,6 +300,9 @@ run_build() {
     fi
     
     echo "$LOG_PREFIX [build] SUCCESS"
+    local BUILD_EVIDENCE_LINES=""
+    BUILD_EVIDENCE_LINES+="build_log"$'\t'"$BUILD_LOG"$'\t'"implement"$'\t'"ac-1"$'\t'"构建日志"$'\n'
+    update_evidence_index "build" "success" "$BUILD_EVIDENCE_LINES" || return 1
     return 0
 }
 
@@ -243,6 +373,9 @@ run_integration() {
     fi
     
     echo "$LOG_PREFIX [integration] SUCCESS"
+    local INTEGRATION_EVIDENCE_LINES=""
+    INTEGRATION_EVIDENCE_LINES+="test_log"$'\t'"$TEST_LOG"$'\t'"implement"$'\t'"ac-2"$'\t'"集成测试日志"$'\n'
+    update_evidence_index "integration" "success" "$INTEGRATION_EVIDENCE_LINES" || return 1
     return 0
 }
 
@@ -311,6 +444,32 @@ esac
 
 # 始终生成差异摘要
 generate_diff_summary
+
+FINAL_OUTCOME="success"
+if [ $MAIN_EXIT -ne 0 ]; then
+    if [ "$STEP" = "all" ]; then
+        FINAL_OUTCOME="partial"
+    else
+        FINAL_OUTCOME="failed"
+    fi
+fi
+
+FINAL_EVIDENCE_LINES=""
+if [ -f "$BUILD_LOG" ]; then
+    FINAL_EVIDENCE_LINES+="build_log"$'\t'"$BUILD_LOG"$'\t'"implement"$'\t'"ac-1"$'\t'"构建日志"$'\n'
+fi
+if [ -f "$TEST_LOG" ]; then
+    FINAL_EVIDENCE_LINES+="test_log"$'\t'"$TEST_LOG"$'\t'"implement"$'\t'"ac-2"$'\t'"集成测试日志"$'\n'
+fi
+if [ -f "$DIFF_SUMMARY" ]; then
+    FINAL_EVIDENCE_LINES+="diff_summary"$'\t'"$DIFF_SUMMARY"$'\t'"implement"$'\t'"ac-1,ac-2,ac-3"$'\t'"证据差异摘要"$'\n'
+fi
+
+INDEX_EXIT=0
+update_evidence_index "$STEP" "$FINAL_OUTCOME" "$FINAL_EVIDENCE_LINES" || INDEX_EXIT=$?
+if [ $INDEX_EXIT -ne 0 ] && [ $MAIN_EXIT -eq 0 ]; then
+    MAIN_EXIT=$INDEX_EXIT
+fi
 
 # 输出结果
 echo ""
