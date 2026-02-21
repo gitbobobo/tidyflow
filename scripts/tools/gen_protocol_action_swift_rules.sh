@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从 schema/protocol/v{PROTOCOL_VERSION}/action_rules.csv 生成 Swift 侧 action 规则表
+# 从 schema/protocol/v{PROTOCOL_VERSION}/action_rules.csv 生成 Swift/JS 侧 action 规则表
 #
 # 用法：
 #   ./scripts/tools/gen_protocol_action_swift_rules.sh
@@ -21,6 +21,9 @@ END_MARKER="// END AUTO-GENERATED: protocol_action_rules"
 RECEIVE_TARGET_FILE="app/TidyFlow/Networking/WSClient+Receive+DomainRouting.swift"
 RECEIVE_BEGIN_MARKER="// BEGIN AUTO-GENERATED: protocol_receive_action_rules"
 RECEIVE_END_MARKER="// END AUTO-GENERATED: protocol_receive_action_rules"
+WEB_TARGET_FILE="app/TidyFlow/Web/main/protocol-rules.js"
+WEB_BEGIN_MARKER="// BEGIN AUTO-GENERATED: protocol_action_rules"
+WEB_END_MARKER="// END AUTO-GENERATED: protocol_action_rules"
 
 MODE="write"
 if [ "${1:-}" = "--check" ]; then
@@ -50,10 +53,18 @@ block_file="$tmp_dir/block.swift"
 generated_file="$tmp_dir/WSClient+Send.swift"
 receive_block_file="$tmp_dir/receive_block.swift"
 generated_receive_file="$tmp_dir/WSClient+Receive+DomainRouting.swift"
+web_exact_rules="$tmp_dir/web_exact.rules"
+web_prefix_rules="$tmp_dir/web_prefix.rules"
+web_contains_rules="$tmp_dir/web_contains.rules"
+web_block_file="$tmp_dir/web_block.js"
+generated_web_file="$tmp_dir/protocol-rules.js"
 
 > "$exact_rules"
 > "$prefix_rules"
 > "$contains_rules"
+> "$web_exact_rules"
+> "$web_prefix_rules"
+> "$web_contains_rules"
 
 trim() {
     echo "$1" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g'
@@ -80,9 +91,18 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
 
     case "$kind" in
-        exact) echo "        (\"$domain\", \"$value\")," >> "$exact_rules" ;;
-        prefix) echo "        (\"$domain\", \"$value\")," >> "$prefix_rules" ;;
-        contains) echo "        (\"$domain\", \"$value\")," >> "$contains_rules" ;;
+        exact)
+            echo "        (\"$domain\", \"$value\")," >> "$exact_rules"
+            echo "        [\"$domain\", \"$value\"]," >> "$web_exact_rules"
+            ;;
+        prefix)
+            echo "        (\"$domain\", \"$value\")," >> "$prefix_rules"
+            echo "        [\"$domain\", \"$value\"]," >> "$web_prefix_rules"
+            ;;
+        contains)
+            echo "        (\"$domain\", \"$value\")," >> "$contains_rules"
+            echo "        [\"$domain\", \"$value\"]," >> "$web_contains_rules"
+            ;;
         *)
             echo "[gen_swift_rules] ERROR: 不支持的 kind '$kind' (line $line_no)"
             exit 1
@@ -134,6 +154,22 @@ $(cat "$contains_rules")
     $RECEIVE_END_MARKER
 EOF
 
+cat > "$web_block_file" <<EOF
+  $WEB_BEGIN_MARKER
+  TF.protocolExactRules = [
+$(cat "$web_exact_rules")
+  ];
+
+  TF.protocolPrefixRules = [
+$(cat "$web_prefix_rules")
+  ];
+
+  TF.protocolContainsRules = [
+$(cat "$web_contains_rules")
+  ];
+  $WEB_END_MARKER
+EOF
+
 if ! rg -q "$BEGIN_MARKER" "$TARGET_FILE" || ! rg -q "$END_MARKER" "$TARGET_FILE"; then
     echo "[gen_swift_rules] ERROR: 未找到生成标记，请先在 $TARGET_FILE 中添加:"
     echo "  $BEGIN_MARKER"
@@ -144,6 +180,16 @@ if ! rg -q "$RECEIVE_BEGIN_MARKER" "$RECEIVE_TARGET_FILE" || ! rg -q "$RECEIVE_E
     echo "[gen_swift_rules] ERROR: 未找到生成标记，请先在 $RECEIVE_TARGET_FILE 中添加:"
     echo "  $RECEIVE_BEGIN_MARKER"
     echo "  $RECEIVE_END_MARKER"
+    exit 1
+fi
+if [ ! -f "$WEB_TARGET_FILE" ]; then
+    echo "[gen_swift_rules] ERROR: 未找到 $WEB_TARGET_FILE"
+    exit 1
+fi
+if ! rg -q "$WEB_BEGIN_MARKER" "$WEB_TARGET_FILE" || ! rg -q "$WEB_END_MARKER" "$WEB_TARGET_FILE"; then
+    echo "[gen_swift_rules] ERROR: 未找到生成标记，请先在 $WEB_TARGET_FILE 中添加:"
+    echo "  $WEB_BEGIN_MARKER"
+    echo "  $WEB_END_MARKER"
     exit 1
 fi
 
@@ -207,6 +253,36 @@ BEGIN {
 }
 ' "$RECEIVE_TARGET_FILE" > "$generated_receive_file"
 
+awk -v begin="$WEB_BEGIN_MARKER" -v end="$WEB_END_MARKER" -v block_file="$web_block_file" '
+BEGIN {
+    while ((getline line < block_file) > 0) {
+        block = block line ORS
+    }
+    close(block_file)
+}
+{
+    if (index($0, begin) > 0) {
+        print block
+        in_block = 1
+        next
+    }
+    if (in_block == 1) {
+        if (index($0, end) > 0) {
+            in_block = 0
+            skip_next_blank = 1
+        }
+        next
+    }
+    if (skip_next_blank == 1) {
+        skip_next_blank = 0
+        if ($0 == "") {
+            next
+        }
+    }
+    print $0
+}
+' "$WEB_TARGET_FILE" > "$generated_web_file"
+
 if [ "$MODE" = "check" ]; then
     if ! diff -u "$TARGET_FILE" "$generated_file" > "$tmp_dir/diff.out"; then
         echo "[gen_swift_rules] ERROR: Swift 规则未同步，请先执行："
@@ -220,12 +296,20 @@ if [ "$MODE" = "check" ]; then
         cat "$tmp_dir/diff.receive.out"
         exit 1
     fi
-    echo "[gen_swift_rules] OK: Swift action 规则与 schema 同步"
+    if ! diff -u "$WEB_TARGET_FILE" "$generated_web_file" > "$tmp_dir/diff.web.out"; then
+        echo "[gen_swift_rules] ERROR: Web 规则未同步，请先执行："
+        echo "  ./scripts/tools/gen_protocol_action_swift_rules.sh"
+        cat "$tmp_dir/diff.web.out"
+        exit 1
+    fi
+    echo "[gen_swift_rules] OK: Swift/Web action 规则与 schema 同步"
     exit 0
 fi
 
 cp "$generated_file" "$TARGET_FILE"
 cp "$generated_receive_file" "$RECEIVE_TARGET_FILE"
+cp "$generated_web_file" "$WEB_TARGET_FILE"
 echo "[gen_swift_rules] Generated blocks in:"
 echo "  - $TARGET_FILE"
 echo "  - $RECEIVE_TARGET_FILE"
+echo "  - $WEB_TARGET_FILE"

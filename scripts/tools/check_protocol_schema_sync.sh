@@ -9,8 +9,9 @@ cd "$PROJECT_ROOT"
 protocol_file="core/src/server/protocol/mod.rs"
 dispatch_file="core/src/server/ws/dispatch.rs"
 swift_send_file="app/TidyFlow/Networking/WSClient+Send.swift"
+web_rules_file="app/TidyFlow/Web/main/protocol-rules.js"
 
-for f in "$protocol_file" "$dispatch_file" "$swift_send_file"; do
+for f in "$protocol_file" "$dispatch_file" "$swift_send_file" "$web_rules_file"; do
     if [ ! -f "$f" ]; then
         echo "[check_schema_sync] ERROR: 未找到 $f"
         exit 1
@@ -51,7 +52,7 @@ swift_domains="$(
         /private (let|var) protocolExactRules/ {mode=1; next}
         /private (let|var) protocolPrefixRules/ {mode=1; next}
         /private (let|var) protocolContainsRules/ {mode=1; next}
-        mode == 1 && /\]/ {mode=0; next}
+        mode == 1 && /^[[:space:]]*];/ {mode=0; next}
         mode == 1 && /\(".*", ".*"\)/ {
             line=$0
             gsub(/^[[:space:]]*\("/, "", line)
@@ -61,8 +62,24 @@ swift_domains="$(
         }
     ' "$swift_send_file" | sort -u
 )"
+web_domains="$(
+    awk '
+        /TF\.protocolExactRules[[:space:]]*=[[:space:]]*\[/ {mode=1; next}
+        /TF\.protocolPrefixRules[[:space:]]*=[[:space:]]*\[/ {mode=1; next}
+        /TF\.protocolContainsRules[[:space:]]*=[[:space:]]*\[/ {mode=1; next}
+        mode == 1 && /^[[:space:]]*];/ {mode=0; next}
+        mode == 1 {
+            if (match($0, /"[^"]+", "[^"]+"/)) {
+                line = substr($0, RSTART, RLENGTH)
+                gsub(/^"/, "", line)
+                gsub(/", ".*$/, "", line)
+                print line
+            }
+        }
+    ' "$web_rules_file" | sort -u
+)"
 
-if [ -z "$schema_domains" ] || [ -z "$dispatch_domains" ] || [ -z "$swift_domains" ]; then
+if [ -z "$schema_domains" ] || [ -z "$dispatch_domains" ] || [ -z "$swift_domains" ] || [ -z "$web_domains" ]; then
     echo "[check_schema_sync] ERROR: 无法解析 domain 集合"
     exit 1
 fi
@@ -86,6 +103,18 @@ if [ "$schema_domains" != "$swift_domains_without_misc" ]; then
     echo "$swift_domains_without_misc"
     echo "--- app (full)"
     echo "$swift_domains"
+    exit 1
+fi
+
+web_domains_without_misc="$(printf "%s\n" "$web_domains" | sed '/^misc$/d')"
+if [ "$schema_domains" != "$web_domains_without_misc" ]; then
+    echo "[check_schema_sync] ERROR: schema domains 与 Web domainForAction 返回域不一致"
+    echo "--- schema"
+    echo "$schema_domains"
+    echo "--- web (without misc)"
+    echo "$web_domains_without_misc"
+    echo "--- web (full)"
+    echo "$web_domains"
     exit 1
 fi
 
