@@ -22,6 +22,7 @@ print_usage() {
   check
       运行架构护栏检查：
       - 协议一致性检查
+      - 协议 schema 同步检查
       - 版本一致性检查
 
   build dmg [--skip-core] [--sign] [--identity "..."]
@@ -51,6 +52,7 @@ case "$cmd" in
         ;;
     check)
         ./scripts/tools/check_protocol_consistency.sh
+        ./scripts/tools/check_protocol_schema_sync.sh
         ./scripts/tools/check_version_consistency.sh
         ;;
     build)
