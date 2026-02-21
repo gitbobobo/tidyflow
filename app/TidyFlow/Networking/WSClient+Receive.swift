@@ -35,7 +35,7 @@ extension WSClient {
         case .data(let data):
             parseAndDispatchBinary(data)
         case .string:
-            TFLog.ws.error("Received unexpected text message, v2 protocol requires binary")
+            TFLog.ws.error("Received unexpected text message, protocol v3 requires binary")
         @unknown default:
             break
         }
@@ -60,6 +60,15 @@ extension WSClient {
 
     /// 分发解析后的消息到对应的处理器
     private func dispatchMessage(_ json: [String: Any]) {
+        // v3 包络：先还原为旧的 type+payload 形态，复用现有分发逻辑
+        if let action = json["action"] as? String,
+           let payload = json["payload"] as? [String: Any] {
+            var legacy = payload
+            legacy["type"] = action
+            dispatchMessage(legacy)
+            return
+        }
+
         guard let type = json["type"] as? String else {
             TFLog.ws.error("Message missing 'type' field")
             return

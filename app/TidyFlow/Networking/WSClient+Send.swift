@@ -37,6 +37,76 @@ private struct SaveClientSettingsRequest: Encodable {
 
 extension WSClient {
 
+    private func domainForAction(_ action: String) -> String {
+        if action == "ping" || action == "hello" {
+            return "system"
+        }
+        if action.hasPrefix("term_")
+            || action == "spawn_terminal"
+            || action == "kill_terminal"
+            || action == "input"
+            || action == "resize"
+            || action == "output"
+            || action == "exit"
+            || action == "terminal_spawned"
+            || action == "terminal_killed"
+            || action == "remote_term_changed" {
+            return "terminal"
+        }
+        if action.hasPrefix("file_")
+            || action.hasPrefix("watch_")
+            || action == "clipboard_image_upload" {
+            return "file"
+        }
+        if action.hasPrefix("git_") || action == "cancel_ai_task" {
+            return "git"
+        }
+        if action.hasPrefix("project_")
+            || action.hasPrefix("workspace_")
+            || action.hasPrefix("list_")
+            || action.hasPrefix("select_")
+            || action.hasPrefix("import_")
+            || action.hasPrefix("create_")
+            || action.hasPrefix("remove_")
+            || action.hasPrefix("save_project_commands")
+            || action.hasPrefix("run_project_command")
+            || action.hasPrefix("cancel_project_command")
+            || action == "projects"
+            || action == "workspaces"
+            || action.hasPrefix("tasks_") {
+            return "project"
+        }
+        if action.hasPrefix("lsp_") {
+            return "lsp"
+        }
+        if action.contains("client_settings") {
+            return "settings"
+        }
+        if action.hasPrefix("ai_") {
+            return "ai"
+        }
+        if action.hasPrefix("evo_") {
+            return "evolution"
+        }
+        return "misc"
+    }
+
+    private func encodeEnvelope(dict: [String: Any], requestId: String?) throws -> Data {
+        guard let action = dict["type"] as? String, !action.isEmpty else {
+            throw NSError(domain: "WSClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Message missing type"])
+        }
+        var payload = dict
+        payload.removeValue(forKey: "type")
+        let envelope: [String: Any] = [
+            "request_id": requestId ?? UUID().uuidString,
+            "domain": domainForAction(action),
+            "action": action,
+            "payload": payload
+        ]
+        let codable = AnyCodable.from(envelope)
+        return try msgpackEncoder.encode(codable)
+    }
+
     // MARK: - Send Messages
 
     /// 发送二进制 MessagePack 数据
@@ -56,10 +126,9 @@ extension WSClient {
     }
 
     /// 发送消息，使用 MessagePack 编码
-    func send(_ dict: [String: Any]) {
+    func send(_ dict: [String: Any], requestId: String? = nil) {
         do {
-            let codable = AnyCodable.from(dict)
-            let data = try msgpackEncoder.encode(codable)
+            let data = try encodeEnvelope(dict: dict, requestId: requestId)
             sendBinary(data)
         } catch {
             TFLog.ws.error("MessagePack encode failed: \(error.localizedDescription, privacy: .public)")
@@ -70,13 +139,12 @@ extension WSClient {
     /// 使用类型化请求体发送消息（包含统一请求包络）。
     func sendTyped<Body: Encodable>(_ body: Body, requestId: String? = nil) {
         do {
-            let data: Data
-            if let requestId {
-                data = try msgpackEncoder.encode(WSRequestEnvelope(id: requestId, body))
-            } else {
-                data = try msgpackEncoder.encode(WSRequestEnvelope(body))
+            let jsonData = try JSONEncoder().encode(body)
+            let jsonObject = try JSONSerialization.jsonObject(with: jsonData)
+            guard let dict = jsonObject as? [String: Any] else {
+                throw NSError(domain: "WSClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Typed body is not object"])
             }
-            sendBinary(data)
+            send(dict, requestId: requestId)
         } catch {
             TFLog.ws.error("MessagePack typed encode failed: \(error.localizedDescription, privacy: .public)")
             onError?("Failed to encode typed message: \(error.localizedDescription)")

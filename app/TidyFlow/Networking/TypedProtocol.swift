@@ -1,42 +1,6 @@
 import Foundation
 import MessagePacker
 
-// MARK: - 类型化协议基础设施
-// 替代手动字典构建，提供编译期类型安全
-
-/// 请求包络 — 支持可选 request_id 关联响应
-struct WSRequestEnvelope<Body: Encodable>: Encodable {
-    /// 客户端 request ID（可选），服务端在响应中回显
-    let id: String?
-    /// 消息体
-    let body: Body
-
-    /// 不带 id 的便捷构造
-    init(_ body: Body) {
-        self.id = nil
-        self.body = body
-    }
-
-    /// 带 id 的构造
-    init(id: String, _ body: Body) {
-        self.id = id
-        self.body = body
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        if let id = id {
-            try container.encode(id, forKey: .id)
-        }
-        // flatten body
-        try body.encode(to: encoder)
-    }
-}
-
 // MARK: - 消息路由协议
 
 /// 领域消息处理协议 — 替代 30+ 回调闭包
