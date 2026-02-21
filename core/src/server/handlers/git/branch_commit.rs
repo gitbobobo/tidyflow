@@ -16,7 +16,7 @@ use crate::server::ws::send_message;
 /// AI 代理执行超时（10 分钟）
 const AI_AGENT_TIMEOUT: Duration = Duration::from_secs(600);
 
-pub async fn try_handle_git_message(
+pub async fn handle_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,

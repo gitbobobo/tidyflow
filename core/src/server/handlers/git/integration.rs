@@ -6,7 +6,7 @@ use crate::server::protocol::ClientMessage;
 mod handlers;
 mod integration_ai_merge;
 
-pub async fn try_handle_git_message(
+pub async fn handle_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,

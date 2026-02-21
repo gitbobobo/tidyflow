@@ -5,7 +5,7 @@ use crate::server::git;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
-pub async fn try_handle_git_message(
+pub async fn handle_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
