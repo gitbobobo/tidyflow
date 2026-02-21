@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# TidyFlow 统一脚本入口
+# 目标：把日常开发、校验与发布入口收敛到单命令，降低脚本分散带来的维护成本。
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+print_usage() {
+    cat <<'EOF'
+用法:
+  ./scripts/tidyflow <command> [args...]
+
+命令:
+  dev
+      本地联调（等价于 ./scripts/run-app.sh）
+
+  test
+      运行 Core 测试（cargo test --manifest-path core/Cargo.toml）
+
+  check
+      运行架构护栏检查：
+      - 协议一致性检查
+      - 版本一致性检查
+
+  build dmg [--skip-core] [--sign] [--identity "..."]
+      构建 DMG（透传到 ./scripts/build_dmg.sh）
+
+  notarize [--profile <profile>] [--dmg <path>]
+      公证 DMG（透传到 ./scripts/notarize.sh）
+
+  release [--dry-run|--upload-release ...]
+      本地发布链路（透传到 ./scripts/release_local.sh）
+EOF
+}
+
+cmd="${1:-}"
+if [ -z "$cmd" ]; then
+    print_usage
+    exit 1
+fi
+shift || true
+
+case "$cmd" in
+    dev)
+        exec ./scripts/run-app.sh "$@"
+        ;;
+    test)
+        exec cargo test --manifest-path core/Cargo.toml "$@"
+        ;;
+    check)
+        ./scripts/tools/check_protocol_consistency.sh
+        ./scripts/tools/check_version_consistency.sh
+        ;;
+    build)
+        sub="${1:-}"
+        if [ "$sub" != "dmg" ]; then
+            echo "[tidyflow] 仅支持: build dmg"
+            exit 1
+        fi
+        shift || true
+        exec ./scripts/build_dmg.sh "$@"
+        ;;
+    notarize)
+        exec ./scripts/notarize.sh "$@"
+        ;;
+    release)
+        exec ./scripts/release_local.sh "$@"
+        ;;
+    help|-h|--help)
+        print_usage
+        ;;
+    *)
+        echo "[tidyflow] 未知命令: $cmd"
+        print_usage
+        exit 1
+        ;;
+esac
