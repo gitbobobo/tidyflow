@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 协议 action 规则同步检查
+#
+# 现阶段 Core/App 规则均由生成器产出，因此这里做两类检查：
+# 1) 生成器一致性（--check）
+# 2) 关键接线点仍然存在（避免生成器通过但调用方脱节）
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_ROOT"
+
+schema_file="schema/protocol/v3/action_rules.csv"
+core_file="core/src/server/protocol/action_table.rs"
+dispatch_file="core/src/server/ws/dispatch.rs"
+app_file="app/TidyFlow/Networking/WSClient+Send.swift"
+
+for f in "$schema_file" "$core_file" "$dispatch_file" "$app_file"; do
+    if [ ! -f "$f" ]; then
+        echo "[check_action_sync] ERROR: 未找到 $f"
+        exit 1
+    fi
+done
+
+# 1) 规则生成一致性
+./scripts/tools/gen_protocol_action_table.sh --check >/dev/null
+./scripts/tools/gen_protocol_action_swift_rules.sh --check >/dev/null
+
+# 2) 关键接线点检查
+if ! rg -q 'matches_action_domain\(domain, action\)' "$dispatch_file"; then
+    echo "[check_action_sync] ERROR: Core dispatch 未使用协议规则表匹配函数"
+    exit 1
+fi
+if ! rg -q 'BEGIN AUTO-GENERATED: protocol_action_rules' "$app_file"; then
+    echo "[check_action_sync] ERROR: App 未包含自动生成规则标记块"
+    exit 1
+fi
+if ! rg -q 'protocolExactRules|protocolPrefixRules|protocolContainsRules' "$app_file"; then
+    echo "[check_action_sync] ERROR: App 未接入生成规则常量"
+    exit 1
+fi
+
+echo "[check_action_sync] OK: 生成器与接线点检查通过"
