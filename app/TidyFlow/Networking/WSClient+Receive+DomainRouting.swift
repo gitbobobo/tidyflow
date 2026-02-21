@@ -99,7 +99,7 @@ extension WSClient {
             return true
         case "error":
             let errorMsg = json["message"] as? String ?? "Unknown error"
-            onError?(errorMsg)
+            emitClientError(errorMsg)
             return true
         default:
             TFLog.ws.warning(

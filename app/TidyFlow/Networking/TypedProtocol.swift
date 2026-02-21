@@ -173,6 +173,30 @@ extension AIMessageHandler {
     func handleAISlashCommands(_ ev: AISlashCommandsResult) {}
 }
 
+protocol EvolutionMessageHandler: AnyObject {
+    func handleEvolutionPulse()
+    func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2)
+    func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2)
+    func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2)
+    func handleEvolutionError(_ message: String)
+}
+
+extension EvolutionMessageHandler {
+    func handleEvolutionPulse() {}
+    func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {}
+    func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) {}
+    func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {}
+    func handleEvolutionError(_ message: String) {}
+}
+
+protocol ErrorMessageHandler: AnyObject {
+    func handleClientError(_ message: String)
+}
+
+extension ErrorMessageHandler {
+    func handleClientError(_ message: String) {}
+}
+
 // MARK: - 类型安全的请求构建器
 
 /// Git 领域请求

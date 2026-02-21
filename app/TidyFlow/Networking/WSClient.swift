@@ -54,6 +54,8 @@ class WSClient: NSObject, ObservableObject {
     weak var terminalMessageHandler: TerminalMessageHandler?
     weak var lspMessageHandler: LspMessageHandler?
     weak var aiMessageHandler: AIMessageHandler?
+    weak var evolutionMessageHandler: EvolutionMessageHandler?
+    weak var errorMessageHandler: ErrorMessageHandler?
 
     /// Get current URL string for debug display
     var currentURLString: String? {
@@ -154,6 +156,14 @@ class WSClient: NSObject, ObservableObject {
     /// v5 包络元信息流（用于上层统一路由/观测）
     var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
 
+    func emitClientError(_ message: String) {
+        if let handler = errorMessageHandler {
+            handler.handleClientError(message)
+        } else {
+            onError?(message)
+        }
+    }
+
     // MARK: - 高频消息合并队列
     /// 合并窗口时长（秒），窗口内同 key 的消息只保留最后一条
     private let coalesceInterval: TimeInterval = 0.05 // 50ms
@@ -211,7 +221,7 @@ class WSClient: NSObject, ObservableObject {
         guard webSocketTask == nil, !isConnecting else { return }
 
         guard let url = currentURL else {
-            onError?("No WebSocket URL configured")
+            emitClientError("No WebSocket URL configured")
             return
         }
 
@@ -221,7 +231,7 @@ class WSClient: NSObject, ObservableObject {
         TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
         guard let task = urlSession?.webSocketTask(with: url) else {
             isConnecting = false
-            onError?("Failed to create WebSocket task")
+            emitClientError("Failed to create WebSocket task")
             return
         }
         webSocketTask = task

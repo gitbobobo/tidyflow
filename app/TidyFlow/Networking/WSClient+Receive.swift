@@ -51,7 +51,7 @@ extension WSClient {
                     self.isConnecting = false
                     self.webSocketTask = nil
                     if self.isConnected {
-                        self.onError?("Receive error: \(error.localizedDescription)")
+                        self.emitClientError("Receive error: \(error.localizedDescription)")
                         self.updateConnectionState(false)
                     }
                 }

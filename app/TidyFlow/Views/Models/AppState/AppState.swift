@@ -107,6 +107,8 @@ class AppState: ObservableObject {
     var wsTerminalMessageHandler: TerminalMessageHandler?
     var wsLspMessageHandler: LspMessageHandler?
     var wsAIMessageHandler: AIMessageHandler?
+    var wsEvolutionMessageHandler: EvolutionMessageHandler?
+    var wsErrorMessageHandler: ErrorMessageHandler?
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]

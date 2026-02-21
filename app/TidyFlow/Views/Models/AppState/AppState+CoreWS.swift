@@ -183,6 +183,32 @@ private final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     func handleAISlashCommands(_ ev: AISlashCommandsResult) { appState?.handleAISlashCommands(ev) }
 }
 
+private final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleEvolutionPulse() { appState?.handleEvolutionPulse() }
+    func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) { appState?.handleEvolutionSnapshot(snapshot) }
+    func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) { appState?.handleEvolutionStageChatOpened(ev) }
+    func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { appState?.handleEvolutionAgentProfile(ev) }
+    func handleEvolutionError(_ message: String) { appState?.handleEvolutionError(message) }
+}
+
+private final class AppStateErrorMessageHandlerAdapter: ErrorMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleClientError(_ message: String) {
+        appState?.handleClientErrorMessage(message)
+    }
+}
+
 extension AppState {
     /// 当前会话是否允许生成并使用移动端连接信息（Core 运行即可）
     var remoteAccessReady: Bool {
@@ -473,6 +499,8 @@ extension AppState {
         let terminalHandler = AppStateTerminalMessageHandlerAdapter(appState: self)
         let lspHandler = AppStateLspMessageHandlerAdapter(appState: self)
         let aiHandler = AppStateAIMessageHandlerAdapter(appState: self)
+        let evolutionHandler = AppStateEvolutionMessageHandlerAdapter(appState: self)
+        let errorHandler = AppStateErrorMessageHandlerAdapter(appState: self)
         wsGitMessageHandler = gitHandler
         wsProjectMessageHandler = projectHandler
         wsFileMessageHandler = fileHandler
@@ -480,6 +508,8 @@ extension AppState {
         wsTerminalMessageHandler = terminalHandler
         wsLspMessageHandler = lspHandler
         wsAIMessageHandler = aiHandler
+        wsEvolutionMessageHandler = evolutionHandler
+        wsErrorMessageHandler = errorHandler
         wsClient.gitMessageHandler = gitHandler
         wsClient.projectMessageHandler = projectHandler
         wsClient.fileMessageHandler = fileHandler
@@ -487,109 +517,8 @@ extension AppState {
         wsClient.terminalMessageHandler = terminalHandler
         wsClient.lspMessageHandler = lspHandler
         wsClient.aiMessageHandler = aiHandler
-
-        // Evolution
-        wsClient.onEvoPulse = { [weak self] in
-            self?.wsClient.requestEvoSnapshot()
-        }
-
-        wsClient.onEvoSnapshot = { [weak self] snapshot in
-            guard let self else { return }
-            self.evolutionScheduler = snapshot.scheduler
-            self.evolutionWorkspaceItems = snapshot.workspaceItems.sorted {
-                ($0.project, $0.workspace) < ($1.project, $1.workspace)
-            }
-        }
-
-        wsClient.onEvoAgentProfile = { [weak self] ev in
-            guard let self else { return }
-            let workspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            let key = self.globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
-            if ev.stageProfiles.isEmpty {
-                TFLog.app.warning(
-                    "Evolution profile ignored: empty stage_profiles, project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public)"
-                )
-                self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
-                return
-            }
-            let normalizedProfiles = Self.normalizedEvolutionProfiles(ev.stageProfiles)
-            self.evolutionStageProfilesByWorkspace[key] = normalizedProfiles
-            let directionModel = normalizedProfiles
-                .first(where: { $0.stage == "direction" })?
-                .model
-                .map { "\($0.providerID)/\($0.modelID)" } ?? "default"
-            TFLog.app.info(
-                "Evolution profile applied: project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public), stages=\(normalizedProfiles.count), direction_model=\(directionModel, privacy: .public)"
-            )
-            self.finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
-        }
-
-        wsClient.onEvoStageChatOpened = { [weak self] ev in
-            guard let self else { return }
-            guard let aiTool = ev.aiTool else {
-                self.evolutionReplayLoading = false
-                self.evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
-                return
-            }
-            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            self.evolutionReplayRequest = nil
-            self.evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
-            self.evolutionReplayError = nil
-            self.evolutionReplayLoading = false
-
-            let workspaceKey = self.globalWorkspaceKey(projectName: ev.project, workspaceName: normalizedWorkspace)
-            self.showWorkspaceSpecialPage(workspaceKey: workspaceKey, page: .aiChat)
-
-            let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
-            let session = AISessionInfo(
-                projectName: ev.project,
-                workspaceName: normalizedWorkspace,
-                aiTool: aiTool,
-                id: ev.sessionID,
-                title: "\(ev.stage) · \(ev.cycleID)",
-                updatedAt: updatedAt
-            )
-            self.upsertAISession(session, for: aiTool)
-
-            if self.aiChatTool != aiTool {
-                self.aiChatTool = aiTool
-            }
-            let targetStore = self.aiStore(for: aiTool)
-            targetStore.setAbortPendingSessionId(nil)
-            targetStore.setCurrentSessionId(ev.sessionID)
-            targetStore.clearMessages()
-
-            self.wsClient.requestAISessionStatus(
-                projectName: ev.project,
-                workspaceName: normalizedWorkspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID
-            )
-            self.wsClient.requestAISessionMessages(
-                projectName: ev.project,
-                workspaceName: normalizedWorkspace,
-                aiTool: aiTool,
-                sessionId: ev.sessionID,
-                limit: 400
-            )
-        }
-
-        wsClient.onEvoError = { [weak self] message in
-            self?.evolutionReplayLoading = false
-            self?.evolutionReplayError = message
-        }
-
-        wsClient.onError = { [weak self] errorMsg in
-            // Update cache with error if we were loading
-            if let ws = self?.selectedWorkspaceKey {
-                var cache = self?.fileIndexCache[ws] ?? FileIndexCache.empty()
-                if cache.isLoading {
-                    cache.isLoading = false
-                    cache.error = errorMsg
-                    self?.fileIndexCache[ws] = cache
-                }
-            }
-        }
+        wsClient.evolutionMessageHandler = evolutionHandler
+        wsClient.errorMessageHandler = errorHandler
 
         // Connect to the dynamic port
         wsClient.connect(port: port)
@@ -877,6 +806,104 @@ extension AppState {
             AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
         }
         setAISlashCommands(commands, for: ev.aiTool)
+    }
+
+    func handleEvolutionPulse() {
+        wsClient.requestEvoSnapshot()
+    }
+
+    func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {
+        evolutionScheduler = snapshot.scheduler
+        evolutionWorkspaceItems = snapshot.workspaceItems.sorted {
+            ($0.project, $0.workspace) < ($1.project, $1.workspace)
+        }
+    }
+
+    func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {
+        let workspace = normalizeEvolutionWorkspaceName(ev.workspace)
+        let key = globalWorkspaceKey(projectName: ev.project, workspaceName: workspace)
+        if ev.stageProfiles.isEmpty {
+            TFLog.app.warning(
+                "Evolution profile ignored: empty stage_profiles, project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public)"
+            )
+            finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
+            return
+        }
+        let normalizedProfiles = Self.normalizedEvolutionProfiles(ev.stageProfiles)
+        evolutionStageProfilesByWorkspace[key] = normalizedProfiles
+        let directionModel = normalizedProfiles
+            .first(where: { $0.stage == "direction" })?
+            .model
+            .map { "\($0.providerID)/\($0.modelID)" } ?? "default"
+        TFLog.app.info(
+            "Evolution profile applied: project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public), stages=\(normalizedProfiles.count), direction_model=\(directionModel, privacy: .public)"
+        )
+        finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
+    }
+
+    func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) {
+        guard let aiTool = ev.aiTool else {
+            evolutionReplayLoading = false
+            evolutionReplayError = "不支持的 AI 工具：\(ev.aiToolRaw)"
+            return
+        }
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(ev.workspace)
+        evolutionReplayRequest = nil
+        evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
+        evolutionReplayError = nil
+        evolutionReplayLoading = false
+
+        let workspaceKey = globalWorkspaceKey(projectName: ev.project, workspaceName: normalizedWorkspace)
+        showWorkspaceSpecialPage(workspaceKey: workspaceKey, page: .aiChat)
+
+        let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
+        let session = AISessionInfo(
+            projectName: ev.project,
+            workspaceName: normalizedWorkspace,
+            aiTool: aiTool,
+            id: ev.sessionID,
+            title: "\(ev.stage) · \(ev.cycleID)",
+            updatedAt: updatedAt
+        )
+        upsertAISession(session, for: aiTool)
+
+        if aiChatTool != aiTool {
+            aiChatTool = aiTool
+        }
+        let targetStore = aiStore(for: aiTool)
+        targetStore.setAbortPendingSessionId(nil)
+        targetStore.setCurrentSessionId(ev.sessionID)
+        targetStore.clearMessages()
+
+        wsClient.requestAISessionStatus(
+            projectName: ev.project,
+            workspaceName: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: ev.sessionID
+        )
+        wsClient.requestAISessionMessages(
+            projectName: ev.project,
+            workspaceName: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: ev.sessionID,
+            limit: 400
+        )
+    }
+
+    func handleEvolutionError(_ message: String) {
+        evolutionReplayLoading = false
+        evolutionReplayError = message
+    }
+
+    func handleClientErrorMessage(_ errorMsg: String) {
+        if let ws = selectedWorkspaceKey {
+            var cache = fileIndexCache[ws] ?? FileIndexCache.empty()
+            if cache.isLoading {
+                cache.isLoading = false
+                cache.error = errorMsg
+                fileIndexCache[ws] = cache
+            }
+        }
     }
 
     // MARK: - Evolution

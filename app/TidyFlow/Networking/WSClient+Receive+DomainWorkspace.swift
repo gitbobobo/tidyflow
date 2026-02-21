@@ -14,7 +14,7 @@ extension WSClient {
                 }
             } else {
                 TFLog.ws.error("Failed to parse ProjectImportedResult")
-                onError?("Failed to parse project import response")
+                emitClientError("Failed to parse project import response")
             }
             return true
         case "workspace_created":
@@ -178,21 +178,37 @@ extension WSClient {
         case "evo_scheduler_updated", "evo_scheduler_status",
              "evo_workspace_started", "evo_workspace_stopped", "evo_workspace_resumed",
              "evo_stage_changed", "evo_cycle_updated", "evo_judge_result":
-            onEvoPulse?()
+            if let handler = evolutionMessageHandler {
+                handler.handleEvolutionPulse()
+            } else {
+                onEvoPulse?()
+            }
             return true
         case "evo_snapshot":
             if let ev = EvolutionSnapshotV2.from(json: json) {
-                onEvoSnapshot?(ev)
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionSnapshot(ev)
+                } else {
+                    onEvoSnapshot?(ev)
+                }
             }
             return true
         case "evo_stage_chat_opened":
             if let ev = EvolutionStageChatOpenedV2.from(json: json) {
-                onEvoStageChatOpened?(ev)
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionStageChatOpened(ev)
+                } else {
+                    onEvoStageChatOpened?(ev)
+                }
             }
             return true
         case "evo_agent_profile":
             if let ev = EvolutionAgentProfileV2.from(json: json) {
-                onEvoAgentProfile?(ev)
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionAgentProfile(ev)
+                } else {
+                    onEvoAgentProfile?(ev)
+                }
             } else {
                 let project = json["project"] as? String ?? ""
                 let workspace = json["workspace"] as? String ?? ""
@@ -204,7 +220,11 @@ extension WSClient {
             return true
         case "evo_error":
             let message = json["message"] as? String ?? "evolution error"
-            onEvoError?(message)
+            if let handler = evolutionMessageHandler {
+                handler.handleEvolutionError(message)
+            } else {
+                onEvoError?(message)
+            }
             return true
         default:
             return false

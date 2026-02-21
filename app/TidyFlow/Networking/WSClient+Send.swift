@@ -116,14 +116,14 @@ extension WSClient {
     func sendBinary(_ data: Data) {
         guard isConnected else {
             TFLog.ws.warning("Cannot send - not connected")
-            onError?("Not connected")
+            emitClientError("Not connected")
             return
         }
 
         webSocketTask?.send(.data(data)) { [weak self] error in
             if let error = error {
                 TFLog.ws.error("Send failed: \(error.localizedDescription, privacy: .public)")
-                self?.onError?("Send failed: \(error.localizedDescription)")
+                self?.emitClientError("Send failed: \(error.localizedDescription)")
             }
         }
     }
@@ -135,7 +135,7 @@ extension WSClient {
             sendBinary(data)
         } catch {
             TFLog.ws.error("MessagePack encode failed: \(error.localizedDescription, privacy: .public)")
-            onError?("Failed to encode message: \(error.localizedDescription)")
+            emitClientError("Failed to encode message: \(error.localizedDescription)")
         }
     }
 
@@ -150,7 +150,7 @@ extension WSClient {
             send(dict, requestId: requestId)
         } catch {
             TFLog.ws.error("MessagePack typed encode failed: \(error.localizedDescription, privacy: .public)")
-            onError?("Failed to encode typed message: \(error.localizedDescription)")
+            emitClientError("Failed to encode typed message: \(error.localizedDescription)")
         }
     }
 
