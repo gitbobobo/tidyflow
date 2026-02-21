@@ -44,9 +44,9 @@ class AppState: ObservableObject {
 
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false
-    /// 最近一次收到的 WS v4 包络序号（用于调试）
+    /// 最近一次收到的 WS v5 包络序号（用于调试）
     @Published var wsLastEnvelopeSeq: UInt64 = 0
-    /// 最近一次收到的 WS v4 包络摘要（domain/action/kind）
+    /// 最近一次收到的 WS v5 包络摘要（domain/action/kind）
     @Published var wsLastEnvelopeSummary: String = ""
 
     // 远程终端追踪

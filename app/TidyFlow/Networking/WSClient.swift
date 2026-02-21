@@ -16,7 +16,7 @@ struct ServerEnvelopeMeta {
 }
 
 /// Minimal WebSocket client for Core communication
-/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v4 包络）
+/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v5 包络）
 class WSClient: NSObject, ObservableObject {
     struct CoalescedEnvelope {
         let domain: String
@@ -43,7 +43,7 @@ class WSClient: NSObject, ObservableObject {
     private(set) var wsAuthToken: String?
     /// 重连防抖任务，避免短时间重复 reconnect 打断新连接
     private var pendingReconnectWorkItem: DispatchWorkItem?
-    /// 最近一次已处理的服务端 seq（v4 包络），用于丢弃乱序/重复消息
+    /// 最近一次已处理的服务端 seq（v5 包络），用于丢弃乱序/重复消息
     var lastServerSeq: UInt64 = 0
 
     /// Get current URL string for debug display
@@ -142,7 +142,7 @@ class WSClient: NSObject, ObservableObject {
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
-    /// v4 包络元信息流（用于上层统一路由/观测）
+    /// v5 包络元信息流（用于上层统一路由/观测）
     var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
 
     // MARK: - 高频消息合并队列
