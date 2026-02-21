@@ -18,6 +18,9 @@ SCHEMA_FILE="schema/protocol/v${PROTOCOL_VERSION}/action_rules.csv"
 TARGET_FILE="app/TidyFlow/Networking/WSClient+Send.swift"
 BEGIN_MARKER="// BEGIN AUTO-GENERATED: protocol_action_rules"
 END_MARKER="// END AUTO-GENERATED: protocol_action_rules"
+RECEIVE_TARGET_FILE="app/TidyFlow/Networking/WSClient+Receive+DomainRouting.swift"
+RECEIVE_BEGIN_MARKER="// BEGIN AUTO-GENERATED: protocol_receive_action_rules"
+RECEIVE_END_MARKER="// END AUTO-GENERATED: protocol_receive_action_rules"
 
 MODE="write"
 if [ "${1:-}" = "--check" ]; then
@@ -32,6 +35,10 @@ if [ ! -f "$TARGET_FILE" ]; then
     echo "[gen_swift_rules] ERROR: 未找到 $TARGET_FILE"
     exit 1
 fi
+if [ ! -f "$RECEIVE_TARGET_FILE" ]; then
+    echo "[gen_swift_rules] ERROR: 未找到 $RECEIVE_TARGET_FILE"
+    exit 1
+fi
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -41,6 +48,8 @@ prefix_rules="$tmp_dir/prefix.rules"
 contains_rules="$tmp_dir/contains.rules"
 block_file="$tmp_dir/block.swift"
 generated_file="$tmp_dir/WSClient+Send.swift"
+receive_block_file="$tmp_dir/receive_block.swift"
+generated_receive_file="$tmp_dir/WSClient+Receive+DomainRouting.swift"
 
 > "$exact_rules"
 > "$prefix_rules"
@@ -103,10 +112,38 @@ $(cat "$contains_rules")
     $END_MARKER
 EOF
 
+cat > "$receive_block_file" <<EOF
+    $RECEIVE_BEGIN_MARKER
+    private var receiveProtocolExactRules: [(domain: String, action: String)] {
+        [
+$(cat "$exact_rules")
+        ]
+    }
+
+    private var receiveProtocolPrefixRules: [(domain: String, prefix: String)] {
+        [
+$(cat "$prefix_rules")
+        ]
+    }
+
+    private var receiveProtocolContainsRules: [(domain: String, needle: String)] {
+        [
+$(cat "$contains_rules")
+        ]
+    }
+    $RECEIVE_END_MARKER
+EOF
+
 if ! rg -q "$BEGIN_MARKER" "$TARGET_FILE" || ! rg -q "$END_MARKER" "$TARGET_FILE"; then
     echo "[gen_swift_rules] ERROR: 未找到生成标记，请先在 $TARGET_FILE 中添加:"
     echo "  $BEGIN_MARKER"
     echo "  $END_MARKER"
+    exit 1
+fi
+if ! rg -q "$RECEIVE_BEGIN_MARKER" "$RECEIVE_TARGET_FILE" || ! rg -q "$RECEIVE_END_MARKER" "$RECEIVE_TARGET_FILE"; then
+    echo "[gen_swift_rules] ERROR: 未找到生成标记，请先在 $RECEIVE_TARGET_FILE 中添加:"
+    echo "  $RECEIVE_BEGIN_MARKER"
+    echo "  $RECEIVE_END_MARKER"
     exit 1
 fi
 
@@ -140,6 +177,36 @@ BEGIN {
 }
 ' "$TARGET_FILE" > "$generated_file"
 
+awk -v begin="$RECEIVE_BEGIN_MARKER" -v end="$RECEIVE_END_MARKER" -v block_file="$receive_block_file" '
+BEGIN {
+    while ((getline line < block_file) > 0) {
+        block = block line ORS
+    }
+    close(block_file)
+}
+{
+    if (index($0, begin) > 0) {
+        print block
+        in_block = 1
+        next
+    }
+    if (in_block == 1) {
+        if (index($0, end) > 0) {
+            in_block = 0
+            skip_next_blank = 1
+        }
+        next
+    }
+    if (skip_next_blank == 1) {
+        skip_next_blank = 0
+        if ($0 == "") {
+            next
+        }
+    }
+    print $0
+}
+' "$RECEIVE_TARGET_FILE" > "$generated_receive_file"
+
 if [ "$MODE" = "check" ]; then
     if ! diff -u "$TARGET_FILE" "$generated_file" > "$tmp_dir/diff.out"; then
         echo "[gen_swift_rules] ERROR: Swift 规则未同步，请先执行："
@@ -147,9 +214,18 @@ if [ "$MODE" = "check" ]; then
         cat "$tmp_dir/diff.out"
         exit 1
     fi
+    if ! diff -u "$RECEIVE_TARGET_FILE" "$generated_receive_file" > "$tmp_dir/diff.receive.out"; then
+        echo "[gen_swift_rules] ERROR: Swift 接收 catalog 未同步，请先执行："
+        echo "  ./scripts/tools/gen_protocol_action_swift_rules.sh"
+        cat "$tmp_dir/diff.receive.out"
+        exit 1
+    fi
     echo "[gen_swift_rules] OK: Swift action 规则与 schema 同步"
     exit 0
 fi
 
 cp "$generated_file" "$TARGET_FILE"
-echo "[gen_swift_rules] Generated block in: $TARGET_FILE"
+cp "$generated_receive_file" "$RECEIVE_TARGET_FILE"
+echo "[gen_swift_rules] Generated blocks in:"
+echo "  - $TARGET_FILE"
+echo "  - $RECEIVE_TARGET_FILE"

@@ -18,8 +18,9 @@ schema_file="schema/protocol/v${protocol_version}/action_rules.csv"
 core_file="core/src/server/protocol/action_table.rs"
 dispatch_file="core/src/server/ws/dispatch.rs"
 app_file="app/TidyFlow/Networking/WSClient+Send.swift"
+app_receive_file="app/TidyFlow/Networking/WSClient+Receive+DomainRouting.swift"
 
-for f in "$schema_file" "$core_file" "$dispatch_file" "$app_file"; do
+for f in "$schema_file" "$core_file" "$dispatch_file" "$app_file" "$app_receive_file"; do
     if [ ! -f "$f" ]; then
         echo "[check_action_sync] ERROR: 未找到 $f"
         exit 1
@@ -41,6 +42,14 @@ if ! rg -q 'BEGIN AUTO-GENERATED: protocol_action_rules' "$app_file"; then
 fi
 if ! rg -q 'protocolExactRules|protocolPrefixRules|protocolContainsRules' "$app_file"; then
     echo "[check_action_sync] ERROR: App 未接入生成规则常量"
+    exit 1
+fi
+if ! rg -q 'BEGIN AUTO-GENERATED: protocol_receive_action_rules' "$app_receive_file"; then
+    echo "[check_action_sync] ERROR: App 接收路由未包含自动生成规则标记块"
+    exit 1
+fi
+if ! rg -q 'receiveProtocolExactRules|receiveProtocolPrefixRules|receiveProtocolContainsRules' "$app_receive_file"; then
+    echo "[check_action_sync] ERROR: App 接收路由未接入生成规则常量"
     exit 1
 fi
 
