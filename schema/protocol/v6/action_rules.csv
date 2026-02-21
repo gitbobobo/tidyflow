@@ -1,0 +1,28 @@
+# kind,domain,value
+# kind: exact | prefix | contains
+exact,system,ping
+prefix,terminal,term_
+exact,terminal,spawn_terminal
+exact,terminal,kill_terminal
+exact,terminal,input
+exact,terminal,resize
+prefix,file,file_
+prefix,file,watch_
+exact,file,clipboard_image_upload
+prefix,git,git_
+exact,git,cancel_ai_task
+prefix,project,list_
+prefix,project,select_
+prefix,project,import_
+prefix,project,create_
+prefix,project,remove_
+prefix,project,project_
+prefix,project,workspace_
+prefix,project,save_project_commands
+prefix,project,run_project_command
+prefix,project,cancel_project_command
+prefix,lsp,lsp_
+contains,settings,client_settings
+prefix,log,log_
+prefix,ai,ai_
+prefix,evolution,evo_

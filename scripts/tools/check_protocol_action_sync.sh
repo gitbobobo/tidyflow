@@ -17,11 +17,12 @@ protocol_version="$(
 schema_file="schema/protocol/v${protocol_version}/action_rules.csv"
 core_file="core/src/server/protocol/action_table.rs"
 dispatch_file="core/src/server/ws/dispatch.rs"
+domain_table_file="core/src/server/protocol/domain_table.rs"
 app_file="app/TidyFlow/Networking/WSClient+Send.swift"
 app_receive_file="app/TidyFlow/Networking/WSClient+Receive+DomainRouting.swift"
 web_rules_file="app/TidyFlow/Web/main/protocol-rules.js"
 
-for f in "$schema_file" "$core_file" "$dispatch_file" "$app_file" "$app_receive_file" "$web_rules_file"; do
+for f in "$schema_file" "$core_file" "$dispatch_file" "$domain_table_file" "$app_file" "$app_receive_file" "$web_rules_file"; do
     if [ ! -f "$f" ]; then
         echo "[check_action_sync] ERROR: 未找到 $f"
         exit 1
@@ -31,10 +32,15 @@ done
 # 1) 规则生成一致性
 ./scripts/tools/gen_protocol_action_table.sh --check >/dev/null
 ./scripts/tools/gen_protocol_action_swift_rules.sh --check >/dev/null
+./scripts/tools/gen_protocol_domain_table.sh --check >/dev/null
 
 # 2) 关键接线点检查
 if ! rg -q 'matches_action_domain\(domain, action\)' "$dispatch_file"; then
     echo "[check_action_sync] ERROR: Core dispatch 未使用协议规则表匹配函数"
+    exit 1
+fi
+if ! rg -q 'parse_domain_route\(&envelope\.domain\)' "$dispatch_file"; then
+    echo "[check_action_sync] ERROR: Core dispatch 未接入 domain_table 解析"
     exit 1
 fi
 if ! rg -q 'BEGIN AUTO-GENERATED: protocol_action_rules' "$app_file"; then

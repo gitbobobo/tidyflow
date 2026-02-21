@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 // 按领域拆分的协议类型子模块（组织性拆分，保持类型引用路径不变）
 pub mod action_table;
+pub mod domain_table;
 pub mod ai;
 pub mod file;
 pub mod git;
@@ -12,16 +13,16 @@ pub mod terminal;
 #[cfg(test)]
 mod action_table_test;
 
-/// Protocol version: 5 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 5;
+/// Protocol version: 6 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 6;
 
 // ============================================================================
-// v5 包络
+// v6 包络
 // ============================================================================
 
-/// v5 客户端请求包络
+/// v6 客户端请求包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientEnvelopeV5 {
+pub struct ClientEnvelopeV6 {
     pub request_id: String,
     pub domain: String,
     pub action: String,
@@ -32,9 +33,9 @@ pub struct ClientEnvelopeV5 {
     pub client_ts: u64,
 }
 
-/// v5 服务端响应包络
+/// v6 服务端响应包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerEnvelopeV5 {
+pub struct ServerEnvelopeV6 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     /// 服务端单调序号（全局）

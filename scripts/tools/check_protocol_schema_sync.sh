@@ -7,11 +7,11 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 protocol_file="core/src/server/protocol/mod.rs"
-dispatch_file="core/src/server/ws/dispatch.rs"
+domain_table_file="core/src/server/protocol/domain_table.rs"
 swift_send_file="app/TidyFlow/Networking/WSClient+Send.swift"
 web_rules_file="app/TidyFlow/Web/main/protocol-rules.js"
 
-for f in "$protocol_file" "$dispatch_file" "$swift_send_file" "$web_rules_file"; do
+for f in "$protocol_file" "$domain_table_file" "$swift_send_file" "$web_rules_file"; do
     if [ ! -f "$f" ]; then
         echo "[check_schema_sync] ERROR: 未找到 $f"
         exit 1
@@ -43,8 +43,8 @@ schema_domains="$(
     sed -n 's/^[[:space:]]*-[[:space:]]*id:[[:space:]]*\([a-z_][a-z_]*\)$/\1/p' "$schema_file" | sort -u
 )"
 dispatch_domains="$(
-    rg '^[[:space:]]*"[a-z_][a-z_]*"[[:space:]]*=>[[:space:]]*Some\(DomainRoute::' "$dispatch_file" -N \
-        | sed -E 's/^[[:space:]]*"([a-z_][a-z_]*)".*$/\1/' \
+    rg '^[[:space:]]*"[a-z_][a-z_]*",[[:space:]]*$' "$domain_table_file" -N \
+        | sed -E 's/^[[:space:]]*"([a-z_][a-z_]*)",[[:space:]]*$/\1/' \
         | sort -u
 )"
 swift_domains="$(
@@ -85,7 +85,7 @@ if [ -z "$schema_domains" ] || [ -z "$dispatch_domains" ] || [ -z "$swift_domain
 fi
 
 if [ "$schema_domains" != "$dispatch_domains" ]; then
-    echo "[check_schema_sync] ERROR: schema domains 与 Core dispatch domains 不一致"
+    echo "[check_schema_sync] ERROR: schema domains 与 Core domain_table domains 不一致"
     echo "--- schema"
     echo "$schema_domains"
     echo "--- core"

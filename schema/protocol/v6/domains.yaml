@@ -1,0 +1,24 @@
+protocol_version: 6
+
+# 协议域权威定义（用于 Core/App/文档一致性校验）
+domains:
+  - id: system
+    action_rule: exact("ping")
+  - id: terminal
+    action_rule: prefix("term_") | one_of("spawn_terminal","kill_terminal","input","resize")
+  - id: file
+    action_rule: prefix("file_") | prefix("watch_") | one_of("clipboard_image_upload")
+  - id: git
+    action_rule: prefix("git_") | one_of("cancel_ai_task")
+  - id: project
+    action_rule: prefix("list_","select_","import_","create_","remove_","project_","workspace_","save_project_commands","run_project_command","cancel_project_command")
+  - id: lsp
+    action_rule: prefix("lsp_")
+  - id: settings
+    action_rule: contains("client_settings")
+  - id: log
+    action_rule: prefix("log_")
+  - id: ai
+    action_rule: prefix("ai_")
+  - id: evolution
+    action_rule: prefix("evo_")
