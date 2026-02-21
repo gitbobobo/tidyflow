@@ -46,40 +46,7 @@ fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
 }
 
 fn action_matches_domain(domain: &str, action: &str) -> bool {
-    match domain {
-        "system" => action == "ping",
-        "terminal" => {
-            action.starts_with("term_")
-                || action == "spawn_terminal"
-                || action == "kill_terminal"
-                || action == "input"
-                || action == "resize"
-        }
-        "file" => {
-            action.starts_with("file_")
-                || action.starts_with("watch_")
-                || action == "clipboard_image_upload"
-        }
-        "git" => action.starts_with("git_") || action == "cancel_ai_task",
-        "project" => {
-            action.starts_with("list_")
-                || action.starts_with("select_")
-                || action.starts_with("import_")
-                || action.starts_with("create_")
-                || action.starts_with("remove_")
-                || action.starts_with("project_")
-                || action.starts_with("workspace_")
-                || action.starts_with("save_project_commands")
-                || action.starts_with("run_project_command")
-                || action.starts_with("cancel_project_command")
-        }
-        "lsp" => action.starts_with("lsp_"),
-        "settings" => action.contains("client_settings"),
-        "log" => action.starts_with("log_"),
-        "ai" => action.starts_with("ai_"),
-        "evolution" => action.starts_with("evo_"),
-        _ => false,
-    }
+    crate::server::protocol::action_table::matches_action_domain(domain, action)
 }
 
 async fn dispatch_domain_handler(

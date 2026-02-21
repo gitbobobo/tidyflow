@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 // 按领域拆分的协议类型子模块（组织性拆分，保持类型引用路径不变）
+pub mod action_table;
 pub mod ai;
 pub mod file;
 pub mod git;
 pub mod project;
 pub mod settings;
 pub mod terminal;
+
+#[cfg(test)]
+mod action_table_test;
 
 /// Protocol version: 3 (MessagePack binary encoding + domain/action envelope)
 pub const PROTOCOL_VERSION: u32 = 3;
