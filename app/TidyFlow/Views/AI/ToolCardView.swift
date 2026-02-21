@@ -130,8 +130,16 @@ struct ToolCardView: View {
         renderModel.presentation
     }
 
+    private func resolvedToolID(for invocation: AIToolInvocationState?) -> String {
+        guard let invocation else { return normalizedToolID }
+        if isSubAgentResultCard(invocation: invocation) {
+            return "subagent_result"
+        }
+        return normalizedToolID
+    }
+
     private var linkedSessionId: String? {
-        guard presentation.toolID == "task" else { return nil }
+        guard presentation.toolID == "task" || presentation.toolID == "subagent_result" else { return nil }
         let candidates: [Any?] = [
             partMetadata,
             invocation?.metadata,
@@ -221,6 +229,7 @@ struct ToolCardView: View {
 
     private func buildRenderModel() -> CachedRenderModel {
         let invocation = AIToolInvocationState.from(state: state)
+        let resolvedToolID = resolvedToolID(for: invocation)
         let headerDiffStats: (added: Int, removed: Int)? = {
             guard ["edit", "write", "apply_patch", "multiedit"].contains(normalizedToolID),
                   let invocation,
@@ -262,20 +271,20 @@ struct ToolCardView: View {
             )
         }
 
-        var sections = buildSections(toolID: normalizedToolID, invocation: invocation)
+        var sections = buildSections(toolID: resolvedToolID, invocation: invocation)
         if normalizedToolID != "question",
            let partMetadata,
            !partMetadata.isEmpty {
             sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
         }
         sections = clampSectionsIfNeeded(sections)
-        let displayTitle = toolCardTitle(toolID: normalizedToolID, invocation: invocation)
+        let displayTitle = toolCardTitle(toolID: resolvedToolID, invocation: invocation)
 
         let presentation = AIToolPresentation(
-            toolID: normalizedToolID,
+            toolID: resolvedToolID,
             displayTitle: displayTitle,
             statusText: invocation.status.text,
-            summary: toolSummary(toolID: normalizedToolID, invocation: invocation),
+            summary: toolSummary(toolID: resolvedToolID, invocation: invocation),
             sections: sections
         )
         return CachedRenderModel(
@@ -386,7 +395,7 @@ struct ToolCardView: View {
             }
 
             Text(card.description)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12))
                 .foregroundColor(.primary)
                 .lineLimit(nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -575,6 +584,8 @@ struct ToolCardView: View {
         switch toolID {
         case "read":
             return buildReadSections(invocation)
+        case "subagent_result":
+            return buildSubAgentResultSections(invocation)
         case "grep":
             return buildGrepSections(invocation)
         case "edit", "write", "apply_patch", "multiedit":
@@ -602,6 +613,12 @@ struct ToolCardView: View {
         default:
             return buildGenericSections(invocation)
         }
+    }
+
+    private func buildSubAgentResultSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        // 获取子代理执行结果卡片仅展示头部（标题 + 状态），不展示正文内容区
+        _ = invocation
+        return []
     }
 
     private func buildReadSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
@@ -916,6 +933,8 @@ struct ToolCardView: View {
         switch toolID {
         case "read":
             return nil
+        case "subagent_result":
+            return nil
         case "grep":
             return grepStatsSummary(invocation)
         case "edit", "write", "apply_patch", "multiedit":
@@ -949,6 +968,12 @@ struct ToolCardView: View {
     }
 
     private func toolCardTitle(toolID: String, invocation: AIToolInvocationState) -> String {
+        if toolID == "subagent_result" {
+            if let title = invocation.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                return title
+            }
+            return "获取子代理执行结果"
+        }
         if toolID == "grep", let keyword = grepKeyword(invocation), !keyword.isEmpty {
             return "grep(\(keyword))"
         }
@@ -1072,6 +1097,7 @@ struct ToolCardView: View {
 
     private func toolDisplayName(_ toolID: String) -> String {
         switch toolID {
+        case "subagent_result": return "subagent_result"
         case "read": return "read"
         case "edit": return "edit"
         case "write": return "write"
@@ -1100,6 +1126,8 @@ struct ToolCardView: View {
 
     private func toolIconName(toolID: String) -> String {
         switch toolID {
+        case "subagent_result":
+            return "person.2.badge.gearshape"
         case "read":
             return "eye"
         case "edit", "write", "apply_patch", "multiedit":
@@ -1125,6 +1153,52 @@ struct ToolCardView: View {
         default:
             return "wrench.and.screwdriver"
         }
+    }
+
+    private func isSubAgentResultCard(invocation: AIToolInvocationState) -> Bool {
+        let output = (invocation.output ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let title = (invocation.title ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        let hasTaskResultText =
+            output.hasPrefix("task result") ||
+            output.contains("task id:") ||
+            title.contains("获取子代理执行结果")
+
+        let hasTaskID =
+            normalizedString(invocation.input["task_id"]) != nil ||
+            normalizedString(invocation.input["taskId"]) != nil ||
+            normalizedString(invocation.metadata?["task_id"]) != nil ||
+            normalizedString(invocation.metadata?["taskId"]) != nil
+
+        let hasSubAgentHint =
+            normalizedString(invocation.input["subagent"]) != nil ||
+            normalizedString(invocation.input["subagent_type"]) != nil ||
+            normalizedString(invocation.metadata?["agent"]) != nil ||
+            extractedAgentNameFromOutput(invocation.output) != nil
+
+        return hasTaskResultText && (hasTaskID || hasSubAgentHint)
+    }
+
+    private func extractedAgentNameFromOutput(_ output: String?) -> String? {
+        guard let output else { return nil }
+        let lines = output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        for line in lines {
+            guard !line.isEmpty else { continue }
+            if line.lowercased().hasPrefix("agent:") {
+                let raw = line.dropFirst("agent:".count)
+                let agent = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !agent.isEmpty {
+                    return agent
+                }
+            }
+        }
+        return nil
     }
 
     @ViewBuilder
