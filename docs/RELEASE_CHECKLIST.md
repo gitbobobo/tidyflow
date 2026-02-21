@@ -1,6 +1,6 @@
 # TidyFlow 发布清单
 
-用于每次正式发布前的最小流程，默认使用一键发布脚本。
+用于每次正式发布前的最小流程，默认使用统一入口脚本 `./scripts/tidyflow`。
 
 ## 1. 版本准备
 
@@ -34,13 +34,20 @@
 
 ## 4. 发布预演（无副作用）
 
-- [ ] 执行：`./scripts/release_local.sh --dry-run`
+- [ ] 执行：`./scripts/tidyflow release --dry-run`
 - [ ] 检查输出中的版本号、签名证书、DMG 路径、Tag、仓库名是否正确
   - [ ] 确认包含以下关键项：版本号、Tag、DMG 路径、SHA 路径、签名证书、Notary Profile
   - [ ] 记录安全模式核对结论（默认本地监听 `127.0.0.1`，远程需显式 `remote_access_enabled`）
   - [ ] 识别兼容性风险：若本轮有 loopback/鉴权变更，补充回滚与恢复步骤
 
-## 5. Evolution 证据回归检查
+## 5. 架构护栏检查（必做）
+
+- [ ] 执行：`./scripts/tidyflow check`
+- [ ] 确认输出通过：
+  - 协议一致性检查（Core 协议版本与文档、App 文档一致）
+  - 版本一致性检查（`MARKETING_VERSION` 与 `core/Cargo.toml` 同步）
+
+## 6. Evolution 证据回归检查
 
 > 本节用于确保 Evolution 系统的测试与证据链正常工作。
 
@@ -52,6 +59,6 @@
 
 **回滚策略**：若证据机制导致不稳定，退回原手工验证流程，关闭统一入口调用。
 
-## 6. 一键发布
+## 7. 一键发布
 
-- [ ] 询问用户是否执行脚本上传产物到 GitHub Release；若用户确认，则执行：`./scripts/release_local.sh --upload-release`
+- [ ] 询问用户是否执行脚本上传产物到 GitHub Release；若用户确认，则执行：`./scripts/tidyflow release --upload-release`

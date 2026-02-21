@@ -71,7 +71,14 @@ If you want to build TidyFlow from source, make sure **Rust** and **Xcode** are 
 
 ### 1. Quick Start (Recommended)
 ```bash
-./scripts/run-app.sh  # Build core + app and launch
+./scripts/tidyflow dev  # Build core + app and launch
+```
+
+### 1.1 Unified Script Entry
+```bash
+./scripts/tidyflow check     # Protocol/version guard checks
+./scripts/tidyflow test      # Core tests
+./scripts/tidyflow release --dry-run
 ```
 
 ### 2. Build Core Manually (Rust Core)

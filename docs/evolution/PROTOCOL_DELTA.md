@@ -1,4 +1,4 @@
-# TidyFlow 演化系统协议增量设计（MessagePack v2）
+# TidyFlow 演化系统协议增量设计（MessagePack v3）
 
 ## 1. 设计目标
 
@@ -170,12 +170,11 @@
 - 若映射已存在，返回已有 `session_id`。
 - 不重复创建 AI 会话。
 
-## 6. 与现有协议兼容策略
+## 6. 与现有协议衔接策略
 
 - 仅新增 `evo_*` 消息，不变更既有消息含义。
-- 复用现有 `RequestEnvelope/ResponseEnvelope` 关联 `id`。
+- 复用现有 v3 包络（`domain/action/request_id/payload`）进行关联。
 - 复用现有任务广播机制推送演化事件。
-- App 不支持 `evo_*` 时，不影响既有终端、文件、Git、AI Chat 功能。
 
 ## 7. 建议的交互时序
 
@@ -185,4 +184,3 @@
 4. Core 连续推送 `evo_stage_changed`、`evo_cycle_updated`、`evo_evidence_updated`。
 5. App 需要回放阶段聊天时发送 `evo_open_stage_chat`。
 6. Core 回 `evo_stage_chat_opened`，App 复用现有 AI 会话接口拉取历史与流式事件。
-

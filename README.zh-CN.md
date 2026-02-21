@@ -71,7 +71,14 @@ TidyFlow 采用现代化的**混合原生架构**：
 
 ### 1. 快速启动 (推荐)
 ```bash
-./scripts/run-app.sh  # 自动构建核心引擎、应用并启动
+./scripts/tidyflow dev  # 自动构建核心引擎、应用并启动
+```
+
+### 1.1 统一脚本入口
+```bash
+./scripts/tidyflow check     # 协议/版本护栏检查
+./scripts/tidyflow test      # Core 测试
+./scripts/tidyflow release --dry-run
 ```
 
 ### 2. 手动构建核心 (Rust Core)
