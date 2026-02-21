@@ -8,7 +8,11 @@
 
   function handleMessage(data) {
     try {
-      const msg = data;
+      if (!data || typeof data.action !== "string" || typeof data.payload !== "object") {
+        console.error("[Messages] Invalid v4 envelope:", data);
+        return;
+      }
+      const msg = { ...(data.payload || {}), type: data.action };
 
       switch (msg.type) {
         case "hello": {

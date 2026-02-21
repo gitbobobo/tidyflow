@@ -49,7 +49,21 @@
     }
     send(data) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        const encoded = MessagePack.encode(data);
+        if (!data || typeof data.type !== "string" || data.type.length === 0) {
+          console.error("[TidyFlow] invalid outbound message: missing type");
+          return;
+        }
+        const action = data.type;
+        const payload = { ...data };
+        delete payload.type;
+        const envelope = {
+          request_id: this._nextRequestId(),
+          domain: this._domainForAction(action),
+          action,
+          payload,
+          client_ts: Date.now(),
+        };
+        const encoded = MessagePack.encode(envelope);
         this.ws.send(encoded.buffer);
       }
     }
@@ -61,6 +75,37 @@
     }
     get isConnecting() {
       return this.ws && this.ws.readyState === WebSocket.CONNECTING;
+    }
+    _nextRequestId() {
+      if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+      }
+      return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    _domainForAction(action) {
+      if (action === "ping") return "system";
+      if (action === "spawn_terminal" || action === "kill_terminal" || action === "input" || action === "resize") return "terminal";
+      if (action.startsWith("term_")) return "terminal";
+      if (action === "clipboard_image_upload" || action.startsWith("file_") || action.startsWith("watch_")) return "file";
+      if (action === "cancel_ai_task" || action.startsWith("git_")) return "git";
+      if (
+        action.startsWith("list_") ||
+        action.startsWith("select_") ||
+        action.startsWith("import_") ||
+        action.startsWith("create_") ||
+        action.startsWith("remove_") ||
+        action.startsWith("project_") ||
+        action.startsWith("workspace_") ||
+        action === "save_project_commands" ||
+        action === "run_project_command" ||
+        action === "cancel_project_command"
+      ) return "project";
+      if (action.startsWith("lsp_")) return "lsp";
+      if (action.includes("client_settings")) return "settings";
+      if (action.startsWith("log_")) return "log";
+      if (action.startsWith("ai_")) return "ai";
+      if (action.startsWith("evo_")) return "evolution";
+      return "misc";
     }
   }
 
