@@ -1,4 +1,4 @@
-# TidyFlow Protocol v2
+# TidyFlow Protocol v3
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -10,12 +10,16 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 2`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 3`
 
-## 消息模型
+## 消息模型（v3 包络）
 
-- 客户端消息：`ClientMessage`
-- 服务端消息：`ServerMessage`
+- 客户端请求：
+  - `ClientEnvelopeV3 { request_id, domain, action, payload }`
+- 服务端响应/事件：
+  - `ServerEnvelopeV3 { request_id?, domain, action, kind, payload }`
+  - `kind`：`result` / `event` / `error`
+- 业务消息体仍由 `ClientMessage` / `ServerMessage` 定义并映射到 `action + payload`
 - 定义位置：`core/src/server/protocol/mod.rs`
 
 ## 远程配对（pairing_v1）
@@ -39,8 +43,8 @@
 
 ## 兼容策略
 
-- 保留基础终端数据面消息（如 `input`、`resize`、`output`）以维持旧行为兼容。
-- 新能力按功能版本递增（当前到 `v1.25`），不回退 `v2` 编码格式。
+- 本版本不向后兼容 v2。
+- 客户端必须发送 v3 包络；服务端统一返回 v3 包络。
 
 ## 主要能力范围
 
@@ -52,7 +56,7 @@
 
 ## 调试建议
 
-- 先确认双方都使用 `MessagePack`，避免把 JSON 文本发到 v2 通道。
+- 先确认双方都使用 `MessagePack`，避免把 JSON 文本发到 v3 通道。
 - 协议字段变更后，同步更新：
   - `core/src/server/protocol/mod.rs`
   - `app/TidyFlow/Networking/ProtocolModels.swift`

@@ -1,28 +1,23 @@
 use axum::extract::ws::WebSocket;
+use serde_json::{Map, Value};
 
 use tokio::sync::Mutex;
 use tracing::{error, info, trace, warn};
 
 use crate::server::context::HandlerContext;
-use crate::server::protocol::{ClientMessage, RequestEnvelope, ServerMessage};
+use crate::server::protocol::{ClientEnvelopeV3, ClientMessage, ServerMessage};
 use crate::server::watcher::WorkspaceWatcher;
 use crate::server::ws::send_message;
 
 pub(super) fn probe_client_message_type(data: &[u8]) -> String {
-    rmp_serde::from_slice::<ClientMessageTypeProbe>(data)
-        .ok()
-        .and_then(|probe| probe.message_type)
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-#[derive(serde::Deserialize)]
-struct ClientMessageTypeProbe {
-    #[serde(rename = "type")]
-    message_type: Option<String>,
+    rmp_serde::from_slice::<ClientEnvelopeV3>(data)
+        .map(|env| env.action)
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 #[derive(Copy, Clone)]
 enum DomainRoute {
+    System,
     Terminal,
     File,
     Git,
@@ -34,30 +29,127 @@ enum DomainRoute {
     Evolution,
 }
 
-const DOMAIN_ROUTES: [DomainRoute; 9] = [
-    DomainRoute::Terminal,
-    DomainRoute::File,
-    DomainRoute::Git,
-    DomainRoute::Project,
-    DomainRoute::Lsp,
-    DomainRoute::Settings,
-    DomainRoute::Log,
-    DomainRoute::Ai,
-    DomainRoute::Evolution,
-];
+fn parse_domain_route(domain: &str) -> Option<DomainRoute> {
+    match domain {
+        "system" => Some(DomainRoute::System),
+        "terminal" => Some(DomainRoute::Terminal),
+        "file" => Some(DomainRoute::File),
+        "git" => Some(DomainRoute::Git),
+        "project" => Some(DomainRoute::Project),
+        "lsp" => Some(DomainRoute::Lsp),
+        "settings" => Some(DomainRoute::Settings),
+        "log" => Some(DomainRoute::Log),
+        "ai" => Some(DomainRoute::Ai),
+        "evolution" => Some(DomainRoute::Evolution),
+        _ => None,
+    }
+}
 
-async fn dispatch_domain_handlers(
+fn action_matches_domain(domain: &str, action: &str) -> bool {
+    match domain {
+        "system" => action == "ping",
+        "terminal" => {
+            action.starts_with("term_")
+                || action == "spawn_terminal"
+                || action == "kill_terminal"
+                || action == "input"
+                || action == "resize"
+        }
+        "file" => {
+            action.starts_with("file_")
+                || action.starts_with("watch_")
+                || action == "clipboard_image_upload"
+        }
+        "git" => action.starts_with("git_") || action == "cancel_ai_task",
+        "project" => {
+            action.starts_with("list_")
+                || action.starts_with("select_")
+                || action.starts_with("import_")
+                || action.starts_with("create_")
+                || action.starts_with("remove_")
+                || action.starts_with("project_")
+                || action.starts_with("workspace_")
+                || action.starts_with("save_project_commands")
+                || action.starts_with("run_project_command")
+                || action.starts_with("cancel_project_command")
+        }
+        "lsp" => action.starts_with("lsp_"),
+        "settings" => action.contains("client_settings"),
+        "log" => action.starts_with("log_"),
+        "ai" => action.starts_with("ai_"),
+        "evolution" => action.starts_with("evo_"),
+        _ => false,
+    }
+}
+
+async fn dispatch_domain_handler(
+    route: DomainRoute,
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
     ctx: &HandlerContext,
+    watcher: &std::sync::Arc<Mutex<WorkspaceWatcher>>,
 ) -> Result<bool, String> {
-    for route in DOMAIN_ROUTES {
-        let handled = match route {
-            DomainRoute::Terminal => {
-                crate::server::handlers::terminal::handle_terminal_message(client_msg, socket, ctx)
-                    .await?
+    let handled = match route {
+        DomainRoute::System => match client_msg {
+            ClientMessage::Ping => {
+                send_message(socket, &ServerMessage::Pong).await?;
+                true
             }
-            DomainRoute::File => {
+            _ => false,
+        },
+        DomainRoute::Terminal => {
+            crate::server::handlers::terminal::handle_terminal_message(client_msg, socket, ctx)
+                .await?
+        }
+        DomainRoute::File => match client_msg {
+            ClientMessage::WatchSubscribe { project, workspace } => {
+                trace!(
+                    "WatchSubscribe: project={}, workspace={}",
+                    project,
+                    workspace
+                );
+                match crate::server::context::resolve_workspace(&ctx.app_state, project, workspace)
+                    .await
+                {
+                    Ok(ws_ctx) => {
+                        let mut w = watcher.lock().await;
+                        match w.subscribe(project.clone(), workspace.clone(), ws_ctx.root_path) {
+                            Ok(_) => {
+                                send_message(
+                                    socket,
+                                    &ServerMessage::WatchSubscribed {
+                                        project: project.clone(),
+                                        workspace: workspace.clone(),
+                                    },
+                                )
+                                .await?;
+                            }
+                            Err(e) => {
+                                send_message(
+                                    socket,
+                                    &ServerMessage::Error {
+                                        code: "watch_subscribe_failed".to_string(),
+                                        message: e,
+                                    },
+                                )
+                                .await?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        send_message(socket, &e.to_server_error()).await?;
+                    }
+                }
+                true
+            }
+            ClientMessage::WatchUnsubscribe => {
+                info!("WatchUnsubscribe");
+                let mut w = watcher.lock().await;
+                w.unsubscribe();
+                send_message(socket, &ServerMessage::WatchUnsubscribed).await?;
+                true
+            }
+            _ => {
                 crate::server::handlers::file::handle_file_message(
                     client_msg,
                     socket,
@@ -65,63 +157,100 @@ async fn dispatch_domain_handlers(
                 )
                 .await?
             }
-            DomainRoute::Git => {
-                crate::server::handlers::git::handle_git_message(
-                    client_msg,
-                    socket,
-                    &ctx.app_state,
-                    ctx,
-                )
-                .await?
-            }
-            DomainRoute::Project => {
-                crate::server::handlers::project::handle_project_message(client_msg, socket, ctx)
-                    .await?
-            }
-            DomainRoute::Lsp => {
-                crate::server::handlers::lsp::handle_lsp_message(client_msg, socket, ctx).await?
-            }
-            DomainRoute::Settings => {
-                crate::server::handlers::settings::handle_settings_message(
-                    client_msg,
-                    socket,
-                    &ctx.app_state,
-                    &ctx.save_tx,
-                )
-                .await?
-            }
-            DomainRoute::Log => crate::server::handlers::log::handle_log_message(client_msg)?,
-            DomainRoute::Ai => {
-                crate::server::handlers::ai::handle_ai_message(
-                    client_msg,
-                    socket,
-                    &ctx.app_state,
-                    &ctx.ai_state,
-                    &ctx.cmd_output_tx,
-                    &ctx.task_broadcast_tx,
-                    &ctx.conn_meta.conn_id,
-                )
-                .await?
-            }
-            DomainRoute::Evolution => {
-                crate::server::handlers::evolution::handle_evolution_message(
-                    client_msg, socket, ctx,
-                )
-                .await?
-            }
-        };
-        if handled {
-            return Ok(true);
+        },
+        DomainRoute::Git => {
+            crate::server::handlers::git::handle_git_message(
+                client_msg,
+                socket,
+                &ctx.app_state,
+                ctx,
+            )
+            .await?
         }
+        DomainRoute::Project => {
+            crate::server::handlers::project::handle_project_message(client_msg, socket, ctx)
+                .await?
+        }
+        DomainRoute::Lsp => {
+            crate::server::handlers::lsp::handle_lsp_message(client_msg, socket, ctx).await?
+        }
+        DomainRoute::Settings => {
+            crate::server::handlers::settings::handle_settings_message(
+                client_msg,
+                socket,
+                &ctx.app_state,
+                &ctx.save_tx,
+            )
+            .await?
+        }
+        DomainRoute::Log => crate::server::handlers::log::handle_log_message(client_msg)?,
+        DomainRoute::Ai => {
+            crate::server::handlers::ai::handle_ai_message(
+                client_msg,
+                socket,
+                &ctx.app_state,
+                &ctx.ai_state,
+                &ctx.cmd_output_tx,
+                &ctx.task_broadcast_tx,
+                &ctx.conn_meta.conn_id,
+            )
+            .await?
+        }
+        DomainRoute::Evolution => {
+            crate::server::handlers::evolution::handle_evolution_message(client_msg, socket, ctx)
+                .await?
+        }
+    };
+    Ok(handled)
+}
+
+fn envelope_payload_to_client_message(
+    envelope: &ClientEnvelopeV3,
+) -> Result<ClientMessage, String> {
+    let mut payload = match &envelope.payload {
+        Value::Object(map) => map.clone(),
+        Value::Null => Map::new(),
+        _ => {
+            return Err("Invalid payload: expected object".to_string());
+        }
+    };
+    payload.insert("type".to_string(), Value::String(envelope.action.clone()));
+    serde_json::from_value(Value::Object(payload)).map_err(|e| format!("Parse error: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn envelope_payload_to_client_message_parses_ping() {
+        let env = ClientEnvelopeV3 {
+            request_id: "req-1".to_string(),
+            domain: "system".to_string(),
+            action: "ping".to_string(),
+            payload: json!({}),
+        };
+        let msg = envelope_payload_to_client_message(&env).expect("should parse");
+        assert!(matches!(msg, ClientMessage::Ping));
     }
-    Ok(false)
+
+    #[test]
+    fn envelope_payload_to_client_message_rejects_non_object_payload() {
+        let env = ClientEnvelopeV3 {
+            request_id: "req-2".to_string(),
+            domain: "system".to_string(),
+            action: "ping".to_string(),
+            payload: json!(["invalid"]),
+        };
+        let err = envelope_payload_to_client_message(&env).expect_err("should fail");
+        assert!(err.contains("expected object"));
+    }
 }
 
 /// Handle a client message — 统一调度层
 ///
-/// 支持两种消息格式：
-/// 1. 带 `id` 的 RequestEnvelope（客户端希望关联响应时附带 request_id）
-/// 2. 裸 ClientMessage（向后兼容）
+/// v3：客户端消息统一使用 `ClientEnvelopeV3`
 pub(super) async fn handle_client_message(
     data: &[u8],
     socket: &mut WebSocket,
@@ -132,21 +261,28 @@ pub(super) async fn handle_client_message(
         "handle_client_message called with data length: {}",
         data.len()
     );
-
-    // 尝试先按 RequestEnvelope 解析（带可选 id 字段）
-    // RequestEnvelope 使用 #[serde(flatten)] 所以裸 ClientMessage 也能匹配（id 为 None）
-    let envelope: RequestEnvelope = rmp_serde::from_slice(data).map_err(|e| {
+    let envelope: ClientEnvelopeV3 = rmp_serde::from_slice(data).map_err(|e| {
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;
 
-    let _request_id = envelope.id; // 预留：未来可在响应中回显
-    let client_msg = envelope.body;
-    trace!(
-        "Parsed client message: {:?}",
-        std::mem::discriminant(&client_msg)
-    );
-    match &client_msg {
+    crate::server::ws::with_request_id(Some(envelope.request_id.clone()), async {
+        let route = parse_domain_route(&envelope.domain)
+            .ok_or_else(|| format!("Unknown domain: {}", envelope.domain))?;
+        if !action_matches_domain(&envelope.domain, &envelope.action) {
+            return Err(format!(
+                "Action/domain mismatch: action={} domain={}",
+                envelope.action, envelope.domain
+            ));
+        }
+        let client_msg = envelope_payload_to_client_message(&envelope)?;
+        trace!(
+            "Parsed client message: domain={}, action={}, discriminant={:?}",
+            envelope.domain,
+            envelope.action,
+            std::mem::discriminant(&client_msg)
+        );
+        match &client_msg {
         ClientMessage::AIChatAbort {
             project_name,
             workspace_name,
@@ -202,68 +338,12 @@ pub(super) async fn handle_client_message(
             );
         }
         _ => {}
-    }
-
-    if dispatch_domain_handlers(&client_msg, socket, ctx).await? {
-        return Ok(());
-    }
-
-    // 内置消息处理
-    match client_msg {
-        ClientMessage::Ping => {
-            send_message(socket, &ServerMessage::Pong).await?;
         }
-
-        // v1.22: File watcher
-        ClientMessage::WatchSubscribe { project, workspace } => {
-            trace!(
-                "WatchSubscribe: project={}, workspace={}",
-                project,
-                workspace
-            );
-
-            match crate::server::context::resolve_workspace(&ctx.app_state, &project, &workspace)
-                .await
-            {
-                Ok(ws_ctx) => {
-                    let mut w = watcher.lock().await;
-                    match w.subscribe(project.clone(), workspace.clone(), ws_ctx.root_path) {
-                        Ok(_) => {
-                            send_message(
-                                socket,
-                                &ServerMessage::WatchSubscribed { project, workspace },
-                            )
-                            .await?;
-                        }
-                        Err(e) => {
-                            send_message(
-                                socket,
-                                &ServerMessage::Error {
-                                    code: "watch_subscribe_failed".to_string(),
-                                    message: e,
-                                },
-                            )
-                            .await?;
-                        }
-                    }
-                }
-                Err(e) => {
-                    send_message(socket, &e.to_server_error()).await?;
-                }
-            }
-        }
-
-        ClientMessage::WatchUnsubscribe => {
-            info!("WatchUnsubscribe");
-            let mut w = watcher.lock().await;
-            w.unsubscribe();
-            send_message(socket, &ServerMessage::WatchUnsubscribed).await?;
-        }
-
-        // 所有其他消息类型已在上方 handler 链中处理，此处兜底
-        _ => {
+        if !dispatch_domain_handler(route, &client_msg, socket, ctx, watcher).await? {
             warn!(
-                "Unhandled message type: {:?}",
+                "Unhandled message type: domain={}, action={}, discriminant={:?}",
+                envelope.domain,
+                envelope.action,
                 std::mem::discriminant(&client_msg)
             );
             send_message(
@@ -275,7 +355,7 @@ pub(super) async fn handle_client_message(
             )
             .await?;
         }
-    }
-
-    Ok(())
+        Ok(())
+    })
+    .await
 }

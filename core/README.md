@@ -7,7 +7,7 @@ Rust-based PTY host with WebSocket server and Workspace Engine.
 - PTY session management (spawn shell, read/write, resize)
 - WebSocket server on configurable port
 - **Workspace Engine v1**: Project and workspace management using git worktree
-- Protocol v2 with MessagePack binary messages
+- Protocol v3 with MessagePack binary envelopes
 - Structured logging with tracing
 
 ## Building

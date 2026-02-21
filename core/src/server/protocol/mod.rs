@@ -8,34 +8,33 @@ pub mod project;
 pub mod settings;
 pub mod terminal;
 
-/// Protocol version: 2 (MessagePack binary encoding)
-/// v2: Switch from JSON+base64 to MessagePack binary encoding
-pub const PROTOCOL_VERSION: u32 = 2;
+/// Protocol version: 3 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 3;
 
 // ============================================================================
-// Request/Response 包络 — 支持 request_id 关联
+// v3 包络
 // ============================================================================
 
-/// 统一请求包络 — 客户端可选附带 `id` 以关联响应
+/// v3 客户端请求包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestEnvelope {
-    /// 客户端可选 request ID，服务端在响应中原样回显
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// 实际消息体（保持原有 ClientMessage 结构）
-    #[serde(flatten)]
-    pub body: ClientMessage,
+pub struct ClientEnvelopeV3 {
+    pub request_id: String,
+    pub domain: String,
+    pub action: String,
+    #[serde(default)]
+    pub payload: serde_json::Value,
 }
 
-/// 统一响应包络 — 回显 request_id
+/// v3 服务端响应包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseEnvelope {
-    /// 回显客户端的 request ID
+pub struct ServerEnvelopeV3 {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// 实际消息体（保持原有 ServerMessage 结构）
-    #[serde(flatten)]
-    pub body: ServerMessage,
+    pub request_id: Option<String>,
+    pub domain: String,
+    pub action: String,
+    pub kind: String, // "result" | "event" | "error"
+    #[serde(default)]
+    pub payload: serde_json::Value,
 }
 
 // ============================================================================

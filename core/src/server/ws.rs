@@ -22,7 +22,7 @@ use crate::server::context::{
     ConnectionMeta, SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory,
     TaskBroadcastTx,
 };
-use crate::server::protocol::{ServerMessage, PROTOCOL_VERSION};
+use crate::server::protocol::{ServerEnvelopeV3, ServerMessage, PROTOCOL_VERSION};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
@@ -34,6 +34,10 @@ mod connection;
 mod dispatch;
 mod pairing;
 mod terminal;
+
+tokio::task_local! {
+    static CURRENT_REQUEST_ID: Option<String>;
+}
 
 /// 流控高水位（100KB）：未确认字节数超过此值时暂停转发
 const FLOW_CONTROL_HIGH_WATER: u64 = 100 * 1024;
@@ -274,11 +278,149 @@ async fn ws_handler(
 
 pub use terminal::{ack_terminal_output, subscribe_terminal, unsubscribe_terminal};
 
+pub(super) async fn with_request_id<F, T>(request_id: Option<String>, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    CURRENT_REQUEST_ID.scope(request_id, fut).await
+}
+
+fn current_request_id() -> Option<String> {
+    CURRENT_REQUEST_ID.try_with(|id| id.clone()).ok().flatten()
+}
+
+fn domain_from_action(action: &str) -> String {
+    if action.starts_with("term_")
+        || action == "output"
+        || action == "exit"
+        || action == "terminal_spawned"
+        || action == "terminal_killed"
+        || action == "remote_term_changed"
+    {
+        return "terminal".to_string();
+    }
+    if action.starts_with("file_") || action.starts_with("watch_") {
+        return "file".to_string();
+    }
+    if action.starts_with("git_") {
+        return "git".to_string();
+    }
+    if action.starts_with("project_")
+        || action.starts_with("workspace_")
+        || action == "projects"
+        || action == "workspaces"
+        || action.starts_with("tasks_")
+    {
+        return "project".to_string();
+    }
+    if action.starts_with("lsp_") {
+        return "lsp".to_string();
+    }
+    if action.starts_with("client_settings") {
+        return "settings".to_string();
+    }
+    if action.starts_with("ai_") {
+        return "ai".to_string();
+    }
+    if action.starts_with("evo_") {
+        return "evolution".to_string();
+    }
+    if action == "pong" || action == "hello" {
+        return "system".to_string();
+    }
+    "misc".to_string()
+}
+
+fn is_event_action(action: &str) -> bool {
+    action == "output"
+        || action == "exit"
+        || action == "file_changed"
+        || action == "git_status_changed"
+        || action == "remote_term_changed"
+        || action == "project_command_output"
+        || action == "ai_session_status_update"
+        || action == "ai_question_asked"
+        || action == "ai_question_cleared"
+        || action == "ai_chat_message_updated"
+        || action == "ai_chat_part_updated"
+        || action == "ai_chat_part_delta"
+        || action == "ai_chat_done"
+        || action == "ai_chat_error"
+        || action.starts_with("evo_")
+}
+
+fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV3, String> {
+    let mut value = serde_json::to_value(msg).map_err(|e| e.to_string())?;
+    let mut payload = match value {
+        serde_json::Value::Object(ref mut map) => map.clone(),
+        _ => return Err("Invalid server message payload".to_string()),
+    };
+    let action = payload
+        .remove("type")
+        .and_then(|v| v.as_str().map(str::to_string))
+        .ok_or_else(|| "Server message missing type".to_string())?;
+    let kind = if action == "error" {
+        "error".to_string()
+    } else if is_event_action(&action) {
+        "event".to_string()
+    } else {
+        "result".to_string()
+    };
+    Ok(ServerEnvelopeV3 {
+        request_id: current_request_id(),
+        domain: domain_from_action(&action),
+        action,
+        kind,
+        payload: serde_json::Value::Object(payload),
+    })
+}
+
+fn encode_server_message(msg: &ServerMessage) -> Result<Vec<u8>, String> {
+    let envelope = to_server_envelope(msg)?;
+    rmp_serde::to_vec_named(&envelope).map_err(|e| e.to_string())
+}
+
 /// Send a server message over WebSocket
 pub async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), String> {
-    let bytes = rmp_serde::to_vec_named(msg).map_err(|e| e.to_string())?;
+    let bytes = encode_server_message(msg)?;
     socket
         .send(Message::Binary(bytes))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::protocol::ServerMessage;
+
+    #[tokio::test]
+    async fn encode_server_message_includes_request_id_when_scoped() {
+        let bytes = with_request_id(Some("req-123".to_string()), async {
+            encode_server_message(&ServerMessage::Pong).expect("encode should succeed")
+        })
+        .await;
+        let env: ServerEnvelopeV3 = rmp_serde::from_slice(&bytes).expect("decode envelope");
+        assert_eq!(env.request_id.as_deref(), Some("req-123"));
+        assert_eq!(env.domain, "system");
+        assert_eq!(env.action, "pong");
+        assert_eq!(env.kind, "result");
+    }
+
+    #[tokio::test]
+    async fn encode_server_message_event_kind_for_output() {
+        let bytes = with_request_id(None, async {
+            encode_server_message(&ServerMessage::Output {
+                data: vec![1, 2, 3],
+                term_id: Some("t1".to_string()),
+            })
+            .expect("encode should succeed")
+        })
+        .await;
+        let env: ServerEnvelopeV3 = rmp_serde::from_slice(&bytes).expect("decode envelope");
+        assert_eq!(env.request_id, None);
+        assert_eq!(env.domain, "terminal");
+        assert_eq!(env.action, "output");
+        assert_eq!(env.kind, "event");
+    }
 }
