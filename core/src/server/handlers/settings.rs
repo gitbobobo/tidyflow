@@ -21,3 +21,37 @@ pub async fn handle_settings_message(
 
     Ok(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::server::handlers::dispatch_handlers;
+    use std::sync::{Arc, Mutex};
+
+    async fn push_and_return(
+        trace: Arc<Mutex<Vec<&'static str>>>,
+        label: &'static str,
+        value: bool,
+    ) -> Result<bool, String> {
+        trace.lock().expect("lock trace").push(label);
+        Ok(value)
+    }
+
+    async fn dispatch_like_settings(trace: Arc<Mutex<Vec<&'static str>>>) -> Result<bool, String> {
+        dispatch_handlers!(
+            push_and_return(trace.clone(), "query", false),
+            push_and_return(trace.clone(), "mutate", true),
+        );
+        Ok(false)
+    }
+
+    #[tokio::test]
+    async fn settings_dispatch_order_short_circuit() {
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let handled = dispatch_like_settings(trace.clone())
+            .await
+            .expect("dispatch should succeed");
+
+        assert!(handled);
+        assert_eq!(*trace.lock().expect("lock trace"), vec!["query", "mutate"]);
+    }
+}

@@ -26,3 +26,42 @@ pub async fn handle_terminal_message(
 
     Ok(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::server::handlers::dispatch_handlers;
+    use std::sync::{Arc, Mutex};
+
+    async fn push_and_return(
+        trace: Arc<Mutex<Vec<&'static str>>>,
+        label: &'static str,
+        value: bool,
+    ) -> Result<bool, String> {
+        trace.lock().expect("lock trace").push(label);
+        Ok(value)
+    }
+
+    async fn dispatch_like_terminal(trace: Arc<Mutex<Vec<&'static str>>>) -> Result<bool, String> {
+        dispatch_handlers!(
+            push_and_return(trace.clone(), "io", false),
+            push_and_return(trace.clone(), "lifecycle", false),
+            push_and_return(trace.clone(), "query", true),
+            push_and_return(trace.clone(), "clipboard", true),
+        );
+        Ok(false)
+    }
+
+    #[tokio::test]
+    async fn terminal_dispatch_order_short_circuit() {
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let handled = dispatch_like_terminal(trace.clone())
+            .await
+            .expect("dispatch should succeed");
+
+        assert!(handled);
+        assert_eq!(
+            *trace.lock().expect("lock trace"),
+            vec!["io", "lifecycle", "query"]
+        );
+    }
+}
