@@ -82,6 +82,9 @@ extension WSClient {
         if action.contains("client_settings") {
             return "settings"
         }
+        if action.hasPrefix("log_") {
+            return "log"
+        }
         if action.hasPrefix("ai_") {
             return "ai"
         }
