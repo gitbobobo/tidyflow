@@ -6,6 +6,15 @@ import os
 // - WSClient+Send.swift     所有 send/request 方法
 // - WSClient+Receive.swift  接收、解析、分发消息 + URLSessionWebSocketDelegate
 
+struct ServerEnvelopeMeta {
+    let seq: UInt64
+    let domain: String
+    let action: String
+    let kind: String
+    let requestID: String?
+    let serverTS: UInt64?
+}
+
 /// Minimal WebSocket client for Core communication
 /// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v4 包络）
 class WSClient: NSObject, ObservableObject {
@@ -128,6 +137,8 @@ class WSClient: NSObject, ObservableObject {
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?
+    /// v4 包络元信息流（用于上层统一路由/观测）
+    var onServerEnvelopeMeta: ((ServerEnvelopeMeta) -> Void)?
 
     // MARK: - 高频消息合并队列
     /// 合并窗口时长（秒），窗口内同 key 的消息只保留最后一条

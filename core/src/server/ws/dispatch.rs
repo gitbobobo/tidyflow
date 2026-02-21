@@ -49,6 +49,19 @@ fn action_matches_domain(domain: &str, action: &str) -> bool {
     crate::server::protocol::action_table::matches_action_domain(domain, action)
 }
 
+fn validate_client_envelope(envelope: &ClientEnvelopeV4) -> Result<(), String> {
+    if envelope.request_id.trim().is_empty() {
+        return Err("Invalid envelope: empty request_id".to_string());
+    }
+    if envelope.domain.trim().is_empty() || envelope.action.trim().is_empty() {
+        return Err("Invalid envelope: empty domain/action".to_string());
+    }
+    if envelope.client_ts == 0 {
+        return Err("Invalid envelope: client_ts is required".to_string());
+    }
+    Ok(())
+}
+
 async fn dispatch_domain_handler(
     route: DomainRoute,
     client_msg: &ClientMessage,
@@ -215,6 +228,32 @@ mod tests {
         let err = envelope_payload_to_client_message(&env).expect_err("should fail");
         assert!(err.contains("expected object"));
     }
+
+    #[test]
+    fn validate_client_envelope_rejects_empty_request_id() {
+        let env = ClientEnvelopeV4 {
+            request_id: "   ".to_string(),
+            domain: "system".to_string(),
+            action: "ping".to_string(),
+            payload: json!({}),
+            client_ts: 1,
+        };
+        let err = validate_client_envelope(&env).expect_err("should reject");
+        assert!(err.contains("empty request_id"));
+    }
+
+    #[test]
+    fn validate_client_envelope_rejects_missing_client_ts() {
+        let env = ClientEnvelopeV4 {
+            request_id: "req-1".to_string(),
+            domain: "system".to_string(),
+            action: "ping".to_string(),
+            payload: json!({}),
+            client_ts: 0,
+        };
+        let err = validate_client_envelope(&env).expect_err("should reject");
+        assert!(err.contains("client_ts"));
+    }
 }
 
 /// Handle a client message — 统一调度层
@@ -234,15 +273,7 @@ pub(super) async fn handle_client_message(
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;
-    if envelope.request_id.trim().is_empty() {
-        return Err("Invalid envelope: empty request_id".to_string());
-    }
-    if envelope.domain.trim().is_empty() || envelope.action.trim().is_empty() {
-        return Err("Invalid envelope: empty domain/action".to_string());
-    }
-    if envelope.client_ts == 0 {
-        return Err("Invalid envelope: client_ts is required".to_string());
-    }
+    validate_client_envelope(&envelope)?;
 
     crate::server::ws::with_request_id(Some(envelope.request_id.clone()), async {
         let route = parse_domain_route(&envelope.domain)

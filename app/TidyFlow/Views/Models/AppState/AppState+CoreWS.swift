@@ -270,6 +270,10 @@ extension AppState {
         TFLog.wsClient = wsClient
         // 切换到当前 Core 会话 token，确保仅本次进程可连接
         wsClient.updateAuthToken(coreProcessManager.wsAuthToken)
+        wsClient.onServerEnvelopeMeta = { [weak self] meta in
+            self?.wsLastEnvelopeSeq = meta.seq
+            self?.wsLastEnvelopeSummary = "\(meta.domain)/\(meta.action) [\(meta.kind)]"
+        }
 
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected

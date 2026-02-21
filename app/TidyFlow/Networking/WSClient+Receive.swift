@@ -3,6 +3,35 @@ import Foundation
 // MARK: - WSClient 接收消息扩展
 
 extension WSClient {
+    private struct ServerEnvelopeV4: Decodable {
+        let requestID: String?
+        let seq: UInt64
+        let domain: String
+        let action: String
+        let kind: String
+        let payload: AnyCodable
+        let serverTS: UInt64
+
+        enum CodingKeys: String, CodingKey {
+            case requestID = "request_id"
+            case seq
+            case domain
+            case action
+            case kind
+            case payload
+            case serverTS = "server_ts"
+        }
+    }
+
+    private struct DecodedServerEnvelope {
+        let requestID: String?
+        let seq: UInt64
+        let domain: String
+        let action: String
+        let kind: String
+        let payload: [String: Any]
+        let serverTS: UInt64
+    }
 
     // MARK: - Receive Messages
 
@@ -45,29 +74,71 @@ extension WSClient {
     /// 解码在后台队列执行，分发回调切回主线程
     private func parseAndDispatchBinary(_ data: Data) {
         do {
-            let decoded = try msgpackDecoder.decode(AnyCodable.self, from: data)
-            guard let json = decoded.toDictionary else {
-                TFLog.ws.error("MessagePack decoded value is not a dictionary")
-                return
-            }
+            let envelope = try decodeServerEnvelope(data)
             DispatchQueue.main.async { [weak self] in
-                self?.dispatchMessage(json)
+                self?.dispatchMessage(envelope)
             }
         } catch {
             TFLog.ws.error("MessagePack decode failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    /// 分发解析后的消息到对应的处理器
-    private func dispatchMessage(_ envelope: [String: Any]) {
-        guard let type = envelope["action"] as? String,
-              let seq = parseEnvelopeSeq(envelope["seq"]),
-              let _ = envelope["domain"] as? String,
-              let _ = envelope["kind"] as? String,
-              let payload = envelope["payload"] as? [String: Any] else {
-            TFLog.ws.error("Message missing v4 envelope fields: seq/domain/action/kind/payload")
-            return
+    private func decodeServerEnvelope(_ data: Data) throws -> DecodedServerEnvelope {
+        let envelope = try msgpackDecoder.decode(ServerEnvelopeV4.self, from: data)
+        guard let payload = envelope.payload.toDictionary else {
+            throw NSError(
+                domain: "WSClient",
+                code: -1001,
+                userInfo: [NSLocalizedDescriptionKey: "Message payload must be object"]
+            )
         }
+        try validateServerEnvelope(envelope, payload: payload)
+        return DecodedServerEnvelope(
+            requestID: envelope.requestID,
+            seq: envelope.seq,
+            domain: envelope.domain,
+            action: envelope.action,
+            kind: envelope.kind,
+            payload: payload,
+            serverTS: envelope.serverTS
+        )
+    }
+
+    private func validateServerEnvelope(_ envelope: ServerEnvelopeV4, payload: [String: Any]) throws {
+        if envelope.domain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            envelope.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw NSError(
+                domain: "WSClient",
+                code: -1002,
+                userInfo: [NSLocalizedDescriptionKey: "Envelope missing domain/action"]
+            )
+        }
+        if envelope.kind != "result" && envelope.kind != "event" && envelope.kind != "error" {
+            throw NSError(
+                domain: "WSClient",
+                code: -1003,
+                userInfo: [NSLocalizedDescriptionKey: "Envelope kind invalid: \(envelope.kind)"]
+            )
+        }
+        if envelope.serverTS == 0 {
+            throw NSError(
+                domain: "WSClient",
+                code: -1004,
+                userInfo: [NSLocalizedDescriptionKey: "Envelope server_ts is required"]
+            )
+        }
+        if payload.isEmpty && envelope.action != "hello" && envelope.action != "pong" {
+            TFLog.ws.warning("Envelope payload is empty: action=\(envelope.action, privacy: .public)")
+        }
+    }
+
+    /// 分发解析后的消息到对应的处理器
+    private func dispatchMessage(_ envelope: DecodedServerEnvelope) {
+        let type = envelope.action
+        let seq = envelope.seq
+        let domain = envelope.domain
+        let kind = envelope.kind
+        let payload = envelope.payload
         if seq <= lastServerSeq {
             TFLog.ws.warning(
                 "Dropping stale envelope: seq=\(seq, privacy: .public), last=\(self.lastServerSeq, privacy: .public)"
@@ -75,6 +146,16 @@ extension WSClient {
             return
         }
         lastServerSeq = seq
+        onServerEnvelopeMeta?(
+            ServerEnvelopeMeta(
+                seq: seq,
+                domain: domain,
+                action: type,
+                kind: kind,
+                requestID: envelope.requestID,
+                serverTS: envelope.serverTS
+            )
+        )
         var json = payload
         json["type"] = type
 
@@ -483,14 +564,6 @@ extension WSClient {
             // Unknown message type, ignore
             break
         }
-    }
-
-    private func parseEnvelopeSeq(_ raw: Any?) -> UInt64? {
-        if let value = raw as? UInt64 { return value }
-        if let value = raw as? UInt { return UInt64(value) }
-        if let value = raw as? Int, value >= 0 { return UInt64(value) }
-        if let value = raw as? NSNumber { return value.uint64Value }
-        return nil
     }
 
     /// 处理合并队列刷新后的高频消息（由 flushCoalesceQueue 调用）
