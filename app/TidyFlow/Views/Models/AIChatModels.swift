@@ -32,7 +32,7 @@ enum AIChatTool: String, CaseIterable, Identifiable {
     }
 }
 
-struct AIToolBadgeState {
+struct AIToolBadgeState: Equatable {
     var hasRunning: Bool = false
     var hasUnread: Bool = false
 

@@ -440,11 +440,15 @@ class AppState: ObservableObject {
     ) {
         let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
         var dict = aiSessionStatusesByTool[aiTool] ?? [:]
-        dict[key] = AISessionStatusSnapshot(
+        let next = AISessionStatusSnapshot(
             status: status,
             errorMessage: errorMessage,
             contextRemainingPercent: contextRemainingPercent
         )
+        if dict[key] == next {
+            return
+        }
+        dict[key] = next
         aiSessionStatusesByTool[aiTool] = dict
     }
 
@@ -578,6 +582,7 @@ class AppState: ObservableObject {
 
     func setBadgeRunning(_ running: Bool, for tool: AIChatTool) {
         var badge = aiToolBadges[tool] ?? AIToolBadgeState()
+        guard badge.hasRunning != running else { return }
         badge.hasRunning = running
         aiToolBadges[tool] = badge
     }
@@ -585,12 +590,14 @@ class AppState: ObservableObject {
     func markUnreadBadge(for tool: AIChatTool) {
         guard tool != aiChatTool else { return }
         var badge = aiToolBadges[tool] ?? AIToolBadgeState()
+        guard !badge.hasUnread else { return }
         badge.hasUnread = true
         aiToolBadges[tool] = badge
     }
 
     func clearUnreadBadge(for tool: AIChatTool) {
         var badge = aiToolBadges[tool] ?? AIToolBadgeState()
+        guard badge.hasUnread else { return }
         badge.hasUnread = false
         aiToolBadges[tool] = badge
     }
