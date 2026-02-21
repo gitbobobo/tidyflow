@@ -23,7 +23,7 @@ use crate::server::context::{
     ConnectionMeta, SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory,
     TaskBroadcastTx,
 };
-use crate::server::protocol::{ServerEnvelopeV4, ServerMessage, PROTOCOL_VERSION};
+use crate::server::protocol::{ServerEnvelopeV5, ServerMessage, PROTOCOL_VERSION};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
@@ -351,7 +351,7 @@ fn is_event_action(action: &str) -> bool {
         || action.starts_with("evo_")
 }
 
-fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV4, String> {
+fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV5, String> {
     let mut value = serde_json::to_value(msg).map_err(|e| e.to_string())?;
     let mut payload = match value {
         serde_json::Value::Object(ref mut map) => map.clone(),
@@ -368,7 +368,7 @@ fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV4, String> {
     } else {
         "result".to_string()
     };
-    Ok(ServerEnvelopeV4 {
+    Ok(ServerEnvelopeV5 {
         request_id: current_request_id(),
         seq: SERVER_ENVELOPE_SEQ.fetch_add(1, Ordering::Relaxed) + 1,
         domain: domain_from_action(&action),
@@ -404,7 +404,7 @@ mod tests {
             encode_server_message(&ServerMessage::Pong).expect("encode should succeed")
         })
         .await;
-        let env: ServerEnvelopeV4 = rmp_serde::from_slice(&bytes).expect("decode envelope");
+        let env: ServerEnvelopeV5 = rmp_serde::from_slice(&bytes).expect("decode envelope");
         assert_eq!(env.request_id.as_deref(), Some("req-123"));
         assert_eq!(env.domain, "system");
         assert_eq!(env.action, "pong");
@@ -423,7 +423,7 @@ mod tests {
             .expect("encode should succeed")
         })
         .await;
-        let env: ServerEnvelopeV4 = rmp_serde::from_slice(&bytes).expect("decode envelope");
+        let env: ServerEnvelopeV5 = rmp_serde::from_slice(&bytes).expect("decode envelope");
         assert_eq!(env.request_id, None);
         assert_eq!(env.domain, "terminal");
         assert_eq!(env.action, "output");
@@ -443,8 +443,8 @@ mod tests {
         })
         .await;
 
-        let first_env: ServerEnvelopeV4 = rmp_serde::from_slice(&first).expect("decode first");
-        let second_env: ServerEnvelopeV4 = rmp_serde::from_slice(&second).expect("decode second");
+        let first_env: ServerEnvelopeV5 = rmp_serde::from_slice(&first).expect("decode first");
+        let second_env: ServerEnvelopeV5 = rmp_serde::from_slice(&second).expect("decode second");
         assert!(second_env.seq > first_env.seq);
     }
 }

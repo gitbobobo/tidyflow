@@ -1,6 +1,6 @@
 //! 自动生成文件，请勿手改。
 //!
-//! 来源：`schema/protocol/v4/action_rules.csv`
+//! 来源：`schema/protocol/v5/action_rules.csv`
 //! 生成命令：`./scripts/tools/gen_protocol_action_table.sh`
 
 pub const EXACT_RULES: &[(&str, &str)] = &[

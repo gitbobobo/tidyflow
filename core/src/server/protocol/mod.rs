@@ -12,16 +12,16 @@ pub mod terminal;
 #[cfg(test)]
 mod action_table_test;
 
-/// Protocol version: 4 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 4;
+/// Protocol version: 5 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 5;
 
 // ============================================================================
-// v4 包络
+// v5 包络
 // ============================================================================
 
-/// v4 客户端请求包络
+/// v5 客户端请求包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientEnvelopeV4 {
+pub struct ClientEnvelopeV5 {
     pub request_id: String,
     pub domain: String,
     pub action: String,
@@ -32,9 +32,9 @@ pub struct ClientEnvelopeV4 {
     pub client_ts: u64,
 }
 
-/// v4 服务端响应包络
+/// v5 服务端响应包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerEnvelopeV4 {
+pub struct ServerEnvelopeV5 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     /// 服务端单调序号（全局）

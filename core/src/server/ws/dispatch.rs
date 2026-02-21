@@ -5,12 +5,12 @@ use tokio::sync::Mutex;
 use tracing::{error, info, trace, warn};
 
 use crate::server::context::HandlerContext;
-use crate::server::protocol::{ClientEnvelopeV4, ClientMessage, ServerMessage};
+use crate::server::protocol::{ClientEnvelopeV5, ClientMessage, ServerMessage};
 use crate::server::watcher::WorkspaceWatcher;
 use crate::server::ws::send_message;
 
 pub(super) fn probe_client_message_type(data: &[u8]) -> String {
-    rmp_serde::from_slice::<ClientEnvelopeV4>(data)
+    rmp_serde::from_slice::<ClientEnvelopeV5>(data)
         .map(|env| env.action)
         .unwrap_or_else(|_| "unknown".to_string())
 }
@@ -49,7 +49,7 @@ fn action_matches_domain(domain: &str, action: &str) -> bool {
     crate::server::protocol::action_table::matches_action_domain(domain, action)
 }
 
-fn validate_client_envelope(envelope: &ClientEnvelopeV4) -> Result<(), String> {
+fn validate_client_envelope(envelope: &ClientEnvelopeV5) -> Result<(), String> {
     if envelope.request_id.trim().is_empty() {
         return Err("Invalid envelope: empty request_id".to_string());
     }
@@ -185,7 +185,7 @@ async fn dispatch_domain_handler(
 }
 
 fn envelope_payload_to_client_message(
-    envelope: &ClientEnvelopeV4,
+    envelope: &ClientEnvelopeV5,
 ) -> Result<ClientMessage, String> {
     let mut payload = match &envelope.payload {
         Value::Object(map) => map.clone(),
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn envelope_payload_to_client_message_parses_ping() {
-        let env = ClientEnvelopeV4 {
+        let env = ClientEnvelopeV5 {
             request_id: "req-1".to_string(),
             domain: "system".to_string(),
             action: "ping".to_string(),
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn envelope_payload_to_client_message_rejects_non_object_payload() {
-        let env = ClientEnvelopeV4 {
+        let env = ClientEnvelopeV5 {
             request_id: "req-2".to_string(),
             domain: "system".to_string(),
             action: "ping".to_string(),
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn validate_client_envelope_rejects_empty_request_id() {
-        let env = ClientEnvelopeV4 {
+        let env = ClientEnvelopeV5 {
             request_id: "   ".to_string(),
             domain: "system".to_string(),
             action: "ping".to_string(),
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn validate_client_envelope_rejects_missing_client_ts() {
-        let env = ClientEnvelopeV4 {
+        let env = ClientEnvelopeV5 {
             request_id: "req-1".to_string(),
             domain: "system".to_string(),
             action: "ping".to_string(),
@@ -258,7 +258,7 @@ mod tests {
 
 /// Handle a client message — 统一调度层
 ///
-/// v4：客户端消息统一使用 `ClientEnvelopeV4`
+/// v4：客户端消息统一使用 `ClientEnvelopeV5`
 pub(super) async fn handle_client_message(
     data: &[u8],
     socket: &mut WebSocket,
@@ -269,7 +269,7 @@ pub(super) async fn handle_client_message(
         "handle_client_message called with data length: {}",
         data.len()
     );
-    let envelope: ClientEnvelopeV4 = rmp_serde::from_slice(data).map_err(|e| {
+    let envelope: ClientEnvelopeV5 = rmp_serde::from_slice(data).map_err(|e| {
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;
