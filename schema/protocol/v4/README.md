@@ -1,4 +1,4 @@
-# Protocol Schema (v3)
+# Protocol Schema (v4)
 
 本目录是协议域与版本信息的权威源（source of truth）。
 
