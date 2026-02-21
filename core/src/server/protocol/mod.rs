@@ -320,6 +320,9 @@ pub enum ClientMessage {
         /// 应用语言
         #[serde(default)]
         app_language: Option<String>,
+        /// 是否开启远程访问（开启后允许局域网连接）
+        #[serde(default)]
+        remote_access_enabled: Option<bool>,
     },
 
     // v1.22: File watcher
@@ -960,6 +963,7 @@ pub enum ServerMessage {
         merge_ai_agent: Option<String>,
         fixed_port: u16,
         app_language: String,
+        remote_access_enabled: bool,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,
     },

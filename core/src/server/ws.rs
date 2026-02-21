@@ -86,14 +86,14 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .map(|addr| addr.trim().to_string())
         .filter(|addr| !addr.is_empty())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
     if expected_ws_token.is_some() {
         info!("WebSocket token auth enabled");
     } else {
         warn!("WebSocket token auth disabled (TIDYFLOW_WS_TOKEN not set)");
     }
-    info!("Binding on {} (LAN clients can connect)", bind_addr);
+    info!("Binding on {}", bind_addr);
 
     // 创建全局任务广播通道
     let (task_broadcast_tx, _) = tokio::sync::broadcast::channel(256);

@@ -86,6 +86,9 @@ pub struct ClientSettings {
     /// 应用语言：system / en / zh-Hans
     #[serde(default = "default_app_language")]
     pub app_language: String,
+    /// 是否开启远程访问（开启后 Core 绑定 0.0.0.0）
+    #[serde(default)]
+    pub remote_access_enabled: bool,
     /// Evolution 代理配置（key: "project/workspace"）
     #[serde(default)]
     pub evolution_agent_profiles: HashMap<String, Vec<EvolutionStageProfile>>,

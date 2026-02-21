@@ -45,6 +45,7 @@ pub async fn handle_settings_message(
                     merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
                     fixed_port: state.client_settings.fixed_port,
                     app_language: state.client_settings.app_language.clone(),
+                    remote_access_enabled: state.client_settings.remote_access_enabled,
                     evolution_agent_profiles,
                 },
             )
@@ -61,6 +62,7 @@ pub async fn handle_settings_message(
             selected_ai_agent,
             fixed_port,
             app_language,
+            remote_access_enabled,
         } => {
             info!("SaveClientSettings request");
             {
@@ -88,6 +90,9 @@ pub async fn handle_settings_message(
                 }
                 if let Some(lang) = app_language {
                     state.client_settings.app_language = lang.clone();
+                }
+                if let Some(enabled) = remote_access_enabled {
+                    state.client_settings.remote_access_enabled = *enabled;
                 }
             }
 

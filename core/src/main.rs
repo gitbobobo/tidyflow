@@ -27,7 +27,7 @@ enum Commands {
     Serve {
         #[arg(short, long)]
         port: Option<u16>,
-        /// Bind address for WebSocket/HTTP server (default: 0.0.0.0)
+        /// Bind address for WebSocket/HTTP server (default: 127.0.0.1)
         #[arg(long)]
         bind_addr: Option<String>,
     },

@@ -21,6 +21,102 @@ struct ClientMessageTypeProbe {
     message_type: Option<String>,
 }
 
+#[derive(Copy, Clone)]
+enum DomainRoute {
+    Terminal,
+    File,
+    Git,
+    Project,
+    Lsp,
+    Settings,
+    Log,
+    Ai,
+    Evolution,
+}
+
+const DOMAIN_ROUTES: [DomainRoute; 9] = [
+    DomainRoute::Terminal,
+    DomainRoute::File,
+    DomainRoute::Git,
+    DomainRoute::Project,
+    DomainRoute::Lsp,
+    DomainRoute::Settings,
+    DomainRoute::Log,
+    DomainRoute::Ai,
+    DomainRoute::Evolution,
+];
+
+async fn dispatch_domain_handlers(
+    client_msg: &ClientMessage,
+    socket: &mut WebSocket,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    for route in DOMAIN_ROUTES {
+        let handled = match route {
+            DomainRoute::Terminal => {
+                crate::server::handlers::terminal::handle_terminal_message(client_msg, socket, ctx)
+                    .await?
+            }
+            DomainRoute::File => {
+                crate::server::handlers::file::handle_file_message(
+                    client_msg,
+                    socket,
+                    &ctx.app_state,
+                )
+                .await?
+            }
+            DomainRoute::Git => {
+                crate::server::handlers::git::handle_git_message(
+                    client_msg,
+                    socket,
+                    &ctx.app_state,
+                    ctx,
+                )
+                .await?
+            }
+            DomainRoute::Project => {
+                crate::server::handlers::project::handle_project_message(client_msg, socket, ctx)
+                    .await?
+            }
+            DomainRoute::Lsp => {
+                crate::server::handlers::lsp::handle_lsp_message(client_msg, socket, ctx).await?
+            }
+            DomainRoute::Settings => {
+                crate::server::handlers::settings::handle_settings_message(
+                    client_msg,
+                    socket,
+                    &ctx.app_state,
+                    &ctx.save_tx,
+                )
+                .await?
+            }
+            DomainRoute::Log => crate::server::handlers::log::handle_log_message(client_msg)?,
+            DomainRoute::Ai => {
+                crate::server::handlers::ai::handle_ai_message(
+                    client_msg,
+                    socket,
+                    &ctx.app_state,
+                    &ctx.ai_state,
+                    &ctx.cmd_output_tx,
+                    &ctx.task_broadcast_tx,
+                    &ctx.conn_meta.conn_id,
+                )
+                .await?
+            }
+            DomainRoute::Evolution => {
+                crate::server::handlers::evolution::handle_evolution_message(
+                    client_msg, socket, ctx,
+                )
+                .await?
+            }
+        };
+        if handled {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Handle a client message — 统一调度层
 ///
 /// 支持两种消息格式：
@@ -108,72 +204,7 @@ pub(super) async fn handle_client_message(
         _ => {}
     }
 
-    // 按领域分发，handler 返回 Option<ServerMessage>，由此处统一发送
-    // 终端消息需要特殊处理（可能返回多条消息），沿用旧模式
-    if crate::server::handlers::terminal::handle_terminal_message(&client_msg, socket, ctx).await? {
-        return Ok(());
-    }
-
-    // 文件消息
-    if crate::server::handlers::file::handle_file_message(&client_msg, socket, &ctx.app_state)
-        .await?
-    {
-        return Ok(());
-    }
-
-    // Git 消息
-    if crate::server::handlers::git::handle_git_message(&client_msg, socket, &ctx.app_state, ctx)
-        .await?
-    {
-        return Ok(());
-    }
-
-    // 项目/工作空间消息
-    if crate::server::handlers::project::handle_project_message(&client_msg, socket, ctx).await? {
-        return Ok(());
-    }
-
-    // LSP 诊断消息
-    if crate::server::handlers::lsp::handle_lsp_message(&client_msg, socket, ctx).await? {
-        return Ok(());
-    }
-
-    // 设置消息
-    if crate::server::handlers::settings::handle_settings_message(
-        &client_msg,
-        socket,
-        &ctx.app_state,
-        &ctx.save_tx,
-    )
-    .await?
-    {
-        return Ok(());
-    }
-
-    // 日志消息
-    if crate::server::handlers::log::handle_log_message(&client_msg)? {
-        return Ok(());
-    }
-
-    // AI 消息
-    if crate::server::handlers::ai::handle_ai_message(
-        &client_msg,
-        socket,
-        &ctx.app_state,
-        &ctx.ai_state,
-        &ctx.cmd_output_tx,
-        &ctx.task_broadcast_tx,
-        &ctx.conn_meta.conn_id,
-    )
-    .await?
-    {
-        return Ok(());
-    }
-
-    // Evolution 消息
-    if crate::server::handlers::evolution::handle_evolution_message(&client_msg, socket, ctx)
-        .await?
-    {
+    if dispatch_domain_handlers(&client_msg, socket, ctx).await? {
         return Ok(());
     }
 
