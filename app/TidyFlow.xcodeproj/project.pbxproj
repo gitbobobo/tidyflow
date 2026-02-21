@@ -127,6 +127,9 @@
 		SPL00004 /* WSClient+Send.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00014 /* WSClient+Send.swift */; };
 		SPL00005 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
 		SPL0000B /* WSClient+Receive+DomainRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00016 /* WSClient+Receive+DomainRouting.swift */; };
+		SPL0000C /* WSClient+Receive+DomainCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00017 /* WSClient+Receive+DomainCore.swift */; };
+		SPL0000D /* WSClient+Receive+DomainWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00018 /* WSClient+Receive+DomainWorkspace.swift */; };
+		SPL0000E /* WSClient+Receive+DomainAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00019 /* WSClient+Receive+DomainAI.swift */; };
 		SPL00006 /* FloatingPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00021 /* FloatingPanelController.swift */; };
 		SPL00007 /* GitPanelSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00022 /* GitPanelSections.swift */; };
 		SPL00008 /* GitGraphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00023 /* GitGraphViews.swift */; };
@@ -267,6 +270,9 @@
 		SPL00014 /* WSClient+Send.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Send.swift"; sourceTree = "<group>"; };
 		SPL00015 /* WSClient+Receive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive.swift"; sourceTree = "<group>"; };
 		SPL00016 /* WSClient+Receive+DomainRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainRouting.swift"; sourceTree = "<group>"; };
+		SPL00017 /* WSClient+Receive+DomainCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainCore.swift"; sourceTree = "<group>"; };
+		SPL00018 /* WSClient+Receive+DomainWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainWorkspace.swift"; sourceTree = "<group>"; };
+		SPL00019 /* WSClient+Receive+DomainAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WSClient+Receive+DomainAI.swift"; sourceTree = "<group>"; };
 		SPL00021 /* FloatingPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanelController.swift; sourceTree = "<group>"; };
 		SPL00022 /* GitPanelSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPanelSections.swift; sourceTree = "<group>"; };
 		SPL00023 /* GitGraphViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitGraphViews.swift; sourceTree = "<group>"; };
@@ -468,6 +474,9 @@
 				B3A00015 /* WSClient.swift */,
 				SPL00015 /* WSClient+Receive.swift */,
 				SPL00016 /* WSClient+Receive+DomainRouting.swift */,
+				SPL00017 /* WSClient+Receive+DomainCore.swift */,
+				SPL00018 /* WSClient+Receive+DomainWorkspace.swift */,
+				SPL00019 /* WSClient+Receive+DomainAI.swift */,
 				SPL00014 /* WSClient+Send.swift */,
 				1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */,
 			);
@@ -746,6 +755,9 @@
 				SPL00004 /* WSClient+Send.swift in Sources */,
 				SPL00005 /* WSClient+Receive.swift in Sources */,
 				SPL0000B /* WSClient+Receive+DomainRouting.swift in Sources */,
+				SPL0000C /* WSClient+Receive+DomainCore.swift in Sources */,
+				SPL0000D /* WSClient+Receive+DomainWorkspace.swift in Sources */,
+				SPL0000E /* WSClient+Receive+DomainAI.swift in Sources */,
 				TPR00001 /* TypedProtocol.swift in Sources */,
 				B3A00006 /* ProtocolModels.swift in Sources */,
 				B3A0000A /* AIChatProtocolModels.swift in Sources */,
