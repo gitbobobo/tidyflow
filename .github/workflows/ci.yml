@@ -30,9 +30,11 @@ jobs:
           bash -n scripts/tools/read_version.sh
           bash -n scripts/tools/gen_sha256.sh
           bash -n scripts/tools/check_protocol_consistency.sh
+          bash -n scripts/tools/check_protocol_schema_sync.sh
           bash -n scripts/tools/check_version_consistency.sh
 
       - name: Architecture guard checks
         run: |
           ./scripts/tools/check_protocol_consistency.sh
+          ./scripts/tools/check_protocol_schema_sync.sh
           ./scripts/tools/check_version_consistency.sh
