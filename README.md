@@ -47,7 +47,7 @@ TidyFlow uses a modern **hybrid native architecture**:
 - **Frontend (UI Shell)**: A macOS-native app built with SwiftUI and AppKit for window management and system integration.
 - **Terminal Container**: xterm.js running inside WKWebView for high-performance terminal rendering.
 - **Core Engine (Backend)**: A high-performance Rust engine handling PTY management, Git operations, filesystem access, and state persistence.
-- **Communication**: Frontend and backend communicate via WebSocket + MessagePack (binary, Protocol v4 envelope).
+- **Communication**: Frontend and backend communicate via WebSocket + MessagePack (binary, Protocol v5 envelope).
 
 ## ⌨️ Common Shortcuts
 

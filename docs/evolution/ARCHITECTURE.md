@@ -126,6 +126,6 @@
 
 ## 9. 与现有能力的衔接
 
-- 协议层：基于现有 MessagePack v4 包络增量扩展 `evo_*` 消息。
+- 协议层：基于现有 MessagePack v5 包络增量扩展 `evo_*` 消息。
 - 任务广播：复用现有 task broadcast 通道扩展演化事件。
 - AI 会话：复用现有 AI Chat，增加 stage 到 session 的映射管理。
