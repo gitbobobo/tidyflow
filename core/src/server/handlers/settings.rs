@@ -1,12 +1,11 @@
 use axum::extract::ws::WebSocket;
-use tracing::info;
 
 use crate::server::context::SharedAppState;
-use crate::server::protocol::{
-    ai::ModelSelection, ClientMessage, CustomCommandInfo, EvolutionStageProfileInfo, ServerMessage,
-};
-use crate::server::ws::send_message;
-use crate::workspace::state::EvolutionStageProfile;
+use crate::server::handlers::dispatch_handlers;
+use crate::server::protocol::ClientMessage;
+
+mod mutate;
+mod query;
 
 /// 处理设置相关的客户端消息
 pub async fn handle_settings_message(
@@ -15,116 +14,10 @@ pub async fn handle_settings_message(
     app_state: &SharedAppState,
     save_tx: &tokio::sync::mpsc::Sender<()>,
 ) -> Result<bool, String> {
-    match client_msg {
-        // v1.21: Get client settings
-        ClientMessage::GetClientSettings => {
-            let state = app_state.read().await;
-            let commands: Vec<CustomCommandInfo> = state
-                .client_settings
-                .custom_commands
-                .iter()
-                .map(|c| CustomCommandInfo {
-                    id: c.id.clone(),
-                    name: c.name.clone(),
-                    icon: c.icon.clone(),
-                    command: c.command.clone(),
-                })
-                .collect();
-            let evolution_agent_profiles = state
-                .client_settings
-                .evolution_agent_profiles
-                .iter()
-                .map(|(key, profiles)| (key.clone(), to_protocol_profiles(profiles)))
-                .collect();
-            send_message(
-                socket,
-                &ServerMessage::ClientSettingsResult {
-                    custom_commands: commands,
-                    workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
-                    commit_ai_agent: state.client_settings.commit_ai_agent.clone(),
-                    merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
-                    fixed_port: state.client_settings.fixed_port,
-                    app_language: state.client_settings.app_language.clone(),
-                    remote_access_enabled: state.client_settings.remote_access_enabled,
-                    evolution_agent_profiles,
-                },
-            )
-            .await?;
-            Ok(true)
-        }
+    dispatch_handlers!(
+        query::handle_query_message(client_msg, socket, app_state),
+        mutate::handle_mutate_message(client_msg, socket, app_state, save_tx),
+    );
 
-        // v1.21: Save client settings（内存更新 + 防抖异步保存）
-        ClientMessage::SaveClientSettings {
-            custom_commands,
-            workspace_shortcuts,
-            commit_ai_agent,
-            merge_ai_agent,
-            selected_ai_agent,
-            fixed_port,
-            app_language,
-            remote_access_enabled,
-        } => {
-            info!("SaveClientSettings request");
-            {
-                let mut state = app_state.write().await;
-                state.client_settings.custom_commands = custom_commands
-                    .iter()
-                    .map(|c| crate::workspace::state::CustomCommand {
-                        id: c.id.clone(),
-                        name: c.name.clone(),
-                        icon: c.icon.clone(),
-                        command: c.command.clone(),
-                    })
-                    .collect();
-                state.client_settings.workspace_shortcuts = workspace_shortcuts.clone();
-                // 优先使用新字段；若新字段为空则回退兼容旧客户端的 selected_ai_agent
-                if commit_ai_agent.is_some() || merge_ai_agent.is_some() {
-                    state.client_settings.commit_ai_agent = commit_ai_agent.clone();
-                    state.client_settings.merge_ai_agent = merge_ai_agent.clone();
-                } else if let Some(old) = selected_ai_agent {
-                    state.client_settings.commit_ai_agent = Some(old.clone());
-                    state.client_settings.merge_ai_agent = Some(old.clone());
-                }
-                if let Some(port) = fixed_port {
-                    state.client_settings.fixed_port = *port;
-                }
-                if let Some(lang) = app_language {
-                    state.client_settings.app_language = lang.clone();
-                }
-                if let Some(enabled) = remote_access_enabled {
-                    state.client_settings.remote_access_enabled = *enabled;
-                }
-            }
-
-            // 触发防抖保存，不等待磁盘写入完成
-            let _ = save_tx.send(()).await;
-
-            send_message(
-                socket,
-                &ServerMessage::ClientSettingsSaved {
-                    ok: true,
-                    message: None,
-                },
-            )
-            .await?;
-            Ok(true)
-        }
-
-        _ => Ok(false), // 不处理的消息返回 false
-    }
-}
-
-fn to_protocol_profiles(input: &[EvolutionStageProfile]) -> Vec<EvolutionStageProfileInfo> {
-    input
-        .iter()
-        .map(|profile| EvolutionStageProfileInfo {
-            stage: profile.stage.clone(),
-            ai_tool: profile.ai_tool.clone(),
-            mode: profile.mode.clone(),
-            model: profile.model.as_ref().map(|model| ModelSelection {
-                provider_id: model.provider_id.clone(),
-                model_id: model.model_id.clone(),
-            }),
-        })
-        .collect()
+    Ok(false)
 }

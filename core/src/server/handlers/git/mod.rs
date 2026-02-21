@@ -6,6 +6,7 @@ use crate::server::protocol::ClientMessage;
 mod branch_commit;
 mod history;
 mod integration;
+mod route;
 mod stage_ops;
 mod status_diff;
 
@@ -33,25 +34,5 @@ pub async fn handle_git_message(
         .await;
     }
 
-    if status_diff::try_handle_git_message(client_msg, socket, app_state).await? {
-        return Ok(true);
-    }
-
-    if stage_ops::try_handle_git_message(client_msg, socket, app_state).await? {
-        return Ok(true);
-    }
-
-    if branch_commit::try_handle_git_message(client_msg, socket, app_state, ctx).await? {
-        return Ok(true);
-    }
-
-    if integration::try_handle_git_message(client_msg, socket, app_state, ctx).await? {
-        return Ok(true);
-    }
-
-    if history::try_handle_git_message(client_msg, socket, app_state).await? {
-        return Ok(true);
-    }
-
-    Ok(false)
+    route::handle_standard_git_routes(client_msg, socket, app_state, ctx).await
 }
