@@ -7,7 +7,7 @@ import os
 // - WSClient+Receive.swift  接收、解析、分发消息 + URLSessionWebSocketDelegate
 
 /// Minimal WebSocket client for Core communication
-/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v3 包络）
+/// 使用 MessagePack 二进制协议与 Rust Core 通信（协议版本 v4 包络）
 class WSClient: NSObject, ObservableObject {
     // MARK: - MessagePack 编解码器（跨 extension 文件访问）
     let msgpackEncoder = MessagePackEncoder()

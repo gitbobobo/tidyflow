@@ -37,7 +37,8 @@ private struct SaveClientSettingsRequest: Encodable {
 
 extension WSClient {
     // BEGIN AUTO-GENERATED: protocol_action_rules
-    private let protocolExactRules: [(domain: String, action: String)] = [
+    private var protocolExactRules: [(domain: String, action: String)] {
+        [
         ("system", "ping"),
         ("terminal", "spawn_terminal"),
         ("terminal", "kill_terminal"),
@@ -45,9 +46,11 @@ extension WSClient {
         ("terminal", "resize"),
         ("file", "clipboard_image_upload"),
         ("git", "cancel_ai_task"),
-    ]
+        ]
+    }
 
-    private let protocolPrefixRules: [(domain: String, prefix: String)] = [
+    private var protocolPrefixRules: [(domain: String, prefix: String)] {
+        [
         ("terminal", "term_"),
         ("file", "file_"),
         ("file", "watch_"),
@@ -66,11 +69,14 @@ extension WSClient {
         ("log", "log_"),
         ("ai", "ai_"),
         ("evolution", "evo_"),
-    ]
+        ]
+    }
 
-    private let protocolContainsRules: [(domain: String, needle: String)] = [
+    private var protocolContainsRules: [(domain: String, needle: String)] {
+        [
         ("settings", "client_settings"),
-    ]
+        ]
+    }
     // END AUTO-GENERATED: protocol_action_rules
 
 
@@ -97,7 +103,8 @@ extension WSClient {
             "request_id": requestId ?? UUID().uuidString,
             "domain": domainForAction(action),
             "action": action,
-            "payload": payload
+            "payload": payload,
+            "client_ts": Int(Date().timeIntervalSince1970 * 1000)
         ]
         let codable = AnyCodable.from(envelope)
         return try msgpackEncoder.encode(codable)

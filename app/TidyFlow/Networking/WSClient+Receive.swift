@@ -59,20 +59,14 @@ extension WSClient {
     }
 
     /// 分发解析后的消息到对应的处理器
-    private func dispatchMessage(_ json: [String: Any]) {
-        // v3 包络：先还原为旧的 type+payload 形态，复用现有分发逻辑
-        if let action = json["action"] as? String,
-           let payload = json["payload"] as? [String: Any] {
-            var legacy = payload
-            legacy["type"] = action
-            dispatchMessage(legacy)
+    private func dispatchMessage(_ envelope: [String: Any]) {
+        guard let type = envelope["action"] as? String,
+              let payload = envelope["payload"] as? [String: Any] else {
+            TFLog.ws.error("Message missing v4 envelope fields: action/payload")
             return
         }
-
-        guard let type = json["type"] as? String else {
-            TFLog.ws.error("Message missing 'type' field")
-            return
-        }
+        var json = payload
+        json["type"] = type
 
         // 高频消息走合并队列，避免淹没 UI 线程
         if isCoalescible(type) {
