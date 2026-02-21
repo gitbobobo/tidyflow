@@ -1,4 +1,4 @@
-# TidyFlow Protocol v3
+# TidyFlow Protocol v4
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -10,15 +10,15 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 3`
-- 协议 schema 权威源：`schema/protocol/v3/`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 4`
+- 协议 schema 权威源：`schema/protocol/v4/`
 
-## 消息模型（v3 包络）
+## 消息模型（v4 包络）
 
 - 客户端请求：
-  - `ClientEnvelopeV3 { request_id, domain, action, payload }`
+  - `ClientEnvelopeV4 { request_id, domain, action, payload, client_ts }`
 - 服务端响应/事件：
-  - `ServerEnvelopeV3 { request_id?, domain, action, kind, payload }`
+  - `ServerEnvelopeV4 { request_id?, seq, domain, action, kind, payload, server_ts }`
   - `kind`：`result` / `event` / `error`
 - 业务消息体仍由 `ClientMessage` / `ServerMessage` 定义并映射到 `action + payload`
 - 定义位置：`core/src/server/protocol/mod.rs`
@@ -44,8 +44,8 @@
 
 ## 兼容策略
 
-- 本版本不向后兼容 v2。
-- 客户端必须发送 v3 包络；服务端统一返回 v3 包络。
+- 本版本不向后兼容 v3。
+- 客户端必须发送 v4 包络；服务端统一返回 v4 包络。
 
 ## 主要能力范围
 

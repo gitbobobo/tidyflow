@@ -173,7 +173,7 @@
 ## 6. 与现有协议衔接策略
 
 - 仅新增 `evo_*` 消息，不变更既有消息含义。
-- 复用现有 v3 包络（`domain/action/request_id/payload`）进行关联。
+- 复用现有 v4 包络（`domain/action/request_id/payload`）进行关联。
 - 复用现有任务广播机制推送演化事件。
 
 ## 7. 建议的交互时序
