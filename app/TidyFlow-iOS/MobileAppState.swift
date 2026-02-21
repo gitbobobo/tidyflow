@@ -157,6 +157,9 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
+    @Published var subAgentViewerTitle: String = ""
+    @Published var subAgentViewerLoading: Bool = false
+    @Published var subAgentViewerError: String?
     /// ClientSettings 下发的 Evolution 代理配置（key: "project/workspace"）
     private var evolutionProfilesFromClientSettings: [String: [EvolutionStageProfileInfoV2]] = [:]
     @Published private var evolutionProvidersByWorkspace: [String: [AIChatTool: [AIProviderInfo]]] = [:]
@@ -169,6 +172,7 @@ final class MobileAppState: ObservableObject {
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
 
     let aiChatStore = AIChatStore()
+    let subAgentViewerStore = AIChatStore()
 
     // AI Chat：按工具分桶存储会话
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
@@ -238,6 +242,12 @@ final class MobileAppState: ObservableObject {
         sessionId: String,
         cycleId: String,
         stage: String
+    )?
+    private var subAgentViewerRequest: (
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
     )?
     /// 当前详情页选中的项目名（兼容旧接口）
     private var selectedProjectName: String = ""
@@ -856,6 +866,51 @@ final class MobileAppState: ObservableObject {
         evolutionReplayLoading = false
     }
 
+    func openSubAgentSessionViewer(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        sourceToolName: String?
+    ) {
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionId.isEmpty else { return }
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let source = (sourceToolName ?? "task").trimmingCharacters(in: .whitespacesAndNewlines)
+        subAgentViewerTitle = source.isEmpty ? "子会话 · \(trimmedSessionId)" : "子会话(\(source)) · \(trimmedSessionId)"
+        subAgentViewerLoading = true
+        subAgentViewerError = nil
+        subAgentViewerRequest = (
+            project: project,
+            workspace: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: trimmedSessionId
+        )
+        subAgentViewerStore.clearAll()
+        subAgentViewerStore.setCurrentSessionId(trimmedSessionId)
+        wsClient.requestAISessionStatus(
+            projectName: project,
+            workspaceName: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: trimmedSessionId
+        )
+        wsClient.requestAISessionMessages(
+            projectName: project,
+            workspaceName: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: trimmedSessionId,
+            limit: 400
+        )
+    }
+
+    func clearSubAgentSessionViewer() {
+        subAgentViewerRequest = nil
+        subAgentViewerTitle = ""
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+        subAgentViewerStore.clearAll()
+    }
+
     private static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
         ["direction", "plan", "implement", "verify", "judge", "report"].map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil)
@@ -993,6 +1048,115 @@ final class MobileAppState: ObservableObject {
         evolutionReplayError = nil
         evolutionReplayRequest = nil
         return true
+    }
+
+    private func consumeSubAgentViewerMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
+        guard let request = subAgentViewerRequest else { return false }
+        guard request.project == ev.projectName,
+              request.workspace == ev.workspaceName,
+              request.aiTool == ev.aiTool,
+              request.sessionId == ev.sessionId else { return false }
+        subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        subAgentViewerStore.replaceMessages(ev.toChatMessages())
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+        return true
+    }
+
+    private func consumeSubAgentViewerMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
+        subAgentViewerStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+    }
+
+    private func consumeSubAgentViewerPartUpdatedIfNeeded(_ ev: AIChatPartUpdatedV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
+        subAgentViewerStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+    }
+
+    private func consumeSubAgentViewerPartDeltaIfNeeded(_ ev: AIChatPartDeltaV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
+        subAgentViewerStore.enqueuePartDelta(
+            messageId: ev.messageId,
+            partId: ev.partId,
+            partType: ev.partType,
+            field: ev.field,
+            delta: ev.delta
+        )
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+    }
+
+    private func consumeSubAgentViewerDoneIfNeeded(_ ev: AIChatDoneV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        subAgentViewerStore.handleChatDone(sessionId: ev.sessionId)
+        subAgentViewerLoading = false
+    }
+
+    private func consumeSubAgentViewerErrorIfNeeded(_ ev: AIChatErrorV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        subAgentViewerStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
+        subAgentViewerLoading = false
+        subAgentViewerError = ev.error
+    }
+
+    private func matchesSubAgentViewerContext(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> Bool {
+        guard let request = subAgentViewerRequest else { return false }
+        return request.project == project &&
+            request.workspace == workspace &&
+            request.aiTool == aiTool &&
+            request.sessionId == sessionId
     }
 
     // MARK: - AI 聊天
@@ -2417,6 +2581,9 @@ final class MobileAppState: ObservableObject {
             if self.consumeEvolutionReplayMessagesIfNeeded(ev) {
                 return
             }
+            if self.consumeSubAgentViewerMessagesIfNeeded(ev) {
+                return
+            }
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -2469,6 +2636,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
+            self.consumeSubAgentViewerMessageUpdatedIfNeeded(ev)
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -2487,6 +2655,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAIChatPartUpdated = { [weak self] ev in
             guard let self else { return }
+            self.consumeSubAgentViewerPartUpdatedIfNeeded(ev)
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -2508,6 +2677,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAIChatPartDelta = { [weak self] ev in
             guard let self else { return }
+            self.consumeSubAgentViewerPartDeltaIfNeeded(ev)
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -2535,6 +2705,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAIChatDone = { [weak self] ev in
             guard let self else { return }
+            self.consumeSubAgentViewerDoneIfNeeded(ev)
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -2554,6 +2725,7 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAIChatError = { [weak self] ev in
             guard let self else { return }
+            self.consumeSubAgentViewerErrorIfNeeded(ev)
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }

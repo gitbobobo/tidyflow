@@ -1,6 +1,11 @@
 #if os(macOS)
 import SwiftUI
 
+private struct SubAgentSessionRoute: Identifiable {
+    let id: String
+    let sourceToolName: String
+}
+
 struct AITabView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var aiChatStore: AIChatStore
@@ -23,6 +28,7 @@ struct AITabView: View {
     @State private var sawCodexPlanProposalInCurrentTurn: Bool = false
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
     @State private var sessionStatusPollingTask: Task<Void, Never>?
+    @State private var presentedSubAgentSession: SubAgentSessionRoute?
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
 
@@ -141,6 +147,53 @@ struct AITabView: View {
         .onChange(of: aiChatStore.awaitingUserEcho) { _, _ in
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
+        }
+        .sheet(item: $presentedSubAgentSession, onDismiss: {
+            appState.clearSubAgentSessionViewer()
+        }) { _ in
+            NavigationStack {
+                ZStack {
+                    if appState.subAgentViewerMessages.isEmpty {
+                        if appState.subAgentViewerLoading {
+                            ProgressView("加载子会话中…")
+                        } else if let error = appState.subAgentViewerError, !error.isEmpty {
+                            Text("加载失败：\(error)")
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("暂无消息")
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        MessageListView(
+                            messages: appState.subAgentViewerMessages,
+                            onQuestionReply: { _, _ in },
+                            onQuestionReject: { _ in },
+                            onQuestionReplyAsMessage: { _ in },
+                            onOpenLinkedSession: { sessionId in
+                                guard let workspace = appState.selectedWorkspaceKey else { return }
+                                appState.openSubAgentSessionViewer(
+                                    project: appState.selectedProjectName,
+                                    workspace: workspace,
+                                    aiTool: appState.aiChatTool,
+                                    sessionId: sessionId,
+                                    sourceToolName: "task"
+                                )
+                                presentedSubAgentSession = SubAgentSessionRoute(id: sessionId, sourceToolName: "task")
+                            }
+                        )
+                        .environmentObject(appState.subAgentViewerStore)
+                    }
+                }
+                .navigationTitle(appState.subAgentViewerTitle.isEmpty ? "子会话" : appState.subAgentViewerTitle)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("关闭") {
+                            presentedSubAgentSession = nil
+                        }
+                    }
+                }
+            }
+            .frame(minWidth: 560, minHeight: 460)
         }
     }
 
@@ -285,7 +338,18 @@ struct AITabView: View {
                     messages: aiChatStore.messages,
                     onQuestionReply: handleQuestionReply,
                     onQuestionReject: handleQuestionReject,
-                    onQuestionReplyAsMessage: handleQuestionReplyAsMessage
+                    onQuestionReplyAsMessage: handleQuestionReplyAsMessage,
+                    onOpenLinkedSession: { sessionId in
+                        guard let workspace = appState.selectedWorkspaceKey else { return }
+                        appState.openSubAgentSessionViewer(
+                            project: appState.selectedProjectName,
+                            workspace: workspace,
+                            aiTool: appState.aiChatTool,
+                            sessionId: sessionId,
+                            sourceToolName: "task"
+                        )
+                        presentedSubAgentSession = SubAgentSessionRoute(id: sessionId, sourceToolName: "task")
+                    }
                 )
             }
         }

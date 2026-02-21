@@ -559,6 +559,9 @@ extension AppState {
             if self.consumeEvolutionReplayMessagesIfNeeded(ev) {
                 return
             }
+            if self.consumeSubAgentViewerMessagesIfNeeded(ev) {
+                return
+            }
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else {
                 TFLog.app.debug(
@@ -642,6 +645,7 @@ extension AppState {
         wsClient.onAIChatMessageUpdated = { [weak self] ev in
             guard let self else { return }
             self.consumeEvolutionReplayMessageUpdatedIfNeeded(ev)
+            self.consumeSubAgentViewerMessageUpdatedIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -660,6 +664,7 @@ extension AppState {
         wsClient.onAIChatPartUpdated = { [weak self] ev in
             guard let self else { return }
             self.consumeEvolutionReplayPartUpdatedIfNeeded(ev)
+            self.consumeSubAgentViewerPartUpdatedIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -678,6 +683,7 @@ extension AppState {
         wsClient.onAIChatPartDelta = { [weak self] ev in
             guard let self else { return }
             self.consumeEvolutionReplayPartDeltaIfNeeded(ev)
+            self.consumeSubAgentViewerPartDeltaIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -702,6 +708,7 @@ extension AppState {
         wsClient.onAIChatDone = { [weak self] ev in
             guard let self else { return }
             self.consumeEvolutionReplayDoneIfNeeded(ev)
+            self.consumeSubAgentViewerDoneIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -717,6 +724,7 @@ extension AppState {
         wsClient.onAIChatError = { [weak self] ev in
             guard let self else { return }
             self.consumeEvolutionReplayErrorIfNeeded(ev)
+            self.consumeSubAgentViewerErrorIfNeeded(ev)
             guard self.selectedProjectName == ev.projectName,
                   self.selectedWorkspaceKey == ev.workspaceName else { return }
             let store = self.aiStore(for: ev.aiTool)
@@ -999,6 +1007,50 @@ extension AppState {
         evolutionReplayError = nil
         evolutionReplayTitle = ""
         evolutionReplayStore.clearAll()
+    }
+
+    func openSubAgentSessionViewer(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        sourceToolName: String?
+    ) {
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionId.isEmpty else { return }
+        let source = (sourceToolName ?? "task").trimmingCharacters(in: .whitespacesAndNewlines)
+        subAgentViewerTitle = source.isEmpty ? "子会话 · \(trimmedSessionId)" : "子会话(\(source)) · \(trimmedSessionId)"
+        subAgentViewerLoading = true
+        subAgentViewerError = nil
+        subAgentViewerRequest = (
+            project: project,
+            workspace: workspace,
+            aiTool: aiTool,
+            sessionId: trimmedSessionId
+        )
+        subAgentViewerStore.clearAll()
+        subAgentViewerStore.setCurrentSessionId(trimmedSessionId)
+        wsClient.requestAISessionStatus(
+            projectName: project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            sessionId: trimmedSessionId
+        )
+        wsClient.requestAISessionMessages(
+            projectName: project,
+            workspaceName: workspace,
+            aiTool: aiTool,
+            sessionId: trimmedSessionId,
+            limit: 400
+        )
+    }
+
+    func clearSubAgentSessionViewer() {
+        subAgentViewerRequest = nil
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+        subAgentViewerTitle = ""
+        subAgentViewerStore.clearAll()
     }
 
     func evolutionItem(project: String, workspace: String) -> EvolutionWorkspaceItemV2? {
@@ -1311,6 +1363,115 @@ extension AppState {
         sessionId: String
     ) -> Bool {
         guard let request = evolutionReplayRequest else { return false }
+        return request.project == project &&
+            request.workspace == workspace &&
+            request.aiTool == aiTool &&
+            request.sessionId == sessionId
+    }
+
+    private func consumeSubAgentViewerMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
+        guard let request = subAgentViewerRequest else { return false }
+        guard request.project == ev.projectName,
+              request.workspace == ev.workspaceName,
+              request.aiTool == ev.aiTool,
+              request.sessionId == ev.sessionId else { return false }
+        subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        subAgentViewerStore.replaceMessages(ev.toChatMessages())
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+        return true
+    }
+
+    private func consumeSubAgentViewerMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
+        subAgentViewerStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+    }
+
+    private func consumeSubAgentViewerPartUpdatedIfNeeded(_ ev: AIChatPartUpdatedV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
+        subAgentViewerStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+    }
+
+    private func consumeSubAgentViewerPartDeltaIfNeeded(_ ev: AIChatPartDeltaV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
+        subAgentViewerStore.enqueuePartDelta(
+            messageId: ev.messageId,
+            partId: ev.partId,
+            partType: ev.partType,
+            field: ev.field,
+            delta: ev.delta
+        )
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+    }
+
+    private func consumeSubAgentViewerDoneIfNeeded(_ ev: AIChatDoneV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        subAgentViewerStore.handleChatDone(sessionId: ev.sessionId)
+        subAgentViewerLoading = false
+    }
+
+    private func consumeSubAgentViewerErrorIfNeeded(_ ev: AIChatErrorV2) {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        subAgentViewerStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
+        subAgentViewerLoading = false
+        subAgentViewerError = ev.error
+    }
+
+    private func matchesSubAgentViewerContext(
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> Bool {
+        guard let request = subAgentViewerRequest else { return false }
         return request.project == project &&
             request.workspace == workspace &&
             request.aiTool == aiTool &&

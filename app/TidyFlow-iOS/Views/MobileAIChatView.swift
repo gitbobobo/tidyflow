@@ -1,5 +1,10 @@
 import SwiftUI
 
+private struct MobileSubAgentSessionRoute: Identifiable {
+    let id: String
+    let sourceToolName: String
+}
+
 struct MobileAIChatView: View {
     @EnvironmentObject var appState: MobileAppState
 
@@ -13,6 +18,7 @@ struct MobileAIChatView: View {
     @State private var sessionStatusPollingTask: Task<Void, Never>?
     @State private var sawCodexPlanProposalInCurrentTurn = false
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
+    @State private var presentedSubAgentSession: MobileSubAgentSessionRoute?
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -145,6 +151,51 @@ struct MobileAIChatView: View {
                 }
             }
         }
+        .sheet(item: $presentedSubAgentSession, onDismiss: {
+            appState.clearSubAgentSessionViewer()
+        }) { _ in
+            NavigationStack {
+                ZStack {
+                    if appState.subAgentViewerStore.messages.isEmpty {
+                        if appState.subAgentViewerLoading {
+                            ProgressView("加载子会话中…")
+                        } else if let error = appState.subAgentViewerError, !error.isEmpty {
+                            Text("加载失败：\(error)")
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("暂无消息")
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        MessageListView(
+                            messages: appState.subAgentViewerStore.messages,
+                            onQuestionReply: { _, _ in },
+                            onQuestionReject: { _ in },
+                            onQuestionReplyAsMessage: { _ in },
+                            onOpenLinkedSession: { sessionId in
+                                appState.openSubAgentSessionViewer(
+                                    project: appState.aiActiveProject,
+                                    workspace: appState.aiActiveWorkspace,
+                                    aiTool: appState.aiChatTool,
+                                    sessionId: sessionId,
+                                    sourceToolName: "task"
+                                )
+                                presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
+                            }
+                        )
+                        .environmentObject(appState.subAgentViewerStore)
+                    }
+                }
+                .navigationTitle(appState.subAgentViewerTitle.isEmpty ? "子会话" : appState.subAgentViewerTitle)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("关闭") {
+                            presentedSubAgentSession = nil
+                        }
+                    }
+                }
+            }
+        }
         .onAppear {
             appState.openAIChat(project: project, workspace: workspace)
             requestCurrentSessionStatus()
@@ -203,6 +254,16 @@ struct MobileAIChatView: View {
                     },
                     onQuestionReplyAsMessage: { text in
                         _ = appState.sendAIMessage(text: text, imageAttachments: [])
+                    },
+                    onOpenLinkedSession: { sessionId in
+                        appState.openSubAgentSessionViewer(
+                            project: appState.aiActiveProject,
+                            workspace: appState.aiActiveWorkspace,
+                            aiTool: appState.aiChatTool,
+                            sessionId: sessionId,
+                            sourceToolName: "task"
+                        )
+                        presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
                     }
                 )
                 .environmentObject(appState.aiChatStore)

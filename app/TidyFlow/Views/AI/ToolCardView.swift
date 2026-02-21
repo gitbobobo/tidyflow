@@ -16,6 +16,7 @@ struct ToolCardView: View {
     let onQuestionReply: (([[String]]) -> Void)?
     let onQuestionReject: (() -> Void)?
     let onQuestionReplyAsMessage: ((String) -> Void)?
+    let onOpenLinkedSession: ((String) -> Void)?
 
     init(
         name: String,
@@ -25,7 +26,8 @@ struct ToolCardView: View {
         pendingQuestion: AIQuestionRequestInfo? = nil,
         onQuestionReply: (([[String]]) -> Void)? = nil,
         onQuestionReject: (() -> Void)? = nil,
-        onQuestionReplyAsMessage: ((String) -> Void)? = nil
+        onQuestionReplyAsMessage: ((String) -> Void)? = nil,
+        onOpenLinkedSession: ((String) -> Void)? = nil
     ) {
         self.name = name
         self.state = state
@@ -35,6 +37,7 @@ struct ToolCardView: View {
         self.onQuestionReply = onQuestionReply
         self.onQuestionReject = onQuestionReject
         self.onQuestionReplyAsMessage = onQuestionReplyAsMessage
+        self.onOpenLinkedSession = onOpenLinkedSession
     }
 
     @State private var expandedSections: Set<String> = []
@@ -43,6 +46,12 @@ struct ToolCardView: View {
         let invocation: AIToolInvocationState?
         let presentation: AIToolPresentation
         let headerDiffStats: (added: Int, removed: Int)?
+    }
+
+    private struct LinkedSubSessionCardModel {
+        let sessionId: String
+        let description: String
+        let agentName: String
     }
 
     /// iOS 端渲染超长工具输出/大 JSON 很容易触发内存峰值（甚至直接被 jetsam kill）。
@@ -121,12 +130,53 @@ struct ToolCardView: View {
         renderModel.presentation
     }
 
+    private var linkedSessionId: String? {
+        guard presentation.toolID == "task" else { return nil }
+        let candidates: [Any?] = [
+            partMetadata,
+            invocation?.metadata,
+            invocation?.input,
+            state,
+        ]
+        let keySet: Set<String> = [
+            "sessionid", "session_id",
+            "threadid", "thread_id",
+            "conversationid", "conversation_id",
+            "childsessionid", "child_session_id",
+            "subsessionid", "sub_session_id",
+            "subagentsessionid", "subagent_session_id",
+            "agentsessionid", "agent_session_id",
+        ]
+        for candidate in candidates {
+            if let found = extractSessionId(from: candidate, keys: keySet) {
+                return found
+            }
+        }
+        if let output = invocation?.output,
+           let parsed = parseJSONString(output),
+           let found = extractSessionId(from: parsed, keys: keySet) {
+            return found
+        }
+        return nil
+    }
+
     private var questionPromptItems: [ToolQuestionPromptItem] {
         questionPromptItems(from: invocation)
     }
 
     private var questionPromptInteractive: Bool {
         questionPromptInteractive(toolID: normalizedToolID, invocation: invocation)
+    }
+
+    private var linkedSubSessionCard: LinkedSubSessionCardModel? {
+        guard let sessionId = linkedSessionId else { return nil }
+        let description = linkedSubSessionDescription ?? "子会话"
+        let agentName = linkedSubSessionAgentName ?? "未知代理"
+        return LinkedSubSessionCardModel(
+            sessionId: sessionId,
+            description: description,
+            agentName: agentName
+        )
     }
 
     /// 已回答的问题从 metadata.answers 提取用户选择
@@ -269,6 +319,14 @@ struct ToolCardView: View {
     }
 
     var body: some View {
+        if let linkedSubSessionCard {
+            linkedSubSessionCardView(linkedSubSessionCard)
+        } else {
+            defaultToolCardView
+        }
+    }
+
+    private var defaultToolCardView: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
 
@@ -303,6 +361,54 @@ struct ToolCardView: View {
                 .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
         )
         .cornerRadius(10)
+    }
+
+    @ViewBuilder
+    private func linkedSubSessionCardView(_ card: LinkedSubSessionCardModel) -> some View {
+        let content = VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: toolIconName(toolID: presentation.toolID))
+                    .foregroundColor(.primary)
+
+                Text(card.agentName)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                if let duration = formattedDuration {
+                    Text(duration)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                statusIcon
+            }
+
+            Text(card.description)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.primary)
+                .lineLimit(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+        .cornerRadius(10)
+
+        if let onOpenLinkedSession {
+            content
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .onTapGesture {
+                    onOpenLinkedSession(card.sessionId)
+                }
+        } else {
+            content
+        }
     }
 
     private var header: some View {
@@ -858,6 +964,103 @@ struct ToolCardView: View {
             return title
         }
         return toolDisplayName(toolID)
+    }
+
+    private func extractSessionId(from value: Any?, keys: Set<String>) -> String? {
+        guard let value else { return nil }
+        if let dict = value as? [String: Any] {
+            for (rawKey, nested) in dict {
+                let key = rawKey
+                    .replacingOccurrences(of: "-", with: "")
+                    .replacingOccurrences(of: "_", with: "")
+                    .lowercased()
+                if keys.contains(key), let token = normalizedString(nested) {
+                    return token
+                }
+                if let found = extractSessionId(from: nested, keys: keys) {
+                    return found
+                }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            for item in array {
+                if let found = extractSessionId(from: item, keys: keys) {
+                    return found
+                }
+            }
+            return nil
+        }
+        return nil
+    }
+
+    private func normalizedString(_ value: Any?) -> String? {
+        switch value {
+        case let text as String:
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let number as NSNumber:
+            return number.stringValue
+        default:
+            return nil
+        }
+    }
+
+    private func parseJSONString(_ raw: String) -> [String: Any]? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty,
+              let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json
+    }
+
+    private var linkedSubSessionDescription: String? {
+        let candidates: [Any?] = [
+            invocation?.input["description"],
+            invocation?.metadata?["description"],
+            partMetadata?["description"],
+            state?["description"]
+        ]
+        for candidate in candidates {
+            if let text = normalizedString(candidate), !text.isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private var linkedSubSessionAgentName: String? {
+        let candidates: [Any?] = [
+            invocation?.metadata?["agent"],
+            partMetadata?["agent"],
+            invocation?.input["agent"],
+            invocation?.input["subagent_type"],
+            invocation?.input["subagent"],
+            state?["agent"]
+        ]
+        for candidate in candidates {
+            if let text = normalizedString(candidate), !text.isEmpty {
+                return text
+            }
+        }
+
+        guard let output = invocation?.output else { return nil }
+        let lines = output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        for line in lines {
+            guard !line.isEmpty else { continue }
+            if line.lowercased().hasPrefix("agent:") {
+                let raw = line.dropFirst("agent:".count)
+                let agent = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !agent.isEmpty {
+                    return agent
+                }
+            }
+        }
+        return nil
     }
 
     private func webSearchQuery(_ invocation: AIToolInvocationState) -> String? {

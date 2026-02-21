@@ -94,6 +94,7 @@ class AppState: ObservableObject {
     private var taskManagerCancellable: AnyCancellable?
     private var coreProcessManagerCancellable: AnyCancellable?
     private var evolutionReplayStoreCancellable: AnyCancellable?
+    private var subAgentViewerStoreCancellable: AnyCancellable?
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]
@@ -157,6 +158,11 @@ class AppState: ObservableObject {
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
     @Published var evolutionReplayStore: AIChatStore = AIChatStore()
+    @Published var subAgentViewerTitle: String = ""
+    @Published var subAgentViewerMessages: [AIChatMessage] = []
+    @Published var subAgentViewerLoading: Bool = false
+    @Published var subAgentViewerError: String?
+    @Published var subAgentViewerStore: AIChatStore = AIChatStore()
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
@@ -175,6 +181,13 @@ class AppState: ObservableObject {
         sessionId: String,
         cycleId: String,
         stage: String
+    )?
+    /// 子代理会话查看请求（主会话中 task 工具跳转的子会话）。
+    var subAgentViewerRequest: (
+        project: String,
+        workspace: String,
+        aiTool: AIChatTool,
+        sessionId: String
     )?
     /// Evolution：按工作空间追踪 provider/agent 列表是否都已返回（用于串联 profile 请求时序）。
     var evolutionSelectorLoadStateByWorkspace: [String: [AIChatTool: (providerLoaded: Bool, agentLoaded: Bool)]] = [:]
@@ -333,6 +346,11 @@ class AppState: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] messages in
                 self?.evolutionReplayMessages = messages
+            }
+        subAgentViewerStoreCancellable = subAgentViewerStore.$messages
+            .receive(on: RunLoop.main)
+            .sink { [weak self] messages in
+                self?.subAgentViewerMessages = messages
             }
 
         // 接线 GitCacheState 依赖

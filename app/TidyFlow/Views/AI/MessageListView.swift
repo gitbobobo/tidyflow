@@ -31,6 +31,7 @@ struct MessageListView: View {
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
     let onQuestionReplyAsMessage: (String) -> Void
+    let onOpenLinkedSession: ((String) -> Void)?
     @State private var viewportHeight: CGFloat = 0
     @State private var isNearBottom: Bool = true
     @State private var shouldAutoScroll: Bool = true
@@ -161,7 +162,8 @@ struct MessageListView: View {
                             },
                             onQuestionReply: onQuestionReply,
                             onQuestionReject: onQuestionReject,
-                            onQuestionReplyAsMessage: onQuestionReplyAsMessage
+                            onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+                            onOpenLinkedSession: onOpenLinkedSession
                         )
                             .equatable()
                             .id(message.id)
@@ -398,6 +400,7 @@ private struct MessageBubble: View, Equatable {
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
     let onQuestionReplyAsMessage: (String) -> Void
+    let onOpenLinkedSession: ((String) -> Void)?
 
     private var isUser: Bool { message.role == .user }
 
@@ -539,7 +542,8 @@ private struct MessageBubble: View, Equatable {
                     guard let pendingQuestion else { return }
                     onQuestionReject(pendingQuestion)
                 },
-                onQuestionReplyAsMessage: pendingQuestion == nil ? onQuestionReplyAsMessage : nil
+                onQuestionReplyAsMessage: pendingQuestion == nil ? onQuestionReplyAsMessage : nil,
+                onOpenLinkedSession: onOpenLinkedSession
             )
         }
     }
