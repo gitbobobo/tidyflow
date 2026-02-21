@@ -36,60 +36,53 @@ private struct SaveClientSettingsRequest: Encodable {
 // MARK: - WSClient 发送消息扩展
 
 extension WSClient {
+    // BEGIN AUTO-GENERATED: protocol_action_rules
+    private let protocolExactRules: [(domain: String, action: String)] = [
+        ("system", "ping"),
+        ("terminal", "spawn_terminal"),
+        ("terminal", "kill_terminal"),
+        ("terminal", "input"),
+        ("terminal", "resize"),
+        ("file", "clipboard_image_upload"),
+        ("git", "cancel_ai_task"),
+    ]
+
+    private let protocolPrefixRules: [(domain: String, prefix: String)] = [
+        ("terminal", "term_"),
+        ("file", "file_"),
+        ("file", "watch_"),
+        ("git", "git_"),
+        ("project", "list_"),
+        ("project", "select_"),
+        ("project", "import_"),
+        ("project", "create_"),
+        ("project", "remove_"),
+        ("project", "project_"),
+        ("project", "workspace_"),
+        ("project", "save_project_commands"),
+        ("project", "run_project_command"),
+        ("project", "cancel_project_command"),
+        ("lsp", "lsp_"),
+        ("log", "log_"),
+        ("ai", "ai_"),
+        ("evolution", "evo_"),
+    ]
+
+    private let protocolContainsRules: [(domain: String, needle: String)] = [
+        ("settings", "client_settings"),
+    ]
+    // END AUTO-GENERATED: protocol_action_rules
+
 
     private func domainForAction(_ action: String) -> String {
-        if action == "ping" || action == "hello" {
-            return "system"
+        if let matched = protocolExactRules.first(where: { $0.action == action }) {
+            return matched.domain
         }
-        if action.hasPrefix("term_")
-            || action == "spawn_terminal"
-            || action == "kill_terminal"
-            || action == "input"
-            || action == "resize"
-            || action == "output"
-            || action == "exit"
-            || action == "terminal_spawned"
-            || action == "terminal_killed"
-            || action == "remote_term_changed" {
-            return "terminal"
+        if let matched = protocolPrefixRules.first(where: { action.hasPrefix($0.prefix) }) {
+            return matched.domain
         }
-        if action.hasPrefix("file_")
-            || action.hasPrefix("watch_")
-            || action == "clipboard_image_upload" {
-            return "file"
-        }
-        if action.hasPrefix("git_") || action == "cancel_ai_task" {
-            return "git"
-        }
-        if action.hasPrefix("project_")
-            || action.hasPrefix("workspace_")
-            || action.hasPrefix("list_")
-            || action.hasPrefix("select_")
-            || action.hasPrefix("import_")
-            || action.hasPrefix("create_")
-            || action.hasPrefix("remove_")
-            || action.hasPrefix("save_project_commands")
-            || action.hasPrefix("run_project_command")
-            || action.hasPrefix("cancel_project_command")
-            || action == "projects"
-            || action == "workspaces"
-            || action.hasPrefix("tasks_") {
-            return "project"
-        }
-        if action.hasPrefix("lsp_") {
-            return "lsp"
-        }
-        if action.contains("client_settings") {
-            return "settings"
-        }
-        if action.hasPrefix("log_") {
-            return "log"
-        }
-        if action.hasPrefix("ai_") {
-            return "ai"
-        }
-        if action.hasPrefix("evo_") {
-            return "evolution"
+        if let matched = protocolContainsRules.first(where: { action.contains($0.needle) }) {
+            return matched.domain
         }
         return "misc"
     }
