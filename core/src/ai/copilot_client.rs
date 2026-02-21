@@ -82,7 +82,11 @@ impl CopilotAcpClient {
         Ok(Self::parse_session_metadata(&result))
     }
 
-    pub async fn session_load_raw(&self, directory: &str, session_id: &str) -> Result<Value, String> {
+    pub async fn session_load_raw(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<Value, String> {
         let result = self
             .manager
             .send_request(

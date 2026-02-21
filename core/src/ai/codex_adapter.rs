@@ -47,7 +47,10 @@ impl CodexAppServerAgent {
         }
     }
 
-    fn compute_remaining_percent(tokens_in_context_window: f64, context_window: f64) -> Option<f64> {
+    fn compute_remaining_percent(
+        tokens_in_context_window: f64,
+        context_window: f64,
+    ) -> Option<f64> {
         if !tokens_in_context_window.is_finite() || !context_window.is_finite() {
             return None;
         }

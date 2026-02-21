@@ -65,7 +65,10 @@ fn find_first_number_by_keys(value: &Value, keys: &[&str]) -> Option<f64> {
     None
 }
 
-fn object_number_by_keys<'a>(map: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Option<f64> {
+fn object_number_by_keys<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<f64> {
     let target = keys.iter().map(|k| canonical_key(k)).collect::<Vec<_>>();
     for (k, v) in map {
         let key = canonical_key(k);
