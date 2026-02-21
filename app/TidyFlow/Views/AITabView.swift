@@ -824,6 +824,11 @@ struct AITabView: View {
         if aiChatStore.abortPendingSessionId != nil {
             return
         }
+        // 新会话创建中的幂等保护：等待 session_started 回来前，禁止重复触发发送，
+        // 避免重复插入本地 user 占位并导致界面出现重复气泡。
+        if aiChatStore.currentSessionId == nil, pendingSendRequest != nil {
+            return
+        }
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imageAttachments.isEmpty else { return }
 

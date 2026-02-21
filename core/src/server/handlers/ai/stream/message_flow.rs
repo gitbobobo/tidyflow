@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
 use crate::ai::AiEvent;
-use crate::server::context::{SharedAppState, TaskBroadcastTx};
+use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -19,6 +19,8 @@ pub(crate) async fn try_handle_ai_chat_start(
     socket: &mut WebSocket,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
 ) -> Result<bool, String> {
     let ClientMessage::AIChatStart {
         project_name,
@@ -49,18 +51,19 @@ pub(crate) async fn try_handle_ai_chat_start(
         ai.directory_last_used_ms.insert(dir_key, now_ms());
     }
 
-    send_message(
-        socket,
-        &crate::server::protocol::ServerMessage::AISessionStartedV2 {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            session_id: session.id,
-            title: session.title,
-            updated_at: session.updated_at,
-        },
-    )
-    .await?;
+    let msg = crate::server::protocol::ServerMessage::AISessionStartedV2 {
+        project_name: project_name.clone(),
+        workspace_name: workspace_name.clone(),
+        ai_tool,
+        session_id: session.id,
+        title: session.title,
+        updated_at: session.updated_at,
+    };
+    send_message(socket, &msg).await?;
+    let _ = task_broadcast_tx.send(TaskBroadcastEvent {
+        origin_conn_id: origin_conn_id.to_string(),
+        message: msg,
+    });
 
     Ok(true)
 }

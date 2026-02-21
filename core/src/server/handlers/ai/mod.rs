@@ -35,7 +35,16 @@ pub async fn handle_ai_message(
 ) -> Result<bool, String> {
     utils::ensure_status_push_initialized(ai_state, task_broadcast_tx).await;
 
-    if stream::try_handle_ai_chat_start(client_msg, socket, app_state, ai_state).await? {
+    if stream::try_handle_ai_chat_start(
+        client_msg,
+        socket,
+        app_state,
+        ai_state,
+        task_broadcast_tx,
+        origin_conn_id,
+    )
+    .await?
+    {
         return Ok(true);
     }
     if stream::try_handle_ai_chat_send(
