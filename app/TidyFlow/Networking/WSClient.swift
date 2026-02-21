@@ -29,6 +29,8 @@ class WSClient: NSObject, ObservableObject {
     private(set) var wsAuthToken: String?
     /// 重连防抖任务，避免短时间重复 reconnect 打断新连接
     private var pendingReconnectWorkItem: DispatchWorkItem?
+    /// 最近一次已处理的服务端 seq（v4 包络），用于丢弃乱序/重复消息
+    var lastServerSeq: UInt64 = 0
 
     /// Get current URL string for debug display
     var currentURLString: String? {
@@ -190,6 +192,7 @@ class WSClient: NSObject, ObservableObject {
 
         isStale = false
         isConnecting = true
+        lastServerSeq = 0
         TFLog.ws.info("Connecting to: \(url.absoluteString, privacy: .public)")
         guard let task = urlSession?.webSocketTask(with: url) else {
             isConnecting = false
@@ -221,6 +224,7 @@ class WSClient: NSObject, ObservableObject {
         }
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        lastServerSeq = 0
         updateConnectionState(false)
     }
 

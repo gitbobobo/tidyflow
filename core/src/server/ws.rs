@@ -431,4 +431,20 @@ mod tests {
         assert!(env.seq >= 1);
         assert!(env.server_ts > 0);
     }
+
+    #[tokio::test]
+    async fn encode_server_message_seq_is_monotonic() {
+        let first = with_request_id(None, async {
+            encode_server_message(&ServerMessage::Pong).expect("encode first")
+        })
+        .await;
+        let second = with_request_id(None, async {
+            encode_server_message(&ServerMessage::Pong).expect("encode second")
+        })
+        .await;
+
+        let first_env: ServerEnvelopeV4 = rmp_serde::from_slice(&first).expect("decode first");
+        let second_env: ServerEnvelopeV4 = rmp_serde::from_slice(&second).expect("decode second");
+        assert!(second_env.seq > first_env.seq);
+    }
 }

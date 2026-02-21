@@ -8,10 +8,23 @@
 
   function handleMessage(data) {
     try {
-      if (!data || typeof data.action !== "string" || typeof data.payload !== "object") {
+      if (
+        !data ||
+        typeof data.seq !== "number" ||
+        data.seq <= 0 ||
+        typeof data.domain !== "string" ||
+        typeof data.action !== "string" ||
+        typeof data.kind !== "string" ||
+        typeof data.payload !== "object"
+      ) {
         console.error("[Messages] Invalid v4 envelope:", data);
         return;
       }
+      if (data.seq <= TF.lastServerSeq) {
+        console.warn("[Messages] Drop stale envelope:", data.seq, TF.lastServerSeq);
+        return;
+      }
+      TF.lastServerSeq = data.seq;
       const msg = { ...(data.payload || {}), type: data.action };
 
       switch (msg.type) {

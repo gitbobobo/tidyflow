@@ -234,6 +234,15 @@ pub(super) async fn handle_client_message(
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;
+    if envelope.request_id.trim().is_empty() {
+        return Err("Invalid envelope: empty request_id".to_string());
+    }
+    if envelope.domain.trim().is_empty() || envelope.action.trim().is_empty() {
+        return Err("Invalid envelope: empty domain/action".to_string());
+    }
+    if envelope.client_ts == 0 {
+        return Err("Invalid envelope: client_ts is required".to_string());
+    }
 
     crate::server::ws::with_request_id(Some(envelope.request_id.clone()), async {
         let route = parse_domain_route(&envelope.domain)

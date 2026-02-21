@@ -35,7 +35,7 @@ extension WSClient {
         case .data(let data):
             parseAndDispatchBinary(data)
         case .string:
-            TFLog.ws.error("Received unexpected text message, protocol v3 requires binary")
+            TFLog.ws.error("Received unexpected text message, protocol v4 requires binary")
         @unknown default:
             break
         }
@@ -61,10 +61,20 @@ extension WSClient {
     /// 分发解析后的消息到对应的处理器
     private func dispatchMessage(_ envelope: [String: Any]) {
         guard let type = envelope["action"] as? String,
+              let seq = parseEnvelopeSeq(envelope["seq"]),
+              let _ = envelope["domain"] as? String,
+              let _ = envelope["kind"] as? String,
               let payload = envelope["payload"] as? [String: Any] else {
-            TFLog.ws.error("Message missing v4 envelope fields: action/payload")
+            TFLog.ws.error("Message missing v4 envelope fields: seq/domain/action/kind/payload")
             return
         }
+        if seq <= lastServerSeq {
+            TFLog.ws.warning(
+                "Dropping stale envelope: seq=\(seq, privacy: .public), last=\(self.lastServerSeq, privacy: .public)"
+            )
+            return
+        }
+        lastServerSeq = seq
         var json = payload
         json["type"] = type
 
@@ -473,6 +483,14 @@ extension WSClient {
             // Unknown message type, ignore
             break
         }
+    }
+
+    private func parseEnvelopeSeq(_ raw: Any?) -> UInt64? {
+        if let value = raw as? UInt64 { return value }
+        if let value = raw as? UInt { return UInt64(value) }
+        if let value = raw as? Int, value >= 0 { return UInt64(value) }
+        if let value = raw as? NSNumber { return value.uint64Value }
+        return nil
     }
 
     /// 处理合并队列刷新后的高频消息（由 flushCoalesceQueue 调用）

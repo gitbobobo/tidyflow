@@ -58,6 +58,7 @@
 
     TF.transport = new TF.WebSocketTransport(wsURL, {
       onOpen: () => {
+        TF.lastServerSeq = 0;
         TF.notifySwift("connected");
         TF.postToNative("terminal_connected", {});
 
@@ -70,6 +71,7 @@
         }
       },
       onClose: () => {
+        TF.lastServerSeq = 0;
         TF.notifySwift("disconnected");
         TF.nativeTerminalReady = false;
         TF.activeSessionId = null;

@@ -122,6 +122,7 @@
   // State
   TF.transport = null;
   TF.protocolVersion = 0;
+  TF.lastServerSeq = 0;
   TF.capabilities = [];
   TF.nativeMode = "editor";
   TF.nativeTerminalReady = false;
