@@ -878,13 +878,34 @@ impl CodexAppServerAgent {
         let part_id = item.get("id")?.as_str()?.to_string();
         let kind = item.get("type")?.as_str()?.to_lowercase();
         match kind.as_str() {
-            "agentmessage" => Some(AiPart::new_text(
-                part_id,
-                item.get("text")
+            "agentmessage" => {
+                let text = item
+                    .get("text")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .to_string(),
-            )),
+                    .to_string();
+                let mut source = serde_json::Map::new();
+                source.insert("vendor".to_string(), Value::String("codex".to_string()));
+                source.insert(
+                    "item_type".to_string(),
+                    Value::String("agentmessage".to_string()),
+                );
+                if let Some(phase) = item
+                    .get("phase")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_lowercase())
+                    .filter(|s| !s.is_empty())
+                {
+                    source.insert("message_phase".to_string(), Value::String(phase));
+                }
+                Some(AiPart {
+                    id: part_id,
+                    part_type: "text".to_string(),
+                    text: Some(text),
+                    source: Some(Value::Object(source)),
+                    ..Default::default()
+                })
+            }
             "plan" => {
                 let text = item
                     .get("text")
@@ -1067,6 +1088,66 @@ impl CodexAppServerAgent {
         } else {
             lines.join("\n")
         }
+    }
+
+    fn extract_tool_output_delta(method: &str, params: &Value) -> Option<(String, String, String)> {
+        if !Self::method_in(
+            method,
+            &[
+                "item/commandExecution/outputDelta",
+                "item/commandExecution/terminalInteraction",
+                "item/fileChange/outputDelta",
+                "item/mcpToolCall/progress",
+            ],
+        ) {
+            return None;
+        }
+
+        let item_id = params
+            .get("itemId")
+            .or_else(|| params.get("item_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if item_id.is_empty() {
+            return None;
+        }
+
+        let (field, payload) = if Self::method_in(method, &["item/mcpToolCall/progress"]) {
+            (
+                "progress".to_string(),
+                params
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| format!("{}\n", s))
+                    .unwrap_or_default(),
+            )
+        } else if Self::method_in(method, &["item/commandExecution/terminalInteraction"]) {
+            (
+                "progress".to_string(),
+                params
+                    .get("stdin")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| format!("stdin: {}\n", s))
+                    .unwrap_or_default(),
+            )
+        } else {
+            (
+                "output".to_string(),
+                params
+                    .get("delta")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        };
+        if payload.is_empty() {
+            return None;
+        }
+        Some((item_id, field, payload))
     }
 
     fn map_turn_item_to_message(
@@ -1395,6 +1476,32 @@ impl CodexAppServerAgent {
                                                 delta: delta.to_string(),
                                             }));
                                         }
+                                    }
+                                    "item/commandExecution/outputDelta"
+                                    | "item/commandExecution/terminalInteraction"
+                                    | "item/fileChange/outputDelta"
+                                    | "item/mcpToolCall/progress" => {
+                                        let Some((item_id, field, payload)) =
+                                            CodexAppServerAgent::extract_tool_output_delta(
+                                                event.method.as_str(),
+                                                &params,
+                                            ) else {
+                                                continue;
+                                            };
+                                        if !known_assistant_messages.contains(&item_id) {
+                                            known_assistant_messages.insert(item_id.clone());
+                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                message_id: item_id.clone(),
+                                                role: "assistant".to_string(),
+                                            }));
+                                        }
+                                        let _ = tx.send(Ok(AiEvent::PartDelta {
+                                            message_id: item_id.clone(),
+                                            part_id: item_id,
+                                            part_type: "tool".to_string(),
+                                            field,
+                                            delta: payload,
+                                        }));
                                     }
                                     "item/plan/delta" => {
                                         let item_id = params
@@ -2336,6 +2443,42 @@ mod tests {
     }
 
     #[test]
+    fn map_item_to_part_marks_agent_message_phase_metadata() {
+        let item = serde_json::json!({
+            "id": "item-agent-1",
+            "type": "agentMessage",
+            "text": "处理中...",
+            "phase": "commentary"
+        });
+
+        let part =
+            CodexAppServerAgent::map_item_to_part(&item, "completed").expect("map should succeed");
+        assert_eq!(part.part_type, "text");
+        assert_eq!(part.text.as_deref(), Some("处理中..."));
+        assert_eq!(
+            part.source
+                .as_ref()
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.as_str()),
+            Some("codex")
+        );
+        assert_eq!(
+            part.source
+                .as_ref()
+                .and_then(|v| v.get("item_type"))
+                .and_then(|v| v.as_str()),
+            Some("agentmessage")
+        );
+        assert_eq!(
+            part.source
+                .as_ref()
+                .and_then(|v| v.get("message_phase"))
+                .and_then(|v| v.as_str()),
+            Some("commentary")
+        );
+    }
+
+    #[test]
     fn map_item_to_part_maps_file_change_changes_to_diff_and_files() {
         let item = serde_json::json!({
             "id": "item-change-1",
@@ -2434,6 +2577,89 @@ mod tests {
                 .map(|m| m.len()),
             Some(0)
         );
+    }
+
+    #[test]
+    fn extract_tool_output_delta_maps_command_execution_delta() {
+        let params = serde_json::json!({
+            "itemId": "item-cmd-1",
+            "delta": "line1\n"
+        });
+        let mapped = CodexAppServerAgent::extract_tool_output_delta(
+            "item/commandExecution/outputDelta",
+            &params,
+        )
+        .expect("should map");
+        assert_eq!(mapped.0, "item-cmd-1");
+        assert_eq!(mapped.1, "output");
+        assert_eq!(mapped.2, "line1\n");
+    }
+
+    #[test]
+    fn extract_tool_output_delta_maps_file_change_delta_with_snake_case_item_id() {
+        let params = serde_json::json!({
+            "item_id": "item-file-1",
+            "delta": "diff chunk"
+        });
+        let mapped =
+            CodexAppServerAgent::extract_tool_output_delta("item/fileChange/outputDelta", &params)
+                .expect("should map");
+        assert_eq!(mapped.0, "item-file-1");
+        assert_eq!(mapped.1, "output");
+        assert_eq!(mapped.2, "diff chunk");
+    }
+
+    #[test]
+    fn extract_tool_output_delta_maps_mcp_progress_message_to_output_line() {
+        let params = serde_json::json!({
+            "itemId": "item-mcp-1",
+            "message": "正在读取 MCP 资源"
+        });
+        let mapped =
+            CodexAppServerAgent::extract_tool_output_delta("item/mcpToolCall/progress", &params)
+                .expect("should map");
+        assert_eq!(mapped.0, "item-mcp-1");
+        assert_eq!(mapped.1, "progress");
+        assert_eq!(mapped.2, "正在读取 MCP 资源\n");
+    }
+
+    #[test]
+    fn extract_tool_output_delta_maps_terminal_interaction_stdin_to_progress_line() {
+        let params = serde_json::json!({
+            "itemId": "item-cmd-stdin-1",
+            "stdin": "y"
+        });
+        let mapped = CodexAppServerAgent::extract_tool_output_delta(
+            "item/commandExecution/terminalInteraction",
+            &params,
+        )
+        .expect("should map");
+        assert_eq!(mapped.0, "item-cmd-stdin-1");
+        assert_eq!(mapped.1, "progress");
+        assert_eq!(mapped.2, "stdin: y\n");
+    }
+
+    #[test]
+    fn extract_tool_output_delta_ignores_empty_payload() {
+        let params = serde_json::json!({
+            "itemId": "item-empty-1",
+            "delta": ""
+        });
+        assert!(CodexAppServerAgent::extract_tool_output_delta(
+            "item/commandExecution/outputDelta",
+            &params
+        )
+        .is_none());
+
+        let terminal_params = serde_json::json!({
+            "itemId": "item-empty-stdin-1",
+            "stdin": ""
+        });
+        assert!(CodexAppServerAgent::extract_tool_output_delta(
+            "item/commandExecution/terminalInteraction",
+            &terminal_params
+        )
+        .is_none());
     }
 
     #[test]
