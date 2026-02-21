@@ -35,15 +35,7 @@ pub(super) async fn handle_message(
                 stage_profiles: stage_profiles.clone(),
             };
             manager.start_workspace(req, ctx).await?;
-            let snapshot = manager.build_snapshot().await;
-            send_message(
-                socket,
-                &ServerMessage::EvoSnapshot {
-                    scheduler: snapshot.scheduler,
-                    workspace_items: snapshot.workspace_items,
-                },
-            )
-            .await?;
+            send_snapshot(socket, &manager).await?;
             Ok(true)
         }
         ClientMessage::EvoStopWorkspace {
@@ -54,53 +46,21 @@ pub(super) async fn handle_message(
             manager
                 .stop_workspace(project, workspace, reason.clone(), ctx)
                 .await?;
-            let snapshot = manager.build_snapshot().await;
-            send_message(
-                socket,
-                &ServerMessage::EvoSnapshot {
-                    scheduler: snapshot.scheduler,
-                    workspace_items: snapshot.workspace_items,
-                },
-            )
-            .await?;
+            send_snapshot(socket, &manager).await?;
             Ok(true)
         }
         ClientMessage::EvoStopAll { reason } => {
             manager.stop_all(reason.clone(), ctx).await;
-            let snapshot = manager.build_snapshot().await;
-            send_message(
-                socket,
-                &ServerMessage::EvoSnapshot {
-                    scheduler: snapshot.scheduler,
-                    workspace_items: snapshot.workspace_items,
-                },
-            )
-            .await?;
+            send_snapshot(socket, &manager).await?;
             Ok(true)
         }
         ClientMessage::EvoResumeWorkspace { project, workspace } => {
             manager.resume_workspace(project, workspace, ctx).await?;
-            let snapshot = manager.build_snapshot().await;
-            send_message(
-                socket,
-                &ServerMessage::EvoSnapshot {
-                    scheduler: snapshot.scheduler,
-                    workspace_items: snapshot.workspace_items,
-                },
-            )
-            .await?;
+            send_snapshot(socket, &manager).await?;
             Ok(true)
         }
         ClientMessage::EvoGetSnapshot { .. } => {
-            let snapshot = manager.build_snapshot().await;
-            send_message(
-                socket,
-                &ServerMessage::EvoSnapshot {
-                    scheduler: snapshot.scheduler,
-                    workspace_items: snapshot.workspace_items,
-                },
-            )
-            .await?;
+            send_snapshot(socket, &manager).await?;
             Ok(true)
         }
         ClientMessage::EvoOpenStageChat {
@@ -201,4 +161,19 @@ pub(super) async fn handle_message(
         }
         _ => Ok(false),
     }
+}
+
+async fn send_snapshot(
+    socket: &mut WebSocket,
+    manager: &super::EvolutionManager,
+) -> Result<(), String> {
+    let snapshot = manager.build_snapshot().await;
+    send_message(
+        socket,
+        &ServerMessage::EvoSnapshot {
+            scheduler: snapshot.scheduler,
+            workspace_items: snapshot.workspace_items,
+        },
+    )
+    .await
 }
