@@ -12,33 +12,40 @@ pub mod terminal;
 #[cfg(test)]
 mod action_table_test;
 
-/// Protocol version: 3 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 3;
+/// Protocol version: 4 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 4;
 
 // ============================================================================
-// v3 包络
+// v4 包络
 // ============================================================================
 
-/// v3 客户端请求包络
+/// v4 客户端请求包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientEnvelopeV3 {
+pub struct ClientEnvelopeV4 {
     pub request_id: String,
     pub domain: String,
     pub action: String,
     #[serde(default)]
     pub payload: serde_json::Value,
+    /// 客户端发送时间（Unix ms）
+    #[serde(default)]
+    pub client_ts: u64,
 }
 
-/// v3 服务端响应包络
+/// v4 服务端响应包络
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerEnvelopeV3 {
+pub struct ServerEnvelopeV4 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// 服务端单调序号（全局）
+    pub seq: u64,
     pub domain: String,
     pub action: String,
     pub kind: String, // "result" | "event" | "error"
     #[serde(default)]
     pub payload: serde_json::Value,
+    /// 服务端发送时间（Unix ms）
+    pub server_ts: u64,
 }
 
 // ============================================================================

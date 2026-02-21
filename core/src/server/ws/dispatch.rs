@@ -5,12 +5,12 @@ use tokio::sync::Mutex;
 use tracing::{error, info, trace, warn};
 
 use crate::server::context::HandlerContext;
-use crate::server::protocol::{ClientEnvelopeV3, ClientMessage, ServerMessage};
+use crate::server::protocol::{ClientEnvelopeV4, ClientMessage, ServerMessage};
 use crate::server::watcher::WorkspaceWatcher;
 use crate::server::ws::send_message;
 
 pub(super) fn probe_client_message_type(data: &[u8]) -> String {
-    rmp_serde::from_slice::<ClientEnvelopeV3>(data)
+    rmp_serde::from_slice::<ClientEnvelopeV4>(data)
         .map(|env| env.action)
         .unwrap_or_else(|_| "unknown".to_string())
 }
@@ -172,7 +172,7 @@ async fn dispatch_domain_handler(
 }
 
 fn envelope_payload_to_client_message(
-    envelope: &ClientEnvelopeV3,
+    envelope: &ClientEnvelopeV4,
 ) -> Result<ClientMessage, String> {
     let mut payload = match &envelope.payload {
         Value::Object(map) => map.clone(),
@@ -192,11 +192,12 @@ mod tests {
 
     #[test]
     fn envelope_payload_to_client_message_parses_ping() {
-        let env = ClientEnvelopeV3 {
+        let env = ClientEnvelopeV4 {
             request_id: "req-1".to_string(),
             domain: "system".to_string(),
             action: "ping".to_string(),
             payload: json!({}),
+            client_ts: 0,
         };
         let msg = envelope_payload_to_client_message(&env).expect("should parse");
         assert!(matches!(msg, ClientMessage::Ping));
@@ -204,11 +205,12 @@ mod tests {
 
     #[test]
     fn envelope_payload_to_client_message_rejects_non_object_payload() {
-        let env = ClientEnvelopeV3 {
+        let env = ClientEnvelopeV4 {
             request_id: "req-2".to_string(),
             domain: "system".to_string(),
             action: "ping".to_string(),
             payload: json!(["invalid"]),
+            client_ts: 0,
         };
         let err = envelope_payload_to_client_message(&env).expect_err("should fail");
         assert!(err.contains("expected object"));
@@ -217,7 +219,7 @@ mod tests {
 
 /// Handle a client message — 统一调度层
 ///
-/// v3：客户端消息统一使用 `ClientEnvelopeV3`
+/// v4：客户端消息统一使用 `ClientEnvelopeV4`
 pub(super) async fn handle_client_message(
     data: &[u8],
     socket: &mut WebSocket,
@@ -228,7 +230,7 @@ pub(super) async fn handle_client_message(
         "handle_client_message called with data length: {}",
         data.len()
     );
-    let envelope: ClientEnvelopeV3 = rmp_serde::from_slice(data).map_err(|e| {
+    let envelope: ClientEnvelopeV4 = rmp_serde::from_slice(data).map_err(|e| {
         error!("Failed to parse client message: {}", e);
         format!("Parse error: {}", e)
     })?;

@@ -8,6 +8,7 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -22,7 +23,7 @@ use crate::server::context::{
     ConnectionMeta, SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory,
     TaskBroadcastTx,
 };
-use crate::server::protocol::{ServerEnvelopeV3, ServerMessage, PROTOCOL_VERSION};
+use crate::server::protocol::{ServerEnvelopeV4, ServerMessage, PROTOCOL_VERSION};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
 use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
@@ -38,6 +39,7 @@ mod terminal;
 tokio::task_local! {
     static CURRENT_REQUEST_ID: Option<String>;
 }
+static SERVER_ENVELOPE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 流控高水位（100KB）：未确认字节数超过此值时暂停转发
 const FLOW_CONTROL_HIGH_WATER: u64 = 100 * 1024;
@@ -349,7 +351,7 @@ fn is_event_action(action: &str) -> bool {
         || action.starts_with("evo_")
 }
 
-fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV3, String> {
+fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV4, String> {
     let mut value = serde_json::to_value(msg).map_err(|e| e.to_string())?;
     let mut payload = match value {
         serde_json::Value::Object(ref mut map) => map.clone(),
@@ -366,12 +368,14 @@ fn to_server_envelope(msg: &ServerMessage) -> Result<ServerEnvelopeV3, String> {
     } else {
         "result".to_string()
     };
-    Ok(ServerEnvelopeV3 {
+    Ok(ServerEnvelopeV4 {
         request_id: current_request_id(),
+        seq: SERVER_ENVELOPE_SEQ.fetch_add(1, Ordering::Relaxed) + 1,
         domain: domain_from_action(&action),
         action,
         kind,
         payload: serde_json::Value::Object(payload),
+        server_ts: chrono::Utc::now().timestamp_millis() as u64,
     })
 }
 
@@ -400,11 +404,13 @@ mod tests {
             encode_server_message(&ServerMessage::Pong).expect("encode should succeed")
         })
         .await;
-        let env: ServerEnvelopeV3 = rmp_serde::from_slice(&bytes).expect("decode envelope");
+        let env: ServerEnvelopeV4 = rmp_serde::from_slice(&bytes).expect("decode envelope");
         assert_eq!(env.request_id.as_deref(), Some("req-123"));
         assert_eq!(env.domain, "system");
         assert_eq!(env.action, "pong");
         assert_eq!(env.kind, "result");
+        assert!(env.seq >= 1);
+        assert!(env.server_ts > 0);
     }
 
     #[tokio::test]
@@ -417,10 +423,12 @@ mod tests {
             .expect("encode should succeed")
         })
         .await;
-        let env: ServerEnvelopeV3 = rmp_serde::from_slice(&bytes).expect("decode envelope");
+        let env: ServerEnvelopeV4 = rmp_serde::from_slice(&bytes).expect("decode envelope");
         assert_eq!(env.request_id, None);
         assert_eq!(env.domain, "terminal");
         assert_eq!(env.action, "output");
         assert_eq!(env.kind, "event");
+        assert!(env.seq >= 1);
+        assert!(env.server_ts > 0);
     }
 }
