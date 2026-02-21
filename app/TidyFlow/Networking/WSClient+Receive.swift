@@ -3,7 +3,7 @@ import Foundation
 // MARK: - WSClient 接收消息扩展
 
 extension WSClient {
-    private struct ServerEnvelopeV5: Decodable {
+    private struct ServerEnvelopeV6: Decodable {
         let requestID: String?
         let seq: UInt64
         let domain: String
@@ -64,7 +64,7 @@ extension WSClient {
         case .data(let data):
             parseAndDispatchBinary(data)
         case .string:
-            TFLog.ws.error("Received unexpected text message, protocol v5 requires binary")
+            TFLog.ws.error("Received unexpected text message, protocol v6 requires binary")
         @unknown default:
             break
         }
@@ -84,7 +84,7 @@ extension WSClient {
     }
 
     private func decodeServerEnvelope(_ data: Data) throws -> DecodedServerEnvelope {
-        let envelope = try msgpackDecoder.decode(ServerEnvelopeV5.self, from: data)
+        let envelope = try msgpackDecoder.decode(ServerEnvelopeV6.self, from: data)
         guard let payload = envelope.payload.toDictionary else {
             throw NSError(
                 domain: "WSClient",
@@ -104,7 +104,7 @@ extension WSClient {
         )
     }
 
-    private func validateServerEnvelope(_ envelope: ServerEnvelopeV5, payload: [String: Any]) throws {
+    private func validateServerEnvelope(_ envelope: ServerEnvelopeV6, payload: [String: Any]) throws {
         if envelope.domain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             envelope.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw NSError(
