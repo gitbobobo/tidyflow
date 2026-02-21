@@ -1321,9 +1321,98 @@ final class AIChatStore: ObservableObject {
     }
 
     private func appendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
-        guard field == "text" else { return }
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: partId)
+
+        if field == "progress", partType == "tool" {
+            if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
+               existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
+                var part = messages[msgIdx].parts[existing.partIdx]
+                var toolState = part.toolState ?? [:]
+                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
+                var lines = (metadata["progress_lines"] as? [String]) ?? []
+                lines.append(delta)
+                if lines.count > 300 {
+                    lines.removeFirst(lines.count - 300)
+                }
+                metadata["progress_lines"] = lines
+                toolState["metadata"] = metadata
+                if toolState["status"] == nil {
+                    toolState["status"] = "running"
+                }
+                part.toolState = toolState
+                part.kind = .tool
+                messages[msgIdx].parts[existing.partIdx] = part
+                return
+            }
+
+            let p = AIChatPart(
+                id: partId,
+                kind: .tool,
+                text: nil,
+                mime: nil,
+                filename: nil,
+                url: nil,
+                synthetic: nil,
+                ignored: nil,
+                source: nil,
+                toolName: "unknown",
+                toolState: [
+                    "status": "running",
+                    "metadata": [
+                        "progress_lines": [delta],
+                    ],
+                ],
+                toolCallId: nil,
+                toolPartMetadata: nil
+            )
+            messages[msgIdx].parts.append(p)
+            let partIdx = messages[msgIdx].parts.count - 1
+            partIndexByPartId[partId] = (msgIdx, partIdx)
+            return
+        }
+
+        if field == "output", partType == "tool" {
+            if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
+               existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
+                var part = messages[msgIdx].parts[existing.partIdx]
+                var toolState = part.toolState ?? [:]
+                let currentOutput = (toolState["output"] as? String) ?? ""
+                toolState["output"] = currentOutput + delta
+                if toolState["status"] == nil {
+                    toolState["status"] = "running"
+                }
+                part.toolState = toolState
+                part.kind = .tool
+                messages[msgIdx].parts[existing.partIdx] = part
+                return
+            }
+            // output 增量先于 tool 全量 part 到达时，创建占位 tool part，避免丢失实时输出。
+            let p = AIChatPart(
+                id: partId,
+                kind: .tool,
+                text: nil,
+                mime: nil,
+                filename: nil,
+                url: nil,
+                synthetic: nil,
+                ignored: nil,
+                source: nil,
+                toolName: "unknown",
+                toolState: [
+                    "status": "running",
+                    "output": delta,
+                ],
+                toolCallId: nil,
+                toolPartMetadata: nil
+            )
+            messages[msgIdx].parts.append(p)
+            let partIdx = messages[msgIdx].parts.count - 1
+            partIndexByPartId[partId] = (msgIdx, partIdx)
+            return
+        }
+
+        guard field == "text" else { return }
 
         if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {

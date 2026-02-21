@@ -564,6 +564,10 @@ struct ToolCardView: View {
             sections.append(section(id: "lsp-input", title: "input", any: invocation.input))
         }
 
+        if let progress = toolProgressSection(invocation, idPrefix: "lsp") {
+            sections.append(progress)
+        }
+
         if let output = invocation.output, !output.isEmpty {
             sections.append(AIToolSection(id: "lsp-output", title: "output", content: output, isCode: true))
         }
@@ -594,6 +598,10 @@ struct ToolCardView: View {
             sections.append(section(id: "bash-input", title: "input", any: remainingInput))
         }
 
+        if let progress = toolProgressSection(invocation, idPrefix: "bash") {
+            sections.append(progress)
+        }
+
         if let output = invocation.output, !output.isEmpty {
             sections.append(AIToolSection(id: "bash-output", title: "output", content: output, isCode: true))
         }
@@ -610,6 +618,10 @@ struct ToolCardView: View {
 
         if !invocation.input.isEmpty {
             sections.append(section(id: "search-input", title: "input", any: invocation.input))
+        }
+
+        if let progress = toolProgressSection(invocation, idPrefix: "search") {
+            sections.append(progress)
         }
 
         if let output = invocation.output, !output.isEmpty {
@@ -662,6 +674,10 @@ struct ToolCardView: View {
 
         if !invocation.input.isEmpty {
             sections.append(section(id: "task-input", title: "input", any: invocation.input))
+        }
+
+        if let progress = toolProgressSection(invocation, idPrefix: "task") {
+            sections.append(progress)
         }
 
         if let output = invocation.output, !output.isEmpty {
@@ -749,6 +765,10 @@ struct ToolCardView: View {
             sections.append(AIToolSection(id: "generic-raw", title: "raw", content: raw, isCode: true))
         }
 
+        if let progress = toolProgressSection(invocation, idPrefix: "generic") {
+            sections.append(progress)
+        }
+
         if let output = invocation.output, !output.isEmpty {
             sections.append(AIToolSection(id: "generic-output", title: "output", content: output, isCode: true))
         }
@@ -766,6 +786,24 @@ struct ToolCardView: View {
         }
 
         return sections
+    }
+
+    private func toolProgressSection(_ invocation: AIToolInvocationState, idPrefix: String) -> AIToolSection? {
+        guard let metadata = invocation.metadata else { return nil }
+        let rawLines = metadata["progress_lines"] as? [String] ?? []
+        let merged = rawLines.joined()
+        let normalized = merged
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !normalized.isEmpty else { return nil }
+        let text = normalized.joined(separator: "\n")
+        return AIToolSection(
+            id: "\(idPrefix)-progress",
+            title: "progress",
+            content: text,
+            isCode: false
+        )
     }
 
     private func toolSummary(toolID: String, invocation: AIToolInvocationState) -> String? {
