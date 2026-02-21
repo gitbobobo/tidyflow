@@ -46,6 +46,9 @@
 - [ ] 确认输出通过：
   - 协议一致性检查（Core 协议版本与文档、App 文档一致）
   - 协议 schema 同步检查（`schema/protocol` 与 Core/App domain 路由一致）
+  - 协议代码生成同步检查（`action_table.rs` 与 schema 生成结果一致）
+  - 协议 Swift 规则生成同步检查（`WSClient+Send.swift` 规则块与 schema 生成结果一致）
+  - 协议 action 规则同步检查（`action_rules.csv` 与 Core/App 规则表一致）
   - 版本一致性检查（`MARKETING_VERSION` 与 `core/Cargo.toml` 同步）
 
 ## 6. Evolution 证据回归检查
