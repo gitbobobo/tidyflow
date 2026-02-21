@@ -17,7 +17,7 @@
 ## 2. 核心概念
 
 - Cycle：一次完整进化循环，包含方向选择到结果报告。
-- Stage：cycle 内的阶段，固定为 `direction -> plan -> implement -> verify -> judge -> report`。
+- Stage：cycle 内的阶段，固定为 `bootstrap -> direction -> plan -> implement -> verify -> judge -> report`。
 - Workspace Pipeline：单 workspace 的串行执行器。
 - Global Orchestrator：全局编排器，管理并发、队列、用户中断和恢复。
 - Evidence：验证证据，如日志、截图、指标、diff 摘要。
@@ -99,6 +99,7 @@
 核心文件：
 
 - `cycle.json`
+- `stage.bootstrap.json`
 - `stage.direction.json`
 - `stage.plan.json`
 - `stage.implement.json`

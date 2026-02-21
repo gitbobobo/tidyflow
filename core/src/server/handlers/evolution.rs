@@ -15,8 +15,8 @@ use crate::ai::AiModelSelection;
 use crate::server::context::{HandlerContext, TaskBroadcastEvent};
 use crate::server::handlers::ai::{ensure_agent, normalize_ai_tool, resolve_directory};
 use crate::server::handlers::evolution_prompts::{
-    STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT, STAGE_JUDGE_PROMPT, STAGE_PLAN_PROMPT,
-    STAGE_REPORT_PROMPT, STAGE_VERIFY_PROMPT,
+    STAGE_BOOTSTRAP_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT, STAGE_JUDGE_PROMPT,
+    STAGE_PLAN_PROMPT, STAGE_REPORT_PROMPT, STAGE_VERIFY_PROMPT,
 };
 use crate::server::protocol::{
     ai, ClientMessage, EvolutionAgentInfo, EvolutionSchedulerInfo, EvolutionStageProfileInfo,
@@ -25,7 +25,8 @@ use crate::server::protocol::{
 use crate::server::ws::send_message;
 use crate::workspace::state::{EvolutionModelSelection, EvolutionStageProfile};
 
-const STAGES: [&str; 6] = [
+const STAGES: [&str; 7] = [
+    "bootstrap",
     "direction",
     "plan",
     "implement",
@@ -216,10 +217,7 @@ pub async fn handle_evolution_message(
         ClientMessage::EvoGetAgentProfile { project, workspace } => {
             info!(
                 "Inbound EvoGetAgentProfile: conn_id={}, remote={}, project={}, workspace={}",
-                ctx.conn_meta.conn_id,
-                ctx.conn_meta.is_remote,
-                project,
-                workspace
+                ctx.conn_meta.conn_id, ctx.conn_meta.is_remote, project, workspace
             );
             let saved = manager.get_agent_profile(project, workspace, ctx).await;
             send_message(
@@ -316,7 +314,8 @@ impl EvolutionManager {
         ctx: &HandlerContext,
     ) -> Result<(), String> {
         let key = workspace_key(&req.project, &req.workspace);
-        let workspace_root = resolve_directory(&ctx.app_state, &req.project, &req.workspace).await?;
+        let workspace_root =
+            resolve_directory(&ctx.app_state, &req.project, &req.workspace).await?;
 
         {
             let workers = self.workers.lock().await;
@@ -364,7 +363,7 @@ impl EvolutionManager {
                     priority: req.priority,
                     status: "queued".to_string(),
                     cycle_id: cycle_id.clone(),
-                    current_stage: "direction".to_string(),
+                    current_stage: "bootstrap".to_string(),
                     global_loop_round: round,
                     auto_loop_enabled: req.auto_loop_enabled,
                     verify_iteration: 0,
@@ -559,7 +558,10 @@ impl EvolutionManager {
                 .evolution_agent_profiles
                 .insert(storage_key, to_persisted_profiles(&normalized));
             for legacy in legacy_keys {
-                state.client_settings.evolution_agent_profiles.remove(&legacy);
+                state
+                    .client_settings
+                    .evolution_agent_profiles
+                    .remove(&legacy);
             }
         }
         let _ = ctx.save_tx.send(()).await;
@@ -612,9 +614,19 @@ impl EvolutionManager {
             } else {
                 let legacy = legacy_keys
                     .into_iter()
-                    .find_map(|key| state.client_settings.evolution_agent_profiles.get(&key).cloned())
+                    .find_map(|key| {
+                        state
+                            .client_settings
+                            .evolution_agent_profiles
+                            .get(&key)
+                            .cloned()
+                    })
                     .unwrap_or_default();
-                let source = if legacy.is_empty() { "default" } else { "legacy" };
+                let source = if legacy.is_empty() {
+                    "default"
+                } else {
+                    "legacy"
+                };
                 (source, legacy)
             }
         };
@@ -708,6 +720,10 @@ impl EvolutionManager {
 
     async fn run_workspace(&self, key: String, preferred_round: u32, ctx: HandlerContext) {
         loop {
+            if self.maybe_skip_bootstrap_stage(&key, &ctx).await {
+                continue;
+            }
+
             {
                 let state = self.state.lock().await;
                 let Some(entry) = state.workspaces.get(&key) else {
@@ -813,6 +829,80 @@ impl EvolutionManager {
                 return;
             }
         }
+    }
+
+    async fn maybe_skip_bootstrap_stage(&self, key: &str, ctx: &HandlerContext) -> bool {
+        let (project, workspace, workspace_root, cycle_id, verify_iteration, is_bootstrap_stage) = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return false;
+            };
+            (
+                entry.project.clone(),
+                entry.workspace.clone(),
+                entry.workspace_root.clone(),
+                entry.cycle_id.clone(),
+                entry.verify_iteration,
+                entry.current_stage == "bootstrap",
+            )
+        };
+
+        if !is_bootstrap_stage {
+            return false;
+        }
+
+        let skip_reason = match bootstrap_skip_reason(&workspace_root) {
+            Ok(reason) => reason,
+            Err(err) => {
+                warn!(
+                    "bootstrap skip check failed: key={}, workspace_root={}, error={}",
+                    key, workspace_root, err
+                );
+                None
+            }
+        };
+        let Some(reason) = skip_reason else {
+            return false;
+        };
+
+        {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get_mut(key) else {
+                return false;
+            };
+            if entry.current_stage != "bootstrap" {
+                return false;
+            }
+            entry
+                .stage_statuses
+                .insert("bootstrap".to_string(), "done".to_string());
+            entry.current_stage = "direction".to_string();
+        }
+
+        info!("bootstrap stage skipped: key={}, reason={}", key, reason);
+        self.persist_stage_file(key, "bootstrap", "done", None, None)
+            .await
+            .ok();
+        self.persist_cycle_file(key).await.ok();
+        self.broadcast(
+            ctx,
+            ServerMessage::EvoStageChanged {
+                event_id: Uuid::new_v4().to_string(),
+                event_seq: self.next_seq(key).await,
+                project,
+                workspace,
+                cycle_id,
+                ts: Utc::now().to_rfc3339(),
+                source: "orchestrator".to_string(),
+                from_stage: "bootstrap".to_string(),
+                to_stage: "direction".to_string(),
+                verify_iteration,
+            },
+        )
+        .await;
+        self.broadcast_cycle_update(key, ctx, "orchestrator").await;
+        self.broadcast_scheduler(ctx).await;
+        true
     }
 
     async fn run_stage(
@@ -925,6 +1015,7 @@ impl EvolutionManager {
             let mut next_stage = previous.clone();
 
             match stage {
+                "bootstrap" => next_stage = "direction".to_string(),
                 "direction" => next_stage = "plan".to_string(),
                 "plan" => next_stage = "implement".to_string(),
                 "implement" => next_stage = "verify".to_string(),
@@ -971,7 +1062,7 @@ impl EvolutionManager {
                             sanitize_name(&entry.workspace),
                             Uuid::new_v4().simple()
                         );
-                        entry.current_stage = "direction".to_string();
+                        entry.current_stage = "bootstrap".to_string();
                         entry.status = "queued".to_string();
                         entry.stage_sessions.clear();
                         entry.stage_statuses.clear();
@@ -1433,6 +1524,18 @@ impl EvolutionManager {
             "STAGE_FILE_PATH": stage_file,
             "EVIDENCE_INDEX_PATH": cycle_dir.join("evidence.index.json"),
             "CHAT_MAP_PATH": cycle_dir.join("chat.map.json"),
+            "BOOTSTRAP_STATE_PATH": evolution_workspace_dir(&workspace_root)
+                .map(|p| p.join("bootstrap.state.json"))
+                .unwrap_or_else(|_| Path::new("bootstrap.state.json").to_path_buf()),
+            "TEST_ADAPTER_PATH": evolution_workspace_dir(&workspace_root)
+                .map(|p| p.join("test.adapter.json"))
+                .unwrap_or_else(|_| Path::new("test.adapter.json").to_path_buf()),
+            "ENV_CONTRACT_PATH": evolution_workspace_dir(&workspace_root)
+                .map(|p| p.join("env.contract.json"))
+                .unwrap_or_else(|_| Path::new("env.contract.json").to_path_buf()),
+            "ENV_VALUES_LOCAL_PATH": evolution_workspace_dir(&workspace_root)
+                .map(|p| p.join("env.values.local.json"))
+                .unwrap_or_else(|_| Path::new("env.values.local.json").to_path_buf()),
             "WORKSPACE_ROOT": "由程序注入，禁止自行推断",
         });
 
@@ -1482,7 +1585,9 @@ fn normalize_profiles(
     Ok(result)
 }
 
-fn normalize_profiles_lenient(input: Vec<EvolutionStageProfileInfo>) -> Vec<EvolutionStageProfileInfo> {
+fn normalize_profiles_lenient(
+    input: Vec<EvolutionStageProfileInfo>,
+) -> Vec<EvolutionStageProfileInfo> {
     let mut by_stage: HashMap<String, EvolutionStageProfileInfo> = HashMap::new();
     for profile in input {
         let stage = profile.stage.trim().to_lowercase();
@@ -1505,12 +1610,14 @@ fn normalize_profiles_lenient(input: Vec<EvolutionStageProfileInfo>) -> Vec<Evol
     STAGES
         .iter()
         .map(|stage| {
-            by_stage.remove(*stage).unwrap_or(EvolutionStageProfileInfo {
-                stage: stage.to_string(),
-                ai_tool: default_evolution_ai_tool(),
-                mode: None,
-                model: None,
-            })
+            by_stage
+                .remove(*stage)
+                .unwrap_or(EvolutionStageProfileInfo {
+                    stage: stage.to_string(),
+                    ai_tool: default_evolution_ai_tool(),
+                    mode: None,
+                    model: None,
+                })
         })
         .collect()
 }
@@ -1608,6 +1715,7 @@ fn active_agents(stage_statuses: &HashMap<String, String>) -> Vec<String> {
 
 fn agent_name(stage: &str) -> &'static str {
     match stage {
+        "bootstrap" => "BootstrapAgent",
         "direction" => "DirectionAgent",
         "plan" => "PlanAgent",
         "implement" => "ImplementAgent",
@@ -1620,6 +1728,7 @@ fn agent_name(stage: &str) -> &'static str {
 
 fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
+        "bootstrap" => Some("direction"),
         "direction" => Some("plan"),
         "plan" => Some("implement"),
         "implement" => Some("verify"),
@@ -1632,6 +1741,7 @@ fn next_stage(stage: &str) -> Option<&'static str> {
 
 fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
     match stage {
+        "bootstrap" => Some(STAGE_BOOTSTRAP_PROMPT),
         "direction" => Some(STAGE_DIRECTION_PROMPT),
         "plan" => Some(STAGE_PLAN_PROMPT),
         "implement" => Some(STAGE_IMPLEMENT_PROMPT),
@@ -1644,6 +1754,7 @@ fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
 
 fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
     match stage {
+        "bootstrap" => Some("builtin://evolution/stage.bootstrap.prompt"),
         "direction" => Some("builtin://evolution/stage.direction.prompt"),
         "plan" => Some("builtin://evolution/stage.plan.prompt"),
         "implement" => Some("builtin://evolution/stage.implement.prompt"),
@@ -1680,6 +1791,14 @@ fn sanitize_name(raw: &str) -> String {
             }
         })
         .collect::<String>()
+}
+
+fn evolution_workspace_dir(workspace_root: &str) -> Result<PathBuf, String> {
+    let root = workspace_root.trim();
+    if root.is_empty() {
+        return Err("workspace root is empty".to_string());
+    }
+    Ok(Path::new(root).join(".tidyflow").join("evolution"))
 }
 
 fn workspace_key(project: &str, workspace: &str) -> String {
@@ -1746,6 +1865,117 @@ fn normalize_ai_tool_compatible(tool: &str) -> Option<String> {
         _ => return None,
     };
     Some(mapped.to_string())
+}
+
+fn bootstrap_state_path(workspace_root: &str) -> Result<PathBuf, String> {
+    Ok(evolution_workspace_dir(workspace_root)?.join("bootstrap.state.json"))
+}
+
+fn bootstrap_skip_reason(workspace_root: &str) -> Result<Option<String>, String> {
+    let path = bootstrap_state_path(workspace_root)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let status = json
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if status != "ready" {
+        return Ok(None);
+    }
+
+    let stored_fingerprint = json
+        .get("project_fingerprint")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if stored_fingerprint.is_empty() {
+        return Ok(None);
+    }
+
+    let current_fingerprint = compute_project_fingerprint(Path::new(workspace_root));
+    if stored_fingerprint == current_fingerprint {
+        return Ok(Some(format!(
+            "bootstrap.state.json is ready and fingerprint matched ({})",
+            current_fingerprint
+        )));
+    }
+
+    Ok(None)
+}
+
+fn compute_project_fingerprint(workspace_root: &Path) -> String {
+    let candidates = [
+        "Cargo.toml",
+        "Cargo.lock",
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "pyproject.toml",
+        "requirements.txt",
+        "go.mod",
+        "go.sum",
+        "Package.swift",
+        "Podfile",
+        "Gemfile",
+        "app/TidyFlow.xcodeproj/project.pbxproj",
+        ".git/HEAD",
+    ];
+    let mut lines = Vec::with_capacity(candidates.len());
+
+    for rel in candidates {
+        let path = workspace_root.join(rel);
+        if !path.exists() {
+            lines.push(format!("{}|missing", rel));
+            continue;
+        }
+
+        let meta = match std::fs::metadata(&path) {
+            Ok(meta) => meta,
+            Err(_) => {
+                lines.push(format!("{}|metadata_error", rel));
+                continue;
+            }
+        };
+
+        let size = meta.len();
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|v| v.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|v| v.as_secs())
+            .unwrap_or(0);
+        let content_hash = if size <= 1024 * 1024 {
+            std::fs::read(&path)
+                .ok()
+                .map(|bytes| fnv1a64(&bytes))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        lines.push(format!(
+            "{}|size={}|modified={}|hash={:016x}",
+            rel, size, modified, content_hash
+        ));
+    }
+
+    format!("{:016x}", fnv1a64(lines.join("\n").as_bytes()))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 #[cfg(test)]
