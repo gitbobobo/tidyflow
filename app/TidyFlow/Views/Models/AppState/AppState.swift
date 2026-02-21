@@ -99,6 +99,14 @@ class AppState: ObservableObject {
     private var coreProcessManagerCancellable: AnyCancellable?
     private var evolutionReplayStoreCancellable: AnyCancellable?
     private var subAgentViewerStoreCancellable: AnyCancellable?
+    // WS 领域 handler 强引用（WSClient 侧为 weak）
+    var wsGitMessageHandler: GitMessageHandler?
+    var wsProjectMessageHandler: ProjectMessageHandler?
+    var wsFileMessageHandler: FileMessageHandler?
+    var wsSettingsMessageHandler: SettingsMessageHandler?
+    var wsTerminalMessageHandler: TerminalMessageHandler?
+    var wsLspMessageHandler: LspMessageHandler?
+    var wsAIMessageHandler: AIMessageHandler?
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]

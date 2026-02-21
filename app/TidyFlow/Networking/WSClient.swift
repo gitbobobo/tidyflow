@@ -46,6 +46,15 @@ class WSClient: NSObject, ObservableObject {
     /// 最近一次已处理的服务端 seq（v5 包络），用于丢弃乱序/重复消息
     var lastServerSeq: UInt64 = 0
 
+    // 领域 handler（新路径）：优先于闭包回调分发，逐步替代 onXxx 回调。
+    weak var gitMessageHandler: GitMessageHandler?
+    weak var projectMessageHandler: ProjectMessageHandler?
+    weak var fileMessageHandler: FileMessageHandler?
+    weak var settingsMessageHandler: SettingsMessageHandler?
+    weak var terminalMessageHandler: TerminalMessageHandler?
+    weak var lspMessageHandler: LspMessageHandler?
+    weak var aiMessageHandler: AIMessageHandler?
+
     /// Get current URL string for debug display
     var currentURLString: String? {
         currentURL?.absoluteString

@@ -17,6 +17,172 @@ private struct PairErrorHTTPResponse: Decodable {
     let message: String
 }
 
+private final class AppStateGitMessageHandlerAdapter: GitMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleGitDiffResult(_ result: GitDiffResult) { appState?.gitCache.handleGitDiffResult(result) }
+    func handleGitStatusResult(_ result: GitStatusResult) { appState?.gitCache.handleGitStatusResult(result) }
+    func handleGitLogResult(_ result: GitLogResult) { appState?.gitCache.handleGitLogResult(result) }
+    func handleGitShowResult(_ result: GitShowResult) { appState?.gitCache.handleGitShowResult(result) }
+    func handleGitOpResult(_ result: GitOpResult) { appState?.gitCache.handleGitOpResult(result) }
+    func handleGitBranchesResult(_ result: GitBranchesResult) { appState?.gitCache.handleGitBranchesResult(result) }
+    func handleGitCommitResult(_ result: GitCommitResult) { appState?.gitCache.handleGitCommitResult(result) }
+    func handleGitRebaseResult(_ result: GitRebaseResult) { appState?.gitCache.handleGitRebaseResult(result) }
+    func handleGitOpStatusResult(_ result: GitOpStatusResult) { appState?.gitCache.handleGitOpStatusResult(result) }
+    func handleGitMergeToDefaultResult(_ result: GitMergeToDefaultResult) { appState?.gitCache.handleGitMergeToDefaultResult(result) }
+    func handleGitIntegrationStatusResult(_ result: GitIntegrationStatusResult) { appState?.gitCache.handleGitIntegrationStatusResult(result) }
+    func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult) { appState?.gitCache.handleGitRebaseOntoDefaultResult(result) }
+    func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) { appState?.gitCache.handleGitResetIntegrationWorktreeResult(result) }
+    func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {
+        appState?.gitCache.fetchGitStatus(workspaceKey: notification.workspace)
+        appState?.gitCache.fetchGitBranches(workspaceKey: notification.workspace)
+    }
+    func handleGitAICommitResult(_ result: GitAICommitResult) { appState?.handleGitAICommitResult(result) }
+    func handleGitAIMergeResult(_ result: GitAIMergeResult) { appState?.handleGitAIMergeResult(result) }
+}
+
+private final class AppStateProjectMessageHandlerAdapter: ProjectMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleProjectsList(_ result: ProjectsListResult) { appState?.handleProjectsList(result) }
+    func handleWorkspacesList(_ result: WorkspacesListResult) { appState?.handleWorkspacesList(result) }
+    func handleProjectImported(_ result: ProjectImportedResult) { appState?.handleProjectImported(result) }
+    func handleWorkspaceCreated(_ result: WorkspaceCreatedResult) { appState?.handleWorkspaceCreated(result) }
+    func handleProjectRemoved(_ result: ProjectRemovedResult) {
+        if !result.ok {
+            TFLog.app.error("移除项目失败: \(result.message ?? "未知错误", privacy: .public)")
+        }
+    }
+    func handleWorkspaceRemoved(_ result: WorkspaceRemovedResult) { appState?.handleWorkspaceRemoved(result) }
+    func handleProjectCommandsSaved(_ project: String, _ ok: Bool, _ message: String?) {
+        if !ok {
+            TFLog.app.warning("项目命令保存失败: \(message ?? "未知错误", privacy: .public)")
+        }
+    }
+    func handleProjectCommandStarted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {
+        appState?.handleProjectCommandStarted(project: project, workspace: workspace, commandId: commandId, taskId: taskId)
+    }
+    func handleProjectCommandCompleted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String, _ ok: Bool, _ message: String?) {
+        appState?.handleProjectCommandCompleted(
+            project: project,
+            workspace: workspace,
+            commandId: commandId,
+            taskId: taskId,
+            ok: ok,
+            message: message
+        )
+    }
+    func handleProjectCommandOutput(_ taskId: String, _ line: String) {
+        appState?.handleProjectCommandOutput(taskId: taskId, line: line)
+    }
+}
+
+private final class AppStateFileMessageHandlerAdapter: FileMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleFileIndexResult(_ result: FileIndexResult) { appState?.handleFileIndexResult(result) }
+    func handleFileListResult(_ result: FileListResult) { appState?.handleFileListResult(result) }
+    func handleFileRenameResult(_ result: FileRenameResult) { appState?.handleFileRenameResult(result) }
+    func handleFileDeleteResult(_ result: FileDeleteResult) { appState?.handleFileDeleteResult(result) }
+    func handleFileCopyResult(_ result: FileCopyResult) { appState?.handleFileCopyResult(result) }
+    func handleFileMoveResult(_ result: FileMoveResult) { appState?.handleFileMoveResult(result) }
+    func handleFileWriteResult(_ result: FileWriteResult) { appState?.handleFileWriteResult(result) }
+    func handleFileChanged(_ notification: FileChangedNotification) {
+        appState?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
+        appState?.notifyEditorFileChanged(notification: notification)
+    }
+}
+
+private final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleClientSettingsResult(_ settings: ClientSettings) {
+        guard let appState else { return }
+        appState.clientSettings = settings
+        appState.clientSettingsLoaded = true
+        appState.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
+        LocalizationManager.shared.appLanguage = settings.appLanguage
+    }
+
+    func handleClientSettingsSaved(_ ok: Bool, _ message: String?) {
+        if !ok {
+            TFLog.app.error("保存设置失败: \(message ?? "未知错误", privacy: .public)")
+        }
+    }
+}
+
+private final class AppStateTerminalMessageHandlerAdapter: TerminalMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleTermList(_ result: TermListResult) {
+        appState?.updateRemoteTerminals(from: result.items)
+    }
+
+    func handleRemoteTermChanged() {
+        appState?.refreshRemoteTerminals()
+    }
+}
+
+private final class AppStateLspMessageHandlerAdapter: LspMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleLspDiagnostics(_ result: LspDiagnosticsResult) {
+        appState?.handleLspDiagnostics(result)
+    }
+
+    func handleLspStatus(_ result: LspStatusResult) {
+        appState?.handleLspStatus(result)
+    }
+}
+
+private final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleAISessionStarted(_ ev: AISessionStartedV2) { appState?.handleAISessionStarted(ev) }
+    func handleAISessionList(_ ev: AISessionListV2) { appState?.handleAISessionList(ev) }
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) { appState?.handleAISessionMessages(ev) }
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { appState?.handleAISessionStatusResult(ev) }
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { appState?.handleAISessionStatusUpdate(ev) }
+    func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2) { appState?.handleAIChatMessageUpdated(ev) }
+    func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) { appState?.handleAIChatPartUpdated(ev) }
+    func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) { appState?.handleAIChatPartDelta(ev) }
+    func handleAIChatDone(_ ev: AIChatDoneV2) { appState?.handleAIChatDone(ev) }
+    func handleAIChatError(_ ev: AIChatErrorV2) { appState?.handleAIChatError(ev) }
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { appState?.handleAIQuestionAsked(ev) }
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { appState?.handleAIQuestionCleared(ev) }
+    func handleAIProviderList(_ ev: AIProviderListResult) { appState?.handleAIProviderList(ev) }
+    func handleAIAgentList(_ ev: AIAgentListResult) { appState?.handleAIAgentList(ev) }
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) { appState?.handleAISlashCommands(ev) }
+}
+
 extension AppState {
     /// 当前会话是否允许生成并使用移动端连接信息（Core 运行即可）
     var remoteAccessReady: Bool {
@@ -299,539 +465,28 @@ extension AppState {
             }
         }
 
-        wsClient.onFileIndexResult = { [weak self] result in
-            self?.handleFileIndexResult(result)
-        }
-
-        // 处理文件列表结果
-        wsClient.onFileListResult = { [weak self] result in
-            self?.handleFileListResult(result)
-        }
-
-        // Phase C2-2a: Handle git diff results
-        wsClient.onGitDiffResult = { [weak self] result in
-            self?.gitCache.handleGitDiffResult(result)
-        }
-
-        // Phase C3-1: Handle git status results
-        wsClient.onGitStatusResult = { [weak self] result in
-            self?.gitCache.handleGitStatusResult(result)
-        }
-
-        // Handle git log results
-        wsClient.onGitLogResult = { [weak self] result in
-            self?.gitCache.handleGitLogResult(result)
-        }
-
-        // Handle git show results (single commit details)
-        wsClient.onGitShowResult = { [weak self] result in
-            self?.gitCache.handleGitShowResult(result)
-        }
-
-        // Phase C3-2a: Handle git operation results
-        wsClient.onGitOpResult = { [weak self] result in
-            self?.gitCache.handleGitOpResult(result)
-        }
-
-        // Phase C3-3a: Handle git branches results
-        wsClient.onGitBranchesResult = { [weak self] result in
-            self?.gitCache.handleGitBranchesResult(result)
-        }
-
-        // Phase C3-4a: Handle git commit results
-        wsClient.onGitCommitResult = { [weak self] result in
-            self?.gitCache.handleGitCommitResult(result)
-        }
-
-        // Phase UX-3a: Handle git rebase results
-        wsClient.onGitRebaseResult = { [weak self] result in
-            self?.gitCache.handleGitRebaseResult(result)
-        }
-
-        // Phase UX-3a: Handle git op status results
-        wsClient.onGitOpStatusResult = { [weak self] result in
-            self?.gitCache.handleGitOpStatusResult(result)
-        }
-
-        // Phase UX-3b: Handle git merge to default results
-        wsClient.onGitMergeToDefaultResult = { [weak self] result in
-            self?.gitCache.handleGitMergeToDefaultResult(result)
-        }
-
-        // Phase UX-3b: Handle git integration status results
-        wsClient.onGitIntegrationStatusResult = { [weak self] result in
-            self?.gitCache.handleGitIntegrationStatusResult(result)
-        }
-
-        // Phase UX-4: Handle git rebase onto default results
-        wsClient.onGitRebaseOntoDefaultResult = { [weak self] result in
-            self?.gitCache.handleGitRebaseOntoDefaultResult(result)
-        }
-
-        // Phase UX-5: Handle git reset integration worktree results
-        wsClient.onGitResetIntegrationWorktreeResult = { [weak self] result in
-            self?.gitCache.handleGitResetIntegrationWorktreeResult(result)
-        }
-
-        // UX-2: Handle project import results
-        wsClient.onProjectImported = { [weak self] result in
-            self?.handleProjectImported(result)
-        }
-
-        // UX-2: Handle project list results
-        wsClient.onProjectsList = { [weak self] result in
-            self?.handleProjectsList(result)
-        }
-
-        // Handle workspaces list results
-        wsClient.onWorkspacesList = { [weak self] result in
-            self?.handleWorkspacesList(result)
-        }
-
-        // UX-2: Handle workspace created results
-        wsClient.onWorkspaceCreated = { [weak self] result in
-            self?.handleWorkspaceCreated(result)
-        }
-
-        // Handle project removed results
-        wsClient.onProjectRemoved = { result in
-            if !result.ok {
-                TFLog.app.error("移除项目失败: \(result.message ?? "未知错误", privacy: .public)")
-            }
-        }
-
-        // Handle workspace removed results
-        wsClient.onWorkspaceRemoved = { [weak self] result in
-            self?.handleWorkspaceRemoved(result)
-        }
-
-        // 处理客户端设置结果
-        wsClient.onClientSettingsResult = { [weak self] settings in
-            guard let self else { return }
-            self.clientSettings = settings
-            self.clientSettingsLoaded = true
-            self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
-            LocalizationManager.shared.appLanguage = settings.appLanguage
-        }
-
-        wsClient.onClientSettingsSaved = { ok, message in
-            if !ok {
-                TFLog.app.error("保存设置失败: \(message ?? "未知错误", privacy: .public)")
-            }
-        }
-
-        // v1.22: 文件监控回调
-        wsClient.onWatchSubscribed = { _ in
-            // 已订阅文件监控
-        }
-
-        wsClient.onWatchUnsubscribed = {
-            // 已取消文件监控订阅
-        }
-
-        wsClient.onFileChanged = { [weak self] notification in
-            // 使相关缓存失效
-            self?.invalidateFileCache(project: notification.project, workspace: notification.workspace)
-            // 通知编辑器层文件变化
-            self?.notifyEditorFileChanged(notification: notification)
-        }
-
-        wsClient.onGitStatusChanged = { [weak self] notification in
-            // 自动刷新 Git 状态
-            self?.gitCache.fetchGitStatus(workspaceKey: notification.workspace)
-            // 同时刷新分支信息（可能有新分支创建）
-            self?.gitCache.fetchGitBranches(workspaceKey: notification.workspace)
-        }
-
-        // v1.23: 文件重命名结果
-        wsClient.onFileRenameResult = { [weak self] result in
-            self?.handleFileRenameResult(result)
-        }
-
-        // v1.23: 文件删除结果
-        wsClient.onFileDeleteResult = { [weak self] result in
-            self?.handleFileDeleteResult(result)
-        }
-
-        // v1.24: 文件复制结果
-        wsClient.onFileCopyResult = { [weak self] result in
-            self?.handleFileCopyResult(result)
-        }
-
-        // v1.25: 文件移动结果
-        wsClient.onFileMoveResult = { [weak self] result in
-            self?.handleFileMoveResult(result)
-        }
-
-        // 文件写入结果（新建文件）
-        wsClient.onFileWriteResult = { [weak self] result in
-            self?.handleFileWriteResult(result)
-        }
-
-        // 项目命令回调
-        wsClient.onProjectCommandsSaved = { project, ok, message in
-            if !ok {
-                TFLog.app.warning("项目命令保存失败: \(message ?? "未知错误", privacy: .public)")
-            }
-        }
-        wsClient.onProjectCommandStarted = { [weak self] project, workspace, commandId, taskId in
-            self?.handleProjectCommandStarted(
-                project: project,
-                workspace: workspace,
-                commandId: commandId,
-                taskId: taskId
-            )
-        }
-        wsClient.onProjectCommandOutput = { [weak self] taskId, line in
-            self?.handleProjectCommandOutput(taskId: taskId, line: line)
-        }
-        wsClient.onProjectCommandCompleted = { [weak self] project, workspace, commandId, taskId, ok, message in
-            self?.handleProjectCommandCompleted(
-                project: project,
-                workspace: workspace,
-                commandId: commandId,
-                taskId: taskId,
-                ok: ok,
-                message: message
-            )
-        }
-        wsClient.onLspDiagnostics = { [weak self] result in
-            self?.handleLspDiagnostics(result)
-        }
-        wsClient.onLspStatus = { [weak self] result in
-            self?.handleLspStatus(result)
-        }
-
-        // v1.32: 远程终端追踪
-        wsClient.onRemoteTermChanged = { [weak self] in
-            self?.refreshRemoteTerminals()
-        }
-        wsClient.onTermList = { [weak self] result in
-            self?.updateRemoteTerminals(from: result.items)
-        }
-
-        // v1.33: AI 提交/合并结果（从 Rust Core 返回）
-        wsClient.onGitAICommitResult = { [weak self] result in
-            self?.handleGitAICommitResult(result)
-        }
-        wsClient.onGitAIMergeResult = { [weak self] result in
-            self?.handleGitAIMergeResult(result)
-        }
-
-        // AI Chat（结构化 message/part 流）
-        wsClient.onAISessionStarted = { [weak self] ev in
-            guard let self else { return }
-            // 仅处理当前选中的 workspace
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-
-            let store = self.aiStore(for: ev.aiTool)
-            store.setCurrentSessionId(ev.sessionId)
-            let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
-            let session = AISessionInfo(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                id: ev.sessionId,
-                title: ev.title,
-                updatedAt: updatedAt
-            )
-            self.upsertAISession(session, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAISessionList = { [weak self] ev in
-            guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-
-            let sessions = ev.sessions.map {
-                AISessionInfo(
-                    projectName: $0.projectName,
-                    workspaceName: $0.workspaceName,
-                    aiTool: ev.aiTool,
-                    id: $0.id,
-                    title: $0.title,
-                    updatedAt: $0.updatedAt
-                )
-            }
-            self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: ev.aiTool)
-        }
-
-        wsClient.onAISessionMessages = { [weak self] ev in
-            guard let self else { return }
-            if self.consumeEvolutionReplayMessagesIfNeeded(ev) {
-                return
-            }
-            if self.consumeSubAgentViewerMessagesIfNeeded(ev) {
-                return
-            }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else {
-                TFLog.app.debug(
-                    "AI session_messages ignored: workspace mismatch, event_project=\(ev.projectName, privacy: .public), event_workspace=\(ev.workspaceName, privacy: .public), selected_project=\(self.selectedProjectName, privacy: .public), selected_workspace=\((self.selectedWorkspaceKey ?? ""), privacy: .public)"
-                )
-                return
-            }
-            let store = self.aiStore(for: ev.aiTool)
-            let currentSessionId = store.currentSessionId ?? ""
-            guard currentSessionId == ev.sessionId else {
-                TFLog.app.warning(
-                    "AI session_messages ignored: session mismatch, ai_tool=\(ev.aiTool.rawValue, privacy: .public), event_session_id=\(ev.sessionId, privacy: .public), current_session_id=\(currentSessionId, privacy: .public), messages_count=\(ev.messages.count)"
-                )
-                return
-            }
-            TFLog.app.info(
-                "AI session_messages accepted: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), messages_count=\(ev.messages.count)"
-            )
-
-            let mapped = ev.toChatMessages()
-            let restoredQuestions = Self.rebuildPendingQuestionRequests(
-                sessionId: ev.sessionId,
-                messages: ev.messages
-            )
-            store.replaceMessages(mapped)
-            store.replaceQuestionRequests(restoredQuestions)
-            self.applyAISessionSelectionHint(
-                ev.selectionHint,
-                sessionId: ev.sessionId,
-                for: ev.aiTool
-            )
-            TFLog.app.info(
-                "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
-            )
-        }
-
-        wsClient.onAISessionStatusResult = { [weak self] ev in
-            guard let self else { return }
-
-            self.upsertAISessionStatus(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                status: ev.status.status,
-                errorMessage: ev.status.errorMessage,
-                contextRemainingPercent: ev.status.contextRemainingPercent
-            )
-            if self.selectedProjectName == ev.projectName,
-               self.selectedWorkspaceKey == ev.workspaceName {
-                self.reconcileAIStreamStateFromSessionStatus(
-                    aiTool: ev.aiTool,
-                    sessionId: ev.sessionId,
-                    status: ev.status.status
-                )
-            }
-        }
-
-        wsClient.onAISessionStatusUpdate = { [weak self] ev in
-            guard let self else { return }
-
-            self.upsertAISessionStatus(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                status: ev.status.status,
-                errorMessage: ev.status.errorMessage,
-                contextRemainingPercent: ev.status.contextRemainingPercent
-            )
-            if self.selectedProjectName == ev.projectName,
-               self.selectedWorkspaceKey == ev.workspaceName {
-                self.reconcileAIStreamStateFromSessionStatus(
-                    aiTool: ev.aiTool,
-                    sessionId: ev.sessionId,
-                    status: ev.status.status
-                )
-            }
-        }
-
-        wsClient.onAIChatMessageUpdated = { [weak self] ev in
-            guard let self else { return }
-            self.consumeEvolutionReplayMessageUpdatedIfNeeded(ev)
-            self.consumeSubAgentViewerMessageUpdatedIfNeeded(ev)
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            guard store.currentSessionId == ev.sessionId else { return }
-            // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
-            if store.isAbortPending(for: ev.sessionId) { return }
-
-            TFLog.app.debug(
-                "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
-            )
-            store.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
-            self.setBadgeRunning(true, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAIChatPartUpdated = { [weak self] ev in
-            guard let self else { return }
-            self.consumeEvolutionReplayPartUpdatedIfNeeded(ev)
-            self.consumeSubAgentViewerPartUpdatedIfNeeded(ev)
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            guard store.currentSessionId == ev.sessionId else { return }
-            // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
-            if store.isAbortPending(for: ev.sessionId) { return }
-
-            TFLog.app.debug(
-                "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
-            )
-            store.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
-            self.setBadgeRunning(true, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAIChatPartDelta = { [weak self] ev in
-            guard let self else { return }
-            self.consumeEvolutionReplayPartDeltaIfNeeded(ev)
-            self.consumeSubAgentViewerPartDeltaIfNeeded(ev)
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            guard store.currentSessionId == ev.sessionId else { return }
-            // 本地已发起停止：忽略后续增量，等待 done/error 收敛。
-            if store.isAbortPending(for: ev.sessionId) { return }
-
-            TFLog.app.debug(
-                "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
-            )
-            store.enqueuePartDelta(
-                messageId: ev.messageId,
-                partId: ev.partId,
-                partType: ev.partType,
-                field: ev.field,
-                delta: ev.delta
-            )
-            self.setBadgeRunning(true, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAIChatDone = { [weak self] ev in
-            guard let self else { return }
-            self.consumeEvolutionReplayDoneIfNeeded(ev)
-            self.consumeSubAgentViewerDoneIfNeeded(ev)
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            // done 可能晚到；即使当前不在该会话，也要先清理 abort pending，避免输入区长期禁用。
-            store.clearAbortPendingIfMatches(ev.sessionId)
-            guard store.currentSessionId == ev.sessionId else { return }
-            TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
-            store.handleChatDone(sessionId: ev.sessionId)
-            self.setBadgeRunning(false, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAIChatError = { [weak self] ev in
-            guard let self else { return }
-            self.consumeEvolutionReplayErrorIfNeeded(ev)
-            self.consumeSubAgentViewerErrorIfNeeded(ev)
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            // error 可能晚到；先清理 abort pending，避免 UI 卡住。
-            store.clearAbortPendingIfMatches(ev.sessionId)
-            guard store.currentSessionId == ev.sessionId else { return }
-            TFLog.app.error(
-                "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
-            )
-            store.handleChatError(sessionId: ev.sessionId, error: ev.error)
-            self.setBadgeRunning(false, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAIQuestionAsked = { [weak self] ev in
-            guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            guard store.currentSessionId == ev.sessionId else { return }
-            store.upsertQuestionRequest(ev.request)
-            self.setBadgeRunning(true, for: ev.aiTool)
-            self.markUnreadBadge(for: ev.aiTool)
-        }
-
-        wsClient.onAIQuestionCleared = { [weak self] ev in
-            guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let store = self.aiStore(for: ev.aiTool)
-            guard store.currentSessionId == ev.sessionId else { return }
-            store.completeQuestionRequestLocally(requestId: ev.requestId)
-        }
-
-        wsClient.onAIProviderList = { [weak self] ev in
-            guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-
-            let providers = ev.providers.map { p in
-                AIProviderInfo(
-                    id: p.id,
-                    name: p.name,
-                    models: p.models.map { m in
-                        AIModelInfo(
-                            id: m.id,
-                            name: m.name,
-                            providerID: m.providerID.isEmpty ? p.id : m.providerID,
-                            supportsImageInput: m.supportsImageInput
-                        )
-                    }
-                )
-            }
-            self.setAIProviders(providers, for: ev.aiTool)
-            self.isAILoadingModels = false
-            self.markEvolutionProviderListLoaded(
-                project: ev.projectName,
-                workspace: ev.workspaceName,
-                aiTool: ev.aiTool
-            )
-            self.retryPendingAISessionSelectionHint(for: ev.aiTool)
-        }
-
-        wsClient.onAIAgentList = { [weak self] ev in
-            guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-
-            let agents = ev.agents.map { a in
-                AIAgentInfo(
-                    name: a.name,
-                    description: a.description,
-                    mode: a.mode,
-                    color: a.color,
-                    defaultProviderID: a.defaultProviderID,
-                    defaultModelID: a.defaultModelID
-                )
-            }
-            self.setAIAgents(agents, for: ev.aiTool)
-            self.isAILoadingAgents = false
-            self.markEvolutionAgentListLoaded(
-                project: ev.projectName,
-                workspace: ev.workspaceName,
-                aiTool: ev.aiTool
-            )
-            if self.selectedAgent(for: ev.aiTool) == nil {
-                let firstAgent = agents.first(where: { $0.mode == "primary" || $0.mode == "all" })
-                    ?? agents.first
-                self.setAISelectedAgent(firstAgent?.name, for: ev.aiTool)
-                self.applyAgentDefaultModel(firstAgent, for: ev.aiTool)
-            }
-            self.retryPendingAISessionSelectionHint(for: ev.aiTool)
-        }
-
-        wsClient.onAISlashCommands = { [weak self] ev in
-            guard let self else { return }
-            guard self.selectedProjectName == ev.projectName,
-                  self.selectedWorkspaceKey == ev.workspaceName else { return }
-            let commands = ev.commands.map { cmd in
-                AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
-            }
-            self.setAISlashCommands(commands, for: ev.aiTool)
-        }
+        // 新路径：按领域 handler 绑定，替代大量 onXxx 闭包接线
+        let gitHandler = AppStateGitMessageHandlerAdapter(appState: self)
+        let projectHandler = AppStateProjectMessageHandlerAdapter(appState: self)
+        let fileHandler = AppStateFileMessageHandlerAdapter(appState: self)
+        let settingsHandler = AppStateSettingsMessageHandlerAdapter(appState: self)
+        let terminalHandler = AppStateTerminalMessageHandlerAdapter(appState: self)
+        let lspHandler = AppStateLspMessageHandlerAdapter(appState: self)
+        let aiHandler = AppStateAIMessageHandlerAdapter(appState: self)
+        wsGitMessageHandler = gitHandler
+        wsProjectMessageHandler = projectHandler
+        wsFileMessageHandler = fileHandler
+        wsSettingsMessageHandler = settingsHandler
+        wsTerminalMessageHandler = terminalHandler
+        wsLspMessageHandler = lspHandler
+        wsAIMessageHandler = aiHandler
+        wsClient.gitMessageHandler = gitHandler
+        wsClient.projectMessageHandler = projectHandler
+        wsClient.fileMessageHandler = fileHandler
+        wsClient.settingsMessageHandler = settingsHandler
+        wsClient.terminalMessageHandler = terminalHandler
+        wsClient.lspMessageHandler = lspHandler
+        wsClient.aiMessageHandler = aiHandler
 
         // Evolution
         wsClient.onEvoPulse = { [weak self] in
@@ -938,6 +593,290 @@ extension AppState {
 
         // Connect to the dynamic port
         wsClient.connect(port: port)
+    }
+
+    func handleAISessionStarted(_ ev: AISessionStartedV2) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+
+        let store = aiStore(for: ev.aiTool)
+        store.setCurrentSessionId(ev.sessionId)
+        let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
+        let session = AISessionInfo(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            id: ev.sessionId,
+            title: ev.title,
+            updatedAt: updatedAt
+        )
+        upsertAISession(session, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAISessionList(_ ev: AISessionListV2) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let sessions = ev.sessions.map {
+            AISessionInfo(
+                projectName: $0.projectName,
+                workspaceName: $0.workspaceName,
+                aiTool: ev.aiTool,
+                id: $0.id,
+                title: $0.title,
+                updatedAt: $0.updatedAt
+            )
+        }
+        setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: ev.aiTool)
+    }
+
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) {
+        if consumeEvolutionReplayMessagesIfNeeded(ev) {
+            return
+        }
+        if consumeSubAgentViewerMessagesIfNeeded(ev) {
+            return
+        }
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else {
+            TFLog.app.debug(
+                "AI session_messages ignored: workspace mismatch, event_project=\(ev.projectName, privacy: .public), event_workspace=\(ev.workspaceName, privacy: .public), selected_project=\(self.selectedProjectName, privacy: .public), selected_workspace=\((self.selectedWorkspaceKey ?? ""), privacy: .public)"
+            )
+            return
+        }
+        let store = aiStore(for: ev.aiTool)
+        let currentSessionId = store.currentSessionId ?? ""
+        guard currentSessionId == ev.sessionId else {
+            TFLog.app.warning(
+                "AI session_messages ignored: session mismatch, ai_tool=\(ev.aiTool.rawValue, privacy: .public), event_session_id=\(ev.sessionId, privacy: .public), current_session_id=\(currentSessionId, privacy: .public), messages_count=\(ev.messages.count)"
+            )
+            return
+        }
+        TFLog.app.info(
+            "AI session_messages accepted: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), messages_count=\(ev.messages.count)"
+        )
+        let mapped = ev.toChatMessages()
+        let restoredQuestions = Self.rebuildPendingQuestionRequests(
+            sessionId: ev.sessionId,
+            messages: ev.messages
+        )
+        store.replaceMessages(mapped)
+        store.replaceQuestionRequests(restoredQuestions)
+        applyAISessionSelectionHint(
+            ev.selectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool
+        )
+        TFLog.app.info(
+            "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
+        )
+    }
+
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
+        upsertAISessionStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            contextRemainingPercent: ev.status.contextRemainingPercent
+        )
+        if selectedProjectName == ev.projectName,
+           selectedWorkspaceKey == ev.workspaceName {
+            reconcileAIStreamStateFromSessionStatus(
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status
+            )
+        }
+    }
+
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
+        upsertAISessionStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            status: ev.status.status,
+            errorMessage: ev.status.errorMessage,
+            contextRemainingPercent: ev.status.contextRemainingPercent
+        )
+        if selectedProjectName == ev.projectName,
+           selectedWorkspaceKey == ev.workspaceName {
+            reconcileAIStreamStateFromSessionStatus(
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: ev.status.status
+            )
+        }
+    }
+
+    func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2) {
+        consumeEvolutionReplayMessageUpdatedIfNeeded(ev)
+        consumeSubAgentViewerMessageUpdatedIfNeeded(ev)
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        guard store.currentSessionId == ev.sessionId else { return }
+        if store.isAbortPending(for: ev.sessionId) { return }
+        TFLog.app.debug(
+            "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
+        )
+        store.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+        setBadgeRunning(true, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) {
+        consumeEvolutionReplayPartUpdatedIfNeeded(ev)
+        consumeSubAgentViewerPartUpdatedIfNeeded(ev)
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        guard store.currentSessionId == ev.sessionId else { return }
+        if store.isAbortPending(for: ev.sessionId) { return }
+        TFLog.app.debug(
+            "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
+        )
+        store.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+        setBadgeRunning(true, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) {
+        consumeEvolutionReplayPartDeltaIfNeeded(ev)
+        consumeSubAgentViewerPartDeltaIfNeeded(ev)
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        guard store.currentSessionId == ev.sessionId else { return }
+        if store.isAbortPending(for: ev.sessionId) { return }
+        TFLog.app.debug(
+            "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
+        )
+        store.enqueuePartDelta(
+            messageId: ev.messageId,
+            partId: ev.partId,
+            partType: ev.partType,
+            field: ev.field,
+            delta: ev.delta
+        )
+        setBadgeRunning(true, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAIChatDone(_ ev: AIChatDoneV2) {
+        consumeEvolutionReplayDoneIfNeeded(ev)
+        consumeSubAgentViewerDoneIfNeeded(ev)
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        store.clearAbortPendingIfMatches(ev.sessionId)
+        guard store.currentSessionId == ev.sessionId else { return }
+        TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
+        store.handleChatDone(sessionId: ev.sessionId)
+        setBadgeRunning(false, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAIChatError(_ ev: AIChatErrorV2) {
+        consumeEvolutionReplayErrorIfNeeded(ev)
+        consumeSubAgentViewerErrorIfNeeded(ev)
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        store.clearAbortPendingIfMatches(ev.sessionId)
+        guard store.currentSessionId == ev.sessionId else { return }
+        TFLog.app.error(
+            "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
+        )
+        store.handleChatError(sessionId: ev.sessionId, error: ev.error)
+        setBadgeRunning(false, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        guard store.currentSessionId == ev.sessionId else { return }
+        store.upsertQuestionRequest(ev.request)
+        setBadgeRunning(true, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        guard store.currentSessionId == ev.sessionId else { return }
+        store.completeQuestionRequestLocally(requestId: ev.requestId)
+    }
+
+    func handleAIProviderList(_ ev: AIProviderListResult) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let providers = ev.providers.map { p in
+            AIProviderInfo(
+                id: p.id,
+                name: p.name,
+                models: p.models.map { m in
+                    AIModelInfo(
+                        id: m.id,
+                        name: m.name,
+                        providerID: m.providerID.isEmpty ? p.id : m.providerID,
+                        supportsImageInput: m.supportsImageInput
+                    )
+                }
+            )
+        }
+        setAIProviders(providers, for: ev.aiTool)
+        isAILoadingModels = false
+        markEvolutionProviderListLoaded(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool
+        )
+        retryPendingAISessionSelectionHint(for: ev.aiTool)
+    }
+
+    func handleAIAgentList(_ ev: AIAgentListResult) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let agents = ev.agents.map { a in
+            AIAgentInfo(
+                name: a.name,
+                description: a.description,
+                mode: a.mode,
+                color: a.color,
+                defaultProviderID: a.defaultProviderID,
+                defaultModelID: a.defaultModelID
+            )
+        }
+        setAIAgents(agents, for: ev.aiTool)
+        isAILoadingAgents = false
+        markEvolutionAgentListLoaded(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool
+        )
+        if selectedAgent(for: ev.aiTool) == nil {
+            let firstAgent = agents.first(where: { $0.mode == "primary" || $0.mode == "all" })
+                ?? agents.first
+            setAISelectedAgent(firstAgent?.name, for: ev.aiTool)
+            applyAgentDefaultModel(firstAgent, for: ev.aiTool)
+        }
+        retryPendingAISessionSelectionHint(for: ev.aiTool)
+    }
+
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let commands = ev.commands.map { cmd in
+            AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
+        }
+        setAISlashCommands(commands, for: ev.aiTool)
     }
 
     // MARK: - Evolution
@@ -1142,7 +1081,7 @@ extension AppState {
         return trimmed
     }
 
-    private func applyEvolutionProfilesFromClientSettings(
+    fileprivate func applyEvolutionProfilesFromClientSettings(
         _ profileMap: [String: [EvolutionStageProfileInfoV2]]
     ) {
         guard !profileMap.isEmpty else { return }

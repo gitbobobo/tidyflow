@@ -7,7 +7,11 @@ extension WSClient {
         switch action {
         case "project_imported":
             if let result = ProjectImportedResult.from(json: json) {
-                onProjectImported?(result)
+                if let handler = projectMessageHandler {
+                    handler.handleProjectImported(result)
+                } else {
+                    onProjectImported?(result)
+                }
             } else {
                 TFLog.ws.error("Failed to parse ProjectImportedResult")
                 onError?("Failed to parse project import response")
@@ -15,41 +19,69 @@ extension WSClient {
             return true
         case "workspace_created":
             if let result = WorkspaceCreatedResult.from(json: json) {
-                onWorkspaceCreated?(result)
+                if let handler = projectMessageHandler {
+                    handler.handleWorkspaceCreated(result)
+                } else {
+                    onWorkspaceCreated?(result)
+                }
             }
             return true
         case "projects":
             if let result = ProjectsListResult.from(json: json) {
-                onProjectsList?(result)
+                if let handler = projectMessageHandler {
+                    handler.handleProjectsList(result)
+                } else {
+                    onProjectsList?(result)
+                }
             }
             return true
         case "workspaces":
             if let result = WorkspacesListResult.from(json: json) {
-                onWorkspacesList?(result)
+                if let handler = projectMessageHandler {
+                    handler.handleWorkspacesList(result)
+                } else {
+                    onWorkspacesList?(result)
+                }
             }
             return true
         case "project_removed":
             if let result = ProjectRemovedResult.from(json: json) {
-                onProjectRemoved?(result)
+                if let handler = projectMessageHandler {
+                    handler.handleProjectRemoved(result)
+                } else {
+                    onProjectRemoved?(result)
+                }
             }
             return true
         case "workspace_removed":
             if let result = WorkspaceRemovedResult.from(json: json) {
-                onWorkspaceRemoved?(result)
+                if let handler = projectMessageHandler {
+                    handler.handleWorkspaceRemoved(result)
+                } else {
+                    onWorkspaceRemoved?(result)
+                }
             }
             return true
         case "project_commands_saved":
             let project = json["project"] as? String ?? ""
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String
-            onProjectCommandsSaved?(project, ok, message)
+            if let handler = projectMessageHandler {
+                handler.handleProjectCommandsSaved(project, ok, message)
+            } else {
+                onProjectCommandsSaved?(project, ok, message)
+            }
             return true
         case "project_command_started":
             let project = json["project"] as? String ?? ""
             let workspace = json["workspace"] as? String ?? ""
             let commandId = json["command_id"] as? String ?? ""
             let taskId = json["task_id"] as? String ?? ""
-            onProjectCommandStarted?(project, workspace, commandId, taskId)
+            if let handler = projectMessageHandler {
+                handler.handleProjectCommandStarted(project, workspace, commandId, taskId)
+            } else {
+                onProjectCommandStarted?(project, workspace, commandId, taskId)
+            }
             return true
         case "project_command_completed":
             let project = json["project"] as? String ?? ""
@@ -58,12 +90,20 @@ extension WSClient {
             let taskId = json["task_id"] as? String ?? ""
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String
-            onProjectCommandCompleted?(project, workspace, commandId, taskId, ok, message)
+            if let handler = projectMessageHandler {
+                handler.handleProjectCommandCompleted(project, workspace, commandId, taskId, ok, message)
+            } else {
+                onProjectCommandCompleted?(project, workspace, commandId, taskId, ok, message)
+            }
             return true
         case "project_command_output":
             let taskId = json["task_id"] as? String ?? ""
             let line = json["line"] as? String ?? ""
-            onProjectCommandOutput?(taskId, line)
+            if let handler = projectMessageHandler {
+                handler.handleProjectCommandOutput(taskId, line)
+            } else {
+                onProjectCommandOutput?(taskId, line)
+            }
             return true
         case "project_command_cancelled":
             // 服务端确认取消，客户端已在 stopRunningTask 中提前处理，此处仅日志
@@ -113,12 +153,20 @@ extension WSClient {
                 appLanguage: appLanguage,
                 evolutionAgentProfiles: evolutionAgentProfiles
             )
-            onClientSettingsResult?(settings)
+            if let handler = settingsMessageHandler {
+                handler.handleClientSettingsResult(settings)
+            } else {
+                onClientSettingsResult?(settings)
+            }
             return true
         case "client_settings_saved":
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String
-            onClientSettingsSaved?(ok, message)
+            if let handler = settingsMessageHandler {
+                handler.handleClientSettingsSaved(ok, message)
+            } else {
+                onClientSettingsSaved?(ok, message)
+            }
             return true
         default:
             return false

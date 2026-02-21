@@ -20,6 +20,7 @@ protocol GitMessageHandler: AnyObject {
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult)
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification)
     func handleGitAICommitResult(_ result: GitAICommitResult)
+    func handleGitAIMergeResult(_ result: GitAIMergeResult)
 }
 
 /// 默认空实现，子类只需 override 关心的方法
@@ -39,6 +40,7 @@ extension GitMessageHandler {
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) {}
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {}
     func handleGitAICommitResult(_ result: GitAICommitResult) {}
+    func handleGitAIMergeResult(_ result: GitAIMergeResult) {}
 }
 
 protocol ProjectMessageHandler: AnyObject {
@@ -101,6 +103,74 @@ protocol SettingsMessageHandler: AnyObject {
 extension SettingsMessageHandler {
     func handleClientSettingsResult(_ settings: ClientSettings) {}
     func handleClientSettingsSaved(_ ok: Bool, _ message: String?) {}
+}
+
+protocol TerminalMessageHandler: AnyObject {
+    func handleTerminalOutput(_ termId: String?, _ bytes: [UInt8])
+    func handleTerminalExit(_ termId: String?, _ code: Int)
+    func handleTermCreated(_ result: TermCreatedResult)
+    func handleTermAttached(_ result: TermAttachedResult)
+    func handleTermList(_ result: TermListResult)
+    func handleTermClosed(_ termId: String)
+    func handleRemoteTermChanged()
+}
+
+extension TerminalMessageHandler {
+    func handleTerminalOutput(_ termId: String?, _ bytes: [UInt8]) {}
+    func handleTerminalExit(_ termId: String?, _ code: Int) {}
+    func handleTermCreated(_ result: TermCreatedResult) {}
+    func handleTermAttached(_ result: TermAttachedResult) {}
+    func handleTermList(_ result: TermListResult) {}
+    func handleTermClosed(_ termId: String) {}
+    func handleRemoteTermChanged() {}
+}
+
+protocol LspMessageHandler: AnyObject {
+    func handleLspDiagnostics(_ result: LspDiagnosticsResult)
+    func handleLspStatus(_ result: LspStatusResult)
+}
+
+extension LspMessageHandler {
+    func handleLspDiagnostics(_ result: LspDiagnosticsResult) {}
+    func handleLspStatus(_ result: LspStatusResult) {}
+}
+
+protocol AIMessageHandler: AnyObject {
+    func handleAITaskCancelled(_ result: AITaskCancelled)
+    func handleAISessionStarted(_ ev: AISessionStartedV2)
+    func handleAISessionList(_ ev: AISessionListV2)
+    func handleAISessionMessages(_ ev: AISessionMessagesV2)
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2)
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2)
+    func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2)
+    func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2)
+    func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2)
+    func handleAIChatDone(_ ev: AIChatDoneV2)
+    func handleAIChatError(_ ev: AIChatErrorV2)
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2)
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2)
+    func handleAIProviderList(_ ev: AIProviderListResult)
+    func handleAIAgentList(_ ev: AIAgentListResult)
+    func handleAISlashCommands(_ ev: AISlashCommandsResult)
+}
+
+extension AIMessageHandler {
+    func handleAITaskCancelled(_ result: AITaskCancelled) {}
+    func handleAISessionStarted(_ ev: AISessionStartedV2) {}
+    func handleAISessionList(_ ev: AISessionListV2) {}
+    func handleAISessionMessages(_ ev: AISessionMessagesV2) {}
+    func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {}
+    func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {}
+    func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2) {}
+    func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) {}
+    func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) {}
+    func handleAIChatDone(_ ev: AIChatDoneV2) {}
+    func handleAIChatError(_ ev: AIChatErrorV2) {}
+    func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {}
+    func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) {}
+    func handleAIProviderList(_ ev: AIProviderListResult) {}
+    func handleAIAgentList(_ ev: AIAgentListResult) {}
+    func handleAISlashCommands(_ ev: AISlashCommandsResult) {}
 }
 
 // MARK: - 类型安全的请求构建器
