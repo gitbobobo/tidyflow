@@ -170,15 +170,7 @@ struct AITabView: View {
                             onQuestionReject: { _ in },
                             onQuestionReplyAsMessage: { _ in },
                             onOpenLinkedSession: { sessionId in
-                                guard let workspace = appState.selectedWorkspaceKey else { return }
-                                appState.openSubAgentSessionViewer(
-                                    project: appState.selectedProjectName,
-                                    workspace: workspace,
-                                    aiTool: appState.aiChatTool,
-                                    sessionId: sessionId,
-                                    sourceToolName: "task"
-                                )
-                                presentedSubAgentSession = SubAgentSessionRoute(id: sessionId, sourceToolName: "task")
+                                openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
                             }
                         )
                         .environmentObject(appState.subAgentViewerStore)
@@ -340,20 +332,37 @@ struct AITabView: View {
                     onQuestionReject: handleQuestionReject,
                     onQuestionReplyAsMessage: handleQuestionReplyAsMessage,
                     onOpenLinkedSession: { sessionId in
-                        guard let workspace = appState.selectedWorkspaceKey else { return }
-                        appState.openSubAgentSessionViewer(
-                            project: appState.selectedProjectName,
-                            workspace: workspace,
-                            aiTool: appState.aiChatTool,
-                            sessionId: sessionId,
-                            sourceToolName: "task"
-                        )
-                        presentedSubAgentSession = SubAgentSessionRoute(id: sessionId, sourceToolName: "task")
+                        openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
                     }
                 )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func openLinkedSessionDetail(sessionId: String, sourceToolName: String) {
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionId.isEmpty else { return }
+
+        if let matched = appState.aiMergedSessions.first(where: { $0.id == trimmedSessionId }) {
+            appState.openSubAgentSessionViewer(
+                project: matched.projectName,
+                workspace: matched.workspaceName,
+                aiTool: matched.aiTool,
+                sessionId: trimmedSessionId,
+                sourceToolName: sourceToolName
+            )
+        } else {
+            guard let workspace = appState.selectedWorkspaceKey else { return }
+            appState.openSubAgentSessionViewer(
+                project: appState.selectedProjectName,
+                workspace: workspace,
+                aiTool: appState.aiChatTool,
+                sessionId: trimmedSessionId,
+                sourceToolName: sourceToolName
+            )
+        }
+        presentedSubAgentSession = SubAgentSessionRoute(id: trimmedSessionId, sourceToolName: sourceToolName)
     }
 
     private var inputArea: some View {

@@ -1019,13 +1019,14 @@ extension AppState {
     ) {
         let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionId.isEmpty else { return }
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let source = (sourceToolName ?? "task").trimmingCharacters(in: .whitespacesAndNewlines)
         subAgentViewerTitle = source.isEmpty ? "子会话 · \(trimmedSessionId)" : "子会话(\(source)) · \(trimmedSessionId)"
         subAgentViewerLoading = true
         subAgentViewerError = nil
         subAgentViewerRequest = (
             project: project,
-            workspace: workspace,
+            workspace: normalizedWorkspace,
             aiTool: aiTool,
             sessionId: trimmedSessionId
         )
@@ -1033,13 +1034,13 @@ extension AppState {
         subAgentViewerStore.setCurrentSessionId(trimmedSessionId)
         wsClient.requestAISessionStatus(
             projectName: project,
-            workspaceName: workspace,
+            workspaceName: normalizedWorkspace,
             aiTool: aiTool,
             sessionId: trimmedSessionId
         )
         wsClient.requestAISessionMessages(
             projectName: project,
-            workspaceName: workspace,
+            workspaceName: normalizedWorkspace,
             aiTool: aiTool,
             sessionId: trimmedSessionId,
             limit: 400
@@ -1289,7 +1290,7 @@ extension AppState {
     private func consumeEvolutionReplayMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
         guard let request = evolutionReplayRequest else { return false }
         guard request.project == ev.projectName,
-              request.workspace == ev.workspaceName,
+              normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(ev.workspaceName),
               request.aiTool == ev.aiTool,
               request.sessionId == ev.sessionId else { return false }
         evolutionReplayStore.setCurrentSessionId(ev.sessionId)
@@ -1389,7 +1390,7 @@ extension AppState {
     ) -> Bool {
         guard let request = evolutionReplayRequest else { return false }
         return request.project == project &&
-            request.workspace == workspace &&
+            normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(workspace) &&
             request.aiTool == aiTool &&
             request.sessionId == sessionId
     }
@@ -1397,7 +1398,7 @@ extension AppState {
     private func consumeSubAgentViewerMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
         guard let request = subAgentViewerRequest else { return false }
         guard request.project == ev.projectName,
-              request.workspace == ev.workspaceName,
+              normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(ev.workspaceName),
               request.aiTool == ev.aiTool,
               request.sessionId == ev.sessionId else { return false }
         subAgentViewerStore.setCurrentSessionId(ev.sessionId)
@@ -1498,7 +1499,7 @@ extension AppState {
     ) -> Bool {
         guard let request = subAgentViewerRequest else { return false }
         return request.project == project &&
-            request.workspace == workspace &&
+            normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(workspace) &&
             request.aiTool == aiTool &&
             request.sessionId == sessionId
     }
