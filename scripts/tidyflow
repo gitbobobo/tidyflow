@@ -23,6 +23,9 @@ print_usage() {
       运行架构护栏检查：
       - 协议一致性检查
       - 协议 schema 同步检查
+      - 协议代码生成同步检查
+      - 协议 Swift 规则生成同步检查
+      - 协议 action 规则同步检查
       - 版本一致性检查
 
   build dmg [--skip-core] [--sign] [--identity "..."]
@@ -53,6 +56,9 @@ case "$cmd" in
     check)
         ./scripts/tools/check_protocol_consistency.sh
         ./scripts/tools/check_protocol_schema_sync.sh
+        ./scripts/tools/gen_protocol_action_table.sh --check
+        ./scripts/tools/gen_protocol_action_swift_rules.sh --check
+        ./scripts/tools/check_protocol_action_sync.sh
         ./scripts/tools/check_version_consistency.sh
         ;;
     build)

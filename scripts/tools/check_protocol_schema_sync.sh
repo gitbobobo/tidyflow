@@ -41,7 +41,19 @@ dispatch_domains="$(
         | sort -u
 )"
 swift_domains="$(
-    sed -n 's/^[[:space:]]*return[[:space:]]*"\([a-z_][a-z_]*\)".*$/\1/p' "$swift_send_file" | sort -u
+    awk '
+        /private let protocolExactRules/ {mode=1; next}
+        /private let protocolPrefixRules/ {mode=1; next}
+        /private let protocolContainsRules/ {mode=1; next}
+        mode == 1 && /\]/ {mode=0; next}
+        mode == 1 && /\(".*", ".*"\)/ {
+            line=$0
+            gsub(/^[[:space:]]*\("/, "", line)
+            gsub(/", ".*$/, "", line)
+            gsub(/"/, "", line)
+            print line
+        }
+    ' "$swift_send_file" | sort -u
 )"
 
 if [ -z "$schema_domains" ] || [ -z "$dispatch_domains" ] || [ -z "$swift_domains" ]; then
@@ -58,8 +70,8 @@ if [ "$schema_domains" != "$dispatch_domains" ]; then
     exit 1
 fi
 
-# App 允许保留 misc 兜底域；除此之外必须覆盖 schema 中的全部域。
-swift_domains_without_misc="$(echo "$swift_domains" | sed '/^misc$/d')"
+# App 允许保留 misc 兜底域；规则表中的域必须覆盖 schema 中的全部域。
+swift_domains_without_misc="$(printf "%s\n" "$swift_domains" | sed '/^misc$/d')"
 if [ "$schema_domains" != "$swift_domains_without_misc" ]; then
     echo "[check_schema_sync] ERROR: schema domains 与 App domainForAction 返回域不一致"
     echo "--- schema"
