@@ -1,0 +1,41 @@
+{
+  "$schema_version": "1.0",
+  "generated_at": "2026-02-21T00:00:00Z",
+  "summary": {
+    "checked_prompts": [
+      "bootstrap",
+      "direction",
+      "plan",
+      "implement",
+      "verify",
+      "judge",
+      "report"
+    ],
+    "overlap_items": 3,
+    "resolved_items": 3,
+    "unresolved_items": 0
+  },
+  "items": [
+    {
+      "id": "ov-001",
+      "topic": "用户提问权限",
+      "before": ["direction", "plan", "implement", "verify", "judge", "report"],
+      "after_owner": "bootstrap",
+      "resolution": "仅 bootstrap 允许提问，其他阶段保持禁止提问"
+    },
+    {
+      "id": "ov-002",
+      "topic": "测试基础设施定义",
+      "before": ["implement", "verify"],
+      "after_owner": "bootstrap",
+      "resolution": "由 bootstrap 主写 test.adapter.json，verify 只读执行"
+    },
+    {
+      "id": "ov-003",
+      "topic": "外部环境信息文件",
+      "before": ["implement", "verify"],
+      "after_owner": "bootstrap",
+      "resolution": "env.contract.json/env.values.local.json 归 bootstrap 主写"
+    }
+  ]
+}
