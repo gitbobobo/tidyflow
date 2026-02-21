@@ -14,7 +14,7 @@ use crate::server::ws::send_message;
 use super::super::utils::*;
 use super::super::SharedAIState;
 
-pub(crate) async fn try_handle_ai_chat_start(
+pub(crate) async fn handle_ai_chat_start(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
@@ -68,7 +68,7 @@ pub(crate) async fn try_handle_ai_chat_start(
     Ok(true)
 }
 
-pub(crate) async fn try_handle_ai_chat_send(
+pub(crate) async fn handle_ai_chat_send(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
@@ -469,7 +469,7 @@ pub(crate) async fn try_handle_ai_chat_send(
     Ok(true)
 }
 
-pub(crate) async fn try_handle_ai_chat_command(
+pub(crate) async fn handle_ai_chat_command(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,

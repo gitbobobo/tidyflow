@@ -104,7 +104,7 @@ pub async fn handle_message(
             ai_agent,
             default_branch,
         } => {
-            integration_ai_merge::try_handle_git_ai_merge(
+            integration_ai_merge::handle_git_ai_merge(
                 project.clone(),
                 workspace.clone(),
                 ai_agent.clone(),

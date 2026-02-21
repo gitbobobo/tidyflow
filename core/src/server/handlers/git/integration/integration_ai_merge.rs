@@ -18,7 +18,7 @@ use crate::server::ws::send_message;
 const AI_AGENT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// 处理 AI 智能合并（后台执行，不阻塞 WebSocket 主循环）
-pub async fn try_handle_git_ai_merge(
+pub async fn handle_git_ai_merge(
     project: String,
     workspace: String,
     ai_agent: Option<String>,

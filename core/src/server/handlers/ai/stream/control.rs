@@ -8,7 +8,7 @@ use crate::server::protocol::{ClientMessage, ServerMessage};
 use super::super::utils::*;
 use super::super::SharedAIState;
 
-pub(crate) async fn try_handle_ai_chat_abort(
+pub(crate) async fn handle_ai_chat_abort(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
@@ -119,7 +119,7 @@ pub(crate) async fn try_handle_ai_chat_abort(
     Ok(true)
 }
 
-pub(crate) async fn try_handle_ai_question_reply(
+pub(crate) async fn handle_ai_question_reply(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
@@ -193,7 +193,7 @@ pub(crate) async fn try_handle_ai_question_reply(
     Ok(true)
 }
 
-pub(crate) async fn try_handle_ai_question_reject(
+pub(crate) async fn handle_ai_question_reject(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,

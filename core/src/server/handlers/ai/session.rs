@@ -9,7 +9,7 @@ use crate::server::ws::send_message;
 use super::utils::*;
 use super::SharedAIState;
 
-pub(super) async fn try_handle_ai_session_list(
+pub(super) async fn handle_ai_session_list(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
@@ -82,7 +82,7 @@ pub(super) async fn try_handle_ai_session_list(
     Ok(true)
 }
 
-pub(super) async fn try_handle_ai_session_messages(
+pub(super) async fn handle_ai_session_messages(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
@@ -240,7 +240,7 @@ pub(super) async fn try_handle_ai_session_messages(
     Ok(true)
 }
 
-pub(super) async fn try_handle_ai_session_delete(
+pub(super) async fn handle_ai_session_delete(
     msg: &ClientMessage,
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
@@ -285,7 +285,7 @@ pub(super) async fn try_handle_ai_session_delete(
     Ok(true)
 }
 
-pub(super) async fn try_handle_ai_session_status(
+pub(super) async fn handle_ai_session_status(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
@@ -361,7 +361,7 @@ pub(super) async fn try_handle_ai_session_status(
     Ok(true)
 }
 
-pub(super) async fn try_handle_ai_provider_list(
+pub(super) async fn handle_ai_provider_list(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
@@ -420,7 +420,7 @@ pub(super) async fn try_handle_ai_provider_list(
     Ok(true)
 }
 
-pub(super) async fn try_handle_ai_agent_list(
+pub(super) async fn handle_ai_agent_list(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
@@ -477,7 +477,7 @@ pub(super) async fn try_handle_ai_agent_list(
 
 /// 返回 AI 聊天可用的斜杠命令列表
 /// 命令分为 client（前端本地执行）和 agent（发送给 AI 代理）两类
-pub(super) async fn try_handle_ai_slash_commands(
+pub(super) async fn handle_ai_slash_commands(
     msg: &ClientMessage,
     socket: &mut WebSocket,
     app_state: &SharedAppState,

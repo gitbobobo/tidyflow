@@ -275,7 +275,7 @@ pub async fn handle_message(
             workspace,
             ai_agent,
         } => {
-            try_handle_git_ai_commit(
+            handle_git_ai_commit(
                 project.clone(),
                 workspace.clone(),
                 ai_agent.clone(),
@@ -291,7 +291,7 @@ pub async fn handle_message(
 }
 
 /// 处理 AI 智能提交（后台执行，不阻塞 WebSocket 主循环）
-pub async fn try_handle_git_ai_commit(
+pub async fn handle_git_ai_commit(
     project: String,
     workspace: String,
     ai_agent: Option<String>,
