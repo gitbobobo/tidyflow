@@ -11,6 +11,7 @@
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
 - 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 3`
+- 协议 schema 权威源：`schema/protocol/v3/`
 
 ## 消息模型（v3 包络）
 
