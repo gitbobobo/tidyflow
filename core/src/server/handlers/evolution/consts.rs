@@ -1,5 +1,4 @@
-pub(super) const STAGES: [&str; 7] = [
-    "bootstrap",
+pub(super) const STAGES: [&str; 6] = [
     "direction",
     "plan",
     "implement",
