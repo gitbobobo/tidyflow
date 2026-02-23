@@ -26,47 +26,6 @@
     console.log("[NativeBridge] Handling event:", type, payload);
 
     switch (type) {
-      case "open_file": {
-        const { project, workspace, path } = payload;
-        if (!project || !workspace || !path) {
-          console.error("[NativeBridge] open_file missing required fields");
-          return;
-        }
-        if (TF.currentProject !== project || TF.currentWorkspace !== workspace) {
-          TF.currentProject = project;
-          TF.currentWorkspace = workspace;
-        }
-        // 确保处于编辑器模式，否则新建的编辑器 pane 会被 terminal/diff 模式隐藏
-        if (TF.nativeMode !== "editor") {
-          TF.setNativeMode("editor");
-        }
-        TF.openFileInEditor(path);
-        break;
-      }
-
-      case "save_file": {
-        const { project, workspace, path } = payload;
-        if (!path) {
-          console.error("[NativeBridge] save_file missing path");
-          postToNative("save_error", { path: "", message: "Missing path" });
-          return;
-        }
-        const wsKey = TF.getWorkspaceKey(project || TF.currentProject, workspace || TF.currentWorkspace);
-        const tabId = "editor-" + path.replace(/[^a-zA-Z0-9]/g, "-");
-
-        if (TF.workspaceTabs.has(wsKey)) {
-          const tabSet = TF.workspaceTabs.get(wsKey);
-          if (tabSet.tabs.has(tabId)) {
-            TF.saveEditorTab(tabId);
-          } else {
-            postToNative("save_error", { path, message: "Editor tab not found" });
-          }
-        } else {
-          postToNative("save_error", { path, message: "Workspace not found" });
-        }
-        break;
-      }
-
       case "enter_mode": {
         const { mode, project, workspace } = payload;
         const oldWsKey = TF.getCurrentWorkspaceKey();
@@ -108,11 +67,11 @@
         }
 
         console.log("[NativeBridge] enter_mode:", mode, "project:", TF.currentProject, "workspace:", TF.currentWorkspace);
-        if (mode === "terminal" || mode === "editor" || mode === "diff") {
-          TF.setNativeMode(mode);
-        } else {
-          console.warn("[NativeBridge] Unknown mode:", mode);
+        if (mode !== "terminal") {
+          console.warn("[NativeBridge] Unsupported mode ignored:", mode);
+          break;
         }
+        TF.setNativeMode("terminal");
         break;
       }
 
@@ -235,115 +194,6 @@
         break;
       }
 
-      case "diff_open": {
-        const { project, workspace, path, mode } = payload;
-        console.log("[NativeBridge] diff_open:", path, mode);
-
-        if (!project || !workspace || !path) {
-          console.error("[NativeBridge] diff_open missing required fields");
-          postToNative("diff_error", { message: "Missing required fields" });
-          return;
-        }
-
-        if (TF.currentProject !== project || TF.currentWorkspace !== workspace) {
-          TF.currentProject = project;
-          TF.currentWorkspace = workspace;
-        }
-
-        TF.openDiffTabFromNative(path, mode || "working");
-        break;
-      }
-
-      case "diff_set_mode": {
-        const { mode } = payload;
-        console.log("[NativeBridge] diff_set_mode:", mode);
-
-        const wsKey = TF.getCurrentWorkspaceKey();
-        if (wsKey && TF.workspaceTabs.has(wsKey)) {
-          const tabSet = TF.workspaceTabs.get(wsKey);
-          const activeTab = tabSet.tabs.get(tabSet.activeTabId);
-          if (activeTab && activeTab.type === "diff") {
-            activeTab.diffMode = mode;
-            TF.sendGitDiff(activeTab.project, activeTab.workspace, activeTab.filePath, mode);
-          }
-        }
-        break;
-      }
-
-      case "editor_reveal_line": {
-        const { path, line, highlightMs } = payload;
-        console.log("[NativeBridge] editor_reveal_line:", path, line, highlightMs);
-
-        if (!path || !line) {
-          console.error("[NativeBridge] editor_reveal_line missing required fields");
-          return;
-        }
-
-        const wsKey = TF.getCurrentWorkspaceKey();
-        if (!wsKey || !TF.workspaceTabs.has(wsKey)) {
-          console.warn("[NativeBridge] No workspace for editor_reveal_line");
-          return;
-        }
-
-        const tabId = "editor-" + path.replace(/[^a-zA-Z0-9]/g, "-");
-        const tabSet = TF.workspaceTabs.get(wsKey);
-
-        if (tabSet.tabs.has(tabId)) {
-          const tab = tabSet.tabs.get(tabId);
-          TF.scrollToLineAndHighlight(tab, line, highlightMs || 2000);
-        } else {
-          console.warn("[NativeBridge] Editor tab not found for:", path);
-        }
-        break;
-      }
-
-      case "close_editor_tab": {
-        const { path } = payload;
-        console.log("[NativeBridge] close_editor_tab:", path);
-        if (!path) return;
-
-        const wsKey = TF.getCurrentWorkspaceKey();
-        if (!wsKey || !TF.workspaceTabs.has(wsKey)) return;
-
-        const tabId = "editor-" + path.replace(/[^a-zA-Z0-9]/g, "-");
-        const tabSet = TF.workspaceTabs.get(wsKey);
-        if (tabSet.tabs.has(tabId)) {
-          TF.removeTabFromUI(tabId);
-        }
-        break;
-      }
-
-      case "file_changed": {
-        const { project, workspace, paths, isDirtyFlags, kind } = payload;
-        if (!paths || paths.length === 0) return;
-
-        const wsKey = TF.getWorkspaceKey(
-          project || TF.currentProject,
-          workspace || TF.currentWorkspace
-        );
-        if (!wsKey || !TF.workspaceTabs.has(wsKey)) return;
-
-        const tabSet = TF.workspaceTabs.get(wsKey);
-
-        for (let i = 0; i < paths.length; i++) {
-          const filePath = paths[i];
-          const isDirty = isDirtyFlags ? isDirtyFlags[i] : false;
-          const tabId = "editor-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
-
-          if (!tabSet.tabs.has(tabId)) continue;
-          const tab = tabSet.tabs.get(tabId);
-
-          if (kind === "delete") {
-            TF.handleFileDeleted(tab);
-          } else if (isDirty) {
-            TF.handleFileConflict(tab, tabId, filePath, project, workspace);
-          } else {
-            TF.reloadEditorContent(tab, tabId, filePath, project, workspace);
-          }
-        }
-        break;
-      }
-
       default:
         console.warn("[NativeBridge] Unknown event type:", type);
     }
@@ -354,15 +204,8 @@
 
     TF.nativeMode = mode;
     console.log("[NativeMode] Switching to:", mode);
-
-    if (mode === "terminal") {
-      TF.hideNonTerminalTabs();
-      TF.showTerminalMode();
-    } else if (mode === "diff") {
-      TF.showDiffMode();
-    } else {
-      TF.showEditorMode();
-    }
+    TF.hideNonTerminalTabs();
+    TF.showTerminalMode();
   }
 
   function hideNonTerminalTabs() {
@@ -417,74 +260,6 @@
     if (TF.placeholder) TF.placeholder.style.display = "none";
   }
 
-  function showEditorMode() {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey || !TF.workspaceTabs.has(wsKey)) return;
-
-    const tabSet = TF.workspaceTabs.get(wsKey);
-
-    tabSet.tabs.forEach((tab) => {
-      tab.tabEl.style.display = "";
-    });
-
-    if (tabSet.activeTabId && tabSet.tabs.has(tabSet.activeTabId)) {
-      TF.switchToTab(tabSet.activeTabId);
-    }
-  }
-
-  function showDiffMode() {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey || !TF.workspaceTabs.has(wsKey)) return;
-
-    const tabSet = TF.workspaceTabs.get(wsKey);
-
-    tabSet.tabs.forEach((tab) => {
-      if (tab.type !== "diff") {
-        tab.pane.classList.remove("active");
-        tab.tabEl.style.display = "none";
-      } else {
-        tab.tabEl.style.display = "";
-      }
-    });
-
-    for (const [tabId, tab] of tabSet.tabs) {
-      if (tab.type === "diff") {
-        TF.switchToTab(tabId);
-        break;
-      }
-    }
-  }
-
-  function openDiffTabFromNative(path, mode) {
-    if (!TF.currentProject || !TF.currentWorkspace) {
-      postToNative("diff_error", { message: "No workspace selected" });
-      return;
-    }
-
-    const tabInfo = TF.createDiffTab(path, "M");
-    if (tabInfo) {
-      tabInfo.diffMode = mode;
-
-      const modeToggle = tabInfo.pane.querySelector(".diff-mode-toggle");
-      if (modeToggle) {
-        modeToggle.querySelectorAll(".diff-mode-btn").forEach((btn) => {
-          btn.classList.toggle("active", btn.dataset.mode === mode);
-        });
-      }
-
-      TF.switchToTab(tabInfo.id);
-      TF.sendGitDiff(TF.currentProject, TF.currentWorkspace, path, mode);
-    }
-  }
-
-  function openFileAtLineViaNative(path, line) {
-    postToNative("open_file_request", {
-      workspace: TF.currentWorkspace,
-      path: path,
-      line: line || null,
-    });
-  }
-
   function ensureTerminalForNative(project, workspace) {
     console.log("[NativeMode] Ensuring terminal for:", project, workspace);
 
@@ -531,9 +306,5 @@
   TF.setNativeMode = setNativeMode;
   TF.hideNonTerminalTabs = hideNonTerminalTabs;
   TF.showTerminalMode = showTerminalMode;
-  TF.showEditorMode = showEditorMode;
-  TF.showDiffMode = showDiffMode;
-  TF.openDiffTabFromNative = openDiffTabFromNative;
-  TF.openFileAtLineViaNative = openFileAtLineViaNative;
   TF.ensureTerminalForNative = ensureTerminalForNative;
 })();

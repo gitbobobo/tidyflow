@@ -123,7 +123,7 @@
   TF.protocolVersion = 0;
   TF.lastServerSeq = 0;
   TF.capabilities = [];
-  TF.nativeMode = "editor";
+  TF.nativeMode = "terminal";
   TF.nativeTerminalReady = false;
   TF.defaultServerTerminalId = null;
   TF.pendingOutputBuffer = [];

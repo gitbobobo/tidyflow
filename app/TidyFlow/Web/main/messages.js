@@ -300,64 +300,7 @@
           break;
 
         case "file_read_result":
-          // 检查是否是 Markdown 预览的图片加载请求
-          if (TF.handleImageReadResult && TF.handleImageReadResult(msg.path, msg.content)) {
-            break;
-          }
-          // 检查是否是 reload 请求（文件外部变更后的重新加载）
-          if (TF.pendingReloads && TF.pendingReloads.has(msg.path)) {
-            try {
-              const content = new TextDecoder().decode(msg.content);
-              const reloadInfo = TF.pendingReloads.get(msg.path);
-              TF.pendingReloads.delete(msg.path);
-
-              const tabSet = TF.workspaceTabs.get(reloadInfo.wsKey);
-              if (tabSet && tabSet.tabs.has(reloadInfo.tabId)) {
-                const tab = tabSet.tabs.get(reloadInfo.tabId);
-                TF.replaceEditorContent(tab, reloadInfo.tabId, content);
-              }
-            } catch (e) {
-              console.error("Failed to decode file content for reload:", e);
-            }
-          } else if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
-            try {
-              const content = new TextDecoder().decode(msg.content);
-              const tabInfo = TF.createEditorTab(msg.path, content);
-              if (tabInfo) {
-                TF.switchToTab(tabInfo.id);
-                // 创建 tab 后再次确保编辑器模式下的 tab 可见（open_file 时 tab set 可能尚不存在，showEditorMode 曾提前返回）
-                if (TF.nativeMode === "editor") {
-                  TF.showEditorMode();
-                }
-                // 强制隐藏 placeholder（避免被 placeholder 遮挡）
-                // 注意：不要设置 pane 的内联 visibility/z-index，依赖 .active 类控制可见性
-                if (TF.placeholder) TF.placeholder.style.setProperty("display", "none", "important");
-                // pane 可见后再触发布局，避免 CodeMirror 在零尺寸下测量
-                if (tabInfo.editorView) {
-                  requestAnimationFrame(() => {
-                    tabInfo.editorView.focus();
-                  });
-                }
-
-                if (
-                  TF.pendingLineNavigation &&
-                  TF.pendingLineNavigation.filePath === msg.path
-                ) {
-                  const lineNumber = TF.pendingLineNavigation.lineNumber;
-                  TF.pendingLineNavigation = null;
-                  setTimeout(() => {
-                    TF.scrollToLineAndHighlight(tabInfo, lineNumber);
-                    // 如果从 diff 跳转过来，显示返回按钮
-                    if (TF.lastDiffTabId && tabInfo.backToDiffBtn) {
-                      tabInfo.backToDiffBtn.style.display = "inline-block";
-                    }
-                  }, 50);
-                }
-              }
-            } catch (e) {
-              console.error("Failed to decode file content:", e);
-            }
-          }
+          // 文件编辑器已迁移至 Native，Web 端忽略此消息
           TF.notifySwift("file_read", {
             project: msg.project,
             workspace: msg.workspace,
@@ -367,28 +310,7 @@
           break;
 
         case "file_write_result":
-          if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace && msg.success) {
-            const wsKey = TF.getCurrentWorkspaceKey();
-            if (wsKey && TF.workspaceTabs.has(wsKey)) {
-              const tabSet = TF.workspaceTabs.get(wsKey);
-              const tabId = "editor-" + msg.path.replace(/[^a-zA-Z0-9]/g, "-");
-              if (tabSet.tabs.has(tabId)) {
-                TF.updateTabDirtyState(tabId, false);
-                const tab = tabSet.tabs.get(tabId);
-                if (tab.statusBar) {
-                  tab.statusBar.textContent = "Saved: " + msg.path;
-                  setTimeout(() => { tab.statusBar.textContent = ""; }, 3000);
-                }
-                // 保存后刷新 gutter 变更指示器
-                if (TF.requestEditorGutterDiff) {
-                  TF.requestEditorGutterDiff(tabId);
-                }
-              }
-            }
-            TF.notifyNativeSaved(msg.path);
-          } else if (!msg.success) {
-            TF.notifyNativeSaveError(msg.path, msg.error || "Save failed");
-          }
+          // 文件编辑器已迁移至 Native，Web 端忽略此消息
           TF.notifySwift("file_write", {
             project: msg.project,
             workspace: msg.workspace,
@@ -428,16 +350,7 @@
           break;
 
         case "git_diff_result":
-          // base 存在时，为编辑器 gutter 变更指示器的 diff 结果
-          if (msg.base && msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
-            if (TF.handleEditorGutterDiffResult) {
-              TF.handleEditorGutterDiffResult(msg.path, msg.text);
-            }
-            break;
-          }
-          if (msg.project === TF.currentProject && msg.workspace === TF.currentWorkspace) {
-            TF.renderDiffContent(msg.path, msg.code, msg.text, msg.is_binary, msg.truncated);
-          }
+          // Diff 已迁移至 Native，Web 端忽略此消息
           TF.notifySwift("git_diff", {
             project: msg.project,
             workspace: msg.workspace,

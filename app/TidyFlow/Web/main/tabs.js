@@ -1,5 +1,5 @@
 /**
- * TidyFlow Main - Tab Management (Terminal + Editor)
+ * TidyFlow Main - Tab Management (Terminal Only)
  */
 (function () {
   "use strict";
@@ -9,180 +9,6 @@
   // 渲染器类型建议（参考 VS Code 策略）
   // undefined = 尚未检测，'dom' = 建议使用 DOM 渲染器
   let suggestedRendererType = undefined;
-
-  // ============================================
-  // Git Change Gutter（VS Code 风格变更指示器）
-  // ============================================
-
-  /**
-   * 解析 unified diff 文本为行级变更信息
-   * @param {string} diffText - unified diff 输出
-   * @returns {Array<{line: number, type: "add"|"del"|"mod"}>} 变更列表（line 为 1-based 行号）
-   */
-  function parseUnifiedDiffToLineChanges(diffText) {
-    if (!diffText) return [];
-    const changes = [];
-    const lines = diffText.split("\n");
-    let newLine = 0;
-    let pendingDelLine = -1; // 记录连续删除块结束后的位置，用于判断 "修改"
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // 解析 hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-      const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (hunkMatch) {
-        newLine = parseInt(hunkMatch[1], 10);
-        pendingDelLine = -1;
-        continue;
-      }
-      if (line.startsWith("---") || line.startsWith("+++") || line.startsWith("diff ") || line.startsWith("index ")) {
-        continue;
-      }
-      if (line.startsWith("-")) {
-        // 记录删除发生的位置（当前 newLine 处）
-        if (pendingDelLine < 0) pendingDelLine = newLine;
-        continue;
-      }
-      if (line.startsWith("+")) {
-        if (pendingDelLine >= 0) {
-          // 删除后紧跟新增 = 修改行
-          changes.push({ line: newLine, type: "mod" });
-        } else {
-          changes.push({ line: newLine, type: "add" });
-        }
-        newLine++;
-        continue;
-      }
-      if (line.startsWith(" ") || line === "") {
-        // context 行：如果之前有未配对的删除，标记为纯删除
-        if (pendingDelLine >= 0) {
-          changes.push({ line: pendingDelLine, type: "del" });
-          pendingDelLine = -1;
-        }
-        if (newLine > 0) newLine++;
-        continue;
-      }
-      // 其他行（如 "\ No newline at end of file"）忽略
-    }
-    // 文件末尾的未配对删除
-    if (pendingDelLine >= 0) {
-      changes.push({ line: pendingDelLine, type: "del" });
-    }
-    return changes;
-  }
-
-  /**
-   * 创建 Git 变更 gutter 扩展（CodeMirror 6）
-   * 返回 { extensions, updateEffect } 供编辑器使用
-   */
-  function createChangeGutter() {
-    if (!window.CodeMirror) return null;
-    const { StateEffect, StateField, gutter, GutterMarker } = window.CodeMirror;
-    if (!gutter || !GutterMarker) return null;
-
-    // 三种 Marker
-    class AddedMarker extends GutterMarker {
-      toDOM() {
-        const el = document.createElement("div");
-        el.className = "cm-change-added";
-        return el;
-      }
-    }
-    class ModifiedMarker extends GutterMarker {
-      toDOM() {
-        const el = document.createElement("div");
-        el.className = "cm-change-modified";
-        return el;
-      }
-    }
-    class DeletedMarker extends GutterMarker {
-      toDOM() {
-        const el = document.createElement("div");
-        el.className = "cm-change-deleted";
-        return el;
-      }
-    }
-    const addedMarker = new AddedMarker();
-    const modifiedMarker = new ModifiedMarker();
-    const deletedMarker = new DeletedMarker();
-
-    const updateEffect = StateEffect.define();
-
-    const changeState = StateField.define({
-      create() { return []; },
-      update(value, tr) {
-        for (const e of tr.effects) {
-          if (e.is(updateEffect)) return e.value;
-        }
-        return value;
-      },
-    });
-
-    const changeGutter = gutter({
-      class: "cm-change-gutter",
-      lineMarker(view, line) {
-        const changes = view.state.field(changeState);
-        const lineNum = view.state.doc.lineAt(line.from).number;
-        for (const ch of changes) {
-          if (ch.line === lineNum) {
-            if (ch.type === "add") return addedMarker;
-            if (ch.type === "mod") return modifiedMarker;
-            if (ch.type === "del") return deletedMarker;
-          }
-        }
-        return null;
-      },
-      initialSpacer() { return addedMarker; },
-    });
-
-    return {
-      extensions: [changeState, changeGutter],
-      updateEffect,
-    };
-  }
-
-  /**
-   * 为编辑器 tab 请求 HEAD diff 并更新 gutter
-   */
-  function requestEditorGutterDiff(tabId) {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey) return;
-    const tabSet = TF.workspaceTabs.get(wsKey);
-    if (!tabSet) return;
-    const tab = tabSet.tabs.get(tabId);
-    if (!tab || tab.type !== "editor" || !tab.editorView) return;
-    if (!TF.currentProject || !TF.currentWorkspace) return;
-
-    TF.sendControlMessage({
-      type: "git_diff",
-      project: TF.currentProject,
-      workspace: TF.currentWorkspace,
-      path: tab.filePath,
-      base: "HEAD",
-      mode: "working",
-    });
-  }
-
-  /**
-   * 处理 git_diff_result 并更新对应编辑器的 gutter markers
-   */
-  function handleEditorGutterDiffResult(path, diffText) {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey) return;
-    const tabSet = TF.workspaceTabs.get(wsKey);
-    if (!tabSet) return;
-
-    const tabId = "editor-" + path.replace(/[^a-zA-Z0-9]/g, "-");
-    const tab = tabSet.tabs.get(tabId);
-    if (!tab || !tab.editorView || !tab._gutterUpdateEffect) {
-      return;
-    }
-
-    const changes = parseUnifiedDiffToLineChanges(diffText);
-    tab.editorView.dispatch({
-      effects: tab._gutterUpdateEffect.of(changes),
-    });
-  }
 
   /**
    * 检测 xterm.js 生成的终端查询响应，避免发送到服务器被 shell 回显
@@ -639,359 +465,18 @@
     return tabInfo;
   }
 
-  function createEditorTab(filePath, content) {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey) return null;
-
-    const tabSet = TF.getOrCreateTabSet(wsKey);
-    const tabId = "editor-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
-
-    if (tabSet.tabs.has(tabId)) {
-      TF.switchToTab(tabId);
-      return tabSet.tabs.get(tabId);
-    }
-
-    const pane = document.createElement("div");
-    pane.className = "tab-pane editor-pane";
-    pane.id = "pane-" + tabId;
-
-    const toolbar = document.createElement("div");
-    toolbar.className = "editor-toolbar";
-
-    const pathEl = document.createElement("span");
-    pathEl.className = "editor-path";
-    pathEl.textContent = filePath;
-    toolbar.appendChild(pathEl);
-
-    // 返回 Diff 按钮（仅当从 diff 跳转过来时显示）
-    const backToDiffBtn = document.createElement("button");
-    backToDiffBtn.className = "editor-back-diff-btn";
-    backToDiffBtn.textContent = "← Back to Diff";
-    backToDiffBtn.title = "Return to diff view";
-    backToDiffBtn.style.display = "none";
-    backToDiffBtn.addEventListener("click", () => {
-      if (TF.goBackToDiff && TF.goBackToDiff()) {
-        backToDiffBtn.style.display = "none";
-      }
-    });
-    toolbar.appendChild(backToDiffBtn);
-
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "editor-save-btn";
-    saveBtn.textContent = "Save";
-    saveBtn.disabled = true;
-    saveBtn.addEventListener("click", () => TF.saveEditorTab(tabId));
-    toolbar.appendChild(saveBtn);
-
-    // Markdown 预览按钮（仅 .md 文件）
-    let previewBtn = null;
-    if (TF.isMarkdownFile && TF.isMarkdownFile(filePath)) {
-      previewBtn = document.createElement("button");
-      previewBtn.className = "editor-preview-btn";
-      previewBtn.textContent = "Preview";
-      previewBtn.addEventListener("click", () => TF.toggleMarkdownPreview(tabId));
-      toolbar.insertBefore(previewBtn, saveBtn);
-    }
-
-    pane.appendChild(toolbar);
-
-    const editorContainer = document.createElement("div");
-    editorContainer.className = "editor-container";
-    pane.appendChild(editorContainer);
-
-    // Markdown 预览容器（仅 .md 文件）
-    let previewContainer = null;
-    if (TF.isMarkdownFile && TF.isMarkdownFile(filePath)) {
-      previewContainer = document.createElement("div");
-      previewContainer.className = "preview-container";
-      previewContainer.style.display = "none";
-      pane.appendChild(previewContainer);
-    }
-
-    const statusBar = document.createElement("div");
-    statusBar.className = "editor-status";
-    pane.appendChild(statusBar);
-
-    TF.tabContent.appendChild(pane);
-
-    let editorView = null;
-    let gutterUpdateEffect = null;
-    if (window.CodeMirror) {
-      const { EditorView, basicSetup, getLanguageExtension, oneDark } = window.CodeMirror;
-
-      // Git 变更 gutter
-      const changeGutter = createChangeGutter();
-      if (changeGutter) gutterUpdateEffect = changeGutter.updateEffect;
-
-      // 构建扩展列表
-      const extensions = [
-        basicSetup,
-        oneDark,
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
-            const tab = tabSet.tabs.get(tabId);
-            if (tab && !tab.isDirty && !tab._isReloading) {
-              tab.isDirty = true;
-              TF.updateTabDirtyState(tabId, true);
-            }
-          }
-        }),
-        EditorView.theme(
-          {
-            "&": { height: "100%", fontSize: "14px" },
-            ".cm-scroller": { fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
-            ".cm-content": { caretColor: "#d4d4d4" },
-            "&.cm-focused .cm-cursor": { borderLeftColor: "#d4d4d4" },
-          },
-          { dark: true },
-        ),
-      ];
-
-      // 添加 git 变更 gutter 扩展
-      if (changeGutter) {
-        extensions.push(...changeGutter.extensions);
-      }
-
-      // 根据文件类型添加语言扩展
-      const langExt = getLanguageExtension(filePath);
-      if (langExt) {
-        extensions.push(langExt);
-      }
-
-      editorView = new EditorView({
-        doc: content || "",
-        extensions,
-        parent: editorContainer,
-      });
-    }
-
-    const tabEl = document.createElement("div");
-    tabEl.className = "tab";
-    tabEl.dataset.tabId = tabId;
-
-    const icon = document.createElement("span");
-    icon.className = "tab-icon editor";
-    icon.textContent = TF.getFileIcon(filePath);
-    tabEl.appendChild(icon);
-
-    const title = document.createElement("span");
-    title.className = "tab-title";
-    title.textContent = filePath.split("/").pop();
-    title.title = filePath;
-    tabEl.appendChild(title);
-
-    const dirtyIndicator = document.createElement("span");
-    dirtyIndicator.className = "tab-dirty";
-    dirtyIndicator.style.display = "none";
-    dirtyIndicator.textContent = "*";
-    tabEl.appendChild(dirtyIndicator);
-
-    const closeBtn = document.createElement("span");
-    closeBtn.className = "tab-close";
-    closeBtn.textContent = "×";
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      TF.closeTab(tabId);
-    });
-    tabEl.appendChild(closeBtn);
-
-    tabEl.addEventListener("click", () => TF.switchToTab(tabId));
-
-    const tabActions = document.getElementById("tab-actions");
-    TF.tabBar.insertBefore(tabEl, tabActions);
-
-    const tabInfo = {
-      id: tabId,
-      type: "editor",
-      title: filePath.split("/").pop(),
-      filePath,
-      editorView,
-      pane,
-      tabEl,
-      saveBtn,
-      backToDiffBtn,
-      statusBar,
-      dirtyIndicator,
-      isDirty: false,
-      project: TF.currentProject,
-      workspace: TF.currentWorkspace,
-      previewMode: false,
-      previewBtn,
-      previewContainer,
-      _gutterUpdateEffect: gutterUpdateEffect,
-    };
-
-    tabSet.tabs.set(tabId, tabInfo);
-    tabSet.tabOrder.push(tabId);
-
-    // 文件打开后请求 HEAD diff 更新 gutter
-    if (gutterUpdateEffect) {
-      requestEditorGutterDiff(tabId);
-    }
-
-    return tabInfo;
-  }
-
-  function updateTabDirtyState(tabId, isDirty) {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey) return;
-    const tabSet = TF.workspaceTabs.get(wsKey);
-    if (!tabSet) return;
-    const tab = tabSet.tabs.get(tabId);
-    if (!tab) return;
-
-    tab.isDirty = isDirty;
-    if (tab.dirtyIndicator) tab.dirtyIndicator.style.display = isDirty ? "inline" : "none";
-    if (tab.saveBtn) tab.saveBtn.disabled = !isDirty;
-
-    // 通知 Native 层 dirty 状态变化
-    if (tab.filePath) {
-      TF.postToNative("dirty_state_changed", { path: tab.filePath, isDirty });
-    }
-  }
-
-  function saveEditorTab(tabId) {
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey) return;
-    const tabSet = TF.workspaceTabs.get(wsKey);
-    if (!tabSet) return;
-    const tab = tabSet.tabs.get(tabId);
-    if (!tab || tab.type !== "editor" || !tab.editorView) return;
-
-    const content = tab.editorView.state.doc.toString();
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(content);
-    TF.sendFileWrite(tab.project, tab.workspace, tab.filePath, bytes);
-  }
+  function createEditorTab() { return null; }
+  function updateTabDirtyState() {}
+  function saveEditorTab() {}
 
   function saveCurrentEditor() {
-    if (!TF.activeTabId) return;
-    const wsKey = TF.getCurrentWorkspaceKey();
-    if (!wsKey) return;
-    const tabSet = TF.workspaceTabs.get(wsKey);
-    if (!tabSet) return;
-    const tab = tabSet.tabs.get(TF.activeTabId);
-    if (tab && tab.type === "editor") TF.saveEditorTab(TF.activeTabId);
+    // editor 已迁移到 Native，Web 端保留空实现避免快捷键报错
   }
 
-  function openFileInEditor(filePath) {
-    if (!TF.currentProject || !TF.currentWorkspace) return;
-
-    const wsKey = TF.getCurrentWorkspaceKey();
-    const tabId = "editor-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
-    const tabSet = wsKey ? TF.workspaceTabs.get(wsKey) : null;
-    const tabExists = !!(tabSet && tabSet.tabs.has(tabId));
-
-    // 若该 path 的 tab 已存在，仅切换显示，不重复发 file_read
-    if (tabExists) {
-      TF.switchToTab(tabId);
-      return;
-    }
-
-    // 如果 WebSocket 未连接，先连接再发送文件读取请求
-    if (!TF.transport || !TF.transport.isConnected) {
-      console.log("[openFileInEditor] WebSocket not connected, connecting first...");
-      TF.pendingFileOpen = { filePath, project: TF.currentProject, workspace: TF.currentWorkspace };
-      TF.connect();
-      return;
-    }
-
-    TF.sendFileRead(TF.currentProject, TF.currentWorkspace, filePath);
-  }
-
-  function openFileAtLine(filePath, lineNumber) {
-    if (!TF.currentProject || !TF.currentWorkspace) return;
-
-    if (TF.nativeMode === "diff") {
-      TF.openFileAtLineViaNative(filePath, lineNumber);
-      return;
-    }
-
-    const wsKey = TF.getCurrentWorkspaceKey();
-    const tabId = "editor-" + filePath.replace(/[^a-zA-Z0-9]/g, "-");
-
-    if (wsKey && TF.workspaceTabs.has(wsKey)) {
-      const tabSet = TF.workspaceTabs.get(wsKey);
-      if (tabSet.tabs.has(tabId)) {
-        const tab = tabSet.tabs.get(tabId);
-        TF.switchToTab(tabId);
-        TF.scrollToLineAndHighlight(tab, lineNumber);
-        // 如果从 diff 跳转过来，显示返回按钮
-        if (TF.lastDiffTabId && tab.backToDiffBtn) {
-          tab.backToDiffBtn.style.display = "inline-block";
-        }
-        return;
-      }
-    }
-
-    TF.pendingLineNavigation = { filePath, lineNumber };
-
-    // 如果 WebSocket 未连接，先连接再发送文件读取请求
-    if (!TF.transport || !TF.transport.isConnected) {
-      console.log("[openFileAtLine] WebSocket not connected, connecting first...");
-      TF.pendingFileOpen = { filePath, project: TF.currentProject, workspace: TF.currentWorkspace };
-      TF.connect();
-      return;
-    }
-
-    TF.sendFileRead(TF.currentProject, TF.currentWorkspace, filePath);
-  }
-
-  function scrollToLineAndHighlight(tab, lineNumber, highlightMs = 2000) {
-    if (!tab || !tab.editorView || !window.CodeMirror) return;
-
-    const { EditorView } = window.CodeMirror;
-    const view = tab.editorView;
-    const doc = view.state.doc;
-
-    const totalLines = doc.lines;
-    const targetLine = Math.max(1, Math.min(lineNumber, totalLines));
-
-    const lineInfo = doc.line(targetLine);
-    const lineStart = lineInfo.from;
-
-    view.dispatch({
-      selection: { anchor: lineStart },
-      scrollIntoView: true,
-    });
-
-    TF.highlightLine(view, targetLine, highlightMs);
-
-    if (tab.statusBar) tab.statusBar.textContent = `Line ${targetLine}`;
-  }
-
-  function highlightLine(view, lineNumber, highlightMs = 2000) {
-    if (!window.CodeMirror) return;
-
-    const { EditorView, Decoration, StateEffect, StateField } = window.CodeMirror;
-    const doc = view.state.doc;
-    const lineInfo = doc.line(lineNumber);
-
-    const highlightMark = Decoration.line({ class: "cm-highlight-line" });
-    const decorations = Decoration.set([highlightMark.range(lineInfo.from)]);
-
-    if (!view._highlightEffect) {
-      view._highlightEffect = StateEffect.define();
-      view._highlightField = StateField.define({
-        create: () => Decoration.none,
-        update: (value, tr) => {
-          for (const e of tr.effects) {
-            if (e.is(view._highlightEffect)) return e.value;
-          }
-          return value;
-        },
-        provide: (f) => EditorView.decorations.from(f),
-      });
-
-      view.dispatch({ effects: StateEffect.appendConfig.of(view._highlightField) });
-    }
-
-    view.dispatch({ effects: view._highlightEffect.of(decorations) });
-
-    setTimeout(() => {
-      view.dispatch({ effects: view._highlightEffect.of(Decoration.none) });
-    }, highlightMs);
-  }
+  function openFileInEditor() {}
+  function openFileAtLine() {}
+  function scrollToLineAndHighlight() {}
+  function highlightLine() {}
 
   function switchToTab(tabId) {
     const wsKey = TF.getCurrentWorkspaceKey();
@@ -1040,8 +525,6 @@
           // 发送 resize 信号，触发 TUI 应用重绘
           // 这是让切换回来后界面正确显示的关键
           TF.sendResize(tab.termId, cols, rows);
-        } else if (tab.type === "editor" && tab.editorView) {
-          tab.editorView.focus();
         }
       });
     });
@@ -1075,10 +558,6 @@
 
     const tab = tabSet.tabs.get(tabId);
 
-    if (tab.type === "editor" && tab.isDirty) {
-      if (!confirm("Unsaved changes will be lost. Close anyway?")) return;
-    }
-
     if (tab.type === "terminal") {
       if (TF.transport && TF.transport.isConnected) {
         TF.transport.send({ type: "term_close", term_id: tab.termId });
@@ -1104,8 +583,6 @@
       // 清理终端相关 Map 条目，防止内存泄漏
       TF.terminalSessions.delete(tabId);
       TF.termAckedBytes.delete(tabId);
-    } else if (tab.type === "editor") {
-      if (tab.editorView) tab.editorView.destroy();
     }
 
     if (tab.pane) tab.pane.remove();
@@ -1182,72 +659,11 @@
     });
   }
 
-  // === 文件外部变更自动刷新 ===
-
-  /// 静默重载（非 dirty 文件）
-  function reloadEditorContent(tab, tabId, filePath, project, workspace) {
-    const wsKey = TF.getWorkspaceKey(project, workspace);
-    TF.pendingReloads.set(filePath, { tabId, wsKey });
-    TF.sendFileRead(project, workspace, filePath);
-  }
-
-  /// 冲突提示（dirty 文件）
-  function handleFileConflict(tab, tabId, filePath, project, workspace) {
-    const fileName = filePath.split("/").pop();
-    if (tab.statusBar) {
-      tab.statusBar.textContent = `⚠ "${fileName}" 已在磁盘上更改。点击重新加载`;
-      tab.statusBar.className = "editor-status file-conflict";
-      tab.statusBar.onclick = () => {
-        tab.statusBar.onclick = null;
-        tab.statusBar.className = "editor-status";
-        tab.statusBar.textContent = "正在重新加载...";
-        TF.reloadEditorContent(tab, tabId, filePath, project, workspace);
-      };
-    }
-  }
-
-  /// 文件删除提示
-  function handleFileDeleted(tab) {
-    if (tab.statusBar) {
-      tab.statusBar.textContent = "⚠ 此文件已从磁盘删除";
-      tab.statusBar.className = "editor-status file-deleted";
-    }
-  }
-
-  /// 替换 CodeMirror 内容（核心函数）
-  function replaceEditorContent(tab, tabId, newContent) {
-    if (!tab || !tab.editorView) return;
-
-    const view = tab.editorView;
-    const currentContent = view.state.doc.toString();
-    if (currentContent === newContent) {
-      if (tab.statusBar) {
-        tab.statusBar.textContent = "";
-        tab.statusBar.className = "editor-status";
-      }
-      return;
-    }
-
-    // 标记正在重载，防止 updateListener 触发 dirty 状态
-    tab._isReloading = true;
-
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: newContent },
-    });
-
-    tab._isReloading = false;
-
-    // 重置 dirty 状态
-    TF.updateTabDirtyState(tabId, false);
-
-    if (tab.statusBar) {
-      tab.statusBar.textContent = "已从磁盘重新加载";
-      tab.statusBar.className = "editor-status";
-      setTimeout(() => {
-        tab.statusBar.textContent = "";
-      }, 3000);
-    }
-  }
+  // editor 已迁移到 Native，Web 端仅保留空实现兼容旧调用
+  function reloadEditorContent() {}
+  function handleFileConflict() {}
+  function handleFileDeleted() {}
+  function replaceEditorContent() {}
 
   // 监听页面可见性变化，解决应用切换后的花屏问题
   document.addEventListener("visibilitychange", () => {
@@ -1284,6 +700,6 @@
   TF.handleFileConflict = handleFileConflict;
   TF.handleFileDeleted = handleFileDeleted;
   TF.replaceEditorContent = replaceEditorContent;
-  TF.requestEditorGutterDiff = requestEditorGutterDiff;
-  TF.handleEditorGutterDiffResult = handleEditorGutterDiffResult;
+  TF.requestEditorGutterDiff = function () {};
+  TF.handleEditorGutterDiffResult = function () {};
 })();

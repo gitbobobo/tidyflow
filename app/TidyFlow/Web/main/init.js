@@ -25,17 +25,6 @@
         e.preventDefault();
         TF.saveCurrentEditor();
       }
-      // Cmd+Shift+V: 切换 Markdown 预览
-      if (e.metaKey && e.shiftKey && e.key === "v") {
-        e.preventDefault();
-        const wsKey = TF.getCurrentWorkspaceKey();
-        if (wsKey && TF.workspaceTabs.has(wsKey)) {
-          const tab = TF.workspaceTabs.get(wsKey).tabs.get(TF.activeTabId);
-          if (tab && tab.type === "editor" && TF.isMarkdownFile && TF.isMarkdownFile(tab.filePath)) {
-            TF.toggleMarkdownPreview(TF.activeTabId);
-          }
-        }
-      }
     });
   }
 
@@ -98,7 +87,7 @@
   function initNativeBridge() {
     if (window.tidyflowNative) {
       window.tidyflowNative.onEvent = TF.handleNativeEvent;
-      TF.postToNative("ready", { capabilities: ["editor", "terminal", "diff"] });
+      TF.postToNative("ready", { capabilities: ["terminal"] });
       console.log("[NativeBridge] Bridge initialized and ready");
     } else {
       console.log("[NativeBridge] Native bridge not available (running in browser?)");
