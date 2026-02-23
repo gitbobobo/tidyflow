@@ -488,9 +488,26 @@ class AppState: ObservableObject {
     ) {
         let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
         var dict = aiSessionStatusesByTool[aiTool] ?? [:]
+
+        let normalizedStatus = status
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let normalizedErrorMessage: String? = {
+            let trimmed = errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let trimmed, !trimmed.isEmpty else { return nil }
+            return trimmed
+        }()
+
+        if let existing = dict[key],
+           existing.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "busy",
+           normalizedStatus == "busy",
+           existing.errorMessage == normalizedErrorMessage {
+            return
+        }
+
         let next = AISessionStatusSnapshot(
-            status: status,
-            errorMessage: errorMessage,
+            status: normalizedStatus.isEmpty ? status : normalizedStatus,
+            errorMessage: normalizedErrorMessage,
             contextRemainingPercent: contextRemainingPercent
         )
         if dict[key] == next {
