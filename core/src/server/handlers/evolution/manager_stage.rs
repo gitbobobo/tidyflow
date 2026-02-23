@@ -498,6 +498,7 @@ impl EvolutionManager {
 #[cfg(test)]
 mod tests {
     use super::{detect_judge_result_in_text, parse_judge_result_from_json};
+    use super::super::{stage::next_stage, STAGES};
 
     #[test]
     fn detect_judge_result_from_chat_text() {
@@ -527,5 +528,36 @@ mod tests {
             }
         });
         assert_eq!(parse_judge_result_from_json(&value), Some(true));
+    }
+
+    // ── 六阶段新约束回归测试 ──────────────────────────────────────────────
+
+    #[test]
+    fn stages_should_not_contain_bootstrap() {
+        // bootstrap 已从 STAGES 集合移除，manager_stage 层回归确认
+        assert!(
+            !STAGES.contains(&"bootstrap"),
+            "STAGES 不应包含 bootstrap"
+        );
+    }
+
+    #[test]
+    fn stages_initial_stage_should_be_direction() {
+        // 循环起始阶段为 direction（取代旧 bootstrap）
+        assert_eq!(STAGES[0], "direction", "初始 stage 应为 direction");
+    }
+
+    #[test]
+    fn next_stage_report_should_loop_back_to_direction() {
+        // report 之后循环回 direction，确保六阶段闭环
+        assert_eq!(next_stage("report"), Some("direction"));
+    }
+
+    #[test]
+    fn next_stage_unknown_should_return_none() {
+        // 未知 stage 必须安全返回 None，不可 panic
+        assert_eq!(next_stage("bootstrap"), None, "bootstrap 应返回 None");
+        assert_eq!(next_stage("unknown"), None, "unknown 应返回 None");
+        assert_eq!(next_stage(""), None, "空字符串应返回 None");
     }
 }
