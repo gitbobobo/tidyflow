@@ -1167,12 +1167,10 @@ struct EvolutionTabView: View {
         let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "未命名类型" }
         switch trimmed.lowercased() {
-        case "plan":
-            return "plan"
-        case "bootstrap":
-            return "bootstrap"
         case "direction":
             return "direction"
+        case "plan":
+            return "plan"
         case "implement":
             return "implement"
         case "verify":

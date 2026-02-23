@@ -3,7 +3,7 @@ use tracing::info;
 use crate::server::context::HandlerContext;
 
 use super::profile::{
-    default_stage_profiles, from_persisted_profiles, normalize_profiles,
+    default_stage_profiles, direction_model_label, from_persisted_profiles, normalize_profiles,
     normalize_profiles_lenient, profile_key, profile_legacy_keys, to_persisted_profiles,
 };
 use super::utils::workspace_key;
@@ -45,12 +45,7 @@ impl EvolutionManager {
             }
         }
 
-        let direction_model = normalized
-            .iter()
-            .find(|item| item.stage == "direction")
-            .and_then(|item| item.model.as_ref())
-            .map(|m| format!("{}/{}", m.provider_id, m.model_id))
-            .unwrap_or_else(|| "default".to_string());
+        let direction_model = direction_model_label(&normalized);
         info!(
             "evolution profile updated: project={}, workspace={}, stages={}, direction_model={}",
             project,
@@ -105,12 +100,7 @@ impl EvolutionManager {
             normalize_profiles_lenient(from_persisted_profiles(from_state))
         };
 
-        let direction_model = profiles
-            .iter()
-            .find(|item| item.stage == "direction")
-            .and_then(|item| item.model.as_ref())
-            .map(|m| format!("{}/{}", m.provider_id, m.model_id))
-            .unwrap_or_else(|| "default".to_string());
+        let direction_model = direction_model_label(&profiles);
         info!(
             "evolution profile loaded: project={}, workspace={}, source={}, stages={}, direction_model={}",
             project,

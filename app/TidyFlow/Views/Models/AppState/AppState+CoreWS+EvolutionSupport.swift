@@ -145,7 +145,7 @@ extension AppState {
     }
 
     static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
-        ["bootstrap", "direction", "plan", "implement", "verify", "judge", "report"].map {
+        ["direction", "plan", "implement", "verify", "judge", "report"].map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil)
         }
     }

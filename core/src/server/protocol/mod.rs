@@ -1588,6 +1588,16 @@ pub struct EvolutionStageProfileInfo {
     pub model: Option<ai::ModelSelection>,
 }
 
+impl EvolutionStageProfileInfo {
+    pub fn normalized_stage(&self) -> String {
+        self.stage.trim().to_lowercase()
+    }
+
+    pub fn is_legacy_bootstrap_stage(&self) -> bool {
+        self.normalized_stage() == "bootstrap"
+    }
+}
+
 /// Evolution 代理运行信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionAgentInfo {

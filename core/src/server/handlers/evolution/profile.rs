@@ -16,7 +16,10 @@ pub(super) fn normalize_profiles(
 ) -> Result<Vec<EvolutionStageProfileInfo>, String> {
     let mut by_stage: HashMap<String, EvolutionStageProfileInfo> = HashMap::new();
     for profile in input {
-        let stage = profile.stage.trim().to_lowercase();
+        let stage = profile.normalized_stage();
+        if profile.is_legacy_bootstrap_stage() {
+            continue;
+        }
         if STAGES.contains(&stage.as_str()) {
             let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool).ok_or_else(|| {
                 format!("invalid ai_tool for stage '{}': {}", stage, profile.ai_tool)
@@ -50,7 +53,10 @@ pub(super) fn normalize_profiles_lenient(
 ) -> Vec<EvolutionStageProfileInfo> {
     let mut by_stage: HashMap<String, EvolutionStageProfileInfo> = HashMap::new();
     for profile in input {
-        let stage = profile.stage.trim().to_lowercase();
+        let stage = profile.normalized_stage();
+        if profile.is_legacy_bootstrap_stage() {
+            continue;
+        }
         if !STAGES.contains(&stage.as_str()) {
             continue;
         }
@@ -80,6 +86,15 @@ pub(super) fn normalize_profiles_lenient(
                 })
         })
         .collect()
+}
+
+pub(super) fn direction_model_label(profiles: &[EvolutionStageProfileInfo]) -> String {
+    profiles
+        .iter()
+        .find(|item| item.normalized_stage() == "direction")
+        .and_then(|item| item.model.as_ref())
+        .map(|m| format!("{}/{}", m.provider_id, m.model_id))
+        .unwrap_or_else(|| "default".to_string())
 }
 
 pub(super) fn default_stage_profiles() -> Vec<EvolutionStageProfileInfo> {
@@ -252,5 +267,43 @@ mod tests {
             .find(|item| item.stage == "direction")
             .expect("missing direction stage");
         assert_eq!(direction.ai_tool, "codex");
+    }
+
+    #[test]
+    fn normalize_profiles_should_ignore_legacy_bootstrap_stage() {
+        let profiles = vec![
+            EvolutionStageProfileInfo {
+                stage: "bootstrap".to_string(),
+                ai_tool: "codex".to_string(),
+                mode: None,
+                model: None,
+            },
+            EvolutionStageProfileInfo {
+                stage: "direction".to_string(),
+                ai_tool: "copilot".to_string(),
+                mode: None,
+                model: None,
+            },
+        ];
+
+        let normalized = normalize_profiles(profiles).expect("normalize should succeed");
+        assert_eq!(normalized.len(), STAGES.len());
+        assert_eq!(normalized[0].stage, "direction");
+        assert!(normalized.iter().all(|item| item.stage != "bootstrap"));
+    }
+
+    #[test]
+    fn normalize_profiles_lenient_should_ignore_legacy_bootstrap_stage() {
+        let profiles = vec![EvolutionStageProfileInfo {
+            stage: " Bootstrap ".to_string(),
+            ai_tool: "codex".to_string(),
+            mode: None,
+            model: None,
+        }];
+
+        let normalized = normalize_profiles_lenient(profiles);
+        assert_eq!(normalized.len(), STAGES.len());
+        assert_eq!(normalized[0].stage, "direction");
+        assert!(normalized.iter().all(|item| item.stage != "bootstrap"));
     }
 }

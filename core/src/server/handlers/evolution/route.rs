@@ -6,6 +6,7 @@ use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
+use super::profile::{direction_model_label, normalize_profiles_lenient};
 use super::{maybe_manager, StartWorkspaceReq, DEFAULT_VERIFY_LIMIT};
 
 pub(super) async fn handle_message(
@@ -113,19 +114,15 @@ pub(super) async fn handle_message(
             workspace,
             stage_profiles,
         } => {
-            let inbound_direction_model = stage_profiles
-                .iter()
-                .find(|item| item.stage == "direction")
-                .and_then(|item| item.model.as_ref())
-                .map(|m| format!("{}/{}", m.provider_id, m.model_id))
-                .unwrap_or_else(|| "default".to_string());
+            let inbound_normalized = normalize_profiles_lenient(stage_profiles.clone());
+            let inbound_direction_model = direction_model_label(&inbound_normalized);
             info!(
                 "Inbound EvoUpdateAgentProfile: conn_id={}, remote={}, project={}, workspace={}, stages={}, direction_model={}",
                 ctx.conn_meta.conn_id,
                 ctx.conn_meta.is_remote,
                 project,
                 workspace,
-                stage_profiles.len(),
+                inbound_normalized.len(),
                 inbound_direction_model
             );
             let saved = manager
