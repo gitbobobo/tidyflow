@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::ai::AiModelSelection;
 use crate::server::context::HandlerContext;
-use crate::server::handlers::ai::{ensure_agent, resolve_directory};
+use crate::server::handlers::ai::{ensure_agent, normalize_part_for_wire, resolve_directory};
 use crate::server::protocol::ServerMessage;
 
 use super::profile::profile_for_stage;
@@ -68,13 +68,50 @@ impl EvolutionManager {
             let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
             match next {
                 Ok(Some(Ok(event))) => match event {
-                    crate::ai::AiEvent::Done => break,
+                    crate::ai::AiEvent::Done => {
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatDone {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.clone(),
+                                session_id: session.id.clone(),
+                            },
+                        )
+                        .await;
+                        break;
+                    }
                     crate::ai::AiEvent::Error { message } => {
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatErrorV2 {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.clone(),
+                                session_id: session.id.clone(),
+                                error: message.clone(),
+                            },
+                        )
+                        .await;
                         return Err(format!("stage stream error: {}", message));
                     }
-                    crate::ai::AiEvent::PartUpdated { part, .. } => {
+                    crate::ai::AiEvent::MessageUpdated { message_id, role } => {
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatMessageUpdated {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.clone(),
+                                session_id: session.id.clone(),
+                                message_id,
+                                role,
+                            },
+                        )
+                        .await;
+                    }
+                    crate::ai::AiEvent::PartUpdated { message_id, part } => {
                         if stage == "judge" {
-                            if let Some(text) = part.text {
+                            if let Some(text) = part.text.as_deref() {
                                 let normalized = text.to_lowercase();
                                 if normalized.contains("\"result\":\"fail\"")
                                     || normalized.contains("result: fail")
@@ -83,8 +120,44 @@ impl EvolutionManager {
                                 }
                             }
                         }
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatPartUpdated {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.clone(),
+                                session_id: session.id.clone(),
+                                message_id,
+                                part: normalize_part_for_wire(part),
+                            },
+                        )
+                        .await;
                     }
-                    _ => {}
+                    crate::ai::AiEvent::PartDelta {
+                        message_id,
+                        part_id,
+                        part_type,
+                        field,
+                        delta,
+                    } => {
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatPartDelta {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.clone(),
+                                session_id: session.id.clone(),
+                                message_id,
+                                part_id,
+                                part_type,
+                                field,
+                                delta,
+                            },
+                        )
+                        .await;
+                    }
+                    crate::ai::AiEvent::QuestionAsked { .. }
+                    | crate::ai::AiEvent::QuestionCleared { .. } => {}
                 },
                 Ok(Some(Err(err))) => return Err(err),
                 Ok(None) => break,
