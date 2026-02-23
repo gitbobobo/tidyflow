@@ -778,6 +778,13 @@ struct AITabView: View {
         }
     }
 
+    /// 会话标题仅从非空输入提取；空输入（如仅图片）返回 nil 以触发后端默认标题。
+    private func sessionStartTitle(from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(50))
+    }
+
     private func parseSlashCommand(from text: String) -> (name: String, arguments: String)? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first, first == "/" || first == "／" else { return nil }
@@ -888,7 +895,7 @@ struct AITabView: View {
             projectName: appState.selectedProjectName,
             workspaceName: ws,
             aiTool: aiTool,
-            title: String(text.prefix(50))
+            title: sessionStartTitle(from: text)
         )
     }
 
@@ -1060,7 +1067,7 @@ struct AITabView: View {
                 projectName: appState.selectedProjectName,
                 workspaceName: ws,
                 aiTool: aiTool,
-                title: String(text.prefix(50))
+                title: sessionStartTitle(from: text)
             )
         }
     }
@@ -1203,7 +1210,7 @@ struct AITabView: View {
             projectName: appState.selectedProjectName,
             workspaceName: ws,
             aiTool: aiTool,
-            title: String(text.prefix(50))
+            title: sessionStartTitle(from: text)
         )
     }
 

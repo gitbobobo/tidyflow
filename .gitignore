@@ -147,3 +147,5 @@ app/TidyFlow/Web/vendor/highlight-dark.css
 app/TidyFlow/Web/vendor/highlight.min.js
 app/TidyFlow/Web/vendor/marked.min.js
 app/TidyFlow/Web/vendor/mermaid.min.js
+# Commit result output (temporary)
+commit_result.json
