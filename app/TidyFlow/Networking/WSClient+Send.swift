@@ -176,6 +176,16 @@ extension WSClient {
         ])
     }
 
+    /// 请求读取文件内容（文本/二进制）
+    func requestFileRead(project: String, workspace: String, path: String) {
+        send([
+            "type": "file_read",
+            "project": project,
+            "workspace": workspace,
+            "path": path
+        ])
+    }
+
     // Phase C2-2a: Request git diff
     func requestGitDiff(project: String, workspace: String, path: String, mode: String) {
         send([

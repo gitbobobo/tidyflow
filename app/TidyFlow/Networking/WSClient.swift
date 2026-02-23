@@ -113,6 +113,8 @@ class WSClient: NSObject, ObservableObject {
     var onFileMoveResult: ((FileMoveResult) -> Void)?
     // 文件写入回调（新建文件）
     var onFileWriteResult: ((FileWriteResult) -> Void)?
+    // 文件读取回调（预览/查看）
+    var onFileReadResult: ((FileReadResult) -> Void)?
     // v1.29: 项目命令回调
     var onProjectCommandsSaved: ((String, Bool, String?) -> Void)?
     var onProjectCommandStarted: ((String, String, String, String) -> Void)?

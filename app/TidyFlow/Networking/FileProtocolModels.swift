@@ -2,6 +2,39 @@ import Foundation
 
 // MARK: - v1.22: File Watcher Protocol Models
 
+/// 文件读取结果
+struct FileReadResult {
+    let project: String
+    let workspace: String
+    let path: String
+    let content: [UInt8]
+    let size: UInt64
+
+    static func from(json: [String: Any]) -> FileReadResult? {
+        guard let project = json["project"] as? String,
+              let workspace = json["workspace"] as? String,
+              let path = json["path"] as? String else {
+            return nil
+        }
+        let content = WSBinary.decodeBytes(json["content"])
+        let size: UInt64
+        if let value = json["size"] as? UInt64 {
+            size = value
+        } else if let value = json["size"] as? Int, value >= 0 {
+            size = UInt64(value)
+        } else {
+            size = UInt64(content.count)
+        }
+        return FileReadResult(
+            project: project,
+            workspace: workspace,
+            path: path,
+            content: content,
+            size: size
+        )
+    }
+}
+
 /// 文件监控订阅成功结果
 struct WatchSubscribedResult {
     let project: String

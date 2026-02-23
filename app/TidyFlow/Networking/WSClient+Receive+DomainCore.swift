@@ -299,6 +299,15 @@ extension WSClient {
                 }
             }
             return true
+        case "file_read_result":
+            if let result = FileReadResult.from(json: json) {
+                if let handler = fileMessageHandler {
+                    handler.handleFileReadResult(result)
+                } else {
+                    onFileReadResult?(result)
+                }
+            }
+            return true
         case "file_changed":
             if let notification = FileChangedNotification.from(json: json) {
                 if let handler = fileMessageHandler {

@@ -70,6 +70,7 @@ extension ProjectMessageHandler {
 }
 
 protocol FileMessageHandler: AnyObject {
+    func handleFileReadResult(_ result: FileReadResult)
     func handleFileIndexResult(_ result: FileIndexResult)
     func handleFileListResult(_ result: FileListResult)
     func handleFileRenameResult(_ result: FileRenameResult)
@@ -83,6 +84,7 @@ protocol FileMessageHandler: AnyObject {
 }
 
 extension FileMessageHandler {
+    func handleFileReadResult(_ result: FileReadResult) {}
     func handleFileIndexResult(_ result: FileIndexResult) {}
     func handleFileListResult(_ result: FileListResult) {}
     func handleFileRenameResult(_ result: FileRenameResult) {}
