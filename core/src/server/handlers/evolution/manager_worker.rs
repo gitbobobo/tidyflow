@@ -1,12 +1,7 @@
-use chrono::Utc;
 use tokio::time::{sleep, Duration};
-use tracing::{error, info, warn};
-use uuid::Uuid;
+use tracing::error;
 
 use crate::server::context::HandlerContext;
-use crate::server::protocol::ServerMessage;
-
-use super::utils::bootstrap_skip_reason;
 use super::EvolutionManager;
 
 impl EvolutionManager {
@@ -40,9 +35,6 @@ impl EvolutionManager {
         ctx: HandlerContext,
     ) {
         loop {
-            if self.maybe_skip_bootstrap_stage(&key, &ctx).await {
-                continue;
-            }
 
             {
                 let state = self.state.lock().await;
@@ -149,77 +141,4 @@ impl EvolutionManager {
         }
     }
 
-    pub(super) async fn maybe_skip_bootstrap_stage(&self, key: &str, ctx: &HandlerContext) -> bool {
-        let (project, workspace, workspace_root, cycle_id, verify_iteration, is_bootstrap_stage) = {
-            let state = self.state.lock().await;
-            let Some(entry) = state.workspaces.get(key) else {
-                return false;
-            };
-            (
-                entry.project.clone(),
-                entry.workspace.clone(),
-                entry.workspace_root.clone(),
-                entry.cycle_id.clone(),
-                entry.verify_iteration,
-                entry.current_stage == "bootstrap",
-            )
-        };
-
-        if !is_bootstrap_stage {
-            return false;
-        }
-
-        let skip_reason = match bootstrap_skip_reason(&workspace_root) {
-            Ok(reason) => reason,
-            Err(err) => {
-                warn!(
-                    "bootstrap skip check failed: key={}, workspace_root={}, error={}",
-                    key, workspace_root, err
-                );
-                None
-            }
-        };
-        let Some(reason) = skip_reason else {
-            return false;
-        };
-
-        {
-            let mut state = self.state.lock().await;
-            let Some(entry) = state.workspaces.get_mut(key) else {
-                return false;
-            };
-            if entry.current_stage != "bootstrap" {
-                return false;
-            }
-            entry
-                .stage_statuses
-                .insert("bootstrap".to_string(), "done".to_string());
-            entry.current_stage = "direction".to_string();
-        }
-
-        info!("bootstrap stage skipped: key={}, reason={}", key, reason);
-        self.persist_stage_file(key, "bootstrap", "done", None, None)
-            .await
-            .ok();
-        self.persist_cycle_file(key).await.ok();
-        self.broadcast(
-            ctx,
-            ServerMessage::EvoStageChanged {
-                event_id: Uuid::new_v4().to_string(),
-                event_seq: self.next_seq(key).await,
-                project,
-                workspace,
-                cycle_id,
-                ts: Utc::now().to_rfc3339(),
-                source: "orchestrator".to_string(),
-                from_stage: "bootstrap".to_string(),
-                to_stage: "direction".to_string(),
-                verify_iteration,
-            },
-        )
-        .await;
-        self.broadcast_cycle_update(key, ctx, "orchestrator").await;
-        self.broadcast_scheduler(ctx).await;
-        true
     }
-}
