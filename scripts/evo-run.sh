@@ -371,7 +371,7 @@ run_build() {
         return 0
     fi
     
-    local BUILD_START=$(date +s)
+    local BUILD_START=$(date +%s)
     local BUILD_EXIT=0
     
     # 构建 Rust Core
@@ -403,7 +403,7 @@ run_build() {
         fi
     } >> "$BUILD_LOG" 2>&1 || BUILD_EXIT=$?
     
-    local BUILD_END=$(date +s)
+    local BUILD_END=$(date +%s)
     local BUILD_DURATION=$((BUILD_END - BUILD_START))
     
     echo "$LOG_PREFIX [build] 耗时: ${BUILD_DURATION}s"
@@ -448,7 +448,7 @@ run_integration() {
         return 0
     fi
     
-    local TEST_START=$(date +s)
+    local TEST_START=$(date +%s)
     local TEST_EXIT=0
     
     {
@@ -479,7 +479,7 @@ run_integration() {
         
     } >> "$TEST_LOG" 2>&1 || TEST_EXIT=$?
     
-    local TEST_END=$(date +s)
+    local TEST_END=$(date +%s)
     local TEST_DURATION=$((TEST_END - TEST_START))
     
     echo "$LOG_PREFIX [integration] 耗时: ${TEST_DURATION}s"
