@@ -18,7 +18,9 @@ mod stream;
 mod utils;
 
 pub use ai_state::AIState;
-pub(crate) use utils::{ensure_agent, normalize_ai_tool, normalize_part_for_wire, resolve_directory};
+pub(crate) use utils::{
+    ensure_agent, normalize_ai_tool, normalize_part_for_wire, resolve_directory,
+};
 
 pub type SharedAIState = Arc<Mutex<AIState>>;
 

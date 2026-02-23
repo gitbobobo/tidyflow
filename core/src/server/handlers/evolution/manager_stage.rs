@@ -1,6 +1,7 @@
 use chrono::Utc;
 use futures::StreamExt;
 use tokio::time::{timeout, Duration};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::ai::AiModelSelection;
@@ -9,8 +10,45 @@ use crate::server::handlers::ai::{ensure_agent, normalize_part_for_wire, resolve
 use crate::server::protocol::ServerMessage;
 
 use super::profile::profile_for_stage;
-use super::utils::sanitize_name;
+use super::utils::{cycle_dir_path, sanitize_name};
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
+
+fn parse_judge_result_text(value: &str) -> Option<bool> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized == "pass" {
+        return Some(true);
+    }
+    if normalized == "fail" {
+        return Some(false);
+    }
+    None
+}
+
+fn detect_judge_result_in_text(text: &str) -> Option<bool> {
+    let normalized = text.to_ascii_lowercase();
+    if normalized.contains("\"result\":\"fail\"") || normalized.contains("result: fail") {
+        return Some(false);
+    }
+    if normalized.contains("\"result\":\"pass\"") || normalized.contains("result: pass") {
+        return Some(true);
+    }
+    None
+}
+
+fn parse_judge_result_from_json(value: &serde_json::Value) -> Option<bool> {
+    let overall = value
+        .pointer("/overall_result/result")
+        .and_then(|v| v.as_str())
+        .and_then(parse_judge_result_text);
+    if overall.is_some() {
+        return overall;
+    }
+
+    value
+        .pointer("/decision/result")
+        .and_then(|v| v.as_str())
+        .and_then(parse_judge_result_text)
+}
 
 impl EvolutionManager {
     pub(super) async fn run_stage(
@@ -64,6 +102,7 @@ impl EvolutionManager {
             .await?;
 
         let mut judge_pass = true;
+        let mut streamed_judge_result: Option<bool> = None;
         loop {
             let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
             match next {
@@ -112,11 +151,8 @@ impl EvolutionManager {
                     crate::ai::AiEvent::PartUpdated { message_id, part } => {
                         if stage == "judge" {
                             if let Some(text) = part.text.as_deref() {
-                                let normalized = text.to_lowercase();
-                                if normalized.contains("\"result\":\"fail\"")
-                                    || normalized.contains("result: fail")
-                                {
-                                    judge_pass = false;
+                                if let Some(parsed) = detect_judge_result_in_text(text) {
+                                    streamed_judge_result = Some(parsed);
                                 }
                             }
                         }
@@ -140,6 +176,11 @@ impl EvolutionManager {
                         field,
                         delta,
                     } => {
+                        if stage == "judge" {
+                            if let Some(parsed) = detect_judge_result_in_text(&delta) {
+                                streamed_judge_result = Some(parsed);
+                            }
+                        }
                         self.broadcast(
                             ctx,
                             ServerMessage::AIChatPartDelta {
@@ -162,6 +203,52 @@ impl EvolutionManager {
                 Ok(Some(Err(err))) => return Err(err),
                 Ok(None) => break,
                 Err(_) => return Err("stage stream timeout".to_string()),
+            }
+        }
+
+        if stage == "judge" {
+            let maybe_workspace_root = {
+                let state = self.state.lock().await;
+                state
+                    .workspaces
+                    .get(key)
+                    .map(|entry| entry.workspace_root.clone())
+            };
+
+            if let Some(workspace_root) = maybe_workspace_root {
+                if let Ok(cycle_dir) = cycle_dir_path(&workspace_root, cycle_id) {
+                    let mut file_judge_result: Option<bool> = None;
+                    let judge_result_path = cycle_dir.join("judge.result.json");
+                    if let Ok(content) = std::fs::read_to_string(&judge_result_path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(parsed) = parse_judge_result_from_json(&json) {
+                                file_judge_result = Some(parsed);
+                            }
+                        }
+                    }
+
+                    if file_judge_result.is_none() {
+                        let stage_judge_path = cycle_dir.join("stage.judge.json");
+                        if let Ok(content) = std::fs::read_to_string(&stage_judge_path) {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                                if let Some(parsed) = parse_judge_result_from_json(&json) {
+                                    file_judge_result = Some(parsed);
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(parsed) = file_judge_result {
+                        judge_pass = parsed;
+                    } else if let Some(parsed) = streamed_judge_result {
+                        judge_pass = parsed;
+                    }
+                }
+            } else {
+                warn!(
+                    "judge result resolve skipped: workspace missing, key={}",
+                    key
+                );
             }
         }
 
@@ -405,5 +492,40 @@ impl EvolutionManager {
             self.broadcast_cycle_update(key, ctx, "system").await;
             self.broadcast_scheduler(ctx).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_judge_result_in_text, parse_judge_result_from_json};
+
+    #[test]
+    fn detect_judge_result_from_chat_text() {
+        assert_eq!(
+            detect_judge_result_in_text("{\"result\":\"fail\"}"),
+            Some(false)
+        );
+        assert_eq!(detect_judge_result_in_text("result: pass"), Some(true));
+        assert_eq!(detect_judge_result_in_text("judge stage persisted"), None);
+    }
+
+    #[test]
+    fn parse_judge_result_json_schema() {
+        let value = serde_json::json!({
+            "overall_result": {
+                "result": "fail"
+            }
+        });
+        assert_eq!(parse_judge_result_from_json(&value), Some(false));
+    }
+
+    #[test]
+    fn parse_stage_judge_json_schema() {
+        let value = serde_json::json!({
+            "decision": {
+                "result": "pass"
+            }
+        });
+        assert_eq!(parse_judge_result_from_json(&value), Some(true));
     }
 }
