@@ -1,6 +1,4 @@
-use axum::{
-    extract::ws::{Message, WebSocket},
-};
+use axum::extract::ws::{Message, WebSocket};
 
 use crate::server::protocol::ServerMessage;
 
