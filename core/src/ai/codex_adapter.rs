@@ -1397,16 +1397,13 @@ impl CodexAppServerAgent {
         let approvals = self.pending_approvals.clone();
         let active_turns = self.active_turns.clone();
         let context_usage_by_session = self.context_usage_by_session.clone();
-
+        let client = self.client.clone();
         let user_message_id = format!("codex-user-{}-{}", session_id, turn_id);
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
             role: "user".to_string(),
         }));
-        let _ = tx.send(Ok(AiEvent::PartUpdated {
-            message_id: user_message_id.clone(),
-            part: AiPart::new_text(format!("{}-text", user_message_id), original_text),
-        }));
+
 
         tokio::spawn(async move {
             let mut known_assistant_messages = HashSet::<String>::new();
@@ -1623,6 +1620,43 @@ impl CodexAppServerAgent {
                                                 message: message.to_string(),
                                             }));
                                         }
+                                        // 获取真实用户消息内容
+                                        let real_user_text = match client.thread_read(&session_id, true).await {
+                                            Ok(thread_data) => {
+                                                let found = thread_data
+                                                    .get("thread")
+                                                    .and_then(|v| v.get("turns"))
+                                                    .and_then(|v| v.as_array())
+                                                    .and_then(|turns| {
+                                                        turns.iter().find(|t| {
+                                                            t.get("id")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or_default()
+                                                                == turn_id
+                                                        })
+                                                    })
+                                                    .and_then(|turn| turn.get("items"))
+                                                    .and_then(|v| v.as_array())
+                                                    .and_then(|items| {
+                                                        items.iter().find(|item| {
+                                                            item.get("type")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or_default()
+                                                                .eq_ignore_ascii_case("usermessage")
+                                                        })
+                                                    })
+                                                    .map(|item| Self::parse_user_text(item));
+                                                found.unwrap_or_else(|| original_text.clone())
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to fetch real user message from thread_read: {}", e);
+                                                original_text.clone()
+                                            }
+                                        };
+                                        let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                            message_id: user_message_id.clone(),
+                                            part: AiPart::new_text(format!("{}-text", user_message_id), real_user_text),
+                                        }));
                                         let _ = tx.send(Ok(AiEvent::Done));
                                         active_turns.lock().await.remove(&session_id);
                                         break;
