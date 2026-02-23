@@ -58,8 +58,15 @@
 - [ ] 执行统一入口：`./scripts/evo-run.sh --cycle <latest_cycle_id> --dry-run`（模拟执行）
 - [ ] 检查日志关键字：确保 `[evo][build]`、`[evo][run]`、`[evo][ws]`、`[evo][evidence]` 标记存在
 - [ ] 验证证据完整度：`evidence.index.json` 包含 build_log、test_log、screenshot、diff_summary
+- [ ] 检查 `evidence.index.json` 结构完整性（含 `$schema_version`, `evidence_items`, `runs` 字段）
+- [ ] 验证 `evidence_items` 条目的 `artifact_hash` 唯一性（无重复）
+- [ ] 验证 `runs` 条目的 `outcome` 字段与实际日志结果一致
 - [ ] 失败可追溯：若存在失败，确认可通过 `failure_context` 定位日志关键字与截图
-- [ ] 兼容性说明：本次变更仅影响测试与证据链，不改变运行时对外行为
+- [ ] **兼容性说明**：
+  - 本次变更仅影响测试与证据链，不改变运行时对外行为
+  - 旧 cycle（2026-02-23 前创建）可能缺失 `evidence.index.json`
+  - 降级行为：扫描 `runs/{run_id}/evidence/` 目录
+  - 在 judge 阶段标记降级来源
 
 **回滚策略**：若证据机制导致不稳定，退回原手工验证流程，关闭统一入口调用。
 

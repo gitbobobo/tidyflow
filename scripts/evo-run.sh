@@ -23,6 +23,64 @@ DRY_RUN=0
 
 # 日志前缀
 LOG_PREFIX="[evo][run]"
+# ============================================
+# 结构化日志函数
+# ============================================
+log_structured() {
+    local LEVEL="$1"       # INFO, WARN, FAILED, SUCCESS
+    local STAGE="$2"       # build, integration, rollback, anchor
+    local CHECK_ID="$3"    # v-1, v-2, v-3
+    local ATTEMPT_NUM="${4:-1}"  # 尝试次数
+    
+    echo "[evo][$STAGE] $LEVEL cycle=$CYCLE_ID stage=implement check=$CHECK_ID attempt=$ATTEMPT_NUM"
+}
+
+# 获取上一稳定运行 ID（用于 rollback 建议）
+get_previous_stable_run_id() {
+    local INDEX_PATH="$EVIDENCE_INDEX"
+    
+    if [ ! -f "$INDEX_PATH" ]; then
+        echo ""
+        return
+    fi
+    
+    # 查找最近成功的 run_id（不包括当前 run）
+    local PREV_RUN=$(python3 -c "
+import json
+import sys
+try:
+    with open('$INDEX_PATH', 'r') as f:
+        data = json.load(f)
+    runs = data.get('runs', [])
+    # 过滤出成功的 run，按 run_id 倒序
+    successful = [r for r in runs if r.get('outcome') == 'success' and r.get('run_id') != '$RUN_ID']
+    if successful:
+        # 最新的成功 run
+        print(successful[-1].get('run_id', ''))
+except:
+    pass
+" 2>/dev/null)
+    
+    echo "$PREV_RUN"
+}
+
+# 输出失败定位信息（rollback + anchor）
+dump_failure_anchors() {
+    local FAILED_STAGE="$1"  # build 或 integration
+    local LOG_FILE="$2"      # 日志文件路径
+    
+    # Log anchor
+    echo "[evo][anchor] 查看: $LOG_FILE"
+    
+    # Rollback suggestion
+    local PREV_RUN=$(get_previous_stable_run_id)
+    if [ -n "$PREV_RUN" ]; then
+        echo "[evo][rollback] 回退到上一稳定写入点: $PREV_RUN"
+    else
+        echo "[evo][rollback] 无上一稳定写入点（请检查 evidence.index.json）"
+    fi
+}
+
 
 # 解析参数
 while [[ $# -gt 0 ]]; do
@@ -131,11 +189,25 @@ import sys
 import json
 import os
 import hashlib
+import tempfile
 from datetime import datetime, timezone
 
 cycle_dir, cycle_id, run_id, step, outcome, command = sys.argv[1:7]
 index_path = os.path.join(cycle_dir, "evidence.index.json")
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def compute_artifact_hash(file_path):
+    """Compute SHA1 hash of file content (first 8 chars)"""
+    if not os.path.isfile(file_path):
+        return None
+    try:
+        sha1 = hashlib.sha1()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha1.update(chunk)
+        return sha1.hexdigest()[:8]
+    except Exception:
+        return None
 
 def load_index(path):
     if not os.path.exists(path):
@@ -143,10 +215,26 @@ def load_index(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f) or {}
-    except Exception:
-        return {}
+    except json.JSONDecodeError as e:
+        print(f"ERROR: index corrupted: {e}", file=sys.stderr)
+        return {"__error__": {"type": "corrupted", "message": str(e)}}
+    except Exception as e:
+        print(f"ERROR: index load failed: {e}", file=sys.stderr)
+        return {"__error__": {"type": "load_failed", "message": str(e)}}
 
 data = load_index(index_path)
+
+# Handle corrupted index gracefully
+if isinstance(data, dict) and "__error__" in data:
+    error_info = data["__error__"]
+    backup_path = index_path + ".corrupted." + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    if os.path.exists(index_path):
+        os.rename(index_path, backup_path)
+        print(f"WARNING: corrupted index backed up to {backup_path}", file=sys.stderr)
+    data = {}
+else:
+    error_info = None
+
 if not isinstance(data, dict):
     data = {}
 
@@ -157,13 +245,16 @@ evidence_items = data.get("evidence_items", [])
 if not isinstance(evidence_items, list):
     evidence_items = []
 
-index_by_path = {}
+# Index by check_id + artifact_hash for idempotent merge
+index_by_key = {}
 for item in evidence_items:
     if not isinstance(item, dict):
         continue
-    path = item.get("path")
-    if path:
-        index_by_path[path] = item
+    criteria_ids = item.get("linked_criteria_ids", [])
+    artifact_hash = item.get("artifact_hash", "")
+    criteria_key = ",".join(sorted(criteria_ids)) if criteria_ids else ""
+    key = f"{criteria_key}:{artifact_hash}"
+    index_by_key[key] = item
 
 for raw_line in os.environ.get("EVIDENCE_LINES", "").splitlines():
     line = raw_line.strip()
@@ -181,24 +272,35 @@ for raw_line in os.environ.get("EVIDENCE_LINES", "").splitlines():
     else:
         rel_path = path
     rel_path = rel_path.replace("\\", "/")
-    evidence_id = "ev-" + hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:8]
+    
+    # Compute artifact_hash from file content
+    abs_path = path if os.path.isabs(path) else os.path.join(cycle_dir, path)
+    artifact_hash = compute_artifact_hash(abs_path) or ""
+    
     linked_criteria_ids = [c for c in criteria_csv.split(",") if c]
+    criteria_key = ",".join(sorted(linked_criteria_ids)) if linked_criteria_ids else ""
+    merge_key = f"{criteria_key}:{artifact_hash}"
+    
+    evidence_id = "ev-" + hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:8]
     item = {
         "evidence_id": evidence_id,
         "type": evidence_type,
         "path": rel_path,
+        "artifact_hash": artifact_hash,
         "generated_by_stage": stage,
         "linked_criteria_ids": linked_criteria_ids,
         "summary": summary,
         "created_at": now,
         "run_id": run_id,
     }
-    existing = index_by_path.get(rel_path)
+    
+    # Preserve existing evidence_id if merging same check_id+artifact_hash
+    existing = index_by_key.get(merge_key)
     if isinstance(existing, dict) and existing.get("evidence_id"):
         item["evidence_id"] = existing.get("evidence_id")
-    index_by_path[rel_path] = item
+    index_by_key[merge_key] = item
 
-data["evidence_items"] = sorted(index_by_path.values(), key=lambda x: x.get("path", ""))
+data["evidence_items"] = sorted(index_by_key.values(), key=lambda x: x.get("path", ""))
 
 runs = data.get("runs", [])
 if not isinstance(runs, list):
@@ -223,9 +325,28 @@ run_map[run_id] = {
 data["runs"] = sorted(run_map.values(), key=lambda x: x.get("run_id", ""))
 data["updated_at"] = now
 
-with open(index_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-    f.write("\n")
+# Atomic write: write to temp file then rename
+temp_dir = os.path.dirname(index_path) or "."
+temp_fd, temp_path = tempfile.mkstemp(suffix=".json", dir=temp_dir)
+try:
+    with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.rename(temp_path, index_path)
+except Exception as e:
+    if os.path.exists(temp_path):
+        os.unlink(temp_path)
+    error_context = {
+        "error": "index_write_failed",
+        "message": str(e),
+        "cycle_id": cycle_id,
+        "run_id": run_id,
+        "index_path": index_path,
+        "evidence_items_count": len(data.get("evidence_items", [])),
+        "runs_count": len(data.get("runs", [])),
+    }
+    print(json.dumps(error_context, ensure_ascii=False), file=sys.stderr)
+    sys.exit(1)
 PY
     then
         echo "$LOG_PREFIX [index] FAILED 写入 evidence.index.json"
@@ -250,7 +371,7 @@ run_build() {
         return 0
     fi
     
-    local BUILD_START=$(date +%s)
+    local BUILD_START=$(date +s)
     local BUILD_EXIT=0
     
     # 构建 Rust Core
@@ -282,20 +403,22 @@ run_build() {
         fi
     } >> "$BUILD_LOG" 2>&1 || BUILD_EXIT=$?
     
-    local BUILD_END=$(date +%s)
+    local BUILD_END=$(date +s)
     local BUILD_DURATION=$((BUILD_END - BUILD_START))
     
     echo "$LOG_PREFIX [build] 耗时: ${BUILD_DURATION}s"
     echo "$LOG_PREFIX [build] 日志: $BUILD_LOG"
     
     if [ $BUILD_EXIT -ne 0 ]; then
-        echo "$LOG_PREFIX [build] FAILED 退出码: $BUILD_EXIT"
+        log_structured "FAILED" "build" "v-1" 1
+        dump_failure_anchors "build" "$BUILD_LOG"
         return $BUILD_EXIT
     fi
     
     # 校验构建产物
     if ! grep -q "BUILD SUCCESS" "$BUILD_LOG"; then
-        echo "$LOG_PREFIX [build] FAILED 未找到 BUILD SUCCESS 标记"
+        log_structured "FAILED" "build" "v-1" 1
+        dump_failure_anchors "build" "$BUILD_LOG"
         return 1
     fi
     
@@ -325,7 +448,7 @@ run_integration() {
         return 0
     fi
     
-    local TEST_START=$(date +%s)
+    local TEST_START=$(date +s)
     local TEST_EXIT=0
     
     {
@@ -356,19 +479,21 @@ run_integration() {
         
     } >> "$TEST_LOG" 2>&1 || TEST_EXIT=$?
     
-    local TEST_END=$(date +%s)
+    local TEST_END=$(date +s)
     local TEST_DURATION=$((TEST_END - TEST_START))
     
     echo "$LOG_PREFIX [integration] 耗时: ${TEST_DURATION}s"
     echo "$LOG_PREFIX [integration] 日志: $TEST_LOG"
     
     if [ $TEST_EXIT -ne 0 ]; then
-        echo "$LOG_PREFIX [integration] FAILED 退出码: $TEST_EXIT"
+        log_structured "FAILED" "integration" "v-2" 1
+        dump_failure_anchors "integration" "$TEST_LOG"
         return $TEST_EXIT
     fi
     
     if ! grep -q "INTEGRATION SUCCESS" "$TEST_LOG"; then
-        echo "$LOG_PREFIX [integration] FAILED 未找到 INTEGRATION SUCCESS 标记"
+        log_structured "FAILED" "integration" "v-2" 1
+        dump_failure_anchors "integration" "$TEST_LOG"
         return 1
     fi
     
