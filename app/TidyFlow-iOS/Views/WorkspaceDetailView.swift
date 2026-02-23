@@ -43,6 +43,12 @@ struct WorkspaceDetailView: View {
                 .padding(.vertical, 4)
             }
 
+            Section("资源管理器") {
+                NavigationLink(value: MobileRoute.workspaceExplorer(project: project, workspace: workspace)) {
+                    Label("浏览项目文件", systemImage: "folder")
+                }
+            }
+
             Section("活跃终端") {
                 if terminals.isEmpty {
                     Text("暂无活跃终端")
@@ -195,6 +201,12 @@ struct WorkspaceDetailView: View {
             }
 
             Button {
+                appState.navigationPath.append(MobileRoute.workspaceExplorer(project: project, workspace: workspace))
+            } label: {
+                Label("资源管理器", systemImage: "folder")
+            }
+
+            Button {
                 appState.runAICommit(project: project, workspace: workspace)
             } label: {
                 Label("一键提交", systemImage: "sparkles")
@@ -225,6 +237,273 @@ struct WorkspaceDetailView: View {
             }
         } label: {
             Image(systemName: "ellipsis.circle")
+        }
+    }
+}
+
+/// iOS 资源管理器（轻交互）：目录浏览 + 新建/重命名/删除 + 文本预览
+struct WorkspaceExplorerView: View {
+    @EnvironmentObject var appState: MobileAppState
+    let project: String
+    let workspace: String
+
+    private var rootCache: FileListCache? {
+        appState.explorerListCache(project: project, workspace: workspace, path: ".")
+    }
+
+    var body: some View {
+        List {
+            if let cache = rootCache {
+                if cache.isLoading && cache.items.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("加载中...")
+                            .foregroundColor(.secondary)
+                    }
+                } else if let error = cache.error, cache.items.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(error)
+                            .foregroundColor(.secondary)
+                        Button("重试") {
+                            appState.fetchExplorerFileList(project: project, workspace: workspace, path: ".")
+                        }
+                    }
+                } else if cache.items.isEmpty {
+                    ContentUnavailableView("当前目录为空", systemImage: "folder")
+                } else {
+                    ForEach(cache.items) { item in
+                        ExplorerFileRowView(
+                            project: project,
+                            workspace: workspace,
+                            item: item,
+                            depth: 0
+                        )
+                        .environmentObject(appState)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("加载中...")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationTitle("资源管理器")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    appState.refreshExplorer(project: project, workspace: workspace)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+        }
+        .sheet(isPresented: $appState.explorerPreviewPresented) {
+            ExplorerFilePreviewSheet()
+                .environmentObject(appState)
+        }
+        .onAppear {
+            appState.prepareExplorer(project: project, workspace: workspace)
+        }
+    }
+}
+
+private struct ExplorerFileRowView: View {
+    @EnvironmentObject var appState: MobileAppState
+    let project: String
+    let workspace: String
+    let item: FileEntry
+    let depth: Int
+
+    @State private var showRenameDialog = false
+    @State private var showDeleteConfirm = false
+    @State private var showNewFileDialog = false
+    @State private var newName = ""
+    @State private var newFileName = ""
+
+    private var isExpanded: Bool {
+        appState.isExplorerDirectoryExpanded(project: project, workspace: workspace, path: item.path)
+    }
+
+    private var childrenCache: FileListCache? {
+        appState.explorerListCache(project: project, workspace: workspace, path: item.path)
+    }
+
+    private var indent: CGFloat {
+        CGFloat(depth) * 14
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                if item.isDir {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(width: 12)
+                } else {
+                    Color.clear.frame(width: 12, height: 1)
+                }
+
+                Image(systemName: item.isDir ? (isExpanded ? "folder.fill" : "folder") : "doc.text")
+                    .foregroundColor(item.isDir ? .accentColor : .secondary)
+                Text(item.name)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .padding(.leading, indent)
+            .padding(.vertical, 6)
+            .onTapGesture {
+                if item.isDir {
+                    appState.toggleExplorerDirectory(project: project, workspace: workspace, path: item.path)
+                } else {
+                    appState.readFileForPreview(project: project, workspace: workspace, path: item.path)
+                }
+            }
+            .contextMenu {
+                if item.isDir {
+                    Button {
+                        newFileName = ""
+                        showNewFileDialog = true
+                    } label: {
+                        Label("新建文件", systemImage: "doc.badge.plus")
+                    }
+                }
+
+                Button {
+                    newName = item.name
+                    showRenameDialog = true
+                } label: {
+                    Label("重命名", systemImage: "pencil")
+                }
+
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
+            .sheet(isPresented: $showNewFileDialog) {
+                NewFileDialogView(
+                    fileName: $newFileName,
+                    onConfirm: {
+                        let parentDir = item.path
+                        appState.createExplorerFile(
+                            project: project,
+                            workspace: workspace,
+                            parentDir: parentDir,
+                            fileName: newFileName
+                        )
+                        showNewFileDialog = false
+                    },
+                    onCancel: {
+                        showNewFileDialog = false
+                    }
+                )
+            }
+            .sheet(isPresented: $showRenameDialog) {
+                RenameDialogView(
+                    originalName: item.name,
+                    newName: $newName,
+                    isDir: item.isDir,
+                    onConfirm: {
+                        appState.renameExplorerFile(
+                            project: project,
+                            workspace: workspace,
+                            path: item.path,
+                            newName: newName
+                        )
+                        showRenameDialog = false
+                    },
+                    onCancel: {
+                        showRenameDialog = false
+                    }
+                )
+            }
+            .confirmationDialog(
+                "确认删除 \(item.name)？",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) {
+                    appState.deleteExplorerFile(project: project, workspace: workspace, path: item.path)
+                }
+                Button("取消", role: .cancel) {}
+            }
+
+            if item.isDir && isExpanded {
+                if let childrenCache {
+                    if childrenCache.isLoading {
+                        HStack(spacing: 8) {
+                            ProgressView().scaleEffect(0.85)
+                            Text("加载中...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.leading, indent + 26)
+                        .padding(.vertical, 4)
+                    } else if let error = childrenCache.error, childrenCache.items.isEmpty {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.leading, indent + 26)
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(childrenCache.items) { child in
+                            ExplorerFileRowView(
+                                project: project,
+                                workspace: workspace,
+                                item: child,
+                                depth: depth + 1
+                            )
+                            .environmentObject(appState)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ExplorerFilePreviewSheet: View {
+    @EnvironmentObject var appState: MobileAppState
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if appState.explorerPreviewLoading {
+                    ProgressView("正在读取文件...")
+                } else if let error = appState.explorerPreviewError {
+                    VStack(spacing: 8) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.largeTitle)
+                            .foregroundColor(.secondary)
+                        Text(error)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                } else {
+                    ScrollView {
+                        Text(appState.explorerPreviewContent)
+                            .font(.system(.footnote, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
+                }
+            }
+            .navigationTitle(appState.explorerPreviewPath ?? "文件预览")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") {
+                        appState.explorerPreviewPresented = false
+                    }
+                }
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 enum MobileRoute: Hashable {
     case projects
     case workspaceDetail(project: String, workspace: String)
+    case workspaceExplorer(project: String, workspace: String)
     case workspaceTasks(project: String, workspace: String)
     case terminal(
         project: String,
@@ -33,6 +34,8 @@ struct TidyFlowiOSApp: App {
                                 ProjectListView()
                             case .workspaceDetail(let project, let workspace):
                                 WorkspaceDetailView(project: project, workspace: workspace)
+                            case .workspaceExplorer(let project, let workspace):
+                                WorkspaceExplorerView(project: project, workspace: workspace)
                             case .workspaceTasks(let project, let workspace):
                                 WorkspaceTasksView(project: project, workspace: workspace)
                             case .terminal(let project, let workspace, let command, let commandIcon, let commandName):

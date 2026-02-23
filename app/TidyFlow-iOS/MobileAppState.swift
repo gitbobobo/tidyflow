@@ -122,6 +122,14 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitSummary: [String: MobileWorkspaceGitSummary] = [:]
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
+    // 资源管理器（按 project/workspace/path 分桶）
+    @Published var explorerFileListCache: [String: FileListCache] = [:]
+    @Published var explorerDirectoryExpandState: [String: Bool] = [:]
+    @Published var explorerPreviewPresented: Bool = false
+    @Published var explorerPreviewLoading: Bool = false
+    @Published var explorerPreviewPath: String?
+    @Published var explorerPreviewContent: String = ""
+    @Published var explorerPreviewError: String?
     @Published var commitAIAgent: String?
     @Published var mergeAIAgent: String?
     // AI Chat 状态（iOS 端完整对齐 macOS）
@@ -251,6 +259,8 @@ final class MobileAppState: ObservableObject {
     )?
     /// 当前详情页选中的项目名（兼容旧接口）
     private var selectedProjectName: String = ""
+    /// 资源管理器预览请求（用于过滤过期回调）
+    private var pendingExplorerPreviewRequest: (project: String, workspace: String, path: String)?
 
     /// AI Chat 待发送请求类型
     private enum PendingAIRequestKind {
@@ -528,6 +538,7 @@ final class MobileAppState: ObservableObject {
     func refreshWorkspaceDetail(project: String, workspace: String) {
         wsClient.requestTermList()
         wsClient.requestGitStatus(project: project, workspace: workspace)
+        fetchExplorerFileList(project: project, workspace: workspace, path: ".")
     }
 
     /// 懒加载项目工作空间
@@ -535,6 +546,105 @@ final class MobileAppState: ObservableObject {
         if workspacesByProject[project] == nil {
             wsClient.requestListWorkspaces(project: project)
         }
+    }
+
+    // MARK: - 资源管理器
+
+    func prepareExplorer(project: String, workspace: String) {
+        fetchExplorerFileList(project: project, workspace: workspace, path: ".")
+    }
+
+    func refreshExplorer(project: String, workspace: String) {
+        let prefix = explorerCachePrefix(project: project, workspace: workspace)
+        let expandedPaths = explorerDirectoryExpandState
+            .filter { $0.key.hasPrefix(prefix) && $0.value }
+            .map { String($0.key.dropFirst(prefix.count)) }
+
+        fetchExplorerFileList(project: project, workspace: workspace, path: ".")
+        for path in expandedPaths where path != "." {
+            fetchExplorerFileList(project: project, workspace: workspace, path: path)
+        }
+    }
+
+    func explorerListCache(project: String, workspace: String, path: String) -> FileListCache? {
+        explorerFileListCache[explorerCacheKey(project: project, workspace: workspace, path: path)]
+    }
+
+    func fetchExplorerFileList(project: String, workspace: String, path: String = ".") {
+        guard isConnected else {
+            let key = explorerCacheKey(project: project, workspace: workspace, path: path)
+            var cache = explorerFileListCache[key] ?? FileListCache.empty()
+            cache.isLoading = false
+            cache.error = "连接已断开"
+            explorerFileListCache[key] = cache
+            return
+        }
+
+        let key = explorerCacheKey(project: project, workspace: workspace, path: path)
+        var cache = explorerFileListCache[key] ?? FileListCache.empty()
+        cache.isLoading = true
+        cache.error = nil
+        explorerFileListCache[key] = cache
+        wsClient.requestFileList(project: project, workspace: workspace, path: path)
+    }
+
+    func isExplorerDirectoryExpanded(project: String, workspace: String, path: String) -> Bool {
+        explorerDirectoryExpandState[explorerCacheKey(project: project, workspace: workspace, path: path)] ?? false
+    }
+
+    func toggleExplorerDirectory(project: String, workspace: String, path: String) {
+        let key = explorerCacheKey(project: project, workspace: workspace, path: path)
+        let next = !(explorerDirectoryExpandState[key] ?? false)
+        explorerDirectoryExpandState[key] = next
+        guard next else { return }
+
+        let cache = explorerFileListCache[key]
+        if cache == nil || cache?.isExpired == true {
+            fetchExplorerFileList(project: project, workspace: workspace, path: path)
+        }
+    }
+
+    func createExplorerFile(project: String, workspace: String, parentDir: String, fileName: String) {
+        guard isConnected else {
+            errorMessage = "连接已断开"
+            return
+        }
+        let trimmed = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let filePath = parentDir == "." ? trimmed : "\(parentDir)/\(trimmed)"
+        wsClient.requestFileWrite(project: project, workspace: workspace, path: filePath, content: Data())
+    }
+
+    func renameExplorerFile(project: String, workspace: String, path: String, newName: String) {
+        guard isConnected else {
+            errorMessage = "连接已断开"
+            return
+        }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        wsClient.requestFileRename(project: project, workspace: workspace, oldPath: path, newName: trimmed)
+    }
+
+    func deleteExplorerFile(project: String, workspace: String, path: String) {
+        guard isConnected else {
+            errorMessage = "连接已断开"
+            return
+        }
+        wsClient.requestFileDelete(project: project, workspace: workspace, path: path)
+    }
+
+    func readFileForPreview(project: String, workspace: String, path: String) {
+        guard isConnected else {
+            errorMessage = "连接已断开"
+            return
+        }
+        explorerPreviewPresented = true
+        explorerPreviewLoading = true
+        explorerPreviewPath = path
+        explorerPreviewContent = ""
+        explorerPreviewError = nil
+        pendingExplorerPreviewRequest = (project, workspace, path)
+        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
     }
 
     func workspacesForProject(_ project: String) -> [WorkspaceInfo] {
@@ -2086,6 +2196,69 @@ final class MobileAppState: ObservableObject {
             }
         }
 
+        wsClient.onFileListResult = { [weak self] result in
+            guard let self else { return }
+            let key = self.explorerCacheKey(project: result.project, workspace: result.workspace, path: result.path)
+            self.explorerFileListCache[key] = FileListCache(
+                items: result.items,
+                isLoading: false,
+                error: nil,
+                updatedAt: Date()
+            )
+        }
+
+        wsClient.onFileWriteResult = { [weak self] result in
+            guard let self else { return }
+            if result.success {
+                self.refreshExplorer(project: result.project, workspace: result.workspace)
+            } else {
+                self.errorMessage = "新建文件失败：\(result.path)"
+            }
+        }
+
+        wsClient.onFileRenameResult = { [weak self] result in
+            guard let self else { return }
+            if result.success {
+                self.refreshExplorer(project: result.project, workspace: result.workspace)
+            } else {
+                self.errorMessage = result.message ?? "重命名失败"
+            }
+        }
+
+        wsClient.onFileDeleteResult = { [weak self] result in
+            guard let self else { return }
+            if result.success {
+                self.refreshExplorer(project: result.project, workspace: result.workspace)
+            } else {
+                self.errorMessage = result.message ?? "删除失败"
+            }
+        }
+
+        wsClient.onFileReadResult = { [weak self] result in
+            guard let self else { return }
+            guard let pending = self.pendingExplorerPreviewRequest else { return }
+            guard pending.project == result.project,
+                  pending.workspace == result.workspace,
+                  pending.path == result.path else { return }
+            self.pendingExplorerPreviewRequest = nil
+            self.explorerPreviewLoading = false
+
+            let bytes = Data(result.content)
+            if result.size > 256 * 1024 {
+                self.explorerPreviewError = "文件过大，暂不支持预览"
+                self.explorerPreviewContent = ""
+                return
+            }
+
+            if let text = String(data: bytes, encoding: .utf8) {
+                self.explorerPreviewError = nil
+                self.explorerPreviewContent = text
+            } else {
+                self.explorerPreviewError = "二进制文件暂不支持预览"
+                self.explorerPreviewContent = ""
+            }
+        }
+
         wsClient.onGitStatusResult = { [weak self] result in
             guard let self else { return }
             let additions = result.items.reduce(0) { $0 + ( $1.additions ?? 0 ) }
@@ -2371,6 +2544,12 @@ final class MobileAppState: ObservableObject {
         wsClient.onError = { [weak self] message in
             guard let self else { return }
             self.errorMessage = message
+            if self.pendingExplorerPreviewRequest != nil {
+                self.pendingExplorerPreviewRequest = nil
+                self.explorerPreviewLoading = false
+                self.explorerPreviewError = message
+                self.explorerPreviewContent = ""
+            }
             if !self.aiActiveProject.isEmpty, !self.aiActiveWorkspace.isEmpty {
                 let key = self.aiContextKey(project: self.aiActiveProject, workspace: self.aiActiveWorkspace)
                 if var cache = self.aiFileIndexCache[key], cache.isLoading {
@@ -3053,6 +3232,14 @@ final class MobileAppState: ObservableObject {
                 projectCommandTaskIdByRemoteTaskId[entry.taskId] = task.id
             }
         }
+    }
+
+    private func explorerCacheKey(project: String, workspace: String, path: String) -> String {
+        "\(project):\(workspace):\(path)"
+    }
+
+    private func explorerCachePrefix(project: String, workspace: String) -> String {
+        "\(project):\(workspace):"
     }
 
     private func globalWorkspaceKey(project: String, workspace: String) -> String {
