@@ -22,7 +22,10 @@ pub(in crate::server::ws) fn unix_ts_to_rfc3339(ts: u64) -> String {
         .to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-pub(in crate::server::ws) fn cleanup_expired_pairing_entries(reg: &mut PairingRegistry, now_ts: u64) {
+pub(in crate::server::ws) fn cleanup_expired_pairing_entries(
+    reg: &mut PairingRegistry,
+    now_ts: u64,
+) {
     reg.pending_codes
         .retain(|_, entry| entry.expires_at_unix > now_ts);
     reg.issued_tokens
@@ -50,7 +53,9 @@ pub(in crate::server::ws) fn load_tokens_from_state(
         .collect()
 }
 
-pub(in crate::server::ws) fn new_pairing_registry(entries: &[PersistedTokenEntry]) -> PairingRegistry {
+pub(in crate::server::ws) fn new_pairing_registry(
+    entries: &[PersistedTokenEntry],
+) -> PairingRegistry {
     PairingRegistry {
         pending_codes: HashMap::new(),
         issued_tokens: load_tokens_from_state(entries),

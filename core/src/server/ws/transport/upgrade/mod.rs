@@ -23,6 +23,7 @@ pub(in crate::server::ws) async fn handle_ws_upgrade(
         return resp;
     }
 
-    let conn_meta = session::build_conn_meta(addr, provided_token.as_deref(), &ctx.pairing_registry).await;
+    let conn_meta =
+        session::build_conn_meta(addr, provided_token.as_deref(), &ctx.pairing_registry).await;
     bind::bind_upgrade(ws, ctx, conn_meta)
 }

@@ -5,8 +5,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::server::context::{
-    SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory,
-    TaskBroadcastTx,
+    SharedAppState, SharedRunningAITasks, SharedRunningCommands, SharedTaskHistory, TaskBroadcastTx,
 };
 use crate::server::handlers::ai::{preload_agents_on_startup, AIState, SharedAIState};
 use crate::server::remote_sub_registry::{RemoteSubRegistry, SharedRemoteSubRegistry};
@@ -83,7 +82,9 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
         scrollback_tx,
         expected_ws_token,
         pairing_registry: Arc::new(Mutex::new(
-            crate::server::ws::pairing::new_pairing_registry(&shared_state.read().await.paired_tokens),
+            crate::server::ws::pairing::new_pairing_registry(
+                &shared_state.read().await.paired_tokens,
+            ),
         )),
         remote_sub_registry: Arc::new(Mutex::new(RemoteSubRegistry::new())),
         task_broadcast_tx,

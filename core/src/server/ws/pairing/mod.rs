@@ -4,7 +4,9 @@ mod model;
 mod store;
 
 pub(in crate::server::ws) use auth::is_ws_token_authorized;
-pub(in crate::server::ws) use handlers::{pair_exchange_handler, pair_revoke_handler, pair_start_handler};
+pub(in crate::server::ws) use handlers::{
+    pair_exchange_handler, pair_revoke_handler, pair_start_handler,
+};
 pub(in crate::server::ws) use model::{SharedPairingRegistry, WsAuthQuery};
 pub(in crate::server::ws) use store::{lookup_paired_info, new_pairing_registry};
 

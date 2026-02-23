@@ -20,11 +20,17 @@ pub(super) async fn dispatch_domain_handler(
         DomainRoute::Terminal => {
             core_domains::handle_terminal_domain(client_msg, socket, ctx).await?
         }
-        DomainRoute::File => file_domain::handle_file_domain(client_msg, socket, ctx, watcher).await?,
+        DomainRoute::File => {
+            file_domain::handle_file_domain(client_msg, socket, ctx, watcher).await?
+        }
         DomainRoute::Git => core_domains::handle_git_domain(client_msg, socket, ctx).await?,
-        DomainRoute::Project => core_domains::handle_project_domain(client_msg, socket, ctx).await?,
+        DomainRoute::Project => {
+            core_domains::handle_project_domain(client_msg, socket, ctx).await?
+        }
         DomainRoute::Lsp => core_domains::handle_lsp_domain(client_msg, socket, ctx).await?,
-        DomainRoute::Settings => core_domains::handle_settings_domain(client_msg, socket, ctx).await?,
+        DomainRoute::Settings => {
+            core_domains::handle_settings_domain(client_msg, socket, ctx).await?
+        }
         DomainRoute::Log => core_domains::handle_log_domain(client_msg)?,
         DomainRoute::Ai => core_domains::handle_ai_domain(client_msg, socket, ctx).await?,
         DomainRoute::Evolution => {

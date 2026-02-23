@@ -1,4 +1,7 @@
-use axum::{extract::ws::WebSocketUpgrade, response::{IntoResponse, Response}};
+use axum::{
+    extract::ws::WebSocketUpgrade,
+    response::{IntoResponse, Response},
+};
 
 pub(in crate::server::ws) fn bind_upgrade(
     ws: WebSocketUpgrade,

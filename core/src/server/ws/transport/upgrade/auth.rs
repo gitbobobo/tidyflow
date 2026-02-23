@@ -1,4 +1,8 @@
-use axum::{extract::Query, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{
+    extract::Query,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 
 pub(in crate::server::ws) fn extract_provided_token(
     query: Option<Query<crate::server::ws::pairing::WsAuthQuery>>,

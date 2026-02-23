@@ -15,7 +15,12 @@ pub(in crate::server::ws) async fn handle_task_broadcast_event(
     match result {
         Ok(event) => {
             if event.origin_conn_id != conn_meta.conn_id {
-                emit_message(socket, &event.message, "Failed to send broadcast task event").await;
+                emit_message(
+                    socket,
+                    &event.message,
+                    "Failed to send broadcast task event",
+                )
+                .await;
             }
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

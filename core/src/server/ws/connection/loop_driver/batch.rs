@@ -16,7 +16,10 @@ pub(super) fn collect_batched_output(
 ) -> (HashMap<String, Vec<u8>>, usize) {
     let mut batched: HashMap<String, Vec<u8>> = HashMap::new();
     let mut total = first_output.len();
-    batched.entry(first_term_id).or_default().extend(first_output);
+    batched
+        .entry(first_term_id)
+        .or_default()
+        .extend(first_output);
 
     while total < MAX_BATCH_SIZE {
         match agg_rx.try_recv() {

@@ -33,7 +33,11 @@ pub(super) async fn handle_socket_recv_result(
     match msg_result {
         Some(Ok(Message::Binary(data))) => {
             super::super::events::handle_binary_client_message(
-                &data, socket, handler_ctx, watcher, conn_meta,
+                &data,
+                socket,
+                handler_ctx,
+                watcher,
+                conn_meta,
             )
             .await;
             LoopControl::Continue
@@ -51,7 +55,10 @@ pub(super) async fn handle_socket_recv_result(
         }
         Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => LoopControl::Continue,
         Some(Err(e)) => {
-            error!("WebSocket error: conn_id={}, error={}", conn_meta.conn_id, e);
+            error!(
+                "WebSocket error: conn_id={}, error={}",
+                conn_meta.conn_id, e
+            );
             LoopControl::Break
         }
         None => {

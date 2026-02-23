@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 // 按领域拆分的协议类型子模块（组织性拆分，保持类型引用路径不变）
 pub mod action_table;
-pub mod domain_table;
 pub mod ai;
+pub mod domain_table;
 pub mod file;
 pub mod git;
 pub mod project;

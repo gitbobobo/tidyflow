@@ -46,7 +46,10 @@ pub(in crate::server::ws) async fn handle_watch_event(
             emit_message(socket, &msg, "Failed to send file changed message").await;
         }
         WatchEvent::GitStatusChanged { project, workspace } => {
-            debug!("Git status changed: project={}, workspace={}", project, workspace);
+            debug!(
+                "Git status changed: project={}, workspace={}",
+                project, workspace
+            );
 
             let ws_ctx =
                 crate::server::context::resolve_workspace(app_state, &project, &workspace).await;
@@ -60,6 +63,9 @@ pub(in crate::server::ws) async fn handle_watch_event(
     }
 }
 
-pub(in crate::server::ws) async fn forward_command_output(msg: ServerMessage, socket: &mut WebSocket) {
+pub(in crate::server::ws) async fn forward_command_output(
+    msg: ServerMessage,
+    socket: &mut WebSocket,
+) {
     emit_message(socket, &msg, "Failed to send command output message").await;
 }
