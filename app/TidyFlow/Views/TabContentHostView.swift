@@ -214,6 +214,12 @@ struct TerminalContentView: View {
         guard let ws = appState.selectedWorkspaceKey else { return }
 
         currentTabId = tab.id
+        // 若已由 Native 侧主动触发 spawn，跳过本次，避免重复创建会话
+        if appState.pendingSpawnTabs.contains(tab.id) {
+            appState.requestTerminal()
+            return
+        }
+
         // 传递 project 和 workspace 以便 JavaScript 端更新当前工作空间
         webBridge.enterMode("terminal", project: appState.selectedProjectName, workspace: ws)
 

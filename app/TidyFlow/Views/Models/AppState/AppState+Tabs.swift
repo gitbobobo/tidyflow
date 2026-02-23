@@ -192,6 +192,10 @@ extension AppState {
 
     /// 创建终端并执行自定义命令
     func addTerminalWithCustomCommand(workspaceKey: String, command: CustomCommand) {
+        // 与 addTab 保持一致：若当前已有终端，立即触发 spawn，避免仅依赖视图 onChange 导致漏建会话
+        let existingTabs = workspaceTabs[workspaceKey] ?? []
+        let hasExistingTerminalTab = existingTabs.contains { $0.kind == .terminal }
+
         // 创建终端 tab，使用命令名称作为标题，命令内容存入 payload，命令图标用于 Tab 栏显示
         let newTab = TabModel(
             id: UUID(),
@@ -213,6 +217,22 @@ extension AppState {
             workspaceTerminalOpenTime[workspaceKey] = Date()
         }
 
-        // 终端视图会在 spawn 后检查 payload 并执行命令
+        // WebView 已就绪时，无论是否首个终端都主动请求 spawn；
+        // 配合 TerminalContentView 的 pendingSpawn 判重，避免重复 spawn。
+        if hasExistingTerminalTab || editorWebReady {
+            pendingSpawnTabs.insert(newTab.id)
+
+            let (rpcProject, rpcWorkspace): (String, String)
+            if let colonIdx = workspaceKey.firstIndex(of: ":") {
+                rpcProject = String(workspaceKey[..<colonIdx])
+                rpcWorkspace = String(workspaceKey[workspaceKey.index(after: colonIdx)...])
+            } else {
+                rpcProject = selectedProjectName
+                rpcWorkspace = workspaceKey
+            }
+            onTerminalSpawn?(newTab.id.uuidString, rpcProject, rpcWorkspace)
+        }
+
+        // 终端 ready 后由 handleTerminalReady 检查 payload 并执行命令
     }
 }

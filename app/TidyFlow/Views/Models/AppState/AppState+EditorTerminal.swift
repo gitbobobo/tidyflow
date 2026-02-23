@@ -3,6 +3,9 @@ import Foundation
 extension AppState {
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)
     func spawnTerminalWithCommand(workspaceKey: String, command: String) {
+        let existingTabs = workspaceTabs[workspaceKey] ?? []
+        let hasExistingTerminalTab = existingTabs.contains { $0.kind == .terminal }
+
         // Create a new terminal tab
         let newTab = TabModel(
             id: UUID(),
@@ -23,8 +26,23 @@ extension AppState {
             workspaceTerminalOpenTime[workspaceKey] = Date()
         }
 
-        // The terminal view will check payload and execute the command after spawn
-        // This is handled by the terminal bridge when it detects a non-empty payload
+        // WebView 已就绪时，无论是否首个终端都主动触发 spawn；
+        // 配合 TerminalContentView 的 pendingSpawn 判重，避免重复 spawn。
+        if hasExistingTerminalTab || editorWebReady {
+            pendingSpawnTabs.insert(newTab.id)
+
+            let (rpcProject, rpcWorkspace): (String, String)
+            if let colonIdx = workspaceKey.firstIndex(of: ":") {
+                rpcProject = String(workspaceKey[..<colonIdx])
+                rpcWorkspace = String(workspaceKey[workspaceKey.index(after: colonIdx)...])
+            } else {
+                rpcProject = selectedProjectName
+                rpcWorkspace = workspaceKey
+            }
+            onTerminalSpawn?(newTab.id.uuidString, rpcProject, rpcWorkspace)
+        }
+
+        // terminal ready 后由 handleTerminalReady 检查 payload 并执行命令
     }
     
     func addEditorTab(workspaceKey: String, path: String, line: Int? = nil) {
@@ -339,6 +357,9 @@ extension AppState {
 
     /// Handle terminal error event from WebBridge
     func handleTerminalError(tabId: String?, message: String) {
+        if let tabId = tabId, let uuid = UUID(uuidString: tabId) {
+            pendingSpawnTabs.remove(uuid)
+        }
         terminalState = .error(message: message)
         TFLog.app.error("Terminal error: \(message, privacy: .public)")
     }
