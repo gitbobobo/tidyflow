@@ -88,3 +88,35 @@ pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+    #[test]
+    fn stages_should_not_contain_bootstrap() {
+        // bootstrap 已从 STAGES 集合中移除，确保常量不包含该旧阶段
+        assert!(
+            !STAGES.contains(&"bootstrap"),
+            "STAGES 不应包含 bootstrap"
+        );
+    }
+
+    #[test]
+    fn stages_first_element_should_be_direction() {
+        // 第一个阶段必须是 direction（bootstrap 被移除后的起始阶段）
+        assert_eq!(
+            STAGES[0], "direction",
+            "STAGES 的第一个元素应为 direction"
+        );
+    }
+
+    #[test]
+    fn next_stage_with_unknown_stage_should_return_none() {
+        // 未知 stage 输入必须安全返回 None，不可 panic
+        assert_eq!(next_stage("unknown"), None);
+        assert_eq!(next_stage("bootstrap"), None);
+        assert_eq!(next_stage(""), None);
+    }
+}

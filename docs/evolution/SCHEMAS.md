@@ -20,7 +20,7 @@
 - `status`: enum
   - `pending | running | interrupted | completed | failed_exhausted | failed_system | cancelled`
 - `current_stage`: enum
-  - `bootstrap | direction | plan | implement | verify | judge | report`
+  - `direction | plan | implement | verify | judge | report`
 - `pipeline`: 固定阶段数组
 - `verify_iteration`: integer，`0..3`
 - `verify_iteration_limit`: integer，固定 `3`
@@ -37,7 +37,7 @@
 - `llm_defined_acceptance`: object
   - `criteria`: array
   - `minimum_evidence_policy`: object
-- `stage_files`: object，固定 7 个阶段文件名
+- `stage_files`: object，固定 6 个阶段文件名
 - `chat_map_file`: string
 - `evidence_index_file`: string
 - `handoff_file`: string
@@ -54,7 +54,7 @@
   "workspace": "default",
   "status": "running",
   "current_stage": "verify",
-  "pipeline": ["bootstrap", "direction", "plan", "implement", "verify", "judge", "report"],
+  "pipeline": ["direction", "plan", "implement", "verify", "judge", "report"],
   "verify_iteration": 2,
   "verify_iteration_limit": 3,
   "global_loop_round": 12,
@@ -77,7 +77,6 @@
     "minimum_evidence_policy": {"strategy": "llm_decided", "description": "..."}
   },
   "stage_files": {
-    "bootstrap": "stage.bootstrap.json",
     "direction": "stage.direction.json",
     "plan": "stage.plan.json",
     "implement": "stage.implement.json",
@@ -101,7 +100,7 @@
 
 - `$schema_version`: string
 - `cycle_id`: string
-- `stage`: enum `bootstrap|direction|plan|implement|verify|judge|report`
+- `stage`: enum `direction|plan|implement|verify|judge|report`
 - `agent`: string
 - `status`: enum `pending|running|blocked|done|failed|cancelled`
 - `inputs`: array

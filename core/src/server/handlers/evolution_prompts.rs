@@ -466,6 +466,15 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 5. 证据必须可复核，禁止伪造、禁止仅口头结论。
 6. 若发现实现与计划明显偏离，必须在结果中单列风险与影响。
 
+【前端/可视项目截图证据规则（必须执行）】
+- 执行验证前，必须读取 `direction.lifecycle_scan.json` 中的 `ui_capability` 字段。
+- 若 `ui_capability` 不为 `none`（即 `web|desktop|mobile|mixed`），则：
+  1. 必须检查 `evidence.index.json` 中是否存在 `type = "screenshot"` 的证据条目。
+  2. 若缺失截图证据，且 `llm_defined_acceptance.minimum_evidence_policy` 显式要求 `screenshot`，则对应验收标准必须判定为 `insufficient_evidence`，不得判定为 `pass`。
+  3. 若缺失截图证据，且未进行截图采集尝试，必须在 `defects_or_risks` 中新增一条 `severity = "high"` 的缺陷，标题为"前端项目缺少截图证据"，并在建议中列出具体截图采集方式（如 e2e 截图、手动截图）。
+  4. 截图证据类型必须使用 `"screenshot"`，与 `evidence.index.json` type 枚举保持一致；禁止使用 `"image"`、`"png"` 等非标准类型名。
+- 若 `ui_capability = "none"`，截图证据为可选项，不强制要求。
+
 【verify.result.json 结构要求】
 {
   "$schema_version": "1.0",
@@ -622,6 +631,16 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
    - 整体 `fail` 且 `verify_iteration >= verify_iteration_limit`：`next_action = stop_cycle`
    - 当触发 `verify_iteration >= verify_iteration_limit` 时，应在裁决理由或上下文中标记 `evo_verify_iteration_exhausted`。
 6. 裁决必须给出可执行建议：继续实现时列出修复重点；通过时列出发布前关注点。
+
+【前端/可视项目截图证据裁决规则（必须执行）】
+- 裁决前，必须从 `direction.lifecycle_scan.json` 读取 `ui_capability`。
+- 若 `ui_capability` 不为 `none`（即 `web|desktop|mobile|mixed`），则：
+  1. 必须检查 `evidence.index.json` 中 `type = "screenshot"` 的条目数量。
+  2. 若截图证据条目数为 0，且 `cycle.json.llm_defined_acceptance.minimum_evidence_policy` 中有截图要求，则：
+     - 相关验收标准裁决为 `insufficient_evidence`，不得裁决为 `pass`。
+     - 在 `focus_for_next_iteration` 中必须包含"补充前端截图证据"，并说明需覆盖的关键页面/状态。
+  3. 证据一致性校验（规则第2条）必须特别核查截图条目的 `linked_criteria_ids` 是否与验收标准对应；若截图与任何验收标准均无关联，视为弱证据并在 `evidence_consistency_check.issues` 中记录。
+- `evidence.index.json` 中截图证据的 `type` 字段必须为 `"screenshot"`，裁决时不接受其他类型名替代。
 
 【judge.result.json 结构要求】
 {
