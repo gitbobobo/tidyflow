@@ -148,6 +148,9 @@ struct AITabView: View {
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
         }
+        .onChange(of: currentSessionStatusSnapshot) { _, _ in
+            restartSessionStatusPollingIfNeeded()
+        }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
         }) { _ in
@@ -1250,20 +1253,63 @@ struct AITabView: View {
         )
     }
 
+    private func requestCurrentSessionMessages(limit: Int = 200) {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
+              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return }
+        appState.wsClient.requestAISessionMessages(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: appState.aiChatTool,
+            sessionId: sessionId,
+            limit: limit
+        )
+    }
+
+    private var currentSessionStatusSnapshot: AISessionStatusSnapshot? {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
+              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return nil }
+        let session = AISessionInfo(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: appState.aiChatTool,
+            id: sessionId,
+            title: "",
+            updatedAt: 0
+        )
+        return appState.aiSessionStatus(for: session)
+    }
+
+    private var shouldPollCurrentSession: Bool {
+        guard aiChatStore.currentSessionId != nil else { return false }
+        if aiChatStore.isStreaming || aiChatStore.awaitingUserEcho || aiChatStore.abortPendingSessionId != nil {
+            return true
+        }
+        return currentSessionStatusSnapshot?.isBusy == true
+    }
+
+    private var shouldSyncMessagesWhilePolling: Bool {
+        if aiChatStore.isStreaming || aiChatStore.awaitingUserEcho {
+            return true
+        }
+        return currentSessionStatusSnapshot?.isBusy == true
+    }
+
     private func restartSessionStatusPollingIfNeeded() {
         sessionStatusPollingTask?.cancel()
         sessionStatusPollingTask = nil
         guard aiChatStore.currentSessionId != nil else { return }
 
-        let shouldPoll = aiChatStore.isStreaming || aiChatStore.awaitingUserEcho || aiChatStore.abortPendingSessionId != nil
-        guard shouldPoll else { return }
+        guard shouldPollCurrentSession else { return }
 
         sessionStatusPollingTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
                 if Task.isCancelled { break }
                 await MainActor.run {
                     requestCurrentSessionStatus()
+                    if shouldSyncMessagesWhilePolling {
+                        requestCurrentSessionMessages(limit: 200)
+                    }
                 }
             }
         }
