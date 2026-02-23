@@ -42,7 +42,6 @@ struct CenterContentView: View {
         } // VStack
         .onAppear {
             setupBridgeCallbacks()
-            setupSaveNotification()
         }
         .alert("tabContent.unsavedChanges".localized, isPresented: $appState.showUnsavedChangesAlert) {
             Button("common.save".localized, role: nil) {
@@ -70,9 +69,9 @@ struct CenterContentView: View {
         }
     }
 
-    /// Whether to show WebView (editor, terminal, or diff tab is active and web is ready)
+    /// Whether to show WebView (terminal tab is active and web is ready)
     private var shouldShowWebView: Bool {
-        return webViewVisible && (appState.isActiveTabEditor || appState.isActiveTabTerminal || appState.isActiveTabDiff) && appState.editorWebReady
+        return webViewVisible && appState.isActiveTabTerminal && appState.editorWebReady
     }
 
     /// Setup WebBridge callbacks
@@ -87,18 +86,6 @@ struct CenterContentView: View {
                 if let port = appState?.coreProcessManager.currentPort {
                     webBridge?.setWsURL(port: port, token: appState?.coreProcessManager.wsAuthToken)
                 }
-            }
-        }
-
-        webBridge.onSaved = { [weak appState] path in
-            DispatchQueue.main.async {
-                appState?.handleEditorSaved(path: path)
-            }
-        }
-
-        webBridge.onSaveError = { [weak appState] path, message in
-            DispatchQueue.main.async {
-                appState?.handleEditorSaveError(path: path, message: message)
             }
         }
 
@@ -161,51 +148,7 @@ struct CenterContentView: View {
             webBridge.setWsURL(port: port, token: appState.coreProcessManager.wsAuthToken)
         }
 
-        // Phase C2-1: Diff callbacks (extended C2-1.5 for line navigation)
-        webBridge.onOpenFile = { [weak appState] workspace, path, line in
-            DispatchQueue.main.async {
-                guard let appState = appState else { return }
-                // Open file in editor tab with optional line
-                appState.addEditorTab(workspaceKey: workspace, path: path, line: line)
-            }
-        }
-
-        webBridge.onDiffError = { message in
-            DispatchQueue.main.async {
-                TFLog.bridge.error("Diff error: \(message, privacy: .public)")
-            }
-        }
-
-        // 编辑器 dirty 状态变化
-        webBridge.onDirtyStateChanged = { [weak appState] path, isDirty in
-            DispatchQueue.main.async {
-                appState?.updateEditorDirtyState(path: path, isDirty: isDirty)
-            }
-        }
-
-        // 编辑器 Tab 关闭时通知 JS 层清理缓存
-        appState.onEditorTabClose = { [weak webBridge] path in
-            webBridge?.closeEditorTab(path: path)
-        }
-
-        // 文件在磁盘上发生变化时通知 JS 层
-        appState.onEditorFileChanged = { [weak webBridge] project, workspace, paths, isDirtyFlags, kind in
-            webBridge?.notifyFileChanged(project: project, workspace: workspace, paths: paths, isDirtyFlags: isDirtyFlags, kind: kind)
-        }
-    }
-
-    /// Setup notification listener for save command
-    private func setupSaveNotification() {
-        NotificationCenter.default.addObserver(
-            forName: .saveEditorFile,
-            object: nil,
-            queue: .main
-        ) { [weak appState, webBridge] notification in
-            guard let path = notification.object as? String,
-                  let ws = appState?.selectedWorkspaceKey,
-                  let project = appState?.selectedProjectName else { return }
-
-            webBridge.saveFile(project: project, workspace: ws, path: path)
-        }
+        appState.onEditorTabClose = nil
+        appState.onEditorFileChanged = nil
     }
 }

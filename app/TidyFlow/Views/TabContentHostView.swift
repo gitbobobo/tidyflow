@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct TabContentHostView: View {
     @EnvironmentObject var appState: AppState
@@ -14,7 +15,7 @@ struct TabContentHostView: View {
               let tabs = appState.workspaceTabs[globalKey],
               let tab = tabs.first(where: { $0.id == activeId })
         else { return false }
-        return tab.kind == .terminal || tab.kind == .editor || tab.kind == .diff
+        return tab.kind == .terminal
     }
 
     var body: some View {
@@ -45,16 +46,14 @@ struct TabContentHostView: View {
                             webViewVisible: $webViewVisible
                         )
                     case .editor:
-                        EditorContentView(
+                        NativeEditorContentView(
                             path: activeTab.payload,
-                            webBridge: webBridge,
                             webViewVisible: $webViewVisible
                         )
                         .id(activeTab.payload) // 不同 path 视为不同 View，确保切换时触发 onAppear
                     case .diff:
-                        DiffContentView(
+                        NativeDiffContentView(
                             path: activeTab.payload,
-                            webBridge: webBridge,
                             webViewVisible: $webViewVisible
                         )
                     case .settings:
@@ -175,14 +174,7 @@ struct TerminalContentView: View {
         }
         .onDisappear {
             // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
-            // 如果下一个活跃 tab 仍是终端，跳过模式切换，避免 terminal→editor→terminal 闪烁
-            if appState.editorWebReady {
-                if let nextTab = appState.getActiveTab(), nextTab.kind == .terminal {
-                    // 终端间切换，不切换模式
-                } else {
-                    webBridge.enterMode("editor")
-                }
-            }
+            // Web 侧已 terminal-only，无需在离开时切回 editor 模式
         }
         .onChange(of: appState.editorWebReady) { _, ready in
             if ready {
@@ -321,93 +313,72 @@ struct TerminalStatusBar: View {
     }
 }
 
-// MARK: - Editor Content View (WebView + Status Bar)
+// MARK: - 原生 Editor Content View
 
-struct EditorContentView: View {
+struct NativeEditorContentView: View {
     let path: String
-    let webBridge: WebBridge
     @Binding var webViewVisible: Bool
     @EnvironmentObject var appState: AppState
+    @State private var highlightedLine: Int?
 
     var body: some View {
         VStack(spacing: 0) {
-            // WebView container (managed by parent CenterContentView)
-            // This view just shows the status bar overlay
-            ZStack {
-                // Placeholder shown while WebView loads
-                if !appState.editorWebReady {
-                    VStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Loading editor...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+            Group {
+                if let globalKey = appState.currentGlobalWorkspaceKey,
+                   let doc = appState.getEditorDocument(globalWorkspaceKey: globalKey, path: path) {
+                    switch doc.status {
+                    case .loading:
+                        ProgressView("Loading editor...")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .error(let message):
+                        Text(message)
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .idle, .ready:
+                        NativeCodeEditorView(
+                            text: editorBinding(globalKey: globalKey),
+                            highlightedLine: $highlightedLine
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(NSColor.textBackgroundColor))
                 } else {
-                    // WebView is visible and ready - show transparent overlay
-                    Color.clear
+                    ProgressView("Loading editor...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Status bar
             EditorStatusBar(path: path)
         }
         .onAppear {
-            webViewVisible = true
-            // 延后到下一 run loop 再发，确保 activeTabIdByWorkspace 已更新（避免切换 tab 时 guard 读到旧值）
-            if appState.editorWebReady {
-                DispatchQueue.main.async { sendOpenFile() }
-            }
+            webViewVisible = false
+            openDocumentIfNeeded(force: false)
+            consumePendingRevealIfNeeded()
         }
-        .onDisappear {
-            // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
+        .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
+            openDocumentIfNeeded(force: true)
         }
-        .onChange(of: appState.editorWebReady) { _, ready in
-            if ready {
-                DispatchQueue.main.async { sendOpenFile() }
-            }
-        }
-        .onChange(of: path) { _, newPath in
-            if appState.editorWebReady {
-                DispatchQueue.main.async { sendOpenFile() }
-            }
-        }
-        .onChange(of: appState.currentGlobalWorkspaceKey) { _, newGlobalKey in
-            // 当全局工作空间键切换时（包括项目切换），重新加载编辑器内容
-            // 即使文件路径相同，不同工作空间的文件内容可能不同
-            guard newGlobalKey != nil else { return }
-            guard appState.editorWebReady else { return }
-            DispatchQueue.main.async { sendOpenFile() }
+        .onChange(of: appState.pendingEditorReveal?.path) { _, _ in
+            consumePendingRevealIfNeeded()
         }
     }
 
-    private func sendOpenFile() {
-        guard let ws = appState.selectedWorkspaceKey else { return }
-        // 仅当当前活跃的 editor tab 仍是本 path 时才发送，避免切换 tab 后旧视图仍触发 sendOpenFile 导致乱序
-        guard appState.getActiveTab()?.kind == .editor && appState.getActiveTab()?.payload == path else { return }
-        // 先切换到编辑器模式，否则 Web 端可能仍在 terminal/diff 模式，编辑器 pane 被隐藏
-        webBridge.enterMode("editor", project: appState.selectedProjectName, workspace: ws)
-        webBridge.openFile(
-            project: appState.selectedProjectName,
-            workspace: ws,
-            path: path
+    private func editorBinding(globalKey: String) -> Binding<String> {
+        Binding(
+            get: { appState.getEditorDocument(globalWorkspaceKey: globalKey, path: path)?.content ?? "" },
+            set: { appState.updateEditorDocumentContent(globalWorkspaceKey: globalKey, path: path, content: $0) }
         )
-        appState.lastEditorPath = path
+    }
 
-        // Phase C2-1.5: Check for pending line reveal
-        if let reveal = appState.pendingEditorReveal, reveal.path == path {
-            // Delay slightly to ensure file is loaded
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak appState, weak webBridge] in
-                guard let appState = appState, let webBridge = webBridge else { return }
-                if let reveal = appState.pendingEditorReveal, reveal.path == path {
-                    webBridge.editorRevealLine(path: reveal.path, line: reveal.line, highlightMs: reveal.highlightMs)
-                    appState.pendingEditorReveal = nil
-                }
-            }
-        }
+    private func openDocumentIfNeeded(force: Bool) {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        guard appState.getActiveTab()?.kind == .editor, appState.getActiveTab()?.payload == path else { return }
+        appState.openEditorDocument(project: appState.selectedProjectName, workspace: ws, path: path, force: force)
+        appState.lastEditorPath = path
+    }
+
+    private func consumePendingRevealIfNeeded() {
+        guard let reveal = appState.pendingEditorReveal, reveal.path == path else { return }
+        highlightedLine = reveal.line
+        appState.pendingEditorReveal = nil
     }
 }
 
@@ -429,7 +400,26 @@ struct EditorStatusBar: View {
             Spacer()
 
             // Status indicator
-            if !appState.editorStatus.isEmpty {
+            if let globalKey = appState.currentGlobalWorkspaceKey,
+               let context = appState.lastDiffNavigationContext,
+               context.workspaceKey == globalKey,
+               context.path == path {
+                Button("返回 Diff") {
+                    appState.addDiffTab(workspaceKey: context.workspaceKey, path: context.path, mode: context.mode)
+                }
+                .buttonStyle(.borderless)
+            } else if let globalKey = appState.currentGlobalWorkspaceKey,
+               let doc = appState.getEditorDocument(globalWorkspaceKey: globalKey, path: path),
+               doc.conflictState != .none {
+                Text(doc.conflictState == .deletedOnDisk ? "文件已被删除" : "磁盘内容已变更")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+                Button("重新加载") {
+                    guard let workspace = appState.selectedWorkspaceKey else { return }
+                    appState.reloadEditorDocument(project: appState.selectedProjectName, workspace: workspace, path: path)
+                }
+                .buttonStyle(.borderless)
+            } else if !appState.editorStatus.isEmpty {
                 Text(appState.editorStatus)
                     .font(.system(size: 11))
                     .foregroundColor(appState.editorStatusIsError ? .red : .green)
@@ -441,12 +431,10 @@ struct EditorStatusBar: View {
     }
 }
 
-// MARK: - Phase C2-1: Diff Content View (WebView + Mode Toggle)
-// WebView-based Diff View
+// MARK: - 原生 Diff Content View
 
-struct DiffContentView: View {
+struct NativeDiffContentView: View {
     let path: String
-    let webBridge: WebBridge
     @Binding var webViewVisible: Bool
     @EnvironmentObject var appState: AppState
 
@@ -454,74 +442,134 @@ struct DiffContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Diff toolbar with mode toggle
             DiffToolbar(currentMode: $currentMode, onModeChange: handleModeChange)
-
-            // WebView container
-            ZStack {
-                if !appState.editorWebReady {
-                    VStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Loading diff viewer...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(NSColor.textBackgroundColor))
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Status bar
+            diffBody
             DiffStatusBar(path: path, mode: currentMode)
         }
         .onAppear {
-            webViewVisible = true
-            // Initialize mode from tab
+            webViewVisible = false
             currentMode = appState.activeDiffMode
-            if appState.editorWebReady {
-                sendDiffOpen()
-            }
+            requestDiff()
         }
-        .onChange(of: appState.editorWebReady) { _, ready in
-            if ready {
-                sendDiffOpen()
+        .onChange(of: path) { _, _ in requestDiff() }
+        .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in requestDiff() }
+    }
+
+    @ViewBuilder
+    private var diffBody: some View {
+        if let ws = appState.selectedWorkspaceKey,
+           let cache = appState.gitCache.getDiffCache(workspaceKey: ws, path: path, mode: currentMode) {
+            if cache.isLoading {
+                ProgressView("Loading diff...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let err = cache.error {
+                Text(err).foregroundColor(.red)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if cache.isBinary {
+                Text("Binary file cannot be previewed")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(cache.parsedLines) { line in
+                            DiffLineRowView(line: line) {
+                                if let target = line.targetLine {
+                                    openEditorAtLine(target)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        .onChange(of: path) { _, _ in
-            if appState.editorWebReady {
-                sendDiffOpen()
-            }
+        } else {
+            ProgressView("Loading diff...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private func sendDiffOpen() {
+    private func requestDiff() {
         guard let ws = appState.selectedWorkspaceKey else { return }
-        webBridge.enterMode("diff")
-        webBridge.diffOpen(
-            project: appState.selectedProjectName,
-            workspace: ws,
-            path: path,
-            mode: currentMode.rawValue
-        )
+        appState.gitCache.fetchGitDiff(workspaceKey: ws, path: path, mode: currentMode)
     }
 
     private func handleModeChange(_ newMode: DiffMode) {
         guard newMode != currentMode else { return }
         currentMode = newMode
         appState.setActiveDiffMode(newMode)
+        requestDiff()
+    }
 
-        // Send the command to WebView
-        guard let ws = appState.selectedWorkspaceKey else { return }
-        webBridge.diffOpen(
-            project: appState.selectedProjectName,
-            workspace: ws,
+    private func openEditorAtLine(_ line: Int) {
+        guard let global = appState.currentGlobalWorkspaceKey else { return }
+        appState.lastDiffNavigationContext = DiffNavigationContext(
+            workspaceKey: global,
             path: path,
-            mode: newMode.rawValue
+            mode: currentMode
         )
+        appState.addEditorTab(workspaceKey: global, path: path, line: line)
+    }
+}
+
+struct DiffLineRowView: View {
+    let line: DiffLine
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(line.oldLineNumber.map { String($0) } ?? "")
+                .frame(width: 50, alignment: .trailing)
+                .foregroundColor(.secondary)
+                .font(.system(size: 11, design: .monospaced))
+            Text(line.newLineNumber.map { String($0) } ?? "")
+                .frame(width: 50, alignment: .trailing)
+                .foregroundColor(.secondary)
+                .font(.system(size: 11, design: .monospaced))
+            Text(prefix(for: line.kind))
+                .foregroundColor(color(for: line.kind))
+                .font(.system(size: 11, design: .monospaced))
+            Text(line.text)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(background(for: line.kind))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if line.isNavigable {
+                onOpen()
+            }
+        }
+    }
+
+    private func prefix(for kind: DiffLineKind) -> String {
+        switch kind {
+        case .add: return "+"
+        case .del: return "-"
+        case .context: return " "
+        case .hunk: return "@@"
+        case .header: return " "
+        }
+    }
+
+    private func color(for kind: DiffLineKind) -> Color {
+        switch kind {
+        case .add: return .green
+        case .del: return .red
+        case .hunk: return .blue
+        default: return .secondary
+        }
+    }
+
+    private func background(for kind: DiffLineKind) -> Color {
+        switch kind {
+        case .add: return Color.green.opacity(0.10)
+        case .del: return Color.red.opacity(0.10)
+        case .hunk: return Color.blue.opacity(0.08)
+        default: return Color.clear
+        }
     }
 }
 
@@ -555,6 +603,115 @@ struct DiffToolbar: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
+struct NativeCodeEditorView: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var highlightedLine: Int?
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: NativeCodeEditorView
+        weak var textView: NSTextView?
+        var suppressChange = false
+        var highlightedRange: NSRange?
+
+        init(parent: NativeCodeEditorView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard !suppressChange, let textView else { return }
+            parent.text = textView.string
+        }
+
+        func reveal(line: Int) {
+            guard line > 0, let textView else { return }
+            let ns = textView.string as NSString
+            var target = 0
+            var currentLine = 1
+            while target < ns.length && currentLine < line {
+                if ns.character(at: target) == 10 {
+                    currentLine += 1
+                }
+                target += 1
+            }
+            textView.setSelectedRange(NSRange(location: min(target, ns.length), length: 0))
+            textView.scrollRangeToVisible(NSRange(location: min(target, ns.length), length: 0))
+
+            if let storage = textView.textStorage {
+                if let old = highlightedRange {
+                    storage.removeAttribute(.backgroundColor, range: old)
+                }
+                let lineEnd = lineEndIndex(ns: ns, start: target)
+                let range = NSRange(location: target, length: max(0, lineEnd - target))
+                highlightedRange = range
+                storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.25), range: range)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self, let storage = textView.textStorage, let old = self.highlightedRange else { return }
+                    storage.removeAttribute(.backgroundColor, range: old)
+                    self.highlightedRange = nil
+                }
+            }
+        }
+
+        private func lineEndIndex(ns: NSString, start: Int) -> Int {
+            var index = start
+            while index < ns.length {
+                if ns.character(at: index) == 10 { break }
+                index += 1
+            }
+            return index
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        let textView = NSTextView()
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.backgroundColor = NSColor.textBackgroundColor
+        textView.textColor = NSColor.textColor
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = false
+        textView.string = text
+        textView.delegate = context.coordinator
+        context.coordinator.textView = textView
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        context.coordinator.parent = self
+        if textView.string != text {
+            context.coordinator.suppressChange = true
+            textView.string = text
+            context.coordinator.suppressChange = false
+        }
+        if let line = highlightedLine {
+            context.coordinator.reveal(line: line)
+            DispatchQueue.main.async {
+                self.highlightedLine = nil
+            }
+        }
     }
 }
 

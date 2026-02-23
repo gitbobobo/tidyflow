@@ -75,6 +75,7 @@ final class AppStateFileMessageHandlerAdapter: FileMessageHandler {
         self.appState = appState
     }
 
+    func handleFileReadResult(_ result: FileReadResult) { appState?.handleFileReadResult(result) }
     func handleFileIndexResult(_ result: FileIndexResult) { appState?.handleFileIndexResult(result) }
     func handleFileListResult(_ result: FileListResult) { appState?.handleFileListResult(result) }
     func handleFileRenameResult(_ result: FileRenameResult) { appState?.handleFileRenameResult(result) }

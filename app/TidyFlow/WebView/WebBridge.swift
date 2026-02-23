@@ -5,28 +5,19 @@ import AppKit
 import os
 
 /// Bridge protocol for Native <-> Web communication
-/// Native -> Web: tidyflow:open_file, tidyflow:save_file, tidyflow:enter_mode, tidyflow:terminal_ensure
-/// Web -> Native: tidyflow:ready, tidyflow:saved, tidyflow:save_error, tidyflow:terminal_ready, tidyflow:terminal_error
+/// Native -> Web: tidyflow:enter_mode(terminal), tidyflow:terminal_ensure
+/// Web -> Native: tidyflow:ready, tidyflow:terminal_ready, tidyflow:terminal_error
 class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
     private weak var webView: WKWebView?
 
     // Callbacks for Web -> Native events
     var onReady: (([String: Any]) -> Void)?
-    var onSaved: ((String) -> Void)?
-    var onSaveError: ((String, String) -> Void)?
 
     // Phase C1-2: Terminal callbacks (with tabId)
     var onTerminalReady: ((String, String, String, String) -> Void)?  // tabId, session_id, project, workspace
     var onTerminalClosed: ((String, String, Int?) -> Void)?  // tabId, session_id, code
     var onTerminalError: ((String?, String) -> Void)?  // tabId (optional), error message
     var onTerminalConnected: (() -> Void)?
-
-    // Phase C2-1: Diff callbacks
-    var onOpenFile: ((String, String, Int?) -> Void)?  // workspace, path, line (optional)
-    var onDiffError: ((String) -> Void)?  // error message
-
-    // 编辑器 dirty 状态变化回调
-    var onDirtyStateChanged: ((String, Bool) -> Void)?  // path, isDirty
 
     // State
     private(set) var isWebReady = false
@@ -59,16 +50,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
             // Flush pending events
             flushPendingEvents()
 
-        case "saved":
-            if let path = body["path"] as? String {
-                onSaved?(path)
-            }
-
-        case "save_error":
-            let path = body["path"] as? String ?? ""
-            let errorMsg = body["message"] as? String ?? "Unknown error"
-            onSaveError?(path, errorMsg)
-
         // Phase C1-2: Terminal events (with tabId)
         case "terminal_ready":
             let tabId = body["tab_id"] as? String ?? ""
@@ -91,17 +72,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         case "terminal_connected":
             onTerminalConnected?()
 
-        // Phase C2-1: Diff callbacks
-        case "open_file_request":
-            let workspace = body["workspace"] as? String ?? ""
-            let path = body["path"] as? String ?? ""
-            let line = body["line"] as? Int
-            onOpenFile?(workspace, path, line)
-
-        case "diff_error":
-            let errorMsg = body["message"] as? String ?? "Unknown diff error"
-            onDiffError?(errorMsg)
-
         // 剪贴板操作：终端选中文字自动复制
         case "clipboard_copy":
             if let text = body["text"] as? String, !text.isEmpty {
@@ -115,12 +85,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
                let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)
             }
-
-        // 编辑器 dirty 状态变化
-        case "dirty_state_changed":
-            let path = body["path"] as? String ?? ""
-            let isDirty = body["isDirty"] as? Bool ?? false
-            onDirtyStateChanged?(path, isDirty)
 
         default:
             TFLog.bridge.warning("Unknown message type: \(type, privacy: .public)")
@@ -199,52 +163,9 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
         }
     }
 
-    func openFile(project: String, workspace: String, path: String) {
-        send(type: "open_file", payload: [
-            "project": project,
-            "workspace": workspace,
-            "path": path
-        ])
-    }
-
-    // Phase C2-1.5: Reveal line in editor with highlight
-    func editorRevealLine(path: String, line: Int, highlightMs: Int = 2000) {
-        send(type: "editor_reveal_line", payload: [
-            "path": path,
-            "line": line,
-            "highlightMs": highlightMs
-        ])
-    }
-
-    func saveFile(project: String, workspace: String, path: String) {
-        send(type: "save_file", payload: [
-            "project": project,
-            "workspace": workspace,
-            "path": path
-        ])
-    }
-
-    /// 通知 JS 层关闭编辑器 Tab（清理 CodeMirror 缓存）
-    func closeEditorTab(path: String) {
-        send(type: "close_editor_tab", payload: [
-            "path": path
-        ])
-    }
-
-    /// 通知 JS 层文件在磁盘上发生变化
-    func notifyFileChanged(project: String, workspace: String, paths: [String], isDirtyFlags: [Bool], kind: String) {
-        send(type: "file_changed", payload: [
-            "project": project,
-            "workspace": workspace,
-            "paths": paths,
-            "isDirtyFlags": isDirtyFlags,
-            "kind": kind
-        ])
-    }
-
     // MARK: - Phase C1-2: Terminal Methods (Multi-Session)
 
-    /// Enter a specific mode (editor or terminal)
+    /// Enter terminal mode
     func enterMode(_ mode: String, project: String? = nil, workspace: String? = nil) {
         var payload: [String: Any] = ["mode": mode]
         if let project = project {
@@ -330,25 +251,6 @@ class WebBridge: NSObject, WKScriptMessageHandler, ObservableObject {
                 TFLog.bridge.error("refreshAllTerminals error: \(error.localizedDescription, privacy: .public)")
             }
         }
-    }
-
-    // MARK: - Phase C2-1: Diff Methods
-
-    /// Open a diff view for a file
-    func diffOpen(project: String, workspace: String, path: String, mode: String) {
-        send(type: "diff_open", payload: [
-            "project": project,
-            "workspace": workspace,
-            "path": path,
-            "mode": mode
-        ])
-    }
-
-    /// Set diff mode (working/staged) for current diff
-    func diffSetMode(mode: String) {
-        send(type: "diff_set_mode", payload: [
-            "mode": mode
-        ])
     }
 
     // MARK: - Bridge Script Injection

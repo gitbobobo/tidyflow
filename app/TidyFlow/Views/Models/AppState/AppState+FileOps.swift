@@ -81,6 +81,117 @@ extension AppState {
         let paths = affectedTabs.map { $0.payload }
         let dirtyFlags = affectedTabs.map { $0.isDirty }
         onEditorFileChanged?(notification.project, notification.workspace, paths, dirtyFlags, notification.kind)
+
+        for tab in affectedTabs {
+            updateEditorConflictState(
+                workspaceKey: globalKey,
+                path: tab.payload,
+                kind: notification.kind,
+                isDirty: tab.isDirty
+            )
+        }
+    }
+
+    // MARK: - 原生编辑器文档读写
+
+    private func editorRequestKey(project: String, workspace: String, path: String) -> EditorRequestKey {
+        EditorRequestKey(project: project, workspace: workspace, path: path)
+    }
+
+    private func contentHash(_ content: String) -> Int {
+        content.hashValue
+    }
+
+    func getEditorDocument(globalWorkspaceKey: String, path: String) -> EditorDocumentState? {
+        editorDocumentsByWorkspace[globalWorkspaceKey]?[path]
+    }
+
+    func updateEditorDocumentContent(globalWorkspaceKey: String, path: String, content: String) {
+        guard var workspaceDocs = editorDocumentsByWorkspace[globalWorkspaceKey],
+              var doc = workspaceDocs[path] else { return }
+        doc.content = content
+        doc.isDirty = contentHash(content) != doc.originalContentHash
+        doc.conflictState = .none
+        workspaceDocs[path] = doc
+        editorDocumentsByWorkspace[globalWorkspaceKey] = workspaceDocs
+        updateEditorDirtyState(path: path, isDirty: doc.isDirty)
+    }
+
+    func reloadEditorDocument(project: String, workspace: String, path: String) {
+        openEditorDocument(project: project, workspace: workspace, path: path, force: true)
+    }
+
+    func openEditorDocument(project: String, workspace: String, path: String, force: Bool = false) {
+        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+        if !force, let existing = workspaceDocs[path], existing.status == .ready {
+            return
+        }
+        workspaceDocs[path] = .loading(path: path)
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+
+        let key = editorRequestKey(project: project, workspace: workspace, path: path)
+        pendingFileReadRequests.insert(key)
+        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+    }
+
+    func saveEditorDocument(project: String, workspace: String, path: String) {
+        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
+        guard let doc = getEditorDocument(globalWorkspaceKey: globalKey, path: path) else { return }
+
+        lastEditorPath = path
+        editorStatus = "Saving..."
+        editorStatusIsError = false
+        let key = editorRequestKey(project: project, workspace: workspace, path: path)
+        pendingFileWriteRequests.insert(key)
+        let data = Data(doc.content.utf8)
+        wsClient.requestFileWrite(project: project, workspace: workspace, path: path, content: data)
+    }
+
+    func handleFileReadResult(_ result: FileReadResult) {
+        let key = editorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
+        guard pendingFileReadRequests.contains(key) else {
+            return
+        }
+        pendingFileReadRequests.remove(key)
+
+        let content = String(decoding: result.content, as: UTF8.self)
+        let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+        var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+        workspaceDocs[result.path] = EditorDocumentState(
+            path: result.path,
+            content: content,
+            originalContentHash: contentHash(content),
+            isDirty: false,
+            lastLoadedAt: Date(),
+            status: .ready,
+            conflictState: .none
+        )
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+        updateEditorDirtyState(path: result.path, isDirty: false)
+    }
+
+    private func updateEditorConflictState(workspaceKey: String, path: String, kind: String, isDirty: Bool) {
+        guard var workspaceDocs = editorDocumentsByWorkspace[workspaceKey],
+              var doc = workspaceDocs[path] else { return }
+
+        if kind == "delete" {
+            doc.conflictState = .deletedOnDisk
+            workspaceDocs[path] = doc
+            editorDocumentsByWorkspace[workspaceKey] = workspaceDocs
+            return
+        }
+
+        if isDirty {
+            doc.conflictState = .changedOnDisk
+            workspaceDocs[path] = doc
+            editorDocumentsByWorkspace[workspaceKey] = workspaceDocs
+            return
+        }
+
+        let parts = workspaceKey.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        openEditorDocument(project: parts[0], workspace: parts[1], path: path, force: true)
     }
 
     // MARK: - 文件列表 API
@@ -273,10 +384,37 @@ extension AppState {
 
     /// 处理文件写入结果
     func handleFileWriteResult(_ result: FileWriteResult) {
+        let key = editorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
+        if pendingFileWriteRequests.contains(key) {
+            pendingFileWriteRequests.remove(key)
+            handleEditorFileWriteResult(result)
+            return
+        }
+
         if result.success {
             refreshFileList()
         } else {
             TFLog.app.error("新建文件失败: \(result.path, privacy: .public)")
+        }
+    }
+
+    private func handleEditorFileWriteResult(_ result: FileWriteResult) {
+        let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+        if result.success {
+            if var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+               var doc = workspaceDocs[result.path] {
+                doc.originalContentHash = contentHash(doc.content)
+                doc.isDirty = false
+                doc.lastLoadedAt = Date()
+                doc.status = .ready
+                doc.conflictState = .none
+                workspaceDocs[result.path] = doc
+                editorDocumentsByWorkspace[globalKey] = workspaceDocs
+            }
+            handleEditorSaved(path: result.path)
+            refreshFileList()
+        } else {
+            handleEditorSaveError(path: result.path, message: "保存失败")
         }
     }
 

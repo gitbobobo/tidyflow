@@ -172,15 +172,11 @@ extension AppState {
 
     /// Save the active editor file (called by Cmd+S)
     func saveActiveEditorFile() {
-        guard let path = activeEditorPath else {
+        guard let path = activeEditorPath,
+              let workspace = selectedWorkspaceKey else {
             return
         }
-        // The actual save is triggered via WebBridge in CenterContentView
-        // This just sets the intent; the view will handle the bridge call
-        lastEditorPath = path
-        editorStatus = "Saving..."
-        editorStatusIsError = false
-        NotificationCenter.default.post(name: .saveEditorFile, object: path)
+        saveEditorDocument(project: selectedProjectName, workspace: workspace, path: path)
     }
 
     /// Update editor status after save result
@@ -225,11 +221,12 @@ extension AppState {
               let tab = tabs.first(where: { $0.id == tabId }),
               tab.kind == .editor else { return }
         pendingCloseAfterSave = (workspaceKey: workspaceKey, tabId: tabId)
-        // 触发保存
-        lastEditorPath = tab.payload
-        editorStatus = "Saving..."
-        editorStatusIsError = false
-        NotificationCenter.default.post(name: .saveEditorFile, object: tab.payload)
+        let parts = workspaceKey.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else {
+            pendingCloseAfterSave = nil
+            return
+        }
+        saveEditorDocument(project: parts[0], workspace: parts[1], path: tab.payload)
     }
 
     /// Check if active tab is a diff tab
