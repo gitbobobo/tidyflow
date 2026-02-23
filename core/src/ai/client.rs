@@ -2029,7 +2029,11 @@ impl AiAgent for OpenCodeAgent {
                         _ => None,
                     }
                 }
-                Err(e) => Some(Err(e.to_string())),
+                // Lagged 错误只记录日志，继续处理后续事件（不中断流）
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    tracing::warn!("OpenCode event hub lagged by {} messages, continuing...", n);
+                    None
+                }
             }
         });
 
@@ -2408,7 +2412,11 @@ impl AiAgent for OpenCodeAgent {
                         _ => None,
                     }
                 }
-                Err(e) => Some(Err(e.to_string())),
+                // Lagged 错误只记录日志，继续处理后续事件（不中断流）
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    tracing::warn!("OpenCode event hub lagged by {} messages, continuing...", n);
+                    None
+                }
             }
         });
 

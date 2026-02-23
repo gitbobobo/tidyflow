@@ -111,6 +111,8 @@ struct MessageListView: View {
                 return true
             case .file:
                 return true
+            case .compaction:
+                return true
             case .text, .reasoning:
                 return !(part.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
             }
@@ -520,6 +522,11 @@ private struct MessageBubble: View, Equatable {
             }
         case .file:
             filePartView(part)
+        case .compaction:
+            Label("上下文压缩中", systemImage: "arrow.triangle.2.circlepath")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         case .tool:
             let requestId = questionRequestId(from: part)
             let pendingQuestion = questionRequestResolver(
@@ -675,6 +682,8 @@ private struct MessageBubble: View, Equatable {
             case .file:
                 let name = part.filename ?? "attachment"
                 lines.append("[附件] \(name)")
+            case .compaction:
+                lines.append("[系统] 上下文压缩中")
             case .tool:
                 let toolName = part.toolName ?? "tool"
                 lines.append("[工具] \(toolName)")

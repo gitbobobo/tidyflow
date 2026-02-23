@@ -46,6 +46,7 @@ enum AIChatPartKind: String {
     case reasoning
     case tool
     case file
+    case compaction
 }
 
 struct AIChatPart: Identifiable {
