@@ -124,6 +124,7 @@ pub(super) async fn handle_socket(
         &conn_meta,
         &remote_sub_registry,
         &runtime.handler_ctx,
+        &runtime.handler_ctx.ai_state,
     )
     .await;
 }

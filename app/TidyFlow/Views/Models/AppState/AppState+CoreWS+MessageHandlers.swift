@@ -165,6 +165,7 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     func handleAIProviderList(_ ev: AIProviderListResult) { appState?.handleAIProviderList(ev) }
     func handleAIAgentList(_ ev: AIAgentListResult) { appState?.handleAIAgentList(ev) }
     func handleAISlashCommands(_ ev: AISlashCommandsResult) { appState?.handleAISlashCommands(ev) }
+    func handleAISessionSubscribeAck() { appState?.handleAISessionSubscribeAck() }
 }
 
 final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {

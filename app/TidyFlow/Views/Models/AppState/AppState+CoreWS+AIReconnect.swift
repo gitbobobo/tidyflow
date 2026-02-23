@@ -99,7 +99,7 @@ extension AppState {
         }
 
         let store = aiStore(for: aiTool)
-        guard store.currentSessionId == sessionId else { return }
+        guard store.subscribedSessionIds.contains(sessionId) else { return }
 
         let hasLocalStreamingState =
             store.isStreaming ||
@@ -140,6 +140,12 @@ extension AppState {
             guard let sessionId = store.currentSessionId, !sessionId.isEmpty else { continue }
             TFLog.app.info(
                 "AI reconnect reload: request session messages, tool=\(tool.rawValue, privacy: .public), session_id=\(sessionId, privacy: .public)"
+            )
+            wsClient.requestAISessionSubscribe(
+                project: selectedProjectName,
+                workspace: workspace,
+                aiTool: tool.rawValue,
+                sessionId: sessionId
             )
             wsClient.requestAISessionMessages(
                 projectName: selectedProjectName,

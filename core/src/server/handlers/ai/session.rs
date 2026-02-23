@@ -539,3 +539,77 @@ pub(super) async fn handle_ai_slash_commands(
 
     Ok(true)
 }
+
+pub(super) async fn handle_ai_session_subscribe(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    conn_id: &str,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionSubscribe {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let key = stream_key(&ai_tool, &directory, session_id);
+
+    {
+        let mut ai = ai_state.lock().await;
+        ai.session_subscriptions
+            .entry(conn_id.to_string())
+            .or_default()
+            .insert(key.clone());
+    }
+
+    send_message(
+        socket,
+        &ServerMessage::AISessionSubscribeAck {
+            session_id: session_id.clone(),
+            session_key: key,
+        },
+    )
+    .await?;
+
+    Ok(true)
+}
+
+pub(super) async fn handle_ai_session_unsubscribe(
+    msg: &ClientMessage,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    conn_id: &str,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionUnsubscribe {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let key = stream_key(&ai_tool, &directory, session_id);
+
+    {
+        let mut ai = ai_state.lock().await;
+        if let Some(keys) = ai.session_subscriptions.get_mut(conn_id) {
+            keys.remove(&key);
+            if keys.is_empty() {
+                ai.session_subscriptions.remove(conn_id);
+            }
+        }
+    }
+
+    Ok(true)
+}

@@ -89,6 +89,20 @@ pub(crate) async fn handle_session_routes(
     Ok(false)
 }
 
+pub(crate) async fn handle_subscription_routes(
+    client_msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    conn_id: &str,
+) -> Result<bool, String> {
+    dispatch_handlers!(
+        session::handle_ai_session_subscribe(client_msg, socket, app_state, ai_state, conn_id),
+        session::handle_ai_session_unsubscribe(client_msg, app_state, ai_state, conn_id),
+    );
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::server::handlers::dispatch_handlers;

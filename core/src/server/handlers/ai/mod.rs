@@ -50,6 +50,7 @@ pub async fn handle_ai_message(
             origin_conn_id,
         ),
         route::handle_session_routes(client_msg, socket, app_state, ai_state),
+        route::handle_subscription_routes(client_msg, socket, app_state, ai_state, origin_conn_id),
     );
 
     Ok(false)

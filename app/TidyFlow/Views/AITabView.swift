@@ -27,7 +27,6 @@ struct AITabView: View {
     /// 当前轮是否检测到 Codex proposed plan（用于 turn 完成后弹出实现确认）
     @State private var sawCodexPlanProposalInCurrentTurn: Bool = false
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
-    @State private var sessionStatusPollingTask: Task<Void, Never>?
     @State private var presentedSubAgentSession: SubAgentSessionRoute?
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
@@ -66,11 +65,8 @@ struct AITabView: View {
         .onAppear {
             restoreAIContextOnAppear()
             requestCurrentSessionStatus()
-            restartSessionStatusPollingIfNeeded()
         }
         .onDisappear {
-            sessionStatusPollingTask?.cancel()
-            sessionStatusPollingTask = nil
             // 用 previousSnapshotKey（onAppear 时记录的工作空间）而非 currentSnapshotKey，
             // 因为工作空间切换和视图移除可能在同一更新周期，此时 currentSnapshotKey 已指向新空间
             if let key = previousSnapshotKey {
@@ -85,7 +81,6 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
             requestCurrentSessionStatus()
-            restartSessionStatusPollingIfNeeded()
             guard let newSessionId else { return }
 
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
@@ -134,7 +129,6 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             requestCurrentSessionStatus()
-            restartSessionStatusPollingIfNeeded()
             if isStreaming {
                 sawCodexPlanProposalInCurrentTurn = false
                 codexPlanProposalPartIDInCurrentTurn = nil
@@ -146,10 +140,6 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.awaitingUserEcho) { _, _ in
             requestCurrentSessionStatus()
-            restartSessionStatusPollingIfNeeded()
-        }
-        .onChange(of: currentSessionStatusSnapshot) { _, _ in
-            restartSessionStatusPollingIfNeeded()
         }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
@@ -594,12 +584,18 @@ struct AITabView: View {
                 return
             }
         }
-
         let targetStore = appState.aiStore(for: session.aiTool)
+        let oldSessionId = targetStore.currentSessionId
         targetStore.setCurrentSessionId(session.id)
         targetStore.clearMessages()
         TFLog.app.info(
             "AI loadSession: set current session and cleared messages, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+        )
+
+        // 保存订阅上下文，ack 后拉消息并 unsubscribe 旧会话
+        appState.pendingSubscribeContextByTool[session.aiTool] = AIPendingSubscribeContext(
+            session: session,
+            oldSessionId: (oldSessionId != session.id) ? oldSessionId : nil
         )
 
         if session.aiTool != appState.aiChatTool {
@@ -610,16 +606,15 @@ struct AITabView: View {
                 aiTool: session.aiTool,
                 sessionId: session.id
             )
-            appState.wsClient.requestAISessionMessages(
-                projectName: session.projectName,
-                workspaceName: session.workspaceName,
-                aiTool: session.aiTool,
-                sessionId: session.id,
-                limit: 200
+            appState.wsClient.requestAISessionSubscribe(
+                project: session.projectName,
+                workspace: session.workspaceName,
+                aiTool: session.aiTool.rawValue,
+                sessionId: session.id
             )
             skipNextAutoReload = (session.aiTool, session.id)
             TFLog.app.info(
-                "AI loadSession: requested messages before switching tool, target_tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+                "AI loadSession: subscribed before switching tool, target_tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
             )
             appState.aiChatTool = session.aiTool
             return
@@ -631,15 +626,14 @@ struct AITabView: View {
             aiTool: session.aiTool,
             sessionId: session.id
         )
-        appState.wsClient.requestAISessionMessages(
-            projectName: session.projectName,
-            workspaceName: session.workspaceName,
-            aiTool: session.aiTool,
-            sessionId: session.id,
-            limit: 200
+        appState.wsClient.requestAISessionSubscribe(
+            project: session.projectName,
+            workspace: session.workspaceName,
+            aiTool: session.aiTool.rawValue,
+            sessionId: session.id
         )
         TFLog.app.info(
-            "AI loadSession: requested messages, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+            "AI loadSession: subscribed, tool=\(session.aiTool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
         )
     }
 
@@ -1263,56 +1257,6 @@ struct AITabView: View {
             sessionId: sessionId,
             limit: limit
         )
-    }
-
-    private var currentSessionStatusSnapshot: AISessionStatusSnapshot? {
-        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
-              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return nil }
-        let session = AISessionInfo(
-            projectName: appState.selectedProjectName,
-            workspaceName: ws,
-            aiTool: appState.aiChatTool,
-            id: sessionId,
-            title: "",
-            updatedAt: 0
-        )
-        return appState.aiSessionStatus(for: session)
-    }
-
-    private var shouldPollCurrentSession: Bool {
-        guard aiChatStore.currentSessionId != nil else { return false }
-        if aiChatStore.isStreaming || aiChatStore.awaitingUserEcho || aiChatStore.abortPendingSessionId != nil {
-            return true
-        }
-        return currentSessionStatusSnapshot?.isBusy == true
-    }
-
-    private var shouldSyncMessagesWhilePolling: Bool {
-        if aiChatStore.isStreaming || aiChatStore.awaitingUserEcho {
-            return true
-        }
-        return currentSessionStatusSnapshot?.isBusy == true
-    }
-
-    private func restartSessionStatusPollingIfNeeded() {
-        sessionStatusPollingTask?.cancel()
-        sessionStatusPollingTask = nil
-        guard aiChatStore.currentSessionId != nil else { return }
-
-        guard shouldPollCurrentSession else { return }
-
-        sessionStatusPollingTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if Task.isCancelled { break }
-                await MainActor.run {
-                    requestCurrentSessionStatus()
-                    if shouldSyncMessagesWhilePolling {
-                        requestCurrentSessionMessages(limit: 200)
-                    }
-                }
-            }
-        }
     }
 }
 

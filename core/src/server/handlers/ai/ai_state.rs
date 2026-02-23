@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::mpsc::Sender;
@@ -19,6 +19,9 @@ pub struct AIState {
     pub maintenance_started: bool,
     /// 状态推送回调是否已初始化（避免每个连接重复 set）
     pub status_push_initialized: bool,
+    /// 连接订阅的会话集合：key = conn_id，value = session_keys 集合
+    /// session_key 格式与 active_streams 相同："{tool}::{directory}::{session_id}"
+    pub session_subscriptions: HashMap<String, HashSet<String>>,
 }
 
 impl AIState {
@@ -31,6 +34,7 @@ impl AIState {
             directory_active_streams: HashMap::new(),
             maintenance_started: false,
             status_push_initialized: false,
+            session_subscriptions: HashMap::new(),
         }
     }
 }

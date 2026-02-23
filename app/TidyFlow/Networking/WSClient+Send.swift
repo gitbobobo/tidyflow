@@ -641,6 +641,30 @@ extension WSClient {
         ])
     }
 
+    // MARK: - v1.xx: AI 会话订阅
+
+    /// 订阅 AI 会话消息
+    func requestAISessionSubscribe(project: String, workspace: String, aiTool: String, sessionId: String) {
+        send([
+            "type": "ai_session_subscribe",
+            "project_name": project,
+            "workspace_name": workspace,
+            "ai_tool": aiTool,
+            "session_id": sessionId,
+        ])
+    }
+
+    /// 取消 AI 会话订阅
+    func requestAISessionUnsubscribe(project: String, workspace: String, aiTool: String, sessionId: String) {
+        send([
+            "type": "ai_session_unsubscribe",
+            "project_name": project,
+            "workspace_name": workspace,
+            "ai_tool": aiTool,
+            "session_id": sessionId,
+        ])
+    }
+
     // MARK: - v1.23: 文件重命名/删除
 
     /// 请求重命名文件或目录

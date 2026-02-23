@@ -540,6 +540,13 @@ struct AISessionStatusSnapshot: Equatable {
     var isError: Bool { status.lowercased() == "error" }
 }
 
+/// subscribe 发出后待 ack 的订阅上下文
+struct AIPendingSubscribeContext {
+    let session: AISessionInfo
+    /// 待 unsubscribe 的旧会话 ID（切换会话时使用）
+    let oldSessionId: String?
+}
+
 // MARK: - 工作空间快照（切换时保留对话上下文）
 
 struct AIChatSnapshot {
@@ -562,6 +569,7 @@ private enum AIChatStreamEvent {
 /// AI 聊天状态域：隔离高频流式更新，避免全局 AppState 频繁刷新。
 final class AIChatStore: ObservableObject {
     @Published var currentSessionId: String?
+    @Published var subscribedSessionIds: Set<String> = []
     @Published var messages: [AIChatMessage] = []
     @Published var isStreaming: Bool = false
     @Published var abortPendingSessionId: String?
@@ -634,6 +642,9 @@ final class AIChatStore: ObservableObject {
     }
 
     // MARK: - Public State Ops
+
+    func addSubscription(_ sessionId: String) { subscribedSessionIds.insert(sessionId) }
+    func removeSubscription(_ sessionId: String) { subscribedSessionIds.remove(sessionId) }
 
     func clearAll() {
         flushPendingStreamEvents()
@@ -740,6 +751,12 @@ final class AIChatStore: ObservableObject {
                 awaitingUserEchoBaselineIndex = nil
                 userPlaceholderMessageIdsPendingServerPart = []
             }
+        }
+        if let old = currentSessionId, old != sessionId {
+            subscribedSessionIds.remove(old)
+        }
+        if let new = sessionId {
+            subscribedSessionIds.insert(new)
         }
         currentSessionId = sessionId
     }

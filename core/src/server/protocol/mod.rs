@@ -558,6 +558,20 @@ pub enum ClientMessage {
         ai_tool: String,
         session_id: String,
     },
+    #[serde(rename = "ai_session_subscribe")]
+    AISessionSubscribe {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+    },
+    #[serde(rename = "ai_session_unsubscribe")]
+    AISessionUnsubscribe {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+    },
 
     // vNext: AI Provider/Agent 列表
     #[serde(rename = "ai_provider_list")]
@@ -1276,6 +1290,11 @@ pub enum ServerMessage {
         workspace_name: String,
         ai_tool: String,
         commands: Vec<ai::SlashCommandInfo>,
+    },
+    #[serde(rename = "ai_session_subscribe_ack")]
+    AISessionSubscribeAck {
+        session_id: String,
+        session_key: String,
     },
 
     // vNext: Evolution 自主进化

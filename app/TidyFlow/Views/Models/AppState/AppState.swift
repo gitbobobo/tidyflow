@@ -187,6 +187,9 @@ class AppState: ObservableObject {
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
     /// 历史会话自动恢复输入框选择的待应用提示（key: sessionId）
     private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
+    /// 待 ack 的 AI 会话订阅上下文（key: AIChatTool）
+    /// subscribe 发出后暂存，ack 收到时消费：addSubscription + 拉消息 + unsubscribe 旧会话
+    var pendingSubscribeContextByTool: [AIChatTool: AIPendingSubscribeContext] = [:]
     /// Evolution 阶段聊天回放请求
     var evolutionReplayRequest: (
         project: String,

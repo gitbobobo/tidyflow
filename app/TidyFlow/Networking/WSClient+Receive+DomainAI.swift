@@ -149,6 +149,11 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_session_subscribe_ack":
+            if let handler = aiMessageHandler {
+                handler.handleAISessionSubscribeAck()
+            }
+            return true
         default:
             return false
         }

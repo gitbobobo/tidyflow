@@ -52,7 +52,7 @@ extension AppState {
         }
         let store = aiStore(for: ev.aiTool)
         let currentSessionId = store.currentSessionId ?? ""
-        guard currentSessionId == ev.sessionId else {
+        guard store.subscribedSessionIds.contains(ev.sessionId) else {
             TFLog.app.warning(
                 "AI session_messages ignored: session mismatch, ai_tool=\(ev.aiTool.rawValue, privacy: .public), event_session_id=\(ev.sessionId, privacy: .public), current_session_id=\(currentSessionId, privacy: .public), messages_count=\(ev.messages.count)"
             )
@@ -124,7 +124,7 @@ extension AppState {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if store.isAbortPending(for: ev.sessionId) { return }
         TFLog.app.debug(
             "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
@@ -140,7 +140,7 @@ extension AppState {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if store.isAbortPending(for: ev.sessionId) { return }
         TFLog.app.debug(
             "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
@@ -156,7 +156,7 @@ extension AppState {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if store.isAbortPending(for: ev.sessionId) { return }
         TFLog.app.debug(
             "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
@@ -179,7 +179,7 @@ extension AppState {
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
         store.clearAbortPendingIfMatches(ev.sessionId)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
         store.handleChatDone(sessionId: ev.sessionId)
         setBadgeRunning(false, for: ev.aiTool)
@@ -193,7 +193,7 @@ extension AppState {
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
         store.clearAbortPendingIfMatches(ev.sessionId)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         TFLog.app.error(
             "AI stream error: session_id=\(ev.sessionId, privacy: .public), error=\(ev.error, privacy: .public)"
         )
@@ -206,7 +206,7 @@ extension AppState {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         store.upsertQuestionRequest(ev.request)
         setBadgeRunning(true, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
@@ -216,7 +216,7 @@ extension AppState {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
-        guard store.currentSessionId == ev.sessionId else { return }
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         store.completeQuestionRequestLocally(requestId: ev.requestId)
     }
 
@@ -370,6 +370,46 @@ extension AppState {
     func handleEvolutionError(_ message: String) {
         evolutionReplayLoading = false
         evolutionReplayError = message
+    }
+
+    func handleAISessionSubscribeAck() {
+        // 遍历所有工具，消费有待处理的订阅上下文
+        for tool in AIChatTool.allCases {
+            guard let ctx = pendingSubscribeContextByTool[tool] else { continue }
+            pendingSubscribeContextByTool[tool] = nil
+
+            let session = ctx.session
+            let store = aiStore(for: tool)
+
+            // 手动维护订阅集合（setCurrentSessionId 已 insert，此处确保一致）
+            store.addSubscription(session.id)
+
+            TFLog.app.info(
+                "AI subscribe ack: tool=\(tool.rawValue, privacy: .public), session_id=\(session.id, privacy: .public)"
+            )
+
+            // ack 确认后再拉消息，确保 Core 已进入推送模式
+            wsClient.requestAISessionMessages(
+                projectName: session.projectName,
+                workspaceName: session.workspaceName,
+                aiTool: tool,
+                sessionId: session.id,
+                limit: 200
+            )
+
+            // 取消订阅旧会话
+            if let oldId = ctx.oldSessionId, !oldId.isEmpty, oldId != session.id {
+                wsClient.requestAISessionUnsubscribe(
+                    project: session.projectName,
+                    workspace: session.workspaceName,
+                    aiTool: tool.rawValue,
+                    sessionId: oldId
+                )
+                TFLog.app.info(
+                    "AI unsubscribed old session: tool=\(tool.rawValue, privacy: .public), old_session_id=\(oldId, privacy: .public)"
+                )
+            }
+        }
     }
 
     func handleClientErrorMessage(_ errorMsg: String) {
