@@ -68,7 +68,7 @@ impl EvolutionManager {
                     priority: req.priority,
                     status: "queued".to_string(),
                     cycle_id: cycle_id.clone(),
-                    current_stage: "bootstrap".to_string(),
+                    current_stage: "direction".to_string(),
                     global_loop_round: round,
                     auto_loop_enabled: req.auto_loop_enabled,
                     verify_iteration: 0,

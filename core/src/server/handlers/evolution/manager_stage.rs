@@ -329,7 +329,7 @@ impl EvolutionManager {
                             sanitize_name(&entry.workspace),
                             Uuid::new_v4().simple()
                         );
-                        entry.current_stage = "bootstrap".to_string();
+                        entry.current_stage = "direction".to_string();
                         entry.status = "queued".to_string();
                         entry.stage_sessions.clear();
                         entry.stage_statuses.clear();
