@@ -1,6 +1,53 @@
 import Foundation
 import Combine
 
+struct EditorRequestKey: Hashable {
+    let project: String
+    let workspace: String
+    let path: String
+}
+
+enum EditorDocumentLoadStatus: Equatable {
+    case idle
+    case loading
+    case ready
+    case error(String)
+}
+
+enum EditorConflictState: Equatable {
+    case none
+    case changedOnDisk
+    case deletedOnDisk
+}
+
+struct EditorDocumentState: Equatable {
+    let path: String
+    var content: String
+    var originalContentHash: Int
+    var isDirty: Bool
+    var lastLoadedAt: Date
+    var status: EditorDocumentLoadStatus
+    var conflictState: EditorConflictState
+
+    static func loading(path: String) -> EditorDocumentState {
+        EditorDocumentState(
+            path: path,
+            content: "",
+            originalContentHash: 0,
+            isDirty: false,
+            lastLoadedAt: .distantPast,
+            status: .loading,
+            conflictState: .none
+        )
+    }
+}
+
+struct DiffNavigationContext: Equatable {
+    let workspaceKey: String
+    let path: String
+    let mode: DiffMode
+}
+
 /// 编辑器领域状态管理
 /// 从 AppState 提取，减少编辑器状态变化对全局视图的影响
 class EditorStore: ObservableObject {
@@ -28,6 +75,16 @@ class EditorStore: ObservableObject {
     var pendingCloseWorkspaceKey: String?
     /// 保存后自动关闭的 Tab 信息
     var pendingCloseAfterSave: (workspaceKey: String, tabId: UUID)?
+
+    /// 文档缓存（key: globalWorkspaceKey -> (path -> state)）
+    @Published var editorDocumentsByWorkspace: [String: [String: EditorDocumentState]] = [:]
+
+    /// 正在进行的读取请求
+    var pendingFileReadRequests: Set<EditorRequestKey> = []
+    /// 正在进行的保存请求
+    var pendingFileWriteRequests: Set<EditorRequestKey> = []
+    /// 最近一次 diff 跳转上下文
+    @Published var lastDiffNavigationContext: DiffNavigationContext?
 
     // MARK: - 回调
 

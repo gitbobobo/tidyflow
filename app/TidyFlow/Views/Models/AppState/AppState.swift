@@ -272,6 +272,22 @@ class AppState: ObservableObject {
         get { editorStore.onEditorFileChanged }
         set { editorStore.onEditorFileChanged = newValue }
     }
+    var editorDocumentsByWorkspace: [String: [String: EditorDocumentState]] {
+        get { editorStore.editorDocumentsByWorkspace }
+        set { editorStore.editorDocumentsByWorkspace = newValue }
+    }
+    var pendingFileReadRequests: Set<EditorRequestKey> {
+        get { editorStore.pendingFileReadRequests }
+        set { editorStore.pendingFileReadRequests = newValue }
+    }
+    var pendingFileWriteRequests: Set<EditorRequestKey> {
+        get { editorStore.pendingFileWriteRequests }
+        set { editorStore.pendingFileWriteRequests = newValue }
+    }
+    var lastDiffNavigationContext: DiffNavigationContext? {
+        get { editorStore.lastDiffNavigationContext }
+        set { editorStore.lastDiffNavigationContext = newValue }
+    }
 
     // 向后兼容：终端状态代理到 terminalStore
     var terminalState: TerminalState {
