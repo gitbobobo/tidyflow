@@ -241,11 +241,6 @@ struct ToolCardView: View {
 
         guard let invocation else {
             var sections: [AIToolSection] = []
-            if normalizedToolID != "question",
-               let partMetadata,
-               !partMetadata.isEmpty {
-                sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
-            }
             if let state {
                 sections.append(
                     AIToolSection(
@@ -272,11 +267,6 @@ struct ToolCardView: View {
         }
 
         var sections = buildSections(toolID: resolvedToolID, invocation: invocation)
-        if normalizedToolID != "question",
-           let partMetadata,
-           !partMetadata.isEmpty {
-            sections.append(section(id: "tool-part-metadata", title: "part_metadata", any: partMetadata))
-        }
         sections = clampSectionsIfNeeded(sections)
         let displayTitle = toolCardTitle(toolID: resolvedToolID, invocation: invocation)
 
@@ -648,9 +638,6 @@ struct ToolCardView: View {
             if sections.isEmpty && !invocation.input.isEmpty {
                 sections.append(section(id: "edit-input", title: "input", any: compactEditInput(invocation.input)))
             }
-            if sections.isEmpty, !metadata.isEmpty {
-                sections.append(section(id: "edit-metadata", title: "metadata", any: metadata))
-            }
         } else if !invocation.input.isEmpty {
             sections.append(section(id: "edit-input", title: "input", any: compactEditInput(invocation.input)))
         }
@@ -693,10 +680,6 @@ struct ToolCardView: View {
 
         if let output = invocation.output, !output.isEmpty {
             sections.append(AIToolSection(id: "lsp-output", title: "output", content: output, isCode: true))
-        }
-
-        if let metadata = invocation.metadata, !metadata.isEmpty {
-            sections.append(section(id: "lsp-metadata", title: "metadata", any: metadata))
         }
 
         if let error = invocation.error, !error.isEmpty {
@@ -751,10 +734,6 @@ struct ToolCardView: View {
             sections.append(AIToolSection(id: "search-output", title: "output", content: output, isCode: true))
         }
 
-        if let metadata = invocation.metadata, !metadata.isEmpty {
-            sections.append(section(id: "search-metadata", title: "metadata", any: metadata))
-        }
-
         if let error = invocation.error, !error.isEmpty {
             sections.append(AIToolSection(id: "search-error", title: "error", content: error, isCode: false))
         }
@@ -807,10 +786,6 @@ struct ToolCardView: View {
             sections.append(AIToolSection(id: "task-output", title: "output", content: output, isCode: true))
         }
 
-        if let metadata = invocation.metadata, !metadata.isEmpty {
-            sections.append(section(id: "task-metadata", title: "metadata", any: metadata))
-        }
-
         if let error = invocation.error, !error.isEmpty {
             sections.append(AIToolSection(id: "task-error", title: "error", content: error, isCode: false))
         }
@@ -835,10 +810,6 @@ struct ToolCardView: View {
 
         if !showPrompt, let output = invocation.output, !output.isEmpty {
             sections.append(AIToolSection(id: "task-output", title: "output", content: output, isCode: true))
-        }
-
-        if !showPrompt, let metadata = invocation.metadata, !metadata.isEmpty {
-            sections.append(section(id: "task-metadata", title: "metadata", any: metadata))
         }
 
         if let error = invocation.error, !error.isEmpty {
@@ -898,10 +869,6 @@ struct ToolCardView: View {
 
         if let error = invocation.error, !error.isEmpty {
             sections.append(AIToolSection(id: "generic-error", title: "error", content: error, isCode: false))
-        }
-
-        if let metadata = invocation.metadata, !metadata.isEmpty {
-            sections.append(section(id: "generic-metadata", title: "metadata", any: metadata))
         }
 
         if let attachments = invocation.attachments, !attachments.isEmpty {
