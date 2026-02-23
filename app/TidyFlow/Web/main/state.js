@@ -54,7 +54,7 @@
           return;
         }
         const action = data.type;
-        const payload = { ...data };
+        const payload = normalizeOutboundPayload({ ...data });
         delete payload.type;
         const envelope = {
           request_id: this._nextRequestId(),
@@ -82,6 +82,30 @@
       }
       return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
+  }
+
+  // 兼容 Core 当前入站解析：MessagePack 的 bin（Uint8Array）会在服务端 JSON 化阶段失败。
+  // 统一转为 JSON 友好的 number[]，避免 input/file_write 等消息被拒收。
+  function normalizeOutboundPayload(value) {
+    if (value == null) return value;
+
+    if (value instanceof Uint8Array) {
+      return Array.from(value);
+    }
+    if (value instanceof ArrayBuffer) {
+      return Array.from(new Uint8Array(value));
+    }
+    if (Array.isArray(value)) {
+      return value.map(normalizeOutboundPayload);
+    }
+    if (typeof value === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) {
+        out[k] = normalizeOutboundPayload(v);
+      }
+      return out;
+    }
+    return value;
   }
 
   function notifySwift(type, data) {
