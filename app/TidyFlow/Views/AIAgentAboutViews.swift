@@ -4,6 +4,7 @@ import SwiftUI
 
 struct AIAgentSection: View {
     @EnvironmentObject var appState: AppState
+    @State private var editableProfiles: [EvolutionEditableProfile] = []
 
     /// AI Agent 选项列表（含"未配置"）
     private var agentOptions: [(value: String?, label: String, icon: String?)] {
@@ -18,56 +19,217 @@ struct AIAgentSection: View {
 
     var body: some View {
         Form {
-            Section {
-                // 提交代理选择
-                Picker("settings.aiAgent.commitAgent".localized, selection: commitBinding) {
-                    ForEach(agentOptions, id: \.label) { option in
-                        if let iconName = option.icon {
-                            Label {
-                                Text(option.label)
-                            } icon: {
-                                Image(iconName)
-                                    .renderingMode(.original)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 16, height: 16)
-                            }
-                            .tag(option.value as String?)
-                        } else {
-                            Text(option.label)
-                                .tag(option.value as String?)
-                        }
-                    }
-                }
-
-                // 合并代理选择
-                Picker("settings.aiAgent.mergeAgent".localized, selection: mergeBinding) {
-                    ForEach(agentOptions, id: \.label) { option in
-                        if let iconName = option.icon {
-                            Label {
-                                Text(option.label)
-                            } icon: {
-                                Image(iconName)
-                                    .renderingMode(.original)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 16, height: 16)
-                            }
-                            .tag(option.value as String?)
-                        } else {
-                            Text(option.label)
-                                .tag(option.value as String?)
-                        }
-                    }
-                }
-            } header: {
-                Text("settings.aiAgent.title".localized)
-            } footer: {
-                Text("settings.aiAgent.footer".localized)
-            }
+            aiAgentBaseSection
+            evolutionSections
         }
         .formStyle(.grouped)
         .settingsPageTopInset()
+        .onAppear {
+            editableProfiles = appState.evolutionDefaultProfiles
+        }
+        .onChange(of: appState.evolutionDefaultProfiles) {
+            editableProfiles = appState.evolutionDefaultProfiles
+        }
+    }
+
+    private var aiAgentBaseSection: some View {
+        Section {
+            agentPickerRow(title: "settings.aiAgent.commitAgent".localized, selection: commitBinding)
+            agentPickerRow(title: "settings.aiAgent.mergeAgent".localized, selection: mergeBinding)
+        } header: {
+            Text("settings.aiAgent.title".localized)
+        } footer: {
+            Text("settings.aiAgent.footer".localized)
+        }
+    }
+
+    @ViewBuilder
+    private var evolutionSections: some View {
+        ForEach($editableProfiles) { $profile in
+            evolutionSection(
+                profile: $profile,
+                isLast: profile.id == editableProfiles.last?.id
+            )
+        }
+    }
+
+    private func agentPickerRow(title: String, selection: Binding<String?>) -> some View {
+        LabeledContent(title) {
+            Picker("", selection: selection) {
+                ForEach(agentOptions, id: \.label) { option in
+                    if let iconName = option.icon {
+                        Label {
+                            Text(option.label)
+                        } icon: {
+                            Image(iconName)
+                                .renderingMode(.original)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 16, height: 16)
+                        }
+                        .tag(option.value as String?)
+                    } else {
+                        Text(option.label)
+                            .tag(option.value as String?)
+                    }
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+    }
+
+    private func evolutionSection(profile: Binding<EvolutionEditableProfile>, isLast: Bool) -> some View {
+        Section {
+            evolutionToolRow(profile: profile)
+            evolutionModeRow(profile: profile)
+            evolutionModelRow(profile: profile)
+        } header: {
+            Text(stageDisplayName(profile.wrappedValue.stage))
+        } footer: {
+            if isLast {
+                Text("settings.evolution.footer".localized)
+            }
+        }
+    }
+
+    private func evolutionToolRow(profile: Binding<EvolutionEditableProfile>) -> some View {
+        LabeledContent("settings.evolution.aiTool".localized) {
+            Picker("", selection: Binding<AIChatTool>(
+                get: { profile.wrappedValue.aiTool },
+                set: { newValue in
+                    profile.wrappedValue.aiTool = newValue
+                    profile.wrappedValue.mode = ""
+                    profile.wrappedValue.providerID = ""
+                    profile.wrappedValue.modelID = ""
+                    persistEvolutionProfiles()
+                }
+            )) {
+                ForEach(AIChatTool.allCases) { tool in
+                    Text(tool.displayName).tag(tool)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+    }
+
+    private func evolutionModeRow(profile: Binding<EvolutionEditableProfile>) -> some View {
+        let selectedMode = profile.wrappedValue.mode
+        let options = modeOptions(for: profile.wrappedValue.aiTool)
+
+        return LabeledContent("settings.evolution.mode".localized) {
+            Menu {
+                Button("settings.evolution.defaultMode".localized) {
+                    profile.wrappedValue.mode = ""
+                    persistEvolutionProfiles()
+                }
+                if options.isEmpty {
+                    Text("settings.evolution.noModes".localized)
+                } else {
+                    ForEach(options, id: \.self) { option in
+                        Button(option) {
+                            profile.wrappedValue.mode = option
+                            persistEvolutionProfiles()
+                        }
+                    }
+                }
+            } label: {
+                Text(selectedMode.isEmpty
+                     ? "settings.evolution.defaultMode".localized
+                     : selectedMode)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    private func evolutionModelRow(profile: Binding<EvolutionEditableProfile>) -> some View {
+        let providers = modelProviders(for: profile.wrappedValue.aiTool)
+
+        return LabeledContent("settings.evolution.model".localized) {
+            Menu {
+                Button("settings.evolution.defaultModel".localized) {
+                    profile.wrappedValue.providerID = ""
+                    profile.wrappedValue.modelID = ""
+                    persistEvolutionProfiles()
+                }
+                if providers.isEmpty {
+                    Text("settings.evolution.noModels".localized)
+                } else if providers.count == 1, let onlyProvider = providers.first {
+                    ForEach(onlyProvider.models) { model in
+                        Button(model.name) {
+                            profile.wrappedValue.providerID = onlyProvider.id
+                            profile.wrappedValue.modelID = model.id
+                            persistEvolutionProfiles()
+                        }
+                    }
+                } else {
+                    ForEach(providers) { provider in
+                        Menu(provider.name) {
+                            ForEach(provider.models) { model in
+                                Button(model.name) {
+                                    profile.wrappedValue.providerID = provider.id
+                                    profile.wrappedValue.modelID = model.id
+                                    persistEvolutionProfiles()
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(selectedModelDisplayName(for: profile.wrappedValue))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    private func stageDisplayName(_ stage: String) -> String {
+        switch stage.lowercased() {
+        case "direction": return "Direction"
+        case "plan":      return "Plan"
+        case "implement": return "Implement"
+        case "verify":    return "Verify"
+        case "judge":     return "Judge"
+        case "report":    return "Report"
+        default:          return stage
+        }
+    }
+
+    private func modeOptions(for tool: AIChatTool) -> [String] {
+        var seen: Set<String> = []
+        var values: [String] = []
+        for agent in appState.aiAgents(for: tool) {
+            let name = agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            guard seen.insert(name).inserted else { continue }
+            values.append(name)
+        }
+        return values
+    }
+
+    private func modelProviders(for tool: AIChatTool) -> [AIProviderInfo] {
+        appState.aiProviders(for: tool).filter { !$0.models.isEmpty }
+    }
+
+    private func selectedModelDisplayName(for profile: EvolutionEditableProfile) -> String {
+        guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else {
+            return "settings.evolution.defaultModel".localized
+        }
+        for provider in modelProviders(for: profile.aiTool) {
+            if provider.id == profile.providerID,
+               let model = provider.models.first(where: { $0.id == profile.modelID }) {
+                return model.name
+            }
+        }
+        return profile.modelID
+    }
+
+    private func persistEvolutionProfiles() {
+        appState.saveEvolutionDefaultProfiles(editableProfiles)
     }
 
     private var commitBinding: Binding<String?> {
