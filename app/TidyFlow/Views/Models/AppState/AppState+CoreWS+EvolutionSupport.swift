@@ -38,6 +38,8 @@ extension AppState {
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionPendingActionByWorkspace[key] = "start"
         wsClient.requestEvoStartWorkspace(
             project: project,
             workspace: normalizedWorkspace,
@@ -55,7 +57,22 @@ extension AppState {
 
     func resumeEvolution(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionPendingActionByWorkspace[key] = "resume"
         wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
+    }
+
+    func resolveEvolutionBlockers(
+        project: String,
+        workspace: String,
+        resolutions: [EvolutionBlockerResolutionInputV2]
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoResolveBlockers(
+            project: project,
+            workspace: normalizedWorkspace,
+            resolutions: resolutions
+        )
     }
 
     func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {

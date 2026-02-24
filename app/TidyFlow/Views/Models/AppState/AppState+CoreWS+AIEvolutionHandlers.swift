@@ -463,8 +463,16 @@ extension AppState {
 
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {
         evolutionScheduler = snapshot.scheduler
-        evolutionWorkspaceItems = snapshot.workspaceItems.sorted {
+        let items = snapshot.workspaceItems.sorted {
             ($0.project, $0.workspace) < ($1.project, $1.workspace)
+        }
+        evolutionWorkspaceItems = items
+        for item in items where item.status != "interrupted" {
+            let key = globalWorkspaceKey(
+                projectName: item.project,
+                workspaceName: normalizeEvolutionWorkspaceName(item.workspace)
+            )
+            evolutionPendingActionByWorkspace.removeValue(forKey: key)
         }
     }
 
@@ -488,6 +496,57 @@ extension AppState {
             "Evolution profile applied: project=\(ev.project, privacy: .public), workspace=\(workspace, privacy: .public), stages=\(normalizedProfiles.count), direction_model=\(directionModel, privacy: .public)"
         )
         finishEvolutionProfileReloadTracking(project: ev.project, workspace: workspace)
+    }
+
+    func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(ev.workspace)
+        evolutionBlockingRequired = EvolutionBlockingRequiredV2(
+            project: ev.project,
+            workspace: normalizedWorkspace,
+            trigger: ev.trigger,
+            cycleID: ev.cycleID,
+            stage: ev.stage,
+            blockerFilePath: ev.blockerFilePath,
+            unresolvedItems: ev.unresolvedItems
+        )
+        evolutionBlockers = ev.unresolvedItems
+    }
+
+    func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(ev.workspace)
+        evolutionBlockers = ev.unresolvedItems
+        if ev.unresolvedCount > 0 {
+            evolutionBlockingRequired = EvolutionBlockingRequiredV2(
+                project: ev.project,
+                workspace: normalizedWorkspace,
+                trigger: "updated",
+                cycleID: evolutionBlockingRequired?.cycleID,
+                stage: evolutionBlockingRequired?.stage,
+                blockerFilePath: evolutionBlockingRequired?.blockerFilePath ?? "",
+                unresolvedItems: ev.unresolvedItems
+            )
+            return
+        }
+        evolutionBlockingRequired = nil
+        let key = globalWorkspaceKey(projectName: ev.project, workspaceName: normalizedWorkspace)
+        guard let pendingAction = evolutionPendingActionByWorkspace.removeValue(forKey: key) else {
+            return
+        }
+        if pendingAction == "start" {
+            let profiles = evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
+            let verify = max(1, evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.verifyIterationLimit ?? 3)
+            startEvolution(
+                project: ev.project,
+                workspace: normalizedWorkspace,
+                maxVerifyIterations: verify,
+                autoLoopEnabled: evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.autoLoopEnabled ?? true,
+                profiles: profiles
+            )
+            return
+        }
+        if pendingAction == "resume" {
+            resumeEvolution(project: ev.project, workspace: normalizedWorkspace)
+        }
     }
 
     func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) {

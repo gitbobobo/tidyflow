@@ -637,6 +637,13 @@ pub enum ClientMessage {
         project: String,
         workspace: String,
     },
+    #[serde(rename = "evo_resolve_blockers")]
+    EvoResolveBlockers {
+        project: String,
+        workspace: String,
+        #[serde(default)]
+        resolutions: Vec<EvolutionBlockerResolutionInput>,
+    },
 
     // v1.40: 查询任务历史（iOS 重连恢复）
     ListTasks,
@@ -1385,6 +1392,25 @@ pub enum ServerMessage {
         workspace: String,
         stage_profiles: Vec<EvolutionStageProfileInfo>,
     },
+    #[serde(rename = "evo_blocking_required")]
+    EvoBlockingRequired {
+        project: String,
+        workspace: String,
+        trigger: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cycle_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stage: Option<String>,
+        blocker_file_path: String,
+        unresolved_items: Vec<EvolutionBlockerItemInfo>,
+    },
+    #[serde(rename = "evo_blockers_updated")]
+    EvoBlockersUpdated {
+        project: String,
+        workspace: String,
+        unresolved_count: u32,
+        unresolved_items: Vec<EvolutionBlockerItemInfo>,
+    },
     #[serde(rename = "evo_error")]
     EvoError {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1611,6 +1637,39 @@ pub struct EvolutionWorkspaceItem {
     pub verify_iteration_limit: u32,
     pub agents: Vec<EvolutionAgentInfo>,
     pub active_agents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionBlockerOptionInfo {
+    pub option_id: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionBlockerItemInfo {
+    pub blocker_id: String,
+    pub status: String,
+    pub cycle_id: String,
+    pub stage: String,
+    pub created_at: String,
+    pub source: String,
+    pub title: String,
+    pub description: String,
+    pub question_type: String,
+    #[serde(default)]
+    pub options: Vec<EvolutionBlockerOptionInfo>,
+    #[serde(default)]
+    pub allow_custom_input: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionBlockerResolutionInput {
+    pub blocker_id: String,
+    #[serde(default)]
+    pub selected_option_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer_text: Option<String>,
 }
 
 // ============================================================================

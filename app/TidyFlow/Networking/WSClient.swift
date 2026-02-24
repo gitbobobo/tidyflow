@@ -148,6 +148,8 @@ class WSClient: NSObject, ObservableObject {
     var onEvoSnapshot: ((EvolutionSnapshotV2) -> Void)?
     var onEvoStageChatOpened: ((EvolutionStageChatOpenedV2) -> Void)?
     var onEvoAgentProfile: ((EvolutionAgentProfileV2) -> Void)?
+    var onEvoBlockingRequired: ((EvolutionBlockingRequiredV2) -> Void)?
+    var onEvoBlockersUpdated: ((EvolutionBlockersUpdatedV2) -> Void)?
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?

@@ -687,6 +687,127 @@ struct AIProtocolSlashCommand {
 
 // MARK: - Evolution
 
+struct EvolutionBlockerOptionV2 {
+    let optionID: String
+    let label: String
+    let description: String
+
+    static func from(json: [String: Any]) -> EvolutionBlockerOptionV2? {
+        guard let optionID = parseOptionalString(json["option_id"]) else { return nil }
+        return EvolutionBlockerOptionV2(
+            optionID: optionID,
+            label: parseOptionalString(json["label"]) ?? optionID,
+            description: parseOptionalString(json["description"]) ?? ""
+        )
+    }
+}
+
+struct EvolutionBlockerItemV2 {
+    let blockerID: String
+    let status: String
+    let cycleID: String
+    let stage: String
+    let createdAt: String
+    let source: String
+    let title: String
+    let description: String
+    let questionType: String
+    let options: [EvolutionBlockerOptionV2]
+    let allowCustomInput: Bool
+
+    static func from(json: [String: Any]) -> EvolutionBlockerItemV2? {
+        guard let blockerID = parseOptionalString(json["blocker_id"]),
+              let status = parseOptionalString(json["status"]),
+              let cycleID = parseOptionalString(json["cycle_id"]),
+              let stage = parseOptionalString(json["stage"]) else { return nil }
+        let optionItems = (json["options"] as? [[String: Any]] ?? []).compactMap {
+            EvolutionBlockerOptionV2.from(json: $0)
+        }
+        return EvolutionBlockerItemV2(
+            blockerID: blockerID,
+            status: status,
+            cycleID: cycleID,
+            stage: stage,
+            createdAt: parseOptionalString(json["created_at"]) ?? "",
+            source: parseOptionalString(json["source"]) ?? "unknown",
+            title: parseOptionalString(json["title"]) ?? "需要人工处理",
+            description: parseOptionalString(json["description"]) ?? "",
+            questionType: parseOptionalString(json["question_type"]) ?? "text",
+            options: optionItems,
+            allowCustomInput: json["allow_custom_input"] as? Bool ?? true
+        )
+    }
+}
+
+struct EvolutionBlockingRequiredV2 {
+    let project: String
+    let workspace: String
+    let trigger: String
+    let cycleID: String?
+    let stage: String?
+    let blockerFilePath: String
+    let unresolvedItems: [EvolutionBlockerItemV2]
+
+    static func from(json: [String: Any]) -> EvolutionBlockingRequiredV2? {
+        guard let project = parseOptionalString(json["project"]),
+              let workspace = parseOptionalString(json["workspace"]),
+              let trigger = parseOptionalString(json["trigger"]),
+              let blockerFilePath = parseOptionalString(json["blocker_file_path"]) else {
+            return nil
+        }
+        let unresolvedItems = (json["unresolved_items"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionBlockerItemV2.from(json: $0) }
+        return EvolutionBlockingRequiredV2(
+            project: project,
+            workspace: workspace,
+            trigger: trigger,
+            cycleID: parseOptionalString(json["cycle_id"]),
+            stage: parseOptionalString(json["stage"]),
+            blockerFilePath: blockerFilePath,
+            unresolvedItems: unresolvedItems
+        )
+    }
+}
+
+struct EvolutionBlockersUpdatedV2 {
+    let project: String
+    let workspace: String
+    let unresolvedCount: Int
+    let unresolvedItems: [EvolutionBlockerItemV2]
+
+    static func from(json: [String: Any]) -> EvolutionBlockersUpdatedV2? {
+        guard let project = parseOptionalString(json["project"]),
+              let workspace = parseOptionalString(json["workspace"]) else {
+            return nil
+        }
+        let unresolvedItems = (json["unresolved_items"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionBlockerItemV2.from(json: $0) }
+        return EvolutionBlockersUpdatedV2(
+            project: project,
+            workspace: workspace,
+            unresolvedCount: Int(parseInt64(json["unresolved_count"])),
+            unresolvedItems: unresolvedItems
+        )
+    }
+}
+
+struct EvolutionBlockerResolutionInputV2 {
+    let blockerID: String
+    let selectedOptionIDs: [String]
+    let answerText: String?
+
+    func toJSON() -> [String: Any] {
+        var json: [String: Any] = [
+            "blocker_id": blockerID,
+            "selected_option_ids": selectedOptionIDs
+        ]
+        if let answerText {
+            json["answer_text"] = answerText
+        }
+        return json
+    }
+}
+
 struct EvolutionModelSelectionV2 {
     let providerID: String
     let modelID: String

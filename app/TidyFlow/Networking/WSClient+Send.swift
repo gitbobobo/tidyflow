@@ -1119,6 +1119,19 @@ extension WSClient {
         ])
     }
 
+    func requestEvoResolveBlockers(
+        project: String,
+        workspace: String,
+        resolutions: [EvolutionBlockerResolutionInputV2]
+    ) {
+        send([
+            "type": "evo_resolve_blockers",
+            "project": project,
+            "workspace": workspace,
+            "resolutions": resolutions.map { $0.toJSON() }
+        ])
+    }
+
     func requestEvoSnapshot(project: String? = nil, workspace: String? = nil) {
         var msg: [String: Any] = ["type": "evo_get_snapshot"]
         if let project, !project.isEmpty { msg["project"] = project }

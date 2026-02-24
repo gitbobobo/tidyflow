@@ -169,6 +169,8 @@ class AppState: ObservableObject {
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
     @Published var evolutionReplayStore: AIChatStore = AIChatStore()
+    @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
+    @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerMessages: [AIChatMessage] = []
     @Published var subAgentViewerLoading: Bool = false
@@ -220,6 +222,8 @@ class AppState: ObservableObject {
     var evolutionPendingProfileReloadWorkspaces: Set<String> = []
     /// Evolution：profile 请求兜底定时器，防止某个列表事件丢失导致一直不拉配置。
     var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
+    /// Evolution：记录某工作空间等待重试的动作（start/resume）。
+    var evolutionPendingActionByWorkspace: [String: String] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]

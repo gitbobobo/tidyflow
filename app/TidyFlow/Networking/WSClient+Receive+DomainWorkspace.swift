@@ -218,6 +218,24 @@ extension WSClient {
                 )
             }
             return true
+        case "evo_blocking_required":
+            if let ev = EvolutionBlockingRequiredV2.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionBlockingRequired(ev)
+                } else {
+                    onEvoBlockingRequired?(ev)
+                }
+            }
+            return true
+        case "evo_blockers_updated":
+            if let ev = EvolutionBlockersUpdatedV2.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionBlockersUpdated(ev)
+                } else {
+                    onEvoBlockersUpdated?(ev)
+                }
+            }
+            return true
         case "evo_error":
             let message = json["message"] as? String ?? "evolution error"
             if let handler = evolutionMessageHandler {

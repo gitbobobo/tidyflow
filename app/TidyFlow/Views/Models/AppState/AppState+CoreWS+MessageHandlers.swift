@@ -183,6 +183,8 @@ final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) { appState?.handleEvolutionSnapshot(snapshot) }
     func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) { appState?.handleEvolutionStageChatOpened(ev) }
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { appState?.handleEvolutionAgentProfile(ev) }
+    func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { appState?.handleEvolutionBlockingRequired(ev) }
+    func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { appState?.handleEvolutionBlockersUpdated(ev) }
     func handleEvolutionError(_ message: String) { appState?.handleEvolutionError(message) }
 }
 

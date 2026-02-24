@@ -172,6 +172,8 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2)
     func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2)
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2)
+    func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2)
+    func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
     func handleEvolutionError(_ message: String)
 }
 
@@ -180,6 +182,8 @@ extension EvolutionMessageHandler {
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {}
     func handleEvolutionStageChatOpened(_ ev: EvolutionStageChatOpenedV2) {}
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {}
+    func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {}
+    func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
     func handleEvolutionError(_ message: String) {}
 }
 
