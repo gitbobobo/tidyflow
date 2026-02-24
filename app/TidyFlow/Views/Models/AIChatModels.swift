@@ -551,6 +551,7 @@ struct AIPendingSubscribeContext {
 
 struct AIChatSnapshot {
     var currentSessionId: String?
+    var subscribedSessionIds: Set<String>
     var messages: [AIChatMessage]
     var isStreaming: Bool
     var sessions: [AISessionInfo]
@@ -613,6 +614,10 @@ final class AIChatStore: ObservableObject {
     func applySnapshot(_ snapshot: AIChatSnapshot) {
         flushPendingStreamEvents()
         currentSessionId = snapshot.currentSessionId
+        subscribedSessionIds = snapshot.subscribedSessionIds
+        if let currentSessionId {
+            subscribedSessionIds.insert(currentSessionId)
+        }
         messages = snapshot.messages
         // 切换工作空间后不恢复流式态，后续由服务端事件重新驱动。
         abortPendingSessionId = nil
@@ -631,6 +636,7 @@ final class AIChatStore: ObservableObject {
     func makeSnapshot(sessions: [AISessionInfo]) -> AIChatSnapshot {
         AIChatSnapshot(
             currentSessionId: currentSessionId,
+            subscribedSessionIds: subscribedSessionIds,
             messages: messages,
             isStreaming: isStreaming,
             sessions: sessions,
@@ -1412,7 +1418,14 @@ final class AIChatStore: ObservableObject {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: partId)
 
-        if field == "progress", partType == "tool" {
+        let normalizedPartType: String = {
+            if partType == AIChatPartKind.tool.rawValue || field == "progress" || field == "output" {
+                return AIChatPartKind.tool.rawValue
+            }
+            return partType
+        }()
+
+        if field == "progress", normalizedPartType == AIChatPartKind.tool.rawValue {
             if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
                existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
                 var part = messages[msgIdx].parts[existing.partIdx]
@@ -1460,7 +1473,7 @@ final class AIChatStore: ObservableObject {
             return
         }
 
-        if field == "output", partType == "tool" {
+        if field == "output", normalizedPartType == AIChatPartKind.tool.rawValue {
             if let existing = partIndexByPartId[partId], existing.msgIdx == msgIdx,
                existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
                 var part = messages[msgIdx].parts[existing.partIdx]
@@ -1512,7 +1525,7 @@ final class AIChatStore: ObservableObject {
             return
         }
 
-        let kind = AIChatPartKind(rawValue: partType) ?? .text
+        let kind = AIChatPartKind(rawValue: normalizedPartType) ?? .text
         let p = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil, toolState: nil)
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1

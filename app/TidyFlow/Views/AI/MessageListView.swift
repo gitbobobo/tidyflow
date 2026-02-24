@@ -418,11 +418,13 @@ private struct MessageBubble: View, Equatable {
             let textToken = compactTextToken(part.text)
             let toolName = part.toolName ?? ""
             let toolStatus = (part.toolState?["status"] as? String) ?? ""
+            let toolStateToken = compactToolStateToken(part.toolState)
             let metadataCount = part.toolPartMetadata?.count ?? 0
+            let metadataToken = compactDictionaryToken(part.toolPartMetadata)
             let fileName = part.filename ?? ""
             let fileURL = part.url ?? ""
             let fileMime = part.mime ?? ""
-            return "\(part.id)|\(part.kind.rawValue)|\(textToken)|\(toolName)|\(toolStatus)|\(metadataCount)|\(fileName)|\(fileMime)|\(fileURL)"
+            return "\(part.id)|\(part.kind.rawValue)|\(textToken)|\(toolName)|\(toolStatus)|\(toolStateToken)|\(metadataCount)|\(metadataToken)|\(fileName)|\(fileMime)|\(fileURL)"
         }.joined(separator: ",")
         return [
             message.id,
@@ -439,6 +441,30 @@ private struct MessageBubble: View, Equatable {
         let prefixHash = String(text.prefix(48)).hashValue
         let suffixHash = String(text.suffix(24)).hashValue
         return "\(text.count):\(prefixHash):\(suffixHash)"
+    }
+
+    private func compactToolStateToken(_ state: [String: Any]?) -> String {
+        guard let state else { return "0" }
+        let output = (state["output"] as? String) ?? ""
+        let error = (state["error"] as? String) ?? ""
+        let metadata = state["metadata"] as? [String: Any]
+        let progressLines = (metadata?["progress_lines"] as? [String]) ?? []
+        let progressJoined = progressLines.joined(separator: "\n")
+
+        let outputToken = compactTextToken(output)
+        let errorToken = compactTextToken(error)
+        let progressToken = compactTextToken(progressJoined)
+        return "\(outputToken)|\(errorToken)|\(progressLines.count)|\(progressToken)"
+    }
+
+    private func compactDictionaryToken(_ value: [String: Any]?) -> String {
+        guard let value else { return "0" }
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "\(value.count):invalid"
+        }
+        return compactTextToken(text)
     }
 
     var body: some View {

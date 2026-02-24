@@ -93,6 +93,12 @@ struct AITabView: View {
                     return
                 }
                 pendingSendRequest = nil
+                appState.wsClient.requestAISessionSubscribe(
+                    project: appState.selectedProjectName,
+                    workspace: ws,
+                    aiTool: pending.aiTool.rawValue,
+                    sessionId: newSessionId
+                )
                 applyPendingSelectionHintIfNeeded(
                     pending.kind,
                     sessionId: newSessionId,
@@ -735,6 +741,12 @@ struct AITabView: View {
         let targetTool = tool ?? appState.aiChatTool
         guard let sessionId = appState.aiStore(for: targetTool).currentSessionId,
               let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
+        appState.wsClient.requestAISessionSubscribe(
+            project: appState.selectedProjectName,
+            workspace: ws,
+            aiTool: targetTool.rawValue,
+            sessionId: sessionId
+        )
         appState.wsClient.requestAISessionMessages(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
@@ -765,13 +777,19 @@ struct AITabView: View {
                 agent: agent
             )
         case let .command(command, arguments, imageParts, model, agent, fileRefs):
-            appState.wsClient.requestAIChatCommand(
+            let commandText: String = {
+                let trimmedArguments = arguments.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedArguments.isEmpty {
+                    return "/\(command)"
+                }
+                return "/\(command) \(trimmedArguments)"
+            }()
+            appState.wsClient.requestAIChatSend(
                 projectName: projectName,
                 workspaceName: workspaceName,
                 aiTool: aiTool,
                 sessionId: sessionId,
-                command: command,
-                arguments: arguments,
+                message: commandText,
                 fileRefs: fileRefs,
                 imageParts: imageParts,
                 model: model,
@@ -1029,6 +1047,7 @@ struct AITabView: View {
             aiChatStore.beginAwaitingUserEcho()
         } else {
             aiChatStore.beginAwaitingAssistantOnly()
+            aiChatStore.appendAssistantPlaceholder()
         }
         aiChatStore.isStreaming = true
 
@@ -1044,13 +1063,19 @@ struct AITabView: View {
         if let sessionId = aiChatStore.currentSessionId {
             // 已有会话，直接发送
             if let slash = slashCommand {
-                appState.wsClient.requestAIChatCommand(
+                let commandText: String = {
+                    let trimmedArguments = slash.arguments.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedArguments.isEmpty {
+                        return "/\(slash.name)"
+                    }
+                    return "/\(slash.name) \(trimmedArguments)"
+                }()
+                appState.wsClient.requestAIChatSend(
                     projectName: appState.selectedProjectName,
                     workspaceName: ws,
                     aiTool: aiTool,
                     sessionId: sessionId,
-                    command: slash.name,
-                    arguments: slash.arguments,
+                    message: commandText,
                     fileRefs: fileRefsParam,
                     imageParts: imageParts,
                     model: model,
