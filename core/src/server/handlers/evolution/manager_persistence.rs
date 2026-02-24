@@ -201,6 +201,9 @@ impl EvolutionManager {
             "ENV_VALUES_LOCAL_PATH": evolution_workspace_dir(&workspace_root)
                 .map(|p| p.join("env.values.local.json"))
                 .unwrap_or_else(|_| Path::new("env.values.local.json").to_path_buf()),
+            "WORKSPACE_BLOCKER_FILE_PATH": evolution_workspace_dir(&workspace_root)
+                .map(|p| p.join("workspace.blockers.json"))
+                .unwrap_or_else(|_| Path::new("workspace.blockers.json").to_path_buf()),
             "WORKSPACE_ROOT": "由程序注入，禁止自行推断",
         });
 

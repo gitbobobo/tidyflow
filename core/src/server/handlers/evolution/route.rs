@@ -156,6 +156,17 @@ pub(super) async fn handle_message(
             .await?;
             Ok(true)
         }
+        ClientMessage::EvoResolveBlockers {
+            project,
+            workspace,
+            resolutions,
+        } => {
+            manager
+                .resolve_blockers(project, workspace, resolutions.clone(), ctx)
+                .await?;
+            send_snapshot(socket, &manager, ctx).await?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }

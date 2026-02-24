@@ -21,6 +21,20 @@ impl EvolutionManager {
         let key = workspace_key(&req.project, &req.workspace);
         let workspace_root =
             resolve_directory(&ctx.app_state, &req.project, &req.workspace).await?;
+        if self
+            .emit_blocking_required_if_any(
+                &req.project,
+                &req.workspace,
+                &workspace_root,
+                "start",
+                None,
+                None,
+                ctx,
+            )
+            .await?
+        {
+            return Ok(());
+        }
 
         {
             let workers = self.workers.lock().await;
@@ -201,7 +215,7 @@ impl EvolutionManager {
             }
         }
 
-        let cycle_id = {
+        let (cycle_id, current_stage, workspace_root) = {
             let mut state = self.state.lock().await;
             let Some(entry) = state.workspaces.get_mut(&key) else {
                 return Err(format!("evo_cycle_not_found: {}", key));
@@ -209,10 +223,35 @@ impl EvolutionManager {
             if entry.status != "interrupted" && entry.status != "stopped" {
                 return Err(format!("evo_resume_not_allowed: {}", entry.status));
             }
+            (
+                entry.cycle_id.clone(),
+                entry.current_stage.clone(),
+                entry.workspace_root.clone(),
+            )
+        };
+        if self
+            .emit_blocking_required_if_any(
+                project,
+                workspace,
+                &workspace_root,
+                "resume",
+                Some(&cycle_id),
+                Some(&current_stage),
+                ctx,
+            )
+            .await?
+        {
+            return Ok(());
+        }
+
+        {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get_mut(&key) else {
+                return Err(format!("evo_cycle_not_found: {}", key));
+            };
             entry.stop_requested = false;
             entry.status = "queued".to_string();
-            entry.cycle_id.clone()
-        };
+        }
 
         self.broadcast(
             ctx,

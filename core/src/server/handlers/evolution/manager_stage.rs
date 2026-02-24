@@ -4,7 +4,7 @@ use tokio::time::{timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::ai::AiModelSelection;
+use crate::ai::{AiModelSelection, AiQuestionRequest};
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::{
     ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
@@ -55,6 +55,108 @@ fn parse_judge_result_from_json(value: &serde_json::Value) -> Option<bool> {
 }
 
 impl EvolutionManager {
+    pub(super) async fn interrupt_for_blockers(
+        &self,
+        key: &str,
+        cycle_id: &str,
+        reason: &str,
+        ctx: &HandlerContext,
+    ) {
+        let maybe = {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get_mut(key) else {
+                return;
+            };
+            entry.status = "interrupted".to_string();
+            entry.stop_requested = false;
+            Some((entry.project.clone(), entry.workspace.clone()))
+        };
+        let Some((project, workspace)) = maybe else {
+            return;
+        };
+        self.persist_cycle_file(key).await.ok();
+        self.broadcast(
+            ctx,
+            ServerMessage::EvoWorkspaceStopped {
+                event_id: Uuid::new_v4().to_string(),
+                event_seq: self.next_seq(key).await,
+                project: project.clone(),
+                workspace: workspace.clone(),
+                cycle_id: cycle_id.to_string(),
+                ts: Utc::now().to_rfc3339(),
+                source: "system".to_string(),
+                status: "interrupted".to_string(),
+                reason: Some(reason.to_string()),
+            },
+        )
+        .await;
+        self.broadcast_cycle_update(key, ctx, "system").await;
+        self.broadcast_scheduler(ctx).await;
+        if let Some(root) = {
+            let state = self.state.lock().await;
+            state
+                .workspaces
+                .get(key)
+                .map(|item| item.workspace_root.clone())
+        } {
+            if let Err(err) = self
+                .emit_blocking_required_if_any(
+                    &project,
+                    &workspace,
+                    &root,
+                    "stage_interrupt",
+                    Some(cycle_id),
+                    None,
+                    ctx,
+                )
+                .await
+            {
+                warn!("emit blocking required failed: {}", err);
+            }
+        }
+    }
+
+    async fn block_current_stage_by_question(
+        &self,
+        key: &str,
+        project: &str,
+        workspace: &str,
+        cycle_id: &str,
+        stage: &str,
+        request: &AiQuestionRequest,
+        ctx: &HandlerContext,
+    ) -> Result<(), String> {
+        let workspace_root = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return Err("workspace state missing".to_string());
+            };
+            entry.workspace_root.clone()
+        };
+        self.add_blocker_from_question(
+            project,
+            workspace,
+            &workspace_root,
+            cycle_id,
+            stage,
+            request,
+        )
+        .await?;
+        self.set_stage_status(key, stage, "blocked").await;
+        self.persist_stage_file(
+            key,
+            stage,
+            "blocked",
+            None,
+            Some("human blocker created from AI question"),
+        )
+        .await
+        .ok();
+        self.persist_cycle_file(key).await.ok();
+        self.broadcast_cycle_update(key, ctx, "agent").await;
+        Ok(())
+    }
+
     async fn run_auto_commit_before_next_round(
         &self,
         workspace_root: &str,
@@ -301,8 +403,20 @@ impl EvolutionManager {
                             self.broadcast_cycle_update(key, ctx, "agent").await;
                         }
                     }
-                    crate::ai::AiEvent::QuestionAsked { .. }
-                    | crate::ai::AiEvent::QuestionCleared { .. } => {}
+                    crate::ai::AiEvent::QuestionAsked { request } => {
+                        self.block_current_stage_by_question(
+                            key,
+                            project,
+                            workspace,
+                            cycle_id,
+                            stage,
+                            &request,
+                            ctx,
+                        )
+                        .await?;
+                        return Err("evo_human_blocking_required:ai_question".to_string());
+                    }
+                    crate::ai::AiEvent::QuestionCleared { .. } => {}
                 },
                 Ok(Some(Err(err))) => return Err(err),
                 Ok(None) => break,
@@ -356,6 +470,44 @@ impl EvolutionManager {
             }
         }
 
+        let blocker_check_ctx = {
+            let state = self.state.lock().await;
+            state.workspaces.get(key).map(|entry| {
+                (
+                    entry.workspace_root.clone(),
+                    entry.project.clone(),
+                    entry.workspace.clone(),
+                )
+            })
+        };
+        let has_stage_blocker = if let Some((workspace_root, project_name, workspace_name)) = blocker_check_ctx {
+            self.has_stage_blocker(
+                &workspace_root,
+                &project_name,
+                &workspace_name,
+                cycle_id,
+                stage,
+            )
+            .await
+        } else {
+            false
+        };
+        if has_stage_blocker {
+            self.set_stage_status(key, stage, "blocked").await;
+            self.persist_stage_file(
+                key,
+                stage,
+                "blocked",
+                Some(&session.id),
+                Some("stage blocked by unresolved human blocker"),
+            )
+            .await
+            .ok();
+            self.persist_cycle_file(key).await.ok();
+            self.broadcast_cycle_update(key, ctx, "agent").await;
+            return Err("evo_human_blocking_required:stage_blocker_file".to_string());
+        }
+
         self.set_stage_status(key, stage, "done").await;
         self.persist_stage_file(key, stage, "done", Some(&session.id), None)
             .await
@@ -377,6 +529,7 @@ impl EvolutionManager {
         let mut stage_changed: Option<(String, String, String, String)> = None;
         let mut auto_next_cycle = false;
         let mut auto_commit_workspace_root: Option<String> = None;
+        let mut auto_loop_gate: Option<(String, String, String, String)> = None;
 
         {
             let mut state = self.state.lock().await;
@@ -426,6 +579,12 @@ impl EvolutionManager {
                     entry.status = "completed".to_string();
                     if entry.auto_loop_enabled {
                         auto_commit_workspace_root = Some(entry.workspace_root.clone());
+                        auto_loop_gate = Some((
+                            entry.project.clone(),
+                            entry.workspace.clone(),
+                            entry.workspace_root.clone(),
+                            entry.cycle_id.clone(),
+                        ));
                     }
                 }
                 _ => {}
@@ -439,6 +598,43 @@ impl EvolutionManager {
                     entry.cycle_id.clone(),
                     next_stage,
                 ));
+            }
+        }
+
+        if let Some((project, workspace, workspace_root, cycle_id)) = auto_loop_gate {
+            match self
+                .emit_blocking_required_if_any(
+                    &project,
+                    &workspace,
+                    &workspace_root,
+                    "auto_loop",
+                    Some(&cycle_id),
+                    Some("report"),
+                    ctx,
+                )
+                .await
+            {
+                Ok(true) => {
+                    self.interrupt_for_blockers(
+                        key,
+                        &cycle_id,
+                        "workspace_blockers_pending",
+                        ctx,
+                    )
+                    .await;
+                    return false;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    self.mark_failed_with_code(
+                        key,
+                        "evo_internal_error",
+                        &format!("blocker gate check failed: {}", err),
+                        ctx,
+                    )
+                    .await;
+                    return false;
+                }
             }
         }
 

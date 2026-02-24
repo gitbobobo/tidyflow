@@ -107,6 +107,24 @@ impl EvolutionManager {
                     }
                 }
                 Err(err) => {
+                    if err.starts_with("evo_human_blocking_required") {
+                        let cycle_id = {
+                            let state = self.state.lock().await;
+                            state
+                                .workspaces
+                                .get(&key)
+                                .map(|w| w.cycle_id.clone())
+                                .unwrap_or_default()
+                        };
+                        self.interrupt_for_blockers(
+                            &key,
+                            &cycle_id,
+                            "workspace_blockers_pending",
+                            &ctx,
+                        )
+                        .await;
+                        return;
+                    }
                     error!(
                         "evolution stage failed: key={}, stage={}, error={}",
                         key, stage, err
