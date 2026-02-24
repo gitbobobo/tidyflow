@@ -32,12 +32,12 @@ xcodebuild -project app/TidyFlow.xcodeproj \
   SKIP_CORE_BUILD=1 \
   build
 
-# iOS 模拟器构建（Debug，示例设备名可替换）
+# iOS 模拟器构建（Debug）
 xcodebuild -project app/TidyFlow.xcodeproj \
   -scheme TidyFlow \
   -configuration Debug \
   -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
-  -derivedDataPath build-ios-sim \
+  -derivedDataPath build \
   SKIP_CORE_BUILD=1 \
   build
 ```
