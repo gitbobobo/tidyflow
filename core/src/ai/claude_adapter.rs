@@ -361,6 +361,9 @@ impl AiAgent for ClaudeCodeAgent {
                     id: user_message_id.clone(),
                     role: "user".to_string(),
                     created_at: Some(Self::now_ms()),
+                    agent: history_hint.agent.clone(),
+                    model_provider_id: history_hint.model_provider_id.clone(),
+                    model_id: history_hint.model_id.clone(),
                     parts: vec![AiPart::new_text(
                         format!("{}-text", user_message_id),
                         user_text.clone(),
@@ -373,6 +376,7 @@ impl AiAgent for ClaudeCodeAgent {
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
             role: "user".to_string(),
+            selection_hint: None,
         }));
         let _ = tx.send(Ok(AiEvent::PartUpdated {
             message_id: user_message_id.clone(),
@@ -544,6 +548,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                     let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                         message_id: assistant_message_id.clone(),
                                                         role: "assistant".to_string(),
+                                                        selection_hint: None,
                                                     }));
                                                 }
                                                 let _ = tx.send(Ok(AiEvent::PartUpdated {
@@ -596,6 +601,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                     let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                         message_id: assistant_message_id.clone(),
                                                         role: "assistant".to_string(),
+                                                        selection_hint: None,
                                                     }));
                                                 }
                                                 let _ = tx.send(Ok(AiEvent::PartUpdated {
@@ -612,6 +618,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                         let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                             message_id: assistant_message_id.clone(),
                                                             role: "assistant".to_string(),
+                                                            selection_hint: None,
                                                         }));
                                                     }
                                                     assistant_reasoning.push_str(text);
@@ -637,6 +644,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                         let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                             message_id: assistant_message_id.clone(),
                                                             role: "assistant".to_string(),
+                                                            selection_hint: None,
                                                         }));
                                                     }
                                                     assistant_text.push_str(text);
@@ -661,6 +669,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                                 message_id: assistant_message_id.clone(),
                                                                 role: "assistant".to_string(),
+                                                                selection_hint: None,
                                                             }));
                                                         }
                                                         let _ = tx.send(Ok(AiEvent::PartDelta {
@@ -690,6 +699,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                         let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                             message_id: assistant_message_id.clone(),
                                                             role: "assistant".to_string(),
+                                                            selection_hint: None,
                                                         }));
                                                     }
                                                     let _ = tx.send(Ok(AiEvent::PartDelta {
@@ -709,6 +719,7 @@ impl AiAgent for ClaudeCodeAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: assistant_message_id.clone(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         assistant_text.push_str(trimmed);
@@ -761,6 +772,7 @@ impl AiAgent for ClaudeCodeAgent {
                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                 message_id: assistant_message_id.clone(),
                                 role: "assistant".to_string(),
+                                selection_hint: None,
                             }));
                         }
                         let _ = tx.send(Ok(AiEvent::Done));
@@ -798,12 +810,15 @@ impl AiAgent for ClaudeCodeAgent {
                 if let Some(real_session_id) = parsed_claude_session_id {
                     record.claude_session_id = Some(real_session_id);
                 }
-                record.selection_hint = history_hint;
+                record.selection_hint = history_hint.clone();
                 if !assistant_parts.is_empty() {
                     record.messages.push(AiMessage {
                         id: assistant_message_id,
                         role: "assistant".to_string(),
                         created_at: Some(ClaudeCodeAgent::now_ms()),
+                        agent: None,
+                        model_provider_id: history_hint.model_provider_id.clone(),
+                        model_id: history_hint.model_id.clone(),
                         parts: assistant_parts,
                     });
                 }

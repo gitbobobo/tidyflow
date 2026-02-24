@@ -35,7 +35,11 @@ use tokio_stream::Stream;
 #[derive(Debug, Clone)]
 pub enum AiEvent {
     /// message.updated：用于建立 message_id -> role 映射，以及创建消息壳
-    MessageUpdated { message_id: String, role: String },
+    MessageUpdated {
+        message_id: String,
+        role: String,
+        selection_hint: Option<AiSessionSelectionHint>,
+    },
     /// message.part.updated：全量 part（text/reasoning/tool）
     PartUpdated { message_id: String, part: AiPart },
     /// message.part.delta：按 part_id 的增量更新（通常 field=text）
@@ -152,6 +156,9 @@ pub struct AiMessage {
     pub id: String,
     pub role: String,
     pub created_at: Option<i64>,
+    pub agent: Option<String>,
+    pub model_provider_id: Option<String>,
+    pub model_id: Option<String>,
     pub parts: Vec<AiPart>,
 }
 

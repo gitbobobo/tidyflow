@@ -390,6 +390,9 @@ impl CopilotAcpAgent {
             id: message_id,
             role: role.to_string(),
             created_at: None,
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
             parts: vec![part],
         });
     }
@@ -506,6 +509,7 @@ impl AiAgent for CopilotAcpAgent {
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
             role: "user".to_string(),
+            selection_hint: None,
         }));
         let _ = tx.send(Ok(AiEvent::PartUpdated {
             message_id: user_message_id.clone(),
@@ -583,6 +587,7 @@ impl AiAgent for CopilotAcpAgent {
                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                 message_id: assistant_message_id.clone(),
                                 role: "assistant".to_string(),
+                                selection_hint: None,
                             }));
                         }
 

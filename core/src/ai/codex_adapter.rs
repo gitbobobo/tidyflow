@@ -1174,6 +1174,9 @@ impl CodexAppServerAgent {
                 id: item_id.clone(),
                 role: "user".to_string(),
                 created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
                 parts: vec![AiPart::new_text(
                     format!("{}-text", item_id),
                     Self::parse_user_text(item),
@@ -1210,6 +1213,9 @@ impl CodexAppServerAgent {
                 id: item_id,
                 role: "assistant".to_string(),
                 created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
                 parts: vec![part],
             }
         })
@@ -1402,8 +1408,8 @@ impl CodexAppServerAgent {
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
             role: "user".to_string(),
+            selection_hint: None,
         }));
-
 
         tokio::spawn(async move {
             let mut known_assistant_messages = HashSet::<String>::new();
@@ -1443,6 +1449,7 @@ impl CodexAppServerAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: item_id.to_string(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
@@ -1465,6 +1472,7 @@ impl CodexAppServerAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: item_id.to_string(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
@@ -1493,6 +1501,7 @@ impl CodexAppServerAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: item_id.clone(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         let _ = tx.send(Ok(AiEvent::PartDelta {
@@ -1517,6 +1526,7 @@ impl CodexAppServerAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: item_id.to_string(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
@@ -1542,6 +1552,7 @@ impl CodexAppServerAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: message_id.clone(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         let _ = tx.send(Ok(AiEvent::PartUpdated {
@@ -1572,6 +1583,7 @@ impl CodexAppServerAgent {
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                                 message_id: message_id.to_string(),
                                                 role: "assistant".to_string(),
+                                                selection_hint: None,
                                             }));
                                         }
                                         let status = if event.method == "item/started" {
@@ -1722,6 +1734,7 @@ impl CodexAppServerAgent {
                                     let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                         message_id: question_message_id.clone(),
                                         role: "assistant".to_string(),
+                                        selection_hint: None,
                                     }));
                                     let _ = tx.send(Ok(AiEvent::PartUpdated {
                                         message_id: question_message_id.clone(),
