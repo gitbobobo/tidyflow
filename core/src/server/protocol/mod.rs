@@ -1175,6 +1175,8 @@ pub enum ServerMessage {
         session_id: String,
         message_id: String,
         role: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_hint: Option<ai::SessionSelectionHint>,
     },
     #[serde(rename = "ai_chat_part_updated")]
     AIChatPartUpdated {
@@ -1203,6 +1205,8 @@ pub enum ServerMessage {
         workspace_name: String,
         ai_tool: String,
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_hint: Option<ai::SessionSelectionHint>,
     },
     #[serde(rename = "ai_chat_error")]
     AIChatErrorV2 {

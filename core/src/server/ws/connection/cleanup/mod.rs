@@ -29,6 +29,9 @@ pub(in crate::server::ws) async fn cleanup_on_disconnect(
 async fn cleanup_ai_session_subscriptions(ai_state: &SharedAIState, conn_id: &str) {
     let mut ai = ai_state.lock().await;
     if ai.session_subscriptions.remove(conn_id).is_some() {
-        info!("Cleaned up AI session subscriptions for connection {}", conn_id);
+        info!(
+            "Cleaned up AI session subscriptions for connection {}",
+            conn_id
+        );
     }
 }

@@ -96,6 +96,12 @@ pub struct MessageInfo {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
     pub parts: Vec<PartInfo>,
 }
 
