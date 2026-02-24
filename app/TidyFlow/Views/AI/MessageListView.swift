@@ -33,17 +33,16 @@ struct MessageListView: View {
     let onQuestionReplyAsMessage: (String) -> Void
     let onOpenLinkedSession: ((String) -> Void)?
     @State private var viewportHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
     @State private var isNearBottom: Bool = true
     @State private var shouldAutoScroll: Bool = true
-    @State private var isUserDragging: Bool = false
-    @State private var lastUserScrollEventAt: TimeInterval = 0
     @State private var visibleMessageIDs: Set<String> = []
 
     private let scrollSpaceName = "ai_message_scroll_space"
+    private let topAnchorId = "ai_message_top_anchor"
     private let bottomAnchorId = "ai_message_bottom_anchor"
     private let bottomTolerance: CGFloat = 36
     private let renderBufferCount: Int = 12
-    private let userScrollInteractionWindow: TimeInterval = 0.25
 
     /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
     private var tailChangeToken: String {
@@ -150,6 +149,10 @@ struct MessageListView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 16) {
+                    Color.clear
+                        .frame(height: 1)
+                        .id(topAnchorId)
+
                     ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
                         MessageBubble(
                             message: message,
@@ -182,15 +185,12 @@ struct MessageListView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(bottomAnchorId)
-                        .background(
-                            GeometryReader { geo in
-                                Color.clear.preference(
-                                    key: MessageListBottomAnchorKey.self,
-                                    value: geo.frame(in: .named(scrollSpaceName)).maxY
-                                )
-                            }
-                        )
                 }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: MessageListContentHeightKey.self, value: geo.size.height)
+                    }
+                )
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -203,15 +203,11 @@ struct MessageListView: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { _ in
-                        markUserScrollInteraction()
-                        if !isUserDragging {
-                            isUserDragging = true
+                        if !isNearBottom, shouldAutoScroll {
+                            shouldAutoScroll = false
                         }
                     }
                     .onEnded { _ in
-                        if isUserDragging {
-                            isUserDragging = false
-                        }
                         if !isNearBottom, shouldAutoScroll {
                             shouldAutoScroll = false
                         }
@@ -219,8 +215,8 @@ struct MessageListView: View {
             )
 #if os(macOS) || os(iOS)
             .background(
-                MessageListUserScrollObserver {
-                    markUserScrollInteraction()
+                MessageListUserScrollObserver(bottomTolerance: bottomTolerance) { isUserInitiated, nearBottom in
+                    updateAutoScrollState(isUserInitiated: isUserInitiated, nearBottom: nearBottom)
                 }
                 .frame(width: 0, height: 0)
             )
@@ -229,8 +225,9 @@ struct MessageListView: View {
                 guard abs(newHeight - viewportHeight) > 0.5 else { return }
                 viewportHeight = newHeight
             }
-            .onPreferenceChange(MessageListBottomAnchorKey.self) { newBottom in
-                updateBottomState(withBottomAnchorMaxY: newBottom)
+            .onPreferenceChange(MessageListContentHeightKey.self) { newHeight in
+                guard abs(newHeight - contentHeight) > 0.5 else { return }
+                contentHeight = newHeight
             }
             .onAppear {
                 scrollToBottom(proxy: proxy, animated: false)
@@ -242,32 +239,26 @@ struct MessageListView: View {
         }
     }
 
-    private func updateBottomState(withBottomAnchorMaxY bottomAnchorMaxY: CGFloat) {
-        guard viewportHeight > 0 else { return }
-        let distanceToBottom = max(0, bottomAnchorMaxY - viewportHeight)
-        let nearBottomNow = distanceToBottom <= bottomTolerance
-        let now = Date().timeIntervalSinceReferenceDate
-        let userInteractingNow = isUserDragging || (now - lastUserScrollEventAt <= userScrollInteractionWindow)
-        if nearBottomNow != isNearBottom {
-            isNearBottom = nearBottomNow
+    private func updateAutoScrollState(isUserInitiated: Bool, nearBottom: Bool) {
+        if nearBottom != isNearBottom {
+            isNearBottom = nearBottom
         }
-
-        if nearBottomNow {
+        if nearBottom {
             if !shouldAutoScroll {
                 shouldAutoScroll = true
             }
-        } else if userInteractingNow && shouldAutoScroll {
+        } else if isUserInitiated && shouldAutoScroll {
             shouldAutoScroll = false
         }
     }
 
-    private func markUserScrollInteraction() {
-        lastUserScrollEventAt = Date().timeIntervalSinceReferenceDate
-    }
-
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
         let action = {
-            proxy.scrollTo(bottomAnchorId, anchor: .bottom)
+            if contentFitsViewport {
+                proxy.scrollTo(topAnchorId, anchor: .top)
+            } else {
+                proxy.scrollTo(bottomAnchorId, anchor: .bottom)
+            }
         }
         if animated {
             withAnimation {
@@ -276,6 +267,11 @@ struct MessageListView: View {
         } else {
             action()
         }
+    }
+
+    private var contentFitsViewport: Bool {
+        guard viewportHeight > 0 else { return false }
+        return contentHeight <= viewportHeight
     }
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
@@ -400,7 +396,7 @@ private struct MessageListViewportHeightKey: PreferenceKey {
     }
 }
 
-private struct MessageListBottomAnchorKey: PreferenceKey {
+private struct MessageListContentHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -410,23 +406,28 @@ private struct MessageListBottomAnchorKey: PreferenceKey {
 
 #if os(macOS)
 private struct MessageListUserScrollObserver: NSViewRepresentable {
-    let onUserScroll: () -> Void
+    let bottomTolerance: CGFloat
+    let onScrollStateChange: (Bool, Bool) -> Void
 
     func makeNSView(context: Context) -> MessageListScrollObserverNSView {
         let view = MessageListScrollObserverNSView()
-        view.onUserScroll = onUserScroll
+        view.bottomTolerance = bottomTolerance
+        view.onScrollStateChange = onScrollStateChange
         return view
     }
 
     func updateNSView(_ nsView: MessageListScrollObserverNSView, context: Context) {
-        nsView.onUserScroll = onUserScroll
+        nsView.bottomTolerance = bottomTolerance
+        nsView.onScrollStateChange = onScrollStateChange
         nsView.attachIfNeeded()
     }
 }
 
 private final class MessageListScrollObserverNSView: NSView {
-    var onUserScroll: (() -> Void)?
+    var bottomTolerance: CGFloat = 36
+    var onScrollStateChange: ((Bool, Bool) -> Void)?
 
+    private weak var observedScrollView: NSScrollView?
     private weak var observedClipView: NSClipView?
     private var boundsObserver: NSObjectProtocol?
 
@@ -452,6 +453,7 @@ private final class MessageListScrollObserverNSView: NSView {
             return
         }
 
+        observedScrollView = scrollView
         let clipView = scrollView.contentView
         clipView.postsBoundsChangedNotifications = true
         observedClipView = clipView
@@ -460,9 +462,13 @@ private final class MessageListScrollObserverNSView: NSView {
             object: clipView,
             queue: .main
         ) { [weak self] _ in
-            guard let self, self.isUserInitiatedScrollEvent else { return }
-            self.onUserScroll?()
+            guard let self else { return }
+            let nearBottom = self.isNearBottom(scrollView: scrollView, clipView: clipView)
+            self.onScrollStateChange?(self.isUserInitiatedScrollEvent, nearBottom)
         }
+
+        let nearBottom = isNearBottom(scrollView: scrollView, clipView: clipView)
+        onScrollStateChange?(false, nearBottom)
     }
 
     private func detachObserver() {
@@ -470,6 +476,7 @@ private final class MessageListScrollObserverNSView: NSView {
             NotificationCenter.default.removeObserver(boundsObserver)
             self.boundsObserver = nil
         }
+        observedScrollView = nil
         observedClipView = nil
     }
 
@@ -493,25 +500,36 @@ private final class MessageListScrollObserverNSView: NSView {
             return false
         }
     }
+
+    private func isNearBottom(scrollView: NSScrollView, clipView: NSClipView) -> Bool {
+        let contentHeight = clipView.documentRect.height + scrollView.contentInsets.bottom
+        let visibleBottom = clipView.bounds.maxY
+        let distanceToBottom = max(0, contentHeight - visibleBottom)
+        return distanceToBottom <= bottomTolerance
+    }
 }
 #elseif os(iOS)
 private struct MessageListUserScrollObserver: UIViewRepresentable {
-    let onUserScroll: () -> Void
+    let bottomTolerance: CGFloat
+    let onScrollStateChange: (Bool, Bool) -> Void
 
     func makeUIView(context: Context) -> MessageListScrollObserverUIView {
         let view = MessageListScrollObserverUIView()
-        view.onUserScroll = onUserScroll
+        view.bottomTolerance = bottomTolerance
+        view.onScrollStateChange = onScrollStateChange
         return view
     }
 
     func updateUIView(_ uiView: MessageListScrollObserverUIView, context: Context) {
-        uiView.onUserScroll = onUserScroll
+        uiView.bottomTolerance = bottomTolerance
+        uiView.onScrollStateChange = onScrollStateChange
         uiView.attachIfNeeded()
     }
 }
 
 private final class MessageListScrollObserverUIView: UIView {
-    var onUserScroll: (() -> Void)?
+    var bottomTolerance: CGFloat = 36
+    var onScrollStateChange: ((Bool, Bool) -> Void)?
 
     private weak var observedScrollView: UIScrollView?
     private var panStateObserver: NSKeyValueObservation?
@@ -545,17 +563,21 @@ private final class MessageListScrollObserverUIView: UIView {
             guard let state = change.newValue else { return }
             switch state {
             case .began, .changed, .ended, .cancelled:
-                self.onUserScroll?()
+                let nearBottom = self.isNearBottom(scrollView)
+                self.onScrollStateChange?(true, nearBottom)
             default:
                 break
             }
         }
         contentOffsetObserver = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
             guard let self else { return }
-            if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
-                self.onUserScroll?()
-            }
+            let isUserInitiated = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+            let nearBottom = self.isNearBottom(scrollView)
+            self.onScrollStateChange?(isUserInitiated, nearBottom)
         }
+
+        let nearBottom = isNearBottom(scrollView)
+        onScrollStateChange?(false, nearBottom)
     }
 
     private func detachObserver() {
@@ -575,6 +597,13 @@ private final class MessageListScrollObserverUIView: UIView {
             cursor = view.superview
         }
         return nil
+    }
+
+    private func isNearBottom(_ scrollView: UIScrollView) -> Bool {
+        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height
+        let contentBottom = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom
+        let distanceToBottom = max(0, contentBottom - visibleBottom)
+        return distanceToBottom <= bottomTolerance
     }
 }
 #endif
