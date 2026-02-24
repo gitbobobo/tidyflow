@@ -36,7 +36,7 @@ xcodebuild -project app/TidyFlow.xcodeproj \
 xcodebuild -project app/TidyFlow.xcodeproj \
   -scheme TidyFlow \
   -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
   -derivedDataPath build-ios-sim \
   SKIP_CORE_BUILD=1 \
   build
