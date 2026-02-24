@@ -182,7 +182,7 @@ struct SwiftTermTerminalView: UIViewRepresentable {
         // 注意：这里必须为 true，否则在内容不足一屏时 topPadding(-contentInset.top) 可能无法生效
         terminalView.alwaysBounceVertical = true
 
-        // 与原 xterm.js 保持一致的基础视觉配置
+        // 与 macOS 端保持一致的基础视觉配置
         // 使用 MesloLGS NF 以支持 Powerline/Nerd Font 字形，回退到系统等宽字体
         let terminalFontSize: CGFloat = 14
         if let nerdFont = UIFont(name: "MesloLGS NF", size: terminalFontSize) {
@@ -295,7 +295,7 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             // 说明：SwiftUI 可能复用同一个 TerminalView，若不清空会导致切换终端时内容“混在一起”。
             let seq: [UInt8] = [
                 0x1b, 0x5b, 0x30, 0x6d, // ESC[0m reset attributes
-                0x1b, 0x5b, 0x33, 0x4a, // ESC[3J clear scrollback (xterm compatible)
+                0x1b, 0x5b, 0x33, 0x4a, // ESC[3J clear scrollback
                 0x1b, 0x5b, 0x32, 0x4a, // ESC[2J clear screen
                 0x1b, 0x5b, 0x48       // ESC[H  home cursor
             ]
@@ -324,7 +324,7 @@ struct SwiftTermTerminalView: UIViewRepresentable {
             // CPR 应答（ESC[row;colR）不再丢弃：
             // C1→7-bit 规范化已修复 zle 误解析问题（0x9b 被 shell 当垃圾字节），
             // 而 TUI 应用（如 helix/lazygit）依赖 CPR 获取光标位置，丢弃会导致功能异常。
-            // xterm.js 时代同样经过网络往返但无此问题，佐证根因是 C1 编码而非延迟。
+            // 历史实现同样经过网络往返但无此问题，佐证根因是 C1 编码而非延迟。
 
             if Thread.isMainThread {
                 appState?.sendTerminalInputBytes(bytes)
