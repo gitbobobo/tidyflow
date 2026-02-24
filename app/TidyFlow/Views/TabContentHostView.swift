@@ -805,7 +805,7 @@ struct EvolutionTabView: View {
         let stage: String
         let agent: String
         let status: String
-        let latestMessage: String?
+        let toolCallCount: Int
     }
 
     private var project: String { appState.selectedProjectName }
@@ -816,6 +816,9 @@ struct EvolutionTabView: View {
         guard let workspace else { return nil }
         return appState.evolutionItem(project: project, workspace: workspace)
     }
+
+    private let evolutionStageOrder: [String] = ["direction", "plan", "implement", "verify", "judge", "report"]
+    private let stageCardHeight: CGFloat = 96
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -1031,7 +1034,7 @@ struct EvolutionTabView: View {
                         stage: runtime.stage,
                         agent: runtime.agent,
                         status: runtime.status,
-                        latestMessage: runtime.latestMessage
+                        toolCallCount: runtime.toolCallCount
                     )
                 )
             } else {
@@ -1043,7 +1046,7 @@ struct EvolutionTabView: View {
                         stage: profile.stage,
                         agent: agentName,
                         status: "未运行",
-                        latestMessage: nil
+                        toolCallCount: 0
                     )
                 )
             }
@@ -1060,23 +1063,16 @@ struct EvolutionTabView: View {
                     stage: runtime.stage,
                     agent: runtime.agent,
                     status: runtime.status,
-                    latestMessage: runtime.latestMessage
+                    toolCallCount: runtime.toolCallCount
                 )
             )
         }
 
         return items.sorted { a, b in
-            let aStatus = normalizedStageStatus(a.status)
-            let bStatus = normalizedStageStatus(b.status)
-            // running 置顶
-            if aStatus == "running" && bStatus != "running" { return true }
-            if bStatus == "running" && aStatus != "running" { return false }
-            // completed 排第二
-            if isCompletedStatus(aStatus) && !isCompletedStatus(bStatus) {
-                return true
-            }
-            if isCompletedStatus(bStatus) && !isCompletedStatus(aStatus) {
-                return false
+            let leftOrder = stageOrder(for: a.stage)
+            let rightOrder = stageOrder(for: b.stage)
+            if leftOrder != rightOrder {
+                return leftOrder < rightOrder
             }
             return a.stage < b.stage
         }
@@ -1134,14 +1130,14 @@ struct EvolutionTabView: View {
                 }
             }
 
-            if let latestMessage = agent.latestMessage, !latestMessage.isEmpty {
-                Text(latestMessage)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-            }
+            Text("工具调用 \(agent.toolCallCount) 次")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: stageCardHeight, alignment: .topLeading)
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1182,7 +1178,7 @@ struct EvolutionTabView: View {
     }
 
     private func isCompletedStatus(_ status: String) -> Bool {
-        status == "completed" || status == "success" || status == "succeeded" || status == "已完成" || status == "完成"
+        status == "completed" || status == "done" || status == "success" || status == "succeeded" || status == "已完成" || status == "完成"
     }
 
     private func stageStatusColor(_ status: String) -> Color {
@@ -1200,6 +1196,7 @@ struct EvolutionTabView: View {
     private func canOpenStageChat(_ status: String) -> Bool {
         let normalized = normalizedStageStatus(status)
         return normalized == "running" ||
+            normalized == "done" ||
             normalized == "completed" ||
             normalized == "已完成" ||
             normalized == "完成" ||
@@ -1209,6 +1206,14 @@ struct EvolutionTabView: View {
 
     private func normalizedStageStatus(_ status: String) -> String {
         status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func stageOrder(for stage: String) -> Int {
+        let normalized = normalizedStageKey(stage)
+        if let index = evolutionStageOrder.firstIndex(of: normalized) {
+            return index
+        }
+        return evolutionStageOrder.count
     }
 
     private func stageDisplayName(_ stage: String) -> String {

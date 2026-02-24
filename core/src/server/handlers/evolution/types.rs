@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::server::protocol::{
     EvolutionSchedulerInfo, EvolutionStageProfileInfo, EvolutionWorkspaceItem,
@@ -28,6 +28,8 @@ pub(super) struct WorkspaceRunState {
     pub(super) stage_profiles: Vec<EvolutionStageProfileInfo>,
     pub(super) stage_statuses: HashMap<String, String>,
     pub(super) stage_sessions: HashMap<String, StageSession>,
+    pub(super) stage_tool_call_counts: HashMap<String, u32>,
+    pub(super) stage_seen_tool_calls: HashMap<String, HashSet<String>>,
 }
 
 #[derive(Clone)]

@@ -24,8 +24,7 @@ impl EvolutionManager {
             verify_iteration,
             verify_limit,
             stage_statuses,
-            stage_sessions,
-            workspace_root,
+            stage_tool_call_counts,
         ) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
@@ -41,18 +40,11 @@ impl EvolutionManager {
                 entry.verify_iteration,
                 entry.verify_iteration_limit,
                 entry.stage_statuses.clone(),
-                entry.stage_sessions.clone(),
-                entry.workspace_root.clone(),
+                entry.stage_tool_call_counts.clone(),
             )
         };
 
-        let agents = build_agents(
-            &stage_statuses,
-            &stage_sessions,
-            &ctx.ai_state,
-            &workspace_root,
-        )
-        .await;
+        let agents = build_agents(&stage_statuses, &stage_tool_call_counts);
 
         self.broadcast(
             ctx,

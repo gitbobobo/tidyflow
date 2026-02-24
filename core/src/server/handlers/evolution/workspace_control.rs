@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use tracing::warn;
@@ -46,8 +46,12 @@ impl EvolutionManager {
         );
 
         let mut stage_statuses = HashMap::new();
+        let mut stage_tool_call_counts = HashMap::new();
+        let mut stage_seen_tool_calls = HashMap::new();
         for stage in STAGES {
             stage_statuses.insert(stage.to_string(), "pending".to_string());
+            stage_tool_call_counts.insert(stage.to_string(), 0);
+            stage_seen_tool_calls.insert(stage.to_string(), HashSet::new());
         }
 
         let global_loop_round = {
@@ -77,6 +81,8 @@ impl EvolutionManager {
                     stage_profiles,
                     stage_statuses,
                     stage_sessions: HashMap::new(),
+                    stage_tool_call_counts,
+                    stage_seen_tool_calls,
                 },
             );
             round
@@ -245,7 +251,7 @@ impl EvolutionManager {
         Some((session.ai_tool, session.session_id))
     }
 
-    pub(super) async fn build_snapshot(&self, ctx: &HandlerContext) -> SnapshotResult {
+    pub(super) async fn build_snapshot(&self, _ctx: &HandlerContext) -> SnapshotResult {
         let state = self.state.lock().await;
         let running_count = state
             .workspaces
@@ -261,13 +267,7 @@ impl EvolutionManager {
         let mut workspace_items: Vec<EvolutionWorkspaceItem> = Vec::new();
 
         for w in state.workspaces.values() {
-            let agents = build_agents(
-                &w.stage_statuses,
-                &w.stage_sessions,
-                &ctx.ai_state,
-                &w.workspace_root,
-            )
-            .await;
+            let agents = build_agents(&w.stage_statuses, &w.stage_tool_call_counts);
 
             workspace_items.push(EvolutionWorkspaceItem {
                 project: w.project.clone(),

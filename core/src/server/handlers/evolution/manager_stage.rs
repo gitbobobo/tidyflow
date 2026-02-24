@@ -106,6 +106,7 @@ impl EvolutionManager {
         let ai_tool = profile.ai_tool.clone();
 
         self.set_stage_status(key, stage, "running").await;
+        self.reset_stage_tool_call_tracking(key, stage).await;
         self.persist_cycle_file(key).await.ok();
         self.persist_stage_file(key, stage, "running", None, None)
             .await
@@ -231,6 +232,16 @@ impl EvolutionManager {
                         .await;
                     }
                     crate::ai::AiEvent::PartUpdated { message_id, part } => {
+                        let mut tool_call_count_changed = false;
+                        if part.part_type == "tool" {
+                            let call_key = part
+                                .tool_call_id
+                                .as_deref()
+                                .filter(|v| !v.trim().is_empty())
+                                .unwrap_or(part.id.as_str());
+                            tool_call_count_changed =
+                                self.record_stage_tool_call(key, stage, call_key).await;
+                        }
                         if stage == "judge" {
                             if let Some(text) = part.text.as_deref() {
                                 if let Some(parsed) = detect_judge_result_in_text(text) {
@@ -250,6 +261,9 @@ impl EvolutionManager {
                             },
                         )
                         .await;
+                        if tool_call_count_changed {
+                            self.broadcast_cycle_update(key, ctx, "agent").await;
+                        }
                     }
                     crate::ai::AiEvent::PartDelta {
                         message_id,
@@ -263,6 +277,11 @@ impl EvolutionManager {
                                 streamed_judge_result = Some(parsed);
                             }
                         }
+                        let tool_call_count_changed = if part_type == "tool" {
+                            self.record_stage_tool_call(key, stage, &part_id).await
+                        } else {
+                            false
+                        };
                         self.broadcast(
                             ctx,
                             ServerMessage::AIChatPartDelta {
@@ -278,6 +297,9 @@ impl EvolutionManager {
                             },
                         )
                         .await;
+                        if tool_call_count_changed {
+                            self.broadcast_cycle_update(key, ctx, "agent").await;
+                        }
                     }
                     crate::ai::AiEvent::QuestionAsked { .. }
                     | crate::ai::AiEvent::QuestionCleared { .. } => {}

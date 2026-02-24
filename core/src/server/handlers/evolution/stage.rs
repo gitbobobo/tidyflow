@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::server::handlers::ai::SharedAIState;
 use crate::server::handlers::evolution_prompts::{
     STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT, STAGE_JUDGE_PROMPT, STAGE_PLAN_PROMPT,
     STAGE_REPORT_PROMPT, STAGE_VERIFY_PROMPT,
@@ -8,80 +7,29 @@ use crate::server::handlers::evolution_prompts::{
 use crate::server::protocol::EvolutionAgentInfo;
 
 use super::STAGES;
-use super::StageSession;
 
-const MAX_MESSAGE_LENGTH: usize = 200;
-
-pub(super) async fn build_agents(
+pub(super) fn build_agents(
     stage_statuses: &HashMap<String, String>,
-    stage_sessions: &HashMap<String, StageSession>,
-    ai_state: &SharedAIState,
-    workspace_root: &str,
+    stage_tool_call_counts: &HashMap<String, u32>,
 ) -> Vec<EvolutionAgentInfo> {
     let mut agents = Vec::with_capacity(STAGES.len());
-    let ai_state_locked = ai_state.lock().await;
 
     for stage in STAGES {
         let status = stage_statuses
             .get(stage)
             .cloned()
             .unwrap_or_else(|| "pending".to_string());
-
-        // 获取最新消息
-        let latest_message = if let Some(session) = stage_sessions.get(stage) {
-            get_latest_assistant_message(&ai_state_locked, workspace_root, &session.session_id, &session.ai_tool)
-                .await
-        } else {
-            None
-        };
+        let tool_call_count = *stage_tool_call_counts.get(stage).unwrap_or(&0);
 
         agents.push(EvolutionAgentInfo {
             stage: stage.to_string(),
             agent: agent_name(stage).to_string(),
             status,
-            latest_message,
+            tool_call_count,
+            latest_message: None,
         });
     }
     agents
-}
-
-async fn get_latest_assistant_message(
-    ai_state: &crate::server::handlers::ai::AIState,
-    workspace_root: &str,
-    session_id: &str,
-    ai_tool: &str,
-) -> Option<String> {
-    let agent = ai_state.agents.get(ai_tool)?;
-    let directory = workspace_root;
-
-    let messages = match agent.list_messages(directory, session_id, Some(50)).await {
-        Ok(m) => m,
-        Err(_) => return None,
-    };
-
-    // 倒序查找最新的 assistant 消息
-    for message in messages.iter().rev() {
-        if message.role == "assistant" {
-            // 提取 text 内容
-            for part in &message.parts {
-                if let Some(text) = &part.text {
-                    if !text.trim().is_empty() {
-                        return Some(truncate_message(text));
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn truncate_message(text: &str) -> String {
-    if text.len() > MAX_MESSAGE_LENGTH {
-        format!("{}...", &text[..MAX_MESSAGE_LENGTH])
-    } else {
-        text.to_string()
-    }
 }
 
 pub(super) fn active_agents(stage_statuses: &HashMap<String, String>) -> Vec<String> {
