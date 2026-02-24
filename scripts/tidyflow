@@ -28,6 +28,9 @@ print_usage() {
       - 协议 action 规则同步检查
       - 版本一致性检查
 
+  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration] [--dry-run]
+      运行 Evolution 质量门禁链路（unit -> core build -> macOS build -> iOS build -> integration）
+
   build dmg [--skip-core] [--sign] [--identity "..."]
       构建 DMG（透传到 ./scripts/build_dmg.sh）
 
@@ -60,6 +63,9 @@ case "$cmd" in
         ./scripts/tools/gen_protocol_action_swift_rules.sh --check
         ./scripts/tools/check_protocol_action_sync.sh
         ./scripts/tools/check_version_consistency.sh
+        ;;
+    quality-gate)
+        exec ./scripts/evo-run.sh "$@"
         ;;
     build)
         sub="${1:-}"

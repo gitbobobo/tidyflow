@@ -1,8 +1,7 @@
 #!/bin/bash
 # Evolution 截图采集辅助脚本
 # 用法:
-#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --state <state>
-#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --state initial
+#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --state initial|processing|complete|error [--run-id <run_id>] [--dry-run]
 
 set -euo pipefail
 
@@ -10,8 +9,27 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EVOLUTION_DIR="$PROJECT_ROOT/.tidyflow/evolution"
 
 CYCLE_ID=""
-CHECK_ID="v-3"
+CHECK_ID="v-6"
 STATE=""
+RUN_ID=""
+DRY_RUN=0
+
+usage() {
+    cat <<'USAGE'
+Evolution 截图采集辅助脚本
+
+用法:
+  ./scripts/evo-screenshot.sh --cycle <cycle_id> --state <state> [options]
+
+选项:
+  --cycle <id>       Cycle ID（必需）
+  --check <id>       检查项 ID（默认：v-6）
+  --state <state>    状态：initial|processing|complete|error（必需）
+  --run-id <id>      关联 run_id（可选，默认最新）
+  --dry-run          生成占位截图（用于无 GUI 场景）
+  --help, -h         显示帮助
+USAGE
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -20,28 +38,28 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --check)
-            CHECK_ID="${2:-v-3}"
+            CHECK_ID="${2:-v-6}"
             shift 2
             ;;
         --state)
             STATE="${2:-}"
             shift 2
             ;;
+        --run-id)
+            RUN_ID="${2:-}"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
         --help|-h)
-            echo "Evolution 截图采集辅助脚本"
-            echo ""
-            echo "用法:"
-            echo "  $0 --cycle <cycle_id> --state <state> [options]"
-            echo ""
-            echo "选项:"
-            echo "  --cycle <id>    Cycle ID（必需）"
-            echo "  --check <id>    检查项 ID（默认：v-3）"
-            echo "  --state <state> 状态：initial|processing|complete|error（必需）"
-            echo "  --help, -h      显示帮助"
+            usage
             exit 0
             ;;
         *)
             echo "[evo][evidence] ERROR: 未知参数: $1"
+            usage
             exit 1
             ;;
     esac
@@ -52,10 +70,14 @@ if [ -z "$CYCLE_ID" ]; then
     exit 1
 fi
 
-if [ -z "$STATE" ]; then
-    echo "[evo][evidence] ERROR: 必须指定 --state (initial|processing|complete|error)"
-    exit 1
-fi
+case "$STATE" in
+    initial|processing|complete|error)
+        ;;
+    *)
+        echo "[evo][evidence] ERROR: --state 仅支持 initial|processing|complete|error"
+        exit 1
+        ;;
+esac
 
 CYCLE_DIR="$EVOLUTION_DIR/$CYCLE_ID"
 if [ ! -d "$CYCLE_DIR" ]; then
@@ -66,102 +88,225 @@ fi
 EVIDENCE_DIR="$CYCLE_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR"
 
-# 生成 cycle_id 短码（取前8位）
-CYCLE_ID_SHORT="${CYCLE_ID:0:8}"
+if [ -z "$RUN_ID" ] && [ -d "$CYCLE_DIR/runs" ]; then
+    RUN_ID="$(ls -1 "$CYCLE_DIR/runs" 2>/dev/null | sort | tail -n 1 || true)"
+fi
+if [ -z "$RUN_ID" ]; then
+    RUN_ID="manual-$(date -u +%Y%m%d-%H%M%S)"
+fi
 
-# 生成 UTC 时间戳
-UTC_TS=$(date -u +%Y%m%d-%H%M%S)
-
-FILENAME="screenshot-${CYCLE_ID_SHORT}-${CHECK_ID}-${STATE}-${UTC_TS}.png"
+UTC_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+SAFE_CYCLE_ID="$(echo "$CYCLE_ID" | tr '/:' '__')"
+FILENAME="screenshot-${SAFE_CYCLE_ID}-${CHECK_ID}-${STATE}-${UTC_TS}.png"
 FILEPATH="$EVIDENCE_DIR/$FILENAME"
+REL_PATH="evidence/$FILENAME"
+RELATED_LOG_REL="runs/$RUN_ID/evidence/integration-$RUN_ID.log"
 
-# 捕获截图
-echo "[evo][evidence] 正在捕获截图..."
-if screencapture -x "$FILEPATH" 2>/dev/null; then
-    if [ -f "$FILEPATH" ] && [ -s "$FILEPATH" ]; then
-        echo "[evo][evidence] 截图保存成功: $FILEPATH"
-    else
-        echo "[evo][evidence] ERROR: 截图保存失败（文件为空或不存在）"
-        echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE"
-        exit 1
-    fi
+capture_success=0
+
+if [ "$DRY_RUN" = "1" ]; then
+    python3 - "$FILEPATH" <<'PY'
+import base64
+import sys
+from pathlib import Path
+
+# 1x1 PNG
+png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W1Z0AAAAASUVORK5CYII="
+out = Path(sys.argv[1])
+out.write_bytes(base64.b64decode(png_b64))
+PY
+    capture_success=1
 else
-    echo "[evo][evidence] ERROR: 截图保存失败"
-    echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE"
+    if screencapture -x "$FILEPATH" 2>/dev/null; then
+        if [ -f "$FILEPATH" ] && [ -s "$FILEPATH" ]; then
+            capture_success=1
+        fi
+    fi
+fi
+
+if [ "$capture_success" != "1" ]; then
+    echo "[evo][evidence] ERROR: 截图失败"
+    echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE --run-id $RUN_ID"
+
+    DIFF_PATH="$CYCLE_DIR/runs/$RUN_ID/evidence/diff-$RUN_ID.md"
+    mkdir -p "$(dirname "$DIFF_PATH")"
+    {
+        echo ""
+        echo "### 截图缺失记录"
+        echo "- state: $STATE"
+        echo "- reason: screenshot capture failed"
+        echo "- retry: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE --run-id $RUN_ID"
+    } >> "$DIFF_PATH"
     exit 1
 fi
 
-# 更新 evidence.index.json
-update_evidence_index() {
-    python3 - "$CYCLE_DIR" "$CYCLE_ID" "$CYCLE_ID_SHORT" "$CHECK_ID" "$STATE" "$FILENAME" <<'PY'
-import sys
+echo "[evo][evidence] 截图保存成功: $FILEPATH"
+
+python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$STATE" "$REL_PATH" "$RELATED_LOG_REL" <<'PY'
+import hashlib
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
+import sys
 
-cycle_dir, cycle_id, cycle_id_short, check_id, state, filename = sys.argv[1:7]
-index_path = os.path.join(cycle_dir, "evidence.index.json")
+cycle_dir = Path(sys.argv[1])
+cycle_id = sys.argv[2]
+run_id = sys.argv[3]
+check_id = sys.argv[4]
+state = sys.argv[5]
+rel_path = sys.argv[6]
+related_log_rel = sys.argv[7]
+
+index_path = cycle_dir / "evidence.index.json"
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-def load_index(path):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+required_types = ["build_log", "test_log", "screenshot", "diff_summary", "metrics"]
 
-data = load_index(index_path)
+def read_index(path):
+    if not path.exists():
+        return {
+            "$schema_version": "1.0",
+            "cycle_id": cycle_id,
+            "updated_at": now,
+            "evidence": [],
+            "failure_context": None,
+            "completeness": {
+                "required_types": required_types,
+                "present_types": [],
+                "missing_types": required_types,
+                "completeness_ratio": 0.0,
+            },
+            "runs": [],
+        }
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        backup = path.with_name(path.name + ".corrupted." + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+        path.rename(backup)
+        return {
+            "$schema_version": "1.0",
+            "cycle_id": cycle_id,
+            "updated_at": now,
+            "evidence": [],
+            "failure_context": {
+                "failed_check_id": "index-load",
+                "timestamp": now,
+                "error_message": f"原索引损坏，已备份到 {backup.name}",
+                "log_keywords": ["[evo][evidence]", "index corrupted"],
+                "screenshot_path": None,
+            },
+            "completeness": {
+                "required_types": required_types,
+                "present_types": [],
+                "missing_types": required_types,
+                "completeness_ratio": 0.0,
+            },
+            "runs": [],
+        }
+
+
+def sha1_8(path: Path) -> str:
+    if not path.exists() or not path.is_file():
+        return ""
+    h = hashlib.sha1()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()[:8]
+
+
+data = read_index(index_path)
 if not isinstance(data, dict):
     data = {}
 
 data["$schema_version"] = "1.0"
 data["cycle_id"] = cycle_id
 
-evidence_items = data.get("evidence_items", [])
-if not isinstance(evidence_items, list):
-    evidence_items = []
+existing = data.get("evidence", [])
+if not isinstance(existing, list):
+    existing = []
+legacy = data.get("evidence_items", [])
+if isinstance(legacy, list):
+    for item in legacy:
+        if item not in existing:
+            existing.append(item)
 
-index_by_path = {}
-for item in evidence_items:
+index_by_key = {}
+for item in existing:
     if not isinstance(item, dict):
         continue
-    path = item.get("path")
-    if path:
-        index_by_path[path] = item
+    key = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{item.get('metadata', {}).get('state', '')}"
+    if key.endswith(":") or key.count(":") < 2:
+        key = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{item.get('path', '')}:{item.get('artifact_hash', '')}"
+    index_by_key[key] = item
 
-rel_path = f"evidence/{filename}"
-screenshot_id = f"scr-{cycle_id_short}-{check_id}-{state}"
+artifact_path = cycle_dir / rel_path
+artifact_hash = sha1_8(artifact_path)
+seed = f"{run_id}:{check_id}:{state}"
+evidence_id = "ev-" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
 
 item = {
-    "evidence_id": screenshot_id,
+    "evidence_id": evidence_id,
     "type": "screenshot",
     "path": rel_path,
-    "check_id": check_id,
-    "state": state,
-    "cycle_id_short": cycle_id_short,
+    "generated_by_stage": "implement",
+    "linked_criteria_ids": ["ac-3"],
+    "summary": f"截图证据 state={state} check={check_id}",
     "created_at": now,
+    "run_id": run_id,
+    "check_id": check_id,
+    "artifact_hash": artifact_hash,
+    "status": "valid",
+    "metadata": {
+        "state": state,
+        "related_test_log": related_log_rel,
+    },
 }
-index_by_path[rel_path] = item
 
-data["evidence_items"] = sorted(index_by_path.values(), key=lambda x: x.get("path", ""))
+key = f"{run_id}:{check_id}:{state}"
+if key in index_by_key and isinstance(index_by_key[key], dict):
+    old = index_by_key[key]
+    if old.get("evidence_id"):
+        item["evidence_id"] = old["evidence_id"]
+    if old.get("created_at"):
+        item["created_at"] = old["created_at"]
+
+index_by_key[key] = item
+all_items = list(index_by_key.values())
+all_items.sort(key=lambda x: (x.get("run_id", ""), x.get("path", "")))
+
+data["evidence"] = all_items
+data["evidence_items"] = all_items
+
+present_types = sorted({i.get("type") for i in all_items if i.get("status") != "missing"})
+missing_types = sorted([t for t in required_types if t not in present_types])
+ratio = round((len(required_types) - len(missing_types)) / len(required_types), 4)
+
+data["completeness"] = {
+    "required_types": required_types,
+    "present_types": present_types,
+    "missing_types": missing_types,
+    "completeness_ratio": ratio,
+}
+
 data["updated_at"] = now
 
-with open(index_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-    f.write("\n")
+fd, tmp_path = tempfile.mkstemp(prefix="evidence.index.", suffix=".tmp", dir=str(cycle_dir))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp_path, index_path)
+except Exception:
+    try:
+        os.unlink(tmp_path)
+    except FileNotFoundError:
+        pass
+    raise
 PY
-    return $?
-}
 
-if update_evidence_index; then
-    echo "[evo][evidence] 索引更新成功"
-else
-    echo "[evo][evidence] WARNING: 索引更新失败，但截图已保存"
-    echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE"
-fi
-
-echo "[evo][evidence] 检查项: $CHECK_ID"
-echo "[evo][evidence] 状态: $STATE"
-echo "[evo][evidence] 时间(UTC): $UTC_TS"
+echo "[evo][evidence] 索引更新成功"
+echo "[evo][evidence] check=$CHECK_ID state=$STATE run_id=$RUN_ID"
+echo "[evo][evidence] related_log=$RELATED_LOG_REL"
