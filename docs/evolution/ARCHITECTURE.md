@@ -64,7 +64,7 @@
 
 ### 4.3 回路规则
 
-- `judge = pass`：进入 `report` 并完成 cycle。
+- `judge = pass`：进入 `report`。若开启自动续轮，`report` 结束后先执行一键提交，成功后再创建下一轮 cycle；失败则当前 cycle 进入 `failed_system`。
 - `judge = fail` 且 `verify_iteration < 3`：回到 `implement`。
 - `judge = fail` 且 `verify_iteration == 3`：标记 `failed_exhausted`，开始下一全流程循环或等待策略决策。
 
