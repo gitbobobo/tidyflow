@@ -1050,15 +1050,11 @@ struct AITabView: View {
         autocomplete.reset()
         if slashCommand == nil {
             aiChatStore.beginAwaitingUserEcho()
+            aiChatStore.insertUserPlaceholder(text: text, imageAttachments: images)
+            aiChatStore.appendAssistantPlaceholder()
         } else {
             aiChatStore.beginAwaitingAssistantOnly()
             aiChatStore.appendAssistantPlaceholder()
-        }
-        aiChatStore.isStreaming = true
-
-        if slashCommand == nil {
-            // 插入用户消息占位（无 messageId），等待服务端 user echo 绑定真实 ID。
-            aiChatStore.insertUserPlaceholder(text: text)
         }
 
         // 发送请求已入队后立即清空输入区；消息展示以代理回传的 user message 为准。
@@ -1231,8 +1227,8 @@ struct AITabView: View {
 
         autocomplete.reset()
         aiChatStore.beginAwaitingUserEcho()
-        aiChatStore.isStreaming = true
         aiChatStore.insertUserPlaceholder(text: text)
+        aiChatStore.appendAssistantPlaceholder()
 
         inputText = ""
         imageAttachments = []

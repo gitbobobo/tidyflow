@@ -723,17 +723,41 @@ final class AIChatStore: ObservableObject {
     }
 
     /// 发送后立即插入用户消息占位（无 messageId），等待服务端 user echo 绑定真实 ID。
-    func insertUserPlaceholder(text: String) {
-        let textPart = AIChatPart(
-            id: UUID().uuidString,
-            kind: .text,
-            text: text,
-            toolName: nil,
-            toolState: nil
-        )
+    func insertUserPlaceholder(text: String, imageAttachments: [ImageAttachment] = []) {
+        var parts: [AIChatPart] = []
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasText {
+            parts.append(
+                AIChatPart(
+                    id: UUID().uuidString,
+                    kind: .text,
+                    text: text,
+                    toolName: nil,
+                    toolState: nil
+                )
+            )
+        }
+        for image in imageAttachments {
+            let dataURL = "data:\(image.mime);base64,\(image.data.base64EncodedString())"
+            parts.append(
+                AIChatPart(
+                    id: UUID().uuidString,
+                    kind: .file,
+                    text: nil,
+                    mime: image.mime,
+                    filename: image.filename,
+                    url: dataURL,
+                    synthetic: nil,
+                    ignored: nil,
+                    source: nil,
+                    toolName: nil,
+                    toolState: nil
+                )
+            )
+        }
         let placeholder = AIChatMessage(
             role: .user,
-            parts: [textPart],
+            parts: parts,
             isStreaming: false
         )
         appendMessage(placeholder)
@@ -1545,10 +1569,19 @@ final class AIChatStore: ObservableObject {
             userPlaceholderMessageIdsPendingServerPart.remove(messageId)
             return
         }
+        let preservedImageParts = messages[msgIdx].parts.filter { part in
+            guard part.kind == .file else { return false }
+            guard let mime = part.mime?.lowercased(), mime.hasPrefix("image/") else { return false }
+            guard let url = part.url else { return false }
+            return url.hasPrefix("data:") || url.hasPrefix("file://")
+        }
         for part in messages[msgIdx].parts {
             partIndexByPartId.removeValue(forKey: part.id)
         }
-        messages[msgIdx].parts.removeAll(keepingCapacity: true)
+        messages[msgIdx].parts = preservedImageParts
+        for (idx, part) in messages[msgIdx].parts.enumerated() {
+            partIndexByPartId[part.id] = (msgIdx, idx)
+        }
         userPlaceholderMessageIdsPendingServerPart.remove(messageId)
     }
 
