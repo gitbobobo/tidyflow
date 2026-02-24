@@ -155,15 +155,19 @@ final class ChatScrollPolicy {
 
     private func handleMessageAppended(now: Date) -> ChatScrollDecision.Action {
         guard autoFollow else { return .none }
-        // 额外校验：仅当最近确认过在底部附近时才滚动，防止竞态
+        // 当 autoFollow 和 nearBottom 都为 true 时，直接滚动（无需确认超时检查）。
+        // 确认超时仅用于处理 nearBottom 不确定时的竞态条件。
+        if nearBottom { return .scrollToBottom }
         guard isNearBottomConfirmationFreshAt(now) else { return .none }
         return .scrollToBottom
     }
 
     private func handleMessageIncremented(now: Date) -> ChatScrollDecision.Action {
         guard autoFollow else { return .none }
-        // 额外校验：仅当最近确认过在底部附近时才滚动，防止竞态
-        guard isNearBottomConfirmationFreshAt(now) else { return .none }
+        // 当 nearBottom 为 true 时直接通过；否则需确认超时仍有效
+        if !nearBottom {
+            guard isNearBottomConfirmationFreshAt(now) else { return .none }
+        }
         guard let lastIncrementScrollAt else {
             self.lastIncrementScrollAt = now
             return .throttledScrollToBottom

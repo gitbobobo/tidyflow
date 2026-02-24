@@ -357,6 +357,8 @@ struct MessageListView: View {
         } else {
             action()
         }
+        // 程序化滚动后立即同步状态，避免等待异步 PreferenceKey 更新导致的竞态
+        isNearBottom = true
         // 自动滚动后刷新近底部确认时间戳
         _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
     }
