@@ -41,6 +41,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 bytes = "1"
 async-trait = "0.1.89"
+gix = "0.80"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
