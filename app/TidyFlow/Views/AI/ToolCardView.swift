@@ -1943,16 +1943,131 @@ struct ToolCardView: View {
     }
 
     private func jsonText(_ obj: Any) -> String? {
-        guard JSONSerialization.isValidJSONObject(obj) else { return nil }
-        // 先做轻量探测：如果对象结构/字符串明显过大，就不要 JSON pretty print（iOS 上很容易直接 OOM）。
-        if isJSONTooHeavyForPrettyPrint(obj) {
-            return summarizeAny(obj)
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else {
+        var visitedObjectIDs: Set<ObjectIdentifier> = []
+        var nodes = 0
+        guard let normalized = normalizeJSONObjectValue(
+            obj,
+            visitedObjectIDs: &visitedObjectIDs,
+            nodes: &nodes,
+            depth: 0
+        ) else {
             return nil
+        }
+        guard JSONSerialization.isValidJSONObject(normalized) else {
+            return summarizeAny(normalized)
+        }
+        // 先做轻量探测：如果对象结构/字符串明显过大，就不要 JSON pretty print（iOS 上很容易直接 OOM）。
+        if isJSONTooHeavyForPrettyPrint(normalized) {
+            return summarizeAny(normalized)
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: normalized, options: [.prettyPrinted, .sortedKeys]) else {
+            return summarizeAny(normalized)
         }
         guard let text = String(data: data, encoding: .utf8) else { return nil }
         return clampText(text, limit: Self.maxCodeSectionChars)
+    }
+
+    /// 将任意对象归一化为“可安全 JSON 序列化”的结构，并做循环引用保护。
+    private func normalizeJSONObjectValue(
+        _ value: Any,
+        visitedObjectIDs: inout Set<ObjectIdentifier>,
+        nodes: inout Int,
+        depth: Int
+    ) -> Any? {
+        nodes += 1
+        if nodes > 4_000 {
+            return "…(truncated: too many nodes)…"
+        }
+        if depth > 16 {
+            return "…(truncated: depth limit)…"
+        }
+
+        switch value {
+        case is NSNull:
+            return NSNull()
+        case let v as String:
+            return v
+        case let v as NSString:
+            return String(v)
+        case let v as Bool:
+            return v
+        case let v as Int:
+            return v
+        case let v as Int64:
+            return v
+        case let v as UInt:
+            return v
+        case let v as Double:
+            return v
+        case let v as Float:
+            return Double(v)
+        case let v as NSNumber:
+            return v
+        case let v as Date:
+            return ISO8601DateFormatter().string(from: v)
+        case let v as Data:
+            return "<Data \(v.count) bytes>"
+        case let dict as [String: Any]:
+            var normalized: [String: Any] = [:]
+            for key in dict.keys.sorted() {
+                guard let raw = dict[key] else {
+                    normalized[key] = NSNull()
+                    continue
+                }
+                normalized[key] = normalizeJSONObjectValue(
+                    raw,
+                    visitedObjectIDs: &visitedObjectIDs,
+                    nodes: &nodes,
+                    depth: depth + 1
+                ) ?? NSNull()
+            }
+            return normalized
+        case let array as [Any]:
+            return array.map { item in
+                normalizeJSONObjectValue(
+                    item,
+                    visitedObjectIDs: &visitedObjectIDs,
+                    nodes: &nodes,
+                    depth: depth + 1
+                ) ?? NSNull()
+            }
+        case let dict as NSDictionary:
+            let oid = ObjectIdentifier(dict)
+            if visitedObjectIDs.contains(oid) {
+                return "[Circular NSDictionary]"
+            }
+            visitedObjectIDs.insert(oid)
+            defer { visitedObjectIDs.remove(oid) }
+            var normalized: [String: Any] = [:]
+            for key in dict.allKeys {
+                let keyString = String(describing: key)
+                let raw = dict[key] ?? NSNull()
+                normalized[keyString] = normalizeJSONObjectValue(
+                    raw,
+                    visitedObjectIDs: &visitedObjectIDs,
+                    nodes: &nodes,
+                    depth: depth + 1
+                ) ?? NSNull()
+            }
+            return normalized
+        case let array as NSArray:
+            let oid = ObjectIdentifier(array)
+            if visitedObjectIDs.contains(oid) {
+                return "[Circular NSArray]"
+            }
+            visitedObjectIDs.insert(oid)
+            defer { visitedObjectIDs.remove(oid) }
+            return array.map { item in
+                normalizeJSONObjectValue(
+                    item,
+                    visitedObjectIDs: &visitedObjectIDs,
+                    nodes: &nodes,
+                    depth: depth + 1
+                ) ?? NSNull()
+            }
+        default:
+            return String(describing: value)
+        }
     }
 
     private func isJSONTooHeavyForPrettyPrint(_ obj: Any) -> Bool {

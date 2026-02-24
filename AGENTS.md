@@ -16,6 +16,8 @@
   修复思路：设置页需主动触发一次 provider/agent 拉取，并在未选中工作空间时记录该次请求上下文，允许对应返回被消费。
 - `AIProviderList` 与 `AIAgentList` 到达顺序不固定，不能在收到第一类结果后立即清理临时请求上下文，否则会出现“模型列表已显示，但模式列表仍为空”。
   修复思路：按 provider/agent 两类结果分别维护 pending 标记，只有两者都返回后再清理。
+- 聊天详情中的工具卡片如果直接对 `state/metadata` 做 `JSONSerialization.data(withJSONObject:)`，遇到 `NSDictionary/NSArray` 循环引用会在主线程递归爆栈（表现为打开/关闭详情时闪退，崩溃栈常见 `ToolCardView.jsonText` 与 `_writeJSONObject/_writeJSONArray`）。
+  修复思路：先把对象归一化为安全 JSON（带循环引用检测与深度/节点上限）再序列化；关闭详情仅通过单一状态源收起（避免同时 `binding=false` 和 `dismiss()` 的重复关闭链路）。
 
 ## 常用命令
 
