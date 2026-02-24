@@ -1,6 +1,6 @@
-# TidyFlow macOS App
+# TidyFlow App
 
-SwiftUI + WKWebView terminal application that connects to the TidyFlow Rust core via WebSocket.
+SwiftUI + SwiftTerm 原生终端应用，通过 WebSocket 连接 TidyFlow Rust core。
 
 ## Quick Start
 
@@ -23,9 +23,9 @@ open app/TidyFlow.xcodeproj
 ┌─────────────────────────────────────────┐
 │           TidyFlow.app (Swift)          │
 │  ┌───────────────────────────────────┐  │
-│  │         WKWebView                 │  │
+│  │      SwiftUI Native Views       │  │
 │  │  ┌─────────────────────────────┐  │  │
-│  │  │   xterm.js + WebGL addon    │  │  │
+│  │  │        SwiftTerm PTY        │  │  │
 │  │  └─────────────────────────────┘  │  │
 │  │              │                    │  │
 │  │         WebSocket                 │  │
@@ -44,10 +44,10 @@ open app/TidyFlow.xcodeproj
 | File | Purpose |
 |------|---------|
 | `TidyFlowApp.swift` | App entry point |
-| `ContentView.swift` | Main view with WKWebView |
-| `Web/index.html` | Terminal HTML container |
-| `Web/main/*.js` | WebSocket 协议处理、终端 UI、Tab/项目状态管理 |
-| `Web/vendor/` | xterm.js and addons |
+| `ContentView.swift` | 主容器视图 |
+| `Views/TabContentHostView.swift` | Tab 内容分发（编辑器/终端/AI） |
+| `Views/MacSwiftTermTerminalView.swift` | macOS 原生终端视图 |
+| `TidyFlow-iOS/Views/SwiftTermTerminalView.swift` | iOS 原生终端视图 |
 | `Info.plist` | ATS configuration for localhost |
 | `TidyFlow.entitlements` | Network permissions |
 

@@ -12,9 +12,8 @@
 		2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */; };
 		2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */; };
 		2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAA2F2F0BAA009B67A9 /* LeftSidebarView.swift */; };
-		2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */; };
+		2AEE0BB52F2F0BAA009B67A9 /* MacSwiftTermTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BB02F2F0BAA009B67A9 /* MacSwiftTermTerminalView.swift */; };
 		2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */; };
-		2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */; };
 		2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */; };
 		2CE8E4846E61AEF7F4977EEC /* TerminalProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34DACB3D06DBF33922531D /* TerminalProtocolModels.swift */; };
 		3DFCBC76B433FB811DF17512 /* ProjectCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000115 /* ProjectCommandModels.swift */; };
@@ -29,19 +28,16 @@
 		930A28E05020B9AD2A364722 /* FileBrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000108 /* FileBrowserModels.swift */; };
 		A1000001 /* TidyFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011 /* TidyFlowApp.swift */; };
 		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012 /* ContentView.swift */; };
-		A1000003 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Web */; };
+		A1000003 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = A1000013 /* Fonts */; };
 		A1000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000016 /* Assets.xcassets */; };
 		A63C63F68A938CE6F19B1257 /* WSClient+Receive.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00015 /* WSClient+Receive.swift */; };
 		A866AA59997825F9AB6ECE6D /* TFLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4200012 /* TFLogger.swift */; };
 		AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */; };
-		MOB00021 /* MobileBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00011 /* MobileBridge.swift */; };
-		MOB00022 /* MobileTerminalWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00012 /* MobileTerminalWebView.swift */; };
 		MOB00023 /* TerminalInputAccessoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00013 /* TerminalInputAccessoryView.swift */; };
 		MOB00024 /* MobileTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00014 /* MobileTerminalView.swift */; };
 		MOB00025 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00015 /* ConnectionView.swift */; };
 		MOB00026 /* ProjectListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00016 /* ProjectListView.swift */; };
 		MOB00027 /* WorkspaceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00017 /* WorkspaceListView.swift */; };
-		MOB00028 /* TerminalInputProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = MOB00018 /* TerminalInputProxy.swift */; };
 		B3A00001 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00011 /* CommandPaletteView.swift */; };
 		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
 		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
@@ -180,18 +176,14 @@
 		2AEE0BAB2F2F0BAA009B67A9 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		2AEE0BAC2F2F0BAA009B67A9 /* RightToolPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightToolPanelView.swift; sourceTree = "<group>"; };
 		2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopToolbarView.swift; sourceTree = "<group>"; };
-		2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebBridge.swift; sourceTree = "<group>"; };
-		2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
+		2AEE0BB02F2F0BAA009B67A9 /* MacSwiftTermTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSwiftTermTerminalView.swift; sourceTree = "<group>"; };
 		2E667DE0A535A7448B3C8A7B /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		33EC9B858CB84EB99FADFDEF /* TidyFlowiOSApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TidyFlowiOSApp.swift; sourceTree = "<group>"; };
-		MOB00011 /* MobileBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileBridge.swift; sourceTree = "<group>"; };
-		MOB00012 /* MobileTerminalWebView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileTerminalWebView.swift; sourceTree = "<group>"; };
 		MOB00013 /* TerminalInputAccessoryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalInputAccessoryView.swift; sourceTree = "<group>"; };
 		MOB00014 /* MobileTerminalView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileTerminalView.swift; sourceTree = "<group>"; };
 		MOB00015 /* ConnectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
 		MOB00016 /* ProjectListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProjectListView.swift; sourceTree = "<group>"; };
 		MOB00017 /* WorkspaceListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
-		MOB00018 /* TerminalInputProxy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalInputProxy.swift; sourceTree = "<group>"; };
 		677A21DC64E8B5102B08960B /* MobileAppState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAppState.swift; sourceTree = "<group>"; };
 		MOB00031 /* SavedConnection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SavedConnection.swift; sourceTree = "<group>"; };
 		MOB00056 /* MobileAIChatView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileAIChatView.swift; sourceTree = "<group>"; };
@@ -205,7 +197,7 @@
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		A1000013 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Web; sourceTree = "<group>"; };
+		A1000013 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fonts; sourceTree = "<group>"; };
 		A1000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1000015 /* TidyFlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TidyFlow.entitlements; sourceTree = "<group>"; };
 		A1000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -333,6 +325,7 @@
 				BGT00011 /* BackgroundTaskViews.swift */,
 				B3A00019 /* BranchPickerView.swift */,
 				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
+				2AEE0BB02F2F0BAA009B67A9 /* MacSwiftTermTerminalView.swift */,
 				SPL00033 /* CommandEditSheet.swift */,
 				EVO00011 /* EvolutionDefaultConfigSection.swift */,
 				B3A00011 /* CommandPaletteView.swift */,
@@ -384,15 +377,6 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		2AEE0BB12F2F0BAA009B67A9 /* WebView */ = {
-			isa = PBXGroup;
-			children = (
-				2AEE0BAF2F2F0BAA009B67A9 /* WebBridge.swift */,
-				2AEE0BB02F2F0BAA009B67A9 /* WebViewContainer.swift */,
-			);
-			path = WebView;
-			sourceTree = "<group>";
-		};
 		3F9CC65A7A1E66F0E34B1056 /* TidyFlow-iOS */ = {
 			isa = PBXGroup;
 			children = (
@@ -417,10 +401,7 @@
 				MOB00014 /* MobileTerminalView.swift */,
 				MOB00033 /* SwiftTermTerminalView.swift */,
 				MOB00043 /* MobileCommandIconView.swift */,
-				MOB00012 /* MobileTerminalWebView.swift */,
-				MOB00011 /* MobileBridge.swift */,
 				MOB00013 /* TerminalInputAccessoryView.swift */,
-				MOB00018 /* TerminalInputProxy.swift */,
 				MOB00054 /* DisconnectBannerView.swift */,
 				MOB00056 /* MobileAIChatView.swift */,
 			);
@@ -480,12 +461,11 @@
 				B3A00020 /* Networking */,
 				D3900020 /* Process */,
 				2AEE0BAE2F2F0BAA009B67A9 /* Views */,
-				2AEE0BB12F2F0BAA009B67A9 /* WebView */,
 				D3900011 /* AppConfig.swift */,
 				L10N0011 /* LocalizationManager.swift */,
 				A1000011 /* TidyFlowApp.swift */,
 				A1000012 /* ContentView.swift */,
-				A1000013 /* Web */,
+				A1000013 /* Fonts */,
 				A1000014 /* Info.plist */,
 				A1000015 /* TidyFlow.entitlements */,
 				L10N0020 /* Localizable.strings */,
@@ -678,7 +658,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000003 /* Web in Resources */,
+				A1000003 /* Fonts in Resources */,
 				A1000004 /* Assets.xcassets in Resources */,
 				L10N0002 /* Localizable.strings in Resources */,
 			);
@@ -719,15 +699,12 @@
 				AD04CC1F54ED5E801F2DDF64 /* TidyFlowiOSApp.swift in Sources */,
 				E46773AC86000133CD59E16F /* MobileAppState.swift in Sources */,
 				MOB00032 /* SavedConnection.swift in Sources */,
-				MOB00021 /* MobileBridge.swift in Sources */,
-				MOB00022 /* MobileTerminalWebView.swift in Sources */,
 				MOB00034 /* SwiftTermTerminalView.swift in Sources */,
 				MOB00023 /* TerminalInputAccessoryView.swift in Sources */,
 				MOB00024 /* MobileTerminalView.swift in Sources */,
 				MOB00025 /* ConnectionView.swift in Sources */,
 				MOB00026 /* ProjectListView.swift in Sources */,
 				MOB00027 /* WorkspaceListView.swift in Sources */,
-				MOB00028 /* TerminalInputProxy.swift in Sources */,
 				MOB00051 /* WorkspaceDetailView.swift in Sources */,
 				MOB00052 /* WorkspaceTasksView.swift in Sources */,
 				MOB00053 /* MobileCommandIconView.swift in Sources */,
@@ -742,7 +719,7 @@
 				2AEE0BB22F2F0BAA009B67A9 /* CenterContentView.swift in Sources */,
 				2AEE0BB32F2F0BAA009B67A9 /* TopToolbarView.swift in Sources */,
 				2AEE0BB42F2F0BAA009B67A9 /* LeftSidebarView.swift in Sources */,
-				2AEE0BB52F2F0BAA009B67A9 /* WebViewContainer.swift in Sources */,
+				2AEE0BB52F2F0BAA009B67A9 /* MacSwiftTermTerminalView.swift in Sources */,
 				2AEE0BB62F2F0BAA009B67A9 /* Models.swift in Sources */,
 				GCS000012 /* GitCacheState.swift in Sources */,
 				FCS000012 /* FileCacheState.swift in Sources */,
@@ -781,7 +758,6 @@
 				FAQ00001 /* FAQView.swift in Sources */,
 				TST00001 /* ToastManager.swift in Sources */,
 				TST00002 /* ToastOverlayView.swift in Sources */,
-				2AEE0BB72F2F0BAA009B67A9 /* WebBridge.swift in Sources */,
 				2AEE0BB82F2F0BAA009B67A9 /* RightToolPanelView.swift in Sources */,
 				SPL00009 /* ExplorerView.swift in Sources */,
 				SPL0000A /* FileDialogViews.swift in Sources */,
@@ -1093,17 +1069,13 @@
 					"ToastManager.swift",
 					"ToastOverlayView.swift",
 					"TopToolbarView.swift",
-					"WebBridge.swift",
-					"WebViewContainer.swift",
+					"MacSwiftTermTerminalView.swift",
 				);
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = (
 					"MobileAppState.swift",
 					"TidyFlowiOSApp.swift",
-					"MobileBridge.swift",
-					"MobileTerminalWebView.swift",
 					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
-					"TerminalInputProxy.swift",
 					"MobileTerminalView.swift",
 					"ConnectionView.swift",
 					"ProjectListView.swift",
@@ -1226,17 +1198,13 @@
 					"ToastManager.swift",
 					"ToastOverlayView.swift",
 					"TopToolbarView.swift",
-					"WebBridge.swift",
-					"WebViewContainer.swift",
+					"MacSwiftTermTerminalView.swift",
 				);
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = (
 					"MobileAppState.swift",
 					"TidyFlowiOSApp.swift",
-					"MobileBridge.swift",
-					"MobileTerminalWebView.swift",
 					"SwiftTermTerminalView.swift",
 					"TerminalInputAccessoryView.swift",
-					"TerminalInputProxy.swift",
 					"MobileTerminalView.swift",
 					"ConnectionView.swift",
 					"ProjectListView.swift",

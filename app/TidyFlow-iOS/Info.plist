@@ -42,8 +42,8 @@
 	</array>
 	<key>UIAppFonts</key>
 	<array>
-		<string>Web/fonts/MesloLGS NF Regular.ttf</string>
-		<string>Web/fonts/MesloLGS NF Bold.ttf</string>
+		<string>Fonts/MesloLGS NF Regular.ttf</string>
+		<string>Fonts/MesloLGS NF Bold.ttf</string>
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
