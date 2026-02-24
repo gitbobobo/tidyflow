@@ -28,6 +28,7 @@ private func isInteractiveQuestionToolState(_ state: [String: Any]) -> Bool {
 struct MessageListView: View {
     @EnvironmentObject var aiChatStore: AIChatStore
     let messages: [AIChatMessage]
+    let sessionToken: String?
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
     let onQuestionReplyAsMessage: (String) -> Void
@@ -35,13 +36,17 @@ struct MessageListView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
     @State private var isNearBottom: Bool = true
-    @State private var shouldAutoScroll: Bool = true
+    @State private var isAutoFollowActive: Bool = true
+    @State private var scrollPolicy: ChatScrollPolicy = ChatScrollPolicy()
+    @State private var lastTailMessageID: String?
+    @State private var lastDisplayMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
+    @State private var scrollPositionID: String?
+    @State private var jumpToBottomRequestID: Int = 0
 
     private let scrollSpaceName = "ai_message_scroll_space"
     private let topAnchorId = "ai_message_top_anchor"
     private let bottomAnchorId = "ai_message_bottom_anchor"
-    private let bottomTolerance: CGFloat = 36
     private let renderBufferCount: Int = 12
 
     /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
@@ -146,109 +151,243 @@ struct MessageListView: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    Color.clear
-                        .frame(height: 1)
-                        .id(topAnchorId)
-
-                    ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
-                        MessageBubble(
-                            message: message,
-                            prefersFullRender: shouldFullyRender(message: message, index: index),
-                            pendingQuestionToken: pendingQuestionToken(for: message),
-                            sessionId: aiChatStore.currentSessionId ?? "",
-                            questionRequestResolver: { callId, toolPartId, messageId, requestId in
-                                aiChatStore.questionRequest(
-                                    forToolCallId: callId,
-                                    toolPartId: toolPartId,
-                                    toolMessageId: messageId,
-                                    requestId: requestId
-                                )
-                            },
-                            onQuestionReply: onQuestionReply,
-                            onQuestionReject: onQuestionReject,
-                            onQuestionReplyAsMessage: onQuestionReplyAsMessage,
-                            onOpenLinkedSession: onOpenLinkedSession
-                        )
-                            .equatable()
-                            .id(message.id)
-                            .onAppear {
-                                visibleMessageIDs.insert(message.id)
-                            }
-                            .onDisappear {
-                                visibleMessageIDs.remove(message.id)
-                            }
-                    }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id(bottomAnchorId)
+        Group {
+            if #available(iOS 17.0, macOS 14.0, *) {
+                ScrollView {
+                    messageStack(usesModernScrollAPI: true)
                 }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: MessageListContentHeightKey.self, value: geo.size.height)
-                    }
-                )
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .coordinateSpace(name: scrollSpaceName)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: MessageListViewportHeightKey.self, value: geo.size.height)
+                .modernScrollPosition(id: $scrollPositionID, contentFitsViewport: contentFitsViewport)
+                .onAppear {
+                    initializeScrollPolicyStateIfNeeded()
+                    scrollToBottomModern(animated: false)
                 }
-            )
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 2)
-                    .onChanged { _ in
-                        if !isNearBottom, shouldAutoScroll {
-                            shouldAutoScroll = false
-                        }
-                    }
-                    .onEnded { _ in
-                        if !isNearBottom, shouldAutoScroll {
-                            shouldAutoScroll = false
-                        }
-                    }
-            )
-#if os(macOS) || os(iOS)
-            .background(
-                MessageListUserScrollObserver(bottomTolerance: bottomTolerance) { isUserInitiated, nearBottom in
-                    updateAutoScrollState(isUserInitiated: isUserInitiated, nearBottom: nearBottom)
+                .onChange(of: sessionToken) { _, _ in
+                    handleSessionTokenChangeIfNeeded()
                 }
-                .frame(width: 0, height: 0)
-            )
-#endif
-            .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
-                guard abs(newHeight - viewportHeight) > 0.5 else { return }
-                viewportHeight = newHeight
+                .onChange(of: tailChangeToken) {
+                    handleTailChangedModern()
+                }
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        messageStack(usesModernScrollAPI: false)
+                    }
+                    .onAppear {
+                        initializeScrollPolicyStateIfNeeded()
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
+                    .onChange(of: sessionToken) { _, _ in
+                        handleSessionTokenChangeIfNeeded()
+                    }
+                    .onChange(of: tailChangeToken) {
+                        handleTailChanged(proxy: proxy)
+                    }
+                    .onChange(of: jumpToBottomRequestID) {
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }
+                }
             }
-            .onPreferenceChange(MessageListContentHeightKey.self) { newHeight in
-                guard abs(newHeight - contentHeight) > 0.5 else { return }
-                contentHeight = newHeight
+        }
+        .coordinateSpace(name: scrollSpaceName)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: MessageListViewportHeightKey.self, value: geo.size.height)
             }
-            .onAppear {
-                scrollToBottom(proxy: proxy, animated: false)
-            }
-            .onChange(of: tailChangeToken) {
-                guard shouldAutoScroll else { return }
-                scrollToBottom(proxy: proxy, animated: false)
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 2)
+                .onChanged { _ in
+                    handleUserScrollGesture()
+                }
+                .onEnded { _ in
+                    handleUserScrollGesture()
+                }
+        )
+        .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
+            guard abs(newHeight - viewportHeight) > 0.5 else { return }
+            viewportHeight = newHeight
+        }
+        .onPreferenceChange(MessageListContentHeightKey.self) { newHeight in
+            guard abs(newHeight - contentHeight) > 0.5 else { return }
+            contentHeight = newHeight
+        }
+        .onPreferenceChange(MessageListBottomAnchorMaxYKey.self) { bottomMaxY in
+            guard viewportHeight > 0 else { return }
+            let threshold = scrollPolicy.configuration.nearBottomThreshold
+            let nearBottom = bottomMaxY <= (viewportHeight + threshold)
+            updateNearBottomState(nearBottom: nearBottom)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if showJumpToBottomButton {
+                jumpToBottomButton
             }
         }
     }
 
-    private func updateAutoScrollState(isUserInitiated: Bool, nearBottom: Bool) {
+    @ViewBuilder
+    private func messageStack(usesModernScrollAPI: Bool) -> some View {
+        LazyVStack(spacing: 16) {
+            Color.clear
+                .frame(height: 1)
+                .id(topAnchorId)
+
+            ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
+                MessageBubble(
+                    message: message,
+                    prefersFullRender: shouldFullyRender(message: message, index: index),
+                    pendingQuestionToken: pendingQuestionToken(for: message),
+                    sessionId: aiChatStore.currentSessionId ?? "",
+                    questionRequestResolver: { callId, toolPartId, messageId, requestId in
+                        aiChatStore.questionRequest(
+                            forToolCallId: callId,
+                            toolPartId: toolPartId,
+                            toolMessageId: messageId,
+                            requestId: requestId
+                        )
+                    },
+                    onQuestionReply: onQuestionReply,
+                    onQuestionReject: onQuestionReject,
+                    onQuestionReplyAsMessage: onQuestionReplyAsMessage,
+                    onOpenLinkedSession: onOpenLinkedSession
+                )
+                .equatable()
+                .id(message.id)
+                .onAppear {
+                    visibleMessageIDs.insert(message.id)
+                }
+                .onDisappear {
+                    visibleMessageIDs.remove(message.id)
+                }
+            }
+
+            Color.clear
+                .frame(height: 1)
+                .id(bottomAnchorId)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: MessageListBottomAnchorMaxYKey.self,
+                            value: geo.frame(in: .named(scrollSpaceName)).maxY
+                        )
+                    }
+                )
+        }
+        .applyScrollTargetLayoutIfNeeded(usesModernScrollAPI: usesModernScrollAPI)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: MessageListContentHeightKey.self, value: geo.size.height)
+            }
+        )
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func updateNearBottomState(nearBottom: Bool) {
         if nearBottom != isNearBottom {
             isNearBottom = nearBottom
+            // 近底部状态变化时同步通知 policy（处理用户手动滚回底部的场景）
+            _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: nearBottom))
+            isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         }
-        if nearBottom {
-            if !shouldAutoScroll {
-                shouldAutoScroll = true
+    }
+
+    private func initializeScrollPolicyStateIfNeeded() {
+        isNearBottom = scrollPolicy.nearBottom
+        isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
+        lastDisplayMessageCount = displayMessages.count
+        lastTailMessageID = displayMessages.last?.id
+    }
+
+    private func handleSessionTokenChangeIfNeeded() {
+        guard sessionToken != nil else { return }
+
+        let decision = scrollPolicy.reduce(event: .sessionSwitched)
+        isNearBottom = scrollPolicy.nearBottom
+        isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
+        lastDisplayMessageCount = displayMessages.count
+        lastTailMessageID = displayMessages.last?.id
+
+        guard decision.shouldScrollToBottom else { return }
+
+        if #available(iOS 17.0, macOS 14.0, *) {
+            scrollToBottomModern(animated: false)
+        } else {
+            jumpToBottomRequestID += 1
+        }
+    }
+
+    private func handleUserScrollGesture() {
+        _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: isNearBottom))
+        isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
+    }
+
+    private func tailChangeEvent() -> ChatScrollEvent {
+        let currentCount = displayMessages.count
+        let currentTailID = displayMessages.last?.id
+        let event: ChatScrollEvent
+        if currentCount > lastDisplayMessageCount || currentTailID != lastTailMessageID {
+            event = .messageAppended
+        } else {
+            event = .messageIncremented
+        }
+        lastDisplayMessageCount = currentCount
+        lastTailMessageID = currentTailID
+        return event
+    }
+
+    @available(iOS 17.0, macOS 14.0, *)
+    private func handleTailChangedModern() {
+        let decision = scrollPolicy.reduce(event: tailChangeEvent())
+        guard decision.shouldScrollToBottom else { return }
+        scrollToBottomModern(animated: false)
+    }
+
+    private func handleTailChanged(proxy: ScrollViewProxy) {
+        let decision = scrollPolicy.reduce(event: tailChangeEvent())
+        guard decision.shouldScrollToBottom else { return }
+        scrollToBottom(proxy: proxy, animated: false)
+    }
+
+    private var showJumpToBottomButton: Bool {
+        !isAutoFollowActive || !isNearBottom
+    }
+
+    private var jumpToBottomButton: some View {
+        Button {
+            _ = scrollPolicy.reduce(event: .jumpToBottomClicked)
+            isAutoFollowActive = true
+            isNearBottom = true
+            if #available(iOS 17.0, macOS 14.0, *) {
+                scrollToBottomModern(animated: true)
+            } else {
+                jumpToBottomRequestID += 1
             }
-        } else if isUserInitiated && shouldAutoScroll {
-            shouldAutoScroll = false
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(10)
+                .background(Color.accentColor)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 16)
+        .padding(.bottom, 12)
+    }
+
+    @available(iOS 17.0, macOS 14.0, *)
+    private func scrollToBottomModern(animated: Bool) {
+        let targetID = contentFitsViewport ? topAnchorId : bottomAnchorId
+        let action = {
+            scrollPositionID = nil
+            scrollPositionID = targetID
+        }
+        if animated {
+            withAnimation {
+                action()
+            }
+        } else {
+            action()
         }
     }
 
@@ -404,209 +543,37 @@ private struct MessageListContentHeightKey: PreferenceKey {
     }
 }
 
-#if os(macOS)
-private struct MessageListUserScrollObserver: NSViewRepresentable {
-    let bottomTolerance: CGFloat
-    let onScrollStateChange: (Bool, Bool) -> Void
+private struct MessageListBottomAnchorMaxYKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
 
-    func makeNSView(context: Context) -> MessageListScrollObserverNSView {
-        let view = MessageListScrollObserverNSView()
-        view.bottomTolerance = bottomTolerance
-        view.onScrollStateChange = onScrollStateChange
-        return view
-    }
-
-    func updateNSView(_ nsView: MessageListScrollObserverNSView, context: Context) {
-        nsView.bottomTolerance = bottomTolerance
-        nsView.onScrollStateChange = onScrollStateChange
-        nsView.attachIfNeeded()
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
-private final class MessageListScrollObserverNSView: NSView {
-    var bottomTolerance: CGFloat = 36
-    var onScrollStateChange: ((Bool, Bool) -> Void)?
-
-    private weak var observedScrollView: NSScrollView?
-    private weak var observedClipView: NSClipView?
-    private var boundsObserver: NSObjectProtocol?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        attachIfNeeded()
-    }
-
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        attachIfNeeded()
-    }
-
-    deinit {
-        detachObserver()
-    }
-
-    func attachIfNeeded() {
-        if boundsObserver != nil {
-            return
-        }
-        guard let scrollView = resolveEnclosingScrollView() else {
-            return
-        }
-
-        observedScrollView = scrollView
-        let clipView = scrollView.contentView
-        clipView.postsBoundsChangedNotifications = true
-        observedClipView = clipView
-        boundsObserver = NotificationCenter.default.addObserver(
-            forName: NSView.boundsDidChangeNotification,
-            object: clipView,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            let nearBottom = self.isNearBottom(scrollView: scrollView, clipView: clipView)
-            self.onScrollStateChange?(self.isUserInitiatedScrollEvent, nearBottom)
-        }
-
-        let nearBottom = isNearBottom(scrollView: scrollView, clipView: clipView)
-        onScrollStateChange?(false, nearBottom)
-    }
-
-    private func detachObserver() {
-        if let boundsObserver {
-            NotificationCenter.default.removeObserver(boundsObserver)
-            self.boundsObserver = nil
-        }
-        observedScrollView = nil
-        observedClipView = nil
-    }
-
-    private func resolveEnclosingScrollView() -> NSScrollView? {
-        var cursor: NSView? = self
-        while let view = cursor {
-            if let scroll = view as? NSScrollView {
-                return scroll
+private extension View {
+    @ViewBuilder
+    func modernScrollPosition(id: Binding<String?>, contentFitsViewport: Bool) -> some View {
+        if #available(iOS 17.0, macOS 14.0, *) {
+            if contentFitsViewport {
+                self.scrollPosition(id: id, anchor: .top)
+            } else {
+                self.scrollPosition(id: id, anchor: .bottom)
             }
-            cursor = view.superview
-        }
-        return nil
-    }
-
-    private var isUserInitiatedScrollEvent: Bool {
-        guard let event = NSApp.currentEvent else { return false }
-        switch event.type {
-        case .scrollWheel, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-            return true
-        default:
-            return false
+        } else {
+            self
         }
     }
 
-    private func isNearBottom(scrollView: NSScrollView, clipView: NSClipView) -> Bool {
-        let contentHeight = clipView.documentRect.height + scrollView.contentInsets.bottom
-        let visibleBottom = clipView.bounds.maxY
-        let distanceToBottom = max(0, contentHeight - visibleBottom)
-        return distanceToBottom <= bottomTolerance
+    @ViewBuilder
+    func applyScrollTargetLayoutIfNeeded(usesModernScrollAPI: Bool) -> some View {
+        if #available(iOS 17.0, macOS 14.0, *), usesModernScrollAPI {
+            self.scrollTargetLayout()
+        } else {
+            self
+        }
     }
 }
-#elseif os(iOS)
-private struct MessageListUserScrollObserver: UIViewRepresentable {
-    let bottomTolerance: CGFloat
-    let onScrollStateChange: (Bool, Bool) -> Void
-
-    func makeUIView(context: Context) -> MessageListScrollObserverUIView {
-        let view = MessageListScrollObserverUIView()
-        view.bottomTolerance = bottomTolerance
-        view.onScrollStateChange = onScrollStateChange
-        return view
-    }
-
-    func updateUIView(_ uiView: MessageListScrollObserverUIView, context: Context) {
-        uiView.bottomTolerance = bottomTolerance
-        uiView.onScrollStateChange = onScrollStateChange
-        uiView.attachIfNeeded()
-    }
-}
-
-private final class MessageListScrollObserverUIView: UIView {
-    var bottomTolerance: CGFloat = 36
-    var onScrollStateChange: ((Bool, Bool) -> Void)?
-
-    private weak var observedScrollView: UIScrollView?
-    private var panStateObserver: NSKeyValueObservation?
-    private var contentOffsetObserver: NSKeyValueObservation?
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        attachIfNeeded()
-    }
-
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        attachIfNeeded()
-    }
-
-    deinit {
-        detachObserver()
-    }
-
-    func attachIfNeeded() {
-        if observedScrollView != nil {
-            return
-        }
-        guard let scrollView = resolveEnclosingScrollView() else {
-            return
-        }
-
-        observedScrollView = scrollView
-        panStateObserver = scrollView.panGestureRecognizer.observe(\.state, options: [.new]) { [weak self] _, change in
-            guard let self else { return }
-            guard let state = change.newValue else { return }
-            switch state {
-            case .began, .changed, .ended, .cancelled:
-                let nearBottom = self.isNearBottom(scrollView)
-                self.onScrollStateChange?(true, nearBottom)
-            default:
-                break
-            }
-        }
-        contentOffsetObserver = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
-            guard let self else { return }
-            let isUserInitiated = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
-            let nearBottom = self.isNearBottom(scrollView)
-            self.onScrollStateChange?(isUserInitiated, nearBottom)
-        }
-
-        let nearBottom = isNearBottom(scrollView)
-        onScrollStateChange?(false, nearBottom)
-    }
-
-    private func detachObserver() {
-        panStateObserver?.invalidate()
-        panStateObserver = nil
-        contentOffsetObserver?.invalidate()
-        contentOffsetObserver = nil
-        observedScrollView = nil
-    }
-
-    private func resolveEnclosingScrollView() -> UIScrollView? {
-        var cursor: UIView? = self
-        while let view = cursor {
-            if let scroll = view as? UIScrollView {
-                return scroll
-            }
-            cursor = view.superview
-        }
-        return nil
-    }
-
-    private func isNearBottom(_ scrollView: UIScrollView) -> Bool {
-        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height
-        let contentBottom = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom
-        let distanceToBottom = max(0, contentBottom - visibleBottom)
-        return distanceToBottom <= bottomTolerance
-    }
-}
-#endif
 
 private struct MessageBubble: View, Equatable {
     let message: AIChatMessage
