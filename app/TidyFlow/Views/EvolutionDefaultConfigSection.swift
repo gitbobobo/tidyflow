@@ -1,6 +1,7 @@
-import SwiftUI
-
 // MARK: - Evolution 全局默认配置区块
+
+#if os(macOS)
+import SwiftUI
 
 struct EvolutionDefaultConfigSection: View {
     @EnvironmentObject var appState: AppState
@@ -175,3 +176,5 @@ struct EvolutionDefaultConfigSection: View {
         appState.saveEvolutionDefaultProfiles(editableProfiles)
     }
 }
+
+#endif
