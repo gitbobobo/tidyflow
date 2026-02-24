@@ -3,7 +3,7 @@ use axum::extract::ws::WebSocket;
 use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::protocol::ClientMessage;
 
-mod branch_commit;
+pub(crate) mod branch_commit;
 mod history;
 mod integration;
 mod route;

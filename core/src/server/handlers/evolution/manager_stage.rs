@@ -10,6 +10,7 @@ use crate::server::handlers::ai::{
     ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
     normalize_part_for_wire, resolve_directory,
 };
+use crate::server::handlers::git::branch_commit::run_ai_commit_internal;
 use crate::server::protocol::ServerMessage;
 
 use super::profile::profile_for_stage;
@@ -54,6 +55,36 @@ fn parse_judge_result_from_json(value: &serde_json::Value) -> Option<bool> {
 }
 
 impl EvolutionManager {
+    async fn run_auto_commit_before_next_round(
+        &self,
+        workspace_root: &str,
+        ctx: &HandlerContext,
+    ) -> Result<(), String> {
+        let ai_agent = {
+            let state = ctx.app_state.read().await;
+            state
+                .client_settings
+                .commit_ai_agent
+                .clone()
+                .unwrap_or_else(|| "cursor".to_string())
+        };
+        let root = std::path::PathBuf::from(workspace_root);
+        let agent = ai_agent.clone();
+
+        let result = timeout(
+            Duration::from_secs(600),
+            tokio::task::spawn_blocking(move || run_ai_commit_internal(&root, &agent, None)),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(Ok(_output))) => Ok(()),
+            Ok(Ok(Err(err))) => Err(err),
+            Ok(Err(err)) => Err(format!("AI commit task failed: {}", err)),
+            Err(_) => Err("AI agent timed out after 600 seconds".to_string()),
+        }
+    }
+
     pub(super) async fn run_stage(
         &self,
         key: &str,
@@ -323,6 +354,7 @@ impl EvolutionManager {
         let mut emit_judge: Option<(String, String, String, String)> = None;
         let mut stage_changed: Option<(String, String, String, String)> = None;
         let mut auto_next_cycle = false;
+        let mut auto_commit_workspace_root: Option<String> = None;
 
         {
             let mut state = self.state.lock().await;
@@ -371,31 +403,7 @@ impl EvolutionManager {
                 "report" => {
                     entry.status = "completed".to_string();
                     if entry.auto_loop_enabled {
-                        entry.global_loop_round += 1;
-                        entry.verify_iteration = 0;
-                        entry.cycle_id = format!(
-                            "{}_{}_{}_{}",
-                            Utc::now().format("%Y-%m-%dT%H-%M-%SZ"),
-                            sanitize_name(&entry.project),
-                            sanitize_name(&entry.workspace),
-                            Uuid::new_v4().simple()
-                        );
-                        entry.current_stage = "direction".to_string();
-                        entry.status = "queued".to_string();
-                        entry.stage_sessions.clear();
-                        entry.stage_statuses.clear();
-                        for s in STAGES {
-                            entry
-                                .stage_statuses
-                                .insert(s.to_string(), "pending".to_string());
-                        }
-                        auto_next_cycle = true;
-                        stage_changed = Some((
-                            entry.project.clone(),
-                            entry.workspace.clone(),
-                            entry.cycle_id.clone(),
-                            entry.current_stage.clone(),
-                        ));
+                        auto_commit_workspace_root = Some(entry.workspace_root.clone());
                     }
                 }
                 _ => {}
@@ -408,6 +416,54 @@ impl EvolutionManager {
                     entry.workspace.clone(),
                     entry.cycle_id.clone(),
                     next_stage,
+                ));
+            }
+        }
+
+        if let Some(workspace_root) = auto_commit_workspace_root {
+            if let Err(err) = self
+                .run_auto_commit_before_next_round(&workspace_root, ctx)
+                .await
+            {
+                self.mark_failed_with_code(
+                    key,
+                    "evo_auto_commit_failed",
+                    &format!("auto commit before next round failed: {}", err),
+                    ctx,
+                )
+                .await;
+                return false;
+            }
+
+            {
+                let mut state = self.state.lock().await;
+                let Some(entry) = state.workspaces.get_mut(key) else {
+                    return false;
+                };
+                entry.global_loop_round += 1;
+                entry.verify_iteration = 0;
+                entry.cycle_id = format!(
+                    "{}_{}_{}_{}",
+                    Utc::now().format("%Y-%m-%dT%H-%M-%SZ"),
+                    sanitize_name(&entry.project),
+                    sanitize_name(&entry.workspace),
+                    Uuid::new_v4().simple()
+                );
+                entry.current_stage = "direction".to_string();
+                entry.status = "queued".to_string();
+                entry.stage_sessions.clear();
+                entry.stage_statuses.clear();
+                for s in STAGES {
+                    entry
+                        .stage_statuses
+                        .insert(s.to_string(), "pending".to_string());
+                }
+                auto_next_cycle = true;
+                stage_changed = Some((
+                    entry.project.clone(),
+                    entry.workspace.clone(),
+                    entry.cycle_id.clone(),
+                    entry.current_stage.clone(),
                 ));
             }
         }
@@ -509,6 +565,17 @@ impl EvolutionManager {
     }
 
     pub(super) async fn mark_failed_system(&self, key: &str, err: &str, ctx: &HandlerContext) {
+        self.mark_failed_with_code(key, "evo_internal_error", err, ctx)
+            .await;
+    }
+
+    pub(super) async fn mark_failed_with_code(
+        &self,
+        key: &str,
+        code: &str,
+        err: &str,
+        ctx: &HandlerContext,
+    ) {
         let maybe = {
             let mut state = self.state.lock().await;
             let Some(entry) = state.workspaces.get_mut(key) else {
@@ -534,7 +601,7 @@ impl EvolutionManager {
                     cycle_id: Some(cycle_id),
                     ts: Utc::now().to_rfc3339(),
                     source: "system".to_string(),
-                    code: "evo_internal_error".to_string(),
+                    code: code.to_string(),
                     message: err.to_string(),
                     context: None,
                 },

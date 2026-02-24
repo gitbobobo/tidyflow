@@ -341,7 +341,7 @@ pub async fn handle_git_ai_commit(
         let result = tokio::time::timeout(
             AI_AGENT_TIMEOUT,
             tokio::task::spawn_blocking(move || {
-                handle_ai_commit_internal(&root_clone, &agent_clone, Some(&pid_for_blocking))
+                run_ai_commit_internal(&root_clone, &agent_clone, Some(&pid_for_blocking))
             }),
         )
         .await;
@@ -463,7 +463,7 @@ pub async fn handle_git_ai_commit(
 }
 
 /// 内部函数：执行 AI 智能提交逻辑（委托式：AI 代理执行 git 操作，我们解析结果）
-fn handle_ai_commit_internal(
+pub(crate) fn run_ai_commit_internal(
     workspace_root: &Path,
     ai_agent: &str,
     pid_holder: Option<&std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
@@ -872,9 +872,9 @@ fn extract_balanced_json(text: &str) -> Option<String> {
 }
 
 /// AI 提交输出
-struct AIGitCommitOutput {
-    message: String,
-    commits: Vec<AIGitCommit>,
+pub(crate) struct AIGitCommitOutput {
+    pub(crate) message: String,
+    pub(crate) commits: Vec<AIGitCommit>,
 }
 
 /// 取消 AI 任务（按 project + workspace + operation_type 查找）
