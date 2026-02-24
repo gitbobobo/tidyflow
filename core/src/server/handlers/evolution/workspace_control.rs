@@ -9,7 +9,7 @@ use crate::server::handlers::ai::resolve_directory;
 use crate::server::protocol::{EvolutionWorkspaceItem, ServerMessage};
 
 use super::stage::{active_agents, build_agents};
-use super::utils::{sanitize_name, workspace_key};
+use super::utils::workspace_key;
 use super::{EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState, STAGES};
 
 impl EvolutionManager {
@@ -51,13 +51,7 @@ impl EvolutionManager {
         };
 
         let now = Utc::now();
-        let cycle_id = format!(
-            "{}_{}_{}_{}",
-            now.format("%Y-%m-%dT%H-%M-%SZ"),
-            sanitize_name(&req.project),
-            sanitize_name(&req.workspace),
-            Uuid::new_v4().simple()
-        );
+        let cycle_id = now.format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
 
         let mut stage_statuses = HashMap::new();
         let mut stage_tool_call_counts = HashMap::new();

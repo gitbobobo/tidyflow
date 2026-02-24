@@ -14,7 +14,7 @@ use crate::server::handlers::git::branch_commit::run_ai_commit_internal;
 use crate::server::protocol::ServerMessage;
 
 use super::profile::profile_for_stage;
-use super::utils::{cycle_dir_path, sanitize_name};
+use super::utils::cycle_dir_path;
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
 fn parse_judge_result_text(value: &str) -> Option<bool> {
@@ -660,13 +660,7 @@ impl EvolutionManager {
                 };
                 entry.global_loop_round += 1;
                 entry.verify_iteration = 0;
-                entry.cycle_id = format!(
-                    "{}_{}_{}_{}",
-                    Utc::now().format("%Y-%m-%dT%H-%M-%SZ"),
-                    sanitize_name(&entry.project),
-                    sanitize_name(&entry.workspace),
-                    Uuid::new_v4().simple()
-                );
+                entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
                 entry.current_stage = "direction".to_string();
                 entry.status = "queued".to_string();
                 entry.stage_sessions.clear();

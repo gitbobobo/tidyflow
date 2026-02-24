@@ -16,18 +16,6 @@ pub(super) fn cycle_dir_path(workspace_root: &str, cycle_id: &str) -> Result<Pat
         .join(cycle_id))
 }
 
-pub(super) fn sanitize_name(raw: &str) -> String {
-    raw.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-}
-
 pub(super) fn evolution_workspace_dir(workspace_root: &str) -> Result<PathBuf, String> {
     let root = workspace_root.trim();
     if root.is_empty() {
