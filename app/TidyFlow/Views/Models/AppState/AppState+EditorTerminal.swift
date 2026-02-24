@@ -3,9 +3,6 @@ import Foundation
 extension AppState {
     /// Spawn a terminal tab and run a command (UX-3a: AI Resolve)
     func spawnTerminalWithCommand(workspaceKey: String, command: String) {
-        let existingTabs = workspaceTabs[workspaceKey] ?? []
-        let hasExistingTerminalTab = existingTabs.contains { $0.kind == .terminal }
-
         // Create a new terminal tab
         let newTab = TabModel(
             id: UUID(),
@@ -26,23 +23,7 @@ extension AppState {
             workspaceTerminalOpenTime[workspaceKey] = Date()
         }
 
-        // WebView 已就绪时，无论是否首个终端都主动触发 spawn；
-        // 配合 TerminalContentView 的 pendingSpawn 判重，避免重复 spawn。
-        if hasExistingTerminalTab || editorWebReady {
-            pendingSpawnTabs.insert(newTab.id)
-
-            let (rpcProject, rpcWorkspace): (String, String)
-            if let colonIdx = workspaceKey.firstIndex(of: ":") {
-                rpcProject = String(workspaceKey[..<colonIdx])
-                rpcWorkspace = String(workspaceKey[workspaceKey.index(after: colonIdx)...])
-            } else {
-                rpcProject = selectedProjectName
-                rpcWorkspace = workspaceKey
-            }
-            onTerminalSpawn?(newTab.id.uuidString, rpcProject, rpcWorkspace)
-        }
-
-        // terminal ready 后由 handleTerminalReady 检查 payload 并执行命令
+        // 终端会在视图出现时创建/附着
     }
     
     func addEditorTab(workspaceKey: String, path: String, line: Int? = nil) {
@@ -278,95 +259,77 @@ extension AppState {
         workspaceTabs[ws] = tabs
     }
 
-    // MARK: - Phase C1-2: Terminal State Helpers (Multi-Session)
+    // MARK: - Terminal State Helpers
 
     /// Check if active tab is a terminal tab
     var isActiveTabTerminal: Bool {
         getActiveTab()?.kind == .terminal
     }
 
-    /// Get the session ID for a specific terminal tab
+    /// Get the term_id for a specific terminal tab
     func getTerminalSessionId(for tabId: UUID) -> String? {
         return terminalSessionByTabId[tabId]
     }
 
-    /// Get the session ID for the active terminal tab
+    /// Get the term_id for the active terminal tab
     var activeTerminalSessionId: String? {
         guard let tab = getActiveTab(), tab.kind == .terminal else { return nil }
         return terminalSessionByTabId[tab.id]
     }
 
-    /// Handle terminal ready event from WebBridge (with tabId)
-    func handleTerminalReady(tabId: String, sessionId: String, project: String, workspace: String, webBridge: WebBridge?) {
-        guard let uuid = UUID(uuidString: tabId) else {
-            TFLog.app.error("Invalid tabId: \(tabId, privacy: .public)")
+    func handleTermCreated(_ result: TermCreatedResult) {
+        guard let tabId = pendingSpawnTabs.first else {
+            TFLog.app.warning("收到 term_created 但没有 pending 终端 tab")
             return
         }
-
-        // 兜底：若某些入口未提前记录，则在终端 ready 时补齐首次打开时间
-        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
-        if workspaceTerminalOpenTime[globalKey] == nil {
-            workspaceTerminalOpenTime[globalKey] = Date()
-        }
-
-        // Update session mapping
-        terminalSessionByTabId[uuid] = sessionId
-        staleTerminalTabs.remove(uuid)
-        pendingSpawnTabs.remove(uuid)  // 移除 pending 标记
-
-        // Update tab's terminalSessionId（使用服务端返回的 project 和 workspace 生成全局键）
-        if var tabs = workspaceTabs[globalKey],
-           let index = tabs.firstIndex(where: { $0.id == uuid }) {
-            tabs[index].terminalSessionId = sessionId
-            workspaceTabs[globalKey] = tabs
-            
-            // 检查 tab 的 payload，如果非空则执行自定义命令
-            let payload = tabs[index].payload
-            if !payload.isEmpty, let bridge = webBridge {
-                bridge.terminalSendInput(sessionId: sessionId, input: payload)
-                
-                // 清空 payload，防止 attach 时重复执行命令
-                tabs[index].payload = ""
-                workspaceTabs[globalKey] = tabs
-            }
-        }
-
-        // Update global terminal state for status bar
-        terminalState = .ready(sessionId: sessionId)
+        let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
+        bindTermToTab(tabId: tabId, termId: result.termId, globalKey: globalKey)
+        wsClient.requestTermAttach(termId: result.termId)
+        wsClient.requestTermList()
     }
 
-    /// Handle terminal closed event from WebBridge
-    func handleTerminalClosed(tabId: String, sessionId: String, code: Int?) {
-        guard let uuid = UUID(uuidString: tabId) else { return }
+    func handleTermAttached(_ result: TermAttachedResult) {
+        guard let tabId = findTabIdByTermId(result.termId) else {
+            TFLog.app.warning("收到 term_attached 但未找到 tab，term=\(result.termId, privacy: .public)")
+            return
+        }
+        terminalState = .ready(sessionId: result.termId)
+        if !result.scrollback.isEmpty {
+            emitTerminalOutput(termId: result.termId, bytes: result.scrollback)
+            wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
+            termOutputUnackedBytes = 0
+        }
+        if let sink = terminalSink, terminalSinkTabId == tabId {
+            sink.focusTerminal()
+        }
+        tryRunPendingCommandIfNeeded(tabId: tabId, termId: result.termId)
+    }
 
-        // Remove session mapping
-        terminalSessionByTabId.removeValue(forKey: uuid)
+    func handleTerminalOutput(termId: String?, bytes: [UInt8]) {
+        guard let termId else { return }
+        emitTerminalOutput(termId: termId, bytes: bytes)
+    }
 
-        // Update tab's terminalSessionId（搜索所有工作空间的 tabs）
+    func handleTerminalExit(termId: String?, code: Int) {
+        guard let termId else { return }
+        TFLog.app.info("终端退出: term=\(termId, privacy: .public), code=\(code)")
+    }
+
+    func handleTermClosed(_ termId: String) {
         for (globalKey, var tabs) in workspaceTabs {
-            if let index = tabs.firstIndex(where: { $0.id == uuid }) {
+            if let index = tabs.firstIndex(where: { $0.terminalSessionId == termId }) {
+                let tabId = tabs[index].id
+                terminalSessionByTabId.removeValue(forKey: tabId)
+                staleTerminalTabs.remove(tabId)
                 tabs[index].terminalSessionId = nil
                 workspaceTabs[globalKey] = tabs
+                if terminalSinkTabId == tabId {
+                    terminalSink?.resetTerminal()
+                }
                 break
             }
         }
-    }
-
-    /// Handle terminal error event from WebBridge
-    func handleTerminalError(tabId: String?, message: String) {
-        if let tabId = tabId, let uuid = UUID(uuidString: tabId) {
-            pendingSpawnTabs.remove(uuid)
-        }
-        terminalState = .error(message: message)
-        TFLog.app.error("Terminal error: \(message, privacy: .public)")
-    }
-
-    /// Handle terminal connected event
-    func handleTerminalConnected() {
-        // Clear error state when reconnected
-        if case .error = terminalState {
-            terminalState = .idle
-        }
+        wsClient.requestTermList()
     }
 
     /// Mark all terminal sessions as stale (on disconnect)
@@ -378,19 +341,15 @@ extension AppState {
         terminalState = .idle
     }
 
-    /// WS 重连后尝试附着已有终端会话
-    /// 遍历所有 stale terminal tabs，对有 terminalSessionId 的 tab 发起 attach
     func requestTerminalReattach() {
         guard !staleTerminalTabs.isEmpty else { return }
 
         for (_, tabs) in workspaceTabs {
             for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
                 if let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
-                    // 有 sessionId，尝试通过 WebBridge 发起 attach
                     TFLog.app.info("终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public)")
-                    onTerminalAttach?(tab.id.uuidString, sessionId)
+                    wsClient.requestTermAttach(termId: sessionId)
                 }
-                // 没有 sessionId 的 stale tab 会在 sendTerminalMode() 中走 respawn 流程
             }
         }
     }
@@ -403,5 +362,130 @@ extension AppState {
     /// Request terminal for current workspace (legacy, for status)
     func requestTerminal() {
         terminalState = .connecting
+    }
+
+    func ensureTerminalForTab(_ tab: TabModel) {
+        guard tab.kind == .terminal else { return }
+        let globalKey = tab.workspaceKey
+        let parts = globalKey.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        let project = parts[0]
+        let workspace = parts[1]
+
+        if let termId = terminalSessionByTabId[tab.id], !termId.isEmpty {
+            wsClient.requestTermAttach(termId: termId)
+            requestTerminal()
+            return
+        }
+
+        pendingSpawnTabs.insert(tab.id)
+        requestTerminal()
+        let icon = tab.commandIcon
+        let name = (tab.kind == .terminal && !tab.title.isEmpty && tab.title != "Terminal") ? tab.title : nil
+        wsClient.requestTermCreate(
+            project: project,
+            workspace: workspace,
+            name: name,
+            icon: icon
+        )
+    }
+
+    func sendTerminalInputBytes(tabId: UUID, _ bytes: [UInt8]) {
+        guard let termId = terminalSessionByTabId[tabId], !termId.isEmpty else { return }
+        wsClient.sendTerminalInput(bytes, termId: termId)
+    }
+
+    func terminalViewDidResize(tabId: UUID, cols: Int, rows: Int) {
+        guard cols > 0, rows > 0 else { return }
+        guard let termId = terminalSessionByTabId[tabId], !termId.isEmpty else { return }
+        wsClient.requestTermResize(termId: termId, cols: cols, rows: rows)
+    }
+
+    #if os(macOS)
+    func attachTerminalSink(_ sink: MacTerminalOutputSink, tabId: UUID) {
+        terminalSink = sink
+        terminalSinkTabId = tabId
+        sink.resetTerminal()
+        flushPendingTerminalOutput()
+    }
+
+    func detachTerminalSink(_ sink: MacTerminalOutputSink? = nil, tabId: UUID) {
+        if let sink, let current = terminalSink, current !== sink {
+            return
+        }
+        if terminalSinkTabId == tabId {
+            terminalSink = nil
+            terminalSinkTabId = nil
+            pendingTerminalOutput.removeAll()
+            termOutputUnackedBytes = 0
+        }
+    }
+    #endif
+
+    private func bindTermToTab(tabId: UUID, termId: String, globalKey: String) {
+        terminalSessionByTabId[tabId] = termId
+        staleTerminalTabs.remove(tabId)
+        pendingSpawnTabs.remove(tabId)
+        if workspaceTerminalOpenTime[globalKey] == nil {
+            workspaceTerminalOpenTime[globalKey] = Date()
+        }
+        if var tabs = workspaceTabs[globalKey],
+           let index = tabs.firstIndex(where: { $0.id == tabId }) {
+            tabs[index].terminalSessionId = termId
+            workspaceTabs[globalKey] = tabs
+        }
+    }
+
+    private func findTabIdByTermId(_ termId: String) -> UUID? {
+        if let hit = terminalSessionByTabId.first(where: { $0.value == termId }) {
+            return hit.key
+        }
+        for (_, tabs) in workspaceTabs {
+            if let tab = tabs.first(where: { $0.kind == .terminal && $0.terminalSessionId == termId }) {
+                return tab.id
+            }
+        }
+        return nil
+    }
+
+    private func emitTerminalOutput(termId: String, bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        guard let tabId = findTabIdByTermId(termId), terminalSinkTabId == tabId else { return }
+
+        if let sink = terminalSink {
+            sink.writeOutput(bytes)
+        } else {
+            pendingTerminalOutput.append(bytes)
+            if pendingTerminalOutput.count > pendingOutputChunkLimit {
+                pendingTerminalOutput.removeFirst(pendingTerminalOutput.count - pendingOutputChunkLimit)
+            }
+        }
+
+        termOutputUnackedBytes += bytes.count
+        if termOutputUnackedBytes >= termOutputAckThreshold {
+            wsClient.sendTermOutputAck(termId: termId, bytes: termOutputUnackedBytes)
+            termOutputUnackedBytes = 0
+        }
+    }
+
+    private func flushPendingTerminalOutput() {
+        guard let sink = terminalSink else { return }
+        guard !pendingTerminalOutput.isEmpty else { return }
+        for chunk in pendingTerminalOutput {
+            sink.writeOutput(chunk)
+        }
+        pendingTerminalOutput.removeAll()
+    }
+
+    private func tryRunPendingCommandIfNeeded(tabId: UUID, termId: String) {
+        for (globalKey, var tabs) in workspaceTabs {
+            guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { continue }
+            let payload = tabs[index].payload
+            guard !payload.isEmpty else { return }
+            wsClient.sendTerminalInput(payload + "\n", termId: termId)
+            tabs[index].payload = ""
+            workspaceTabs[globalKey] = tabs
+            return
+        }
     }
 }

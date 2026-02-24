@@ -200,8 +200,6 @@ extension AppState {
 
         // 重连 Swift WSClient (WS①)
         wsClient.reconnect()
-        // 重连 JS WebSocket (WS②)
-        onReconnectJS?()
 
         // 等待连接结果后判断是否需要继续重试
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 2.0) { [weak self] in

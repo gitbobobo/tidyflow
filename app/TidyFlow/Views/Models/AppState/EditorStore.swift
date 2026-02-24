@@ -51,9 +51,6 @@ struct DiffNavigationContext: Equatable {
 /// 编辑器领域状态管理
 /// 从 AppState 提取，减少编辑器状态变化对全局视图的影响
 class EditorStore: ObservableObject {
-    /// 编辑器 WebView 是否就绪
-    @Published var editorWebReady: Bool = false
-
     /// 上次操作的编辑器文件路径
     @Published var lastEditorPath: String?
 

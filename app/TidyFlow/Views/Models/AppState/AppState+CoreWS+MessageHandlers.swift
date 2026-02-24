@@ -118,8 +118,28 @@ final class AppStateTerminalMessageHandlerAdapter: TerminalMessageHandler {
         self.appState = appState
     }
 
+    func handleTerminalOutput(_ termId: String?, _ bytes: [UInt8]) {
+        appState?.handleTerminalOutput(termId: termId, bytes: bytes)
+    }
+
+    func handleTerminalExit(_ termId: String?, _ code: Int) {
+        appState?.handleTerminalExit(termId: termId, code: code)
+    }
+
+    func handleTermCreated(_ result: TermCreatedResult) {
+        appState?.handleTermCreated(result)
+    }
+
+    func handleTermAttached(_ result: TermAttachedResult) {
+        appState?.handleTermAttached(result)
+    }
+
     func handleTermList(_ result: TermListResult) {
         appState?.updateRemoteTerminals(from: result.items)
+    }
+
+    func handleTermClosed(_ termId: String) {
+        appState?.handleTermClosed(termId)
     }
 
     func handleRemoteTermChanged() {

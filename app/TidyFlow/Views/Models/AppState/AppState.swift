@@ -239,10 +239,6 @@ class AppState: ObservableObject {
     @Published var clientSettingsLoaded: Bool = false
 
     // 向后兼容：编辑器状态代理到 editorStore
-    var editorWebReady: Bool {
-        get { editorStore.editorWebReady }
-        set { editorStore.editorWebReady = newValue }
-    }
     var lastEditorPath: String? {
         get { editorStore.lastEditorPath }
         set { editorStore.lastEditorPath = newValue }
@@ -321,23 +317,14 @@ class AppState: ObservableObject {
         get { terminalStore.pendingSpawnTabs }
         set { terminalStore.pendingSpawnTabs = newValue }
     }
-    var onTerminalKill: ((String, String) -> Void)? {
-        get { terminalStore.onTerminalKill }
-        set { terminalStore.onTerminalKill = newValue }
-    }
-    var onTerminalSpawn: ((String, String, String) -> Void)? {
-        get { terminalStore.onTerminalSpawn }
-        set { terminalStore.onTerminalSpawn = newValue }
-    }
-    var onTerminalAttach: ((String, String) -> Void)? {
-        get { terminalStore.onTerminalAttach }
-        set { terminalStore.onTerminalAttach = newValue }
-    }
-
-    // Callback for Core ready with port (set by CenterContentView to update WebBridge)
-    var onCoreReadyWithPort: ((Int) -> Void)?
-    // Callback for JS WebSocket reconnect (通知 JS 层重连 WebSocket)
-    var onReconnectJS: (() -> Void)?
+    #if os(macOS)
+    weak var terminalSink: MacTerminalOutputSink?
+    var terminalSinkTabId: UUID?
+    #endif
+    var pendingTerminalOutput: [[UInt8]] = []
+    let pendingOutputChunkLimit = 128
+    var termOutputUnackedBytes: Int = 0
+    let termOutputAckThreshold = 50 * 1024
 
     // 系统唤醒通知观察者
     var wakeObserver: NSObjectProtocol?

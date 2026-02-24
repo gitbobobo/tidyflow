@@ -107,7 +107,7 @@ extension AppState {
         // Phase C1-2: Send terminal kill and clean up session mapping
         if tab.kind == .terminal {
             if let sessionId = terminalSessionByTabId[tabId] {
-                onTerminalKill?(tabId.uuidString, sessionId)
+                wsClient.requestTermClose(termId: sessionId)
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
@@ -141,10 +141,6 @@ extension AppState {
     }
     
     func addTab(workspaceKey: String, kind: TabKind, title: String, payload: String) {
-        // 检查是否已有终端 Tab（用于判断是否需要通过回调 spawn）
-        let existingTabs = workspaceTabs[workspaceKey] ?? []
-        let hasExistingTerminalTab = existingTabs.contains { $0.kind == .terminal }
-        
         let newTab = TabModel(
             id: UUID(),
             title: title,
@@ -167,23 +163,6 @@ extension AppState {
             workspaceTerminalOpenTime[workspaceKey] = Date()
         }
 
-        // 当创建终端 Tab 且已有其他终端时，直接通知 WebBridge spawn 新终端
-        // （第一个终端由 TerminalContentView.onAppear 处理）
-        if kind == .terminal && hasExistingTerminalTab {
-            // 标记为 pending spawn，防止 handleTabSwitch 重复 spawn
-            pendingSpawnTabs.insert(newTab.id)
-            
-            // 协议要求传 (projectName, workspaceName)。TabStrip 传入的是 globalKey "project:workspace"，需解析为纯 workspace 名
-            let (rpcProject, rpcWorkspace): (String, String)
-            if let colonIdx = workspaceKey.firstIndex(of: ":") {
-                rpcProject = String(workspaceKey[..<colonIdx])
-                rpcWorkspace = String(workspaceKey[workspaceKey.index(after: colonIdx)...])
-            } else {
-                rpcProject = selectedProjectName
-                rpcWorkspace = workspaceKey
-            }
-            onTerminalSpawn?(newTab.id.uuidString, rpcProject, rpcWorkspace)
-        }
     }
     
     func addTerminalTab(workspaceKey: String) {
@@ -192,10 +171,6 @@ extension AppState {
 
     /// 创建终端并执行自定义命令
     func addTerminalWithCustomCommand(workspaceKey: String, command: CustomCommand) {
-        // 与 addTab 保持一致：若当前已有终端，立即触发 spawn，避免仅依赖视图 onChange 导致漏建会话
-        let existingTabs = workspaceTabs[workspaceKey] ?? []
-        let hasExistingTerminalTab = existingTabs.contains { $0.kind == .terminal }
-
         // 创建终端 tab，使用命令名称作为标题，命令内容存入 payload，命令图标用于 Tab 栏显示
         let newTab = TabModel(
             id: UUID(),
@@ -217,22 +192,6 @@ extension AppState {
             workspaceTerminalOpenTime[workspaceKey] = Date()
         }
 
-        // WebView 已就绪时，无论是否首个终端都主动请求 spawn；
-        // 配合 TerminalContentView 的 pendingSpawn 判重，避免重复 spawn。
-        if hasExistingTerminalTab || editorWebReady {
-            pendingSpawnTabs.insert(newTab.id)
-
-            let (rpcProject, rpcWorkspace): (String, String)
-            if let colonIdx = workspaceKey.firstIndex(of: ":") {
-                rpcProject = String(workspaceKey[..<colonIdx])
-                rpcWorkspace = String(workspaceKey[workspaceKey.index(after: colonIdx)...])
-            } else {
-                rpcProject = selectedProjectName
-                rpcWorkspace = workspaceKey
-            }
-            onTerminalSpawn?(newTab.id.uuidString, rpcProject, rpcWorkspace)
-        }
-
-        // 终端 ready 后由 handleTerminalReady 检查 payload 并执行命令
+        // 终端会在视图出现时创建/附着
     }
 }

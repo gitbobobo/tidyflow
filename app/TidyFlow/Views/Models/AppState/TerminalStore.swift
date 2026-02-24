@@ -20,15 +20,6 @@ class TerminalStore: ObservableObject {
     /// 正在 spawn 中的 tab 集合（跳过 handleTabSwitch）
     var pendingSpawnTabs: Set<UUID> = []
 
-    // MARK: - 回调
-
-    /// 终端关闭回调
-    var onTerminalKill: ((String, String) -> Void)?
-    /// 终端创建回调：(tabId, project, workspace)
-    var onTerminalSpawn: ((String, String, String) -> Void)?
-    /// 终端附着回调：(tabId, sessionId)
-    var onTerminalAttach: ((String, String) -> Void)?
-
     // MARK: - 查询方法
 
     /// 获取指定 tab 的终端 session ID

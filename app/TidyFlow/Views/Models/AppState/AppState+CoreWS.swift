@@ -133,8 +133,6 @@ extension AppState {
     func setupCoreCallbacks() {
         coreProcessManager.onCoreReady = { [weak self] port in
             self?.setupWSClient(port: port)
-            // Notify CenterContentView to update WebBridge with the port
-            self?.onCoreReadyWithPort?(port)
             // 启动阶段：Core ready 后再展示主窗口
             self?.onCoreReadyForWindow?()
         }
