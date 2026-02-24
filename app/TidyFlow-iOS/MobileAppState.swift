@@ -209,7 +209,7 @@ final class MobileAppState: ObservableObject {
     private var isTerminalViewReady: Bool = false
     /// 终端输出流控 ACK：累计未确认字节数
     private var termOutputUnackedBytes: Int = 0
-    /// ACK 阈值（50KB），与 macOS xterm.js 端一致
+    /// ACK 阈值（50KB），与 macOS 原生终端端保持一致
     private let termOutputAckThreshold = 50 * 1024
 
     /// 原生终端输出目标（SwiftTerm）
