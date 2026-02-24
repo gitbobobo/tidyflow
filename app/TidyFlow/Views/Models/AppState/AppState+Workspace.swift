@@ -21,6 +21,8 @@ extension AppState {
         selectedWorkspaceKey = workspaceName
         // 选中工作空间时关闭项目配置页面
         selectedProjectForConfig = nil
+        // 工作空间发生切换后，丢弃设置页临时拉取上下文，避免后续事件串台。
+        clearAISelectorBootstrapContexts()
         
         // Update selectedProjectName for WS protocol
         // 注意：使用原始项目名称，不进行格式转换，因为服务端使用原始名称索引项目

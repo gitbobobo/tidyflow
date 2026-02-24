@@ -187,8 +187,19 @@ class AppState: ObservableObject {
     private var aiAgentsByTool: [AIChatTool: [AIAgentInfo]] = [:]
     private var aiSelectedAgentByTool: [AIChatTool: String?] = [:]
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
+    enum AISelectorResourceKind {
+        case providerList
+        case agentList
+    }
     /// 历史会话自动恢复输入框选择的待应用提示（key: sessionId）
     private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
+    /// 设置页在“未选中工作空间”场景触发 AI 列表请求时，按工具记录请求上下文。
+    var aiSelectorBootstrapContextByTool: [AIChatTool: (
+        project: String,
+        workspace: String,
+        providerPending: Bool,
+        agentPending: Bool
+    )] = [:]
     /// 待 ack 的 AI 会话订阅上下文（key: AIChatTool）
     /// subscribe 发出后暂存，ack 收到时消费：addSubscription + 拉消息 + unsubscribe 旧会话
     var pendingSubscribeContextByTool: [AIChatTool: AIPendingSubscribeContext] = [:]
@@ -529,6 +540,105 @@ class AppState: ObservableObject {
         for tool in AIChatTool.allCases {
             aiSessionStatusesByTool[tool] = [:]
         }
+    }
+
+    /// 选择一个可用于拉取 AI 选择器资源（agent/model）的上下文。
+    /// 优先使用当前选中的项目/工作空间；若未选中，则回退到第一个可用工作空间。
+    func preferredAISelectorContext() -> (project: String, workspace: String)? {
+        let selectedProject = selectedProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let selectedWorkspace = selectedWorkspaceKey?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !selectedWorkspace.isEmpty,
+           !selectedProject.isEmpty {
+            return (selectedProject, selectedWorkspace)
+        }
+
+        for project in projects {
+            let projectName = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !projectName.isEmpty else { continue }
+            let preferredWorkspace = project.workspaces.first(where: { $0.isDefault }) ?? project.workspaces.first
+            guard let preferredWorkspace else { continue }
+            let workspace = preferredWorkspace.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !workspace.isEmpty else { continue }
+            return (projectName, workspace)
+        }
+
+        return nil
+    }
+
+    /// 供设置页调用：批量拉取所有 AI 工具的模型/模式列表。
+    @discardableResult
+    func requestAISelectorResourcesForSettings() -> Bool {
+        guard connectionState == .connected else { return false }
+        guard let context = preferredAISelectorContext() else { return false }
+
+        for tool in AIChatTool.allCases {
+            aiSelectorBootstrapContextByTool[tool] = (
+                project: context.project,
+                workspace: context.workspace,
+                providerPending: true,
+                agentPending: true
+            )
+            wsClient.requestAIProviderList(
+                projectName: context.project,
+                workspaceName: context.workspace,
+                aiTool: tool
+            )
+            wsClient.requestAIAgentList(
+                projectName: context.project,
+                workspaceName: context.workspace,
+                aiTool: tool
+            )
+        }
+        return true
+    }
+
+    /// AI provider/agent 列表事件是否应被当前 UI 消费。
+    func shouldAcceptAISelectorEvent(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        kind: AISelectorResourceKind
+    ) -> Bool {
+        if selectedProjectName == projectName, selectedWorkspaceKey == workspaceName {
+            return true
+        }
+        guard let pending = aiSelectorBootstrapContextByTool[aiTool] else { return false }
+        guard pending.project == projectName, pending.workspace == workspaceName else { return false }
+        switch kind {
+        case .providerList:
+            return pending.providerPending
+        case .agentList:
+            return pending.agentPending
+        }
+    }
+
+    /// 若该事件对应设置页触发的临时请求，则在消费后清理上下文，避免后续串台。
+    func consumeAISelectorBootstrapContextIfNeeded(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        kind: AISelectorResourceKind
+    ) {
+        guard var pending = aiSelectorBootstrapContextByTool[aiTool] else { return }
+        guard pending.project == projectName, pending.workspace == workspaceName else { return }
+
+        switch kind {
+        case .providerList:
+            pending.providerPending = false
+        case .agentList:
+            pending.agentPending = false
+        }
+
+        if pending.providerPending || pending.agentPending {
+            aiSelectorBootstrapContextByTool[aiTool] = pending
+        } else {
+            aiSelectorBootstrapContextByTool[aiTool] = nil
+        }
+    }
+
+    func clearAISelectorBootstrapContexts() {
+        aiSelectorBootstrapContextByTool.removeAll()
     }
 
     func setAIProviders(_ providers: [AIProviderInfo], for tool: AIChatTool) {

@@ -26,9 +26,17 @@ struct AIAgentSection: View {
         .settingsPageTopInset()
         .onAppear {
             editableProfiles = appState.evolutionDefaultProfiles
+            _ = appState.requestAISelectorResourcesForSettings()
         }
         .onChange(of: appState.evolutionDefaultProfiles) {
             editableProfiles = appState.evolutionDefaultProfiles
+        }
+        .onChange(of: appState.connectionState) { _, state in
+            guard state == .connected else { return }
+            _ = appState.requestAISelectorResourcesForSettings()
+        }
+        .onChange(of: appState.projects.map { $0.workspaces.count }) { _, _ in
+            _ = appState.requestAISelectorResourcesForSettings()
         }
     }
 

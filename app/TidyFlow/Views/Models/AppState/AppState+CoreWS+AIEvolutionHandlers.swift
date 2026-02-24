@@ -373,8 +373,12 @@ extension AppState {
     }
 
     func handleAIProviderList(_ ev: AIProviderListResult) {
-        guard selectedProjectName == ev.projectName,
-              selectedWorkspaceKey == ev.workspaceName else { return }
+        guard shouldAcceptAISelectorEvent(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            kind: .providerList
+        ) else { return }
         let providers = ev.providers.map { p in
             AIProviderInfo(
                 id: p.id,
@@ -396,12 +400,22 @@ extension AppState {
             workspace: ev.workspaceName,
             aiTool: ev.aiTool
         )
+        consumeAISelectorBootstrapContextIfNeeded(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            kind: .providerList
+        )
         retryPendingAISessionSelectionHint(for: ev.aiTool)
     }
 
     func handleAIAgentList(_ ev: AIAgentListResult) {
-        guard selectedProjectName == ev.projectName,
-              selectedWorkspaceKey == ev.workspaceName else { return }
+        guard shouldAcceptAISelectorEvent(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            kind: .agentList
+        ) else { return }
         let agents = ev.agents.map { a in
             AIAgentInfo(
                 name: a.name,
@@ -418,6 +432,12 @@ extension AppState {
             project: ev.projectName,
             workspace: ev.workspaceName,
             aiTool: ev.aiTool
+        )
+        consumeAISelectorBootstrapContextIfNeeded(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            kind: .agentList
         )
         if selectedAgent(for: ev.aiTool) == nil {
             let firstAgent = agents.first(where: { $0.mode == "primary" || $0.mode == "all" })
