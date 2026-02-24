@@ -3,8 +3,6 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var paletteState: CommandPaletteState
-    // 使用 @StateObject 确保 WebBridge 只创建一次，不随视图更新而重建
-    @StateObject private var webBridge = WebBridge()
 
     /// 控制 Inspector 显示状态（与 rightSidebarCollapsed 反向绑定）
     private var inspectorPresented: Binding<Bool> {
@@ -31,8 +29,7 @@ struct ContentView: View {
                     .environmentObject(appState)
                     .navigationSplitViewColumnWidth(min: 200, ideal: 250)
             } detail: {
-                // 移除 .id() 修饰符，避免切换 workspace 时重建 WKWebView 导致终端会话丢失
-                CenterContentView(webBridge: webBridge)
+                CenterContentView()
                     .environmentObject(appState)
             }
             // 使用苹果官方 Inspector API 实现右侧面板
@@ -136,13 +133,6 @@ struct ContentView: View {
                 .environmentObject(appState)
                 .environmentObject(appState.gitCache)
                 .environmentObject(appState.fileCache)
-        }
-        // 监听应用激活事件，刷新终端以解决花屏问题
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // 延迟执行，等待 WKWebView 完全恢复
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                webBridge.refreshAllTerminals()
-            }
         }
     }
 }

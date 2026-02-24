@@ -3,20 +3,6 @@ import AppKit
 
 struct TabContentHostView: View {
     @EnvironmentObject var appState: AppState
-    let webBridge: WebBridge
-    @Binding var webViewVisible: Bool
-
-    /// 是否有需要展示 WebView 的活跃 tab（只读，用于驱动 webViewVisible）
-    private var hasActiveContent: Bool {
-        // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
-        guard let globalKey = appState.currentGlobalWorkspaceKey,
-              appState.workspaceSpecialPageByWorkspace[globalKey] == nil,
-              let activeId = appState.activeTabIdByWorkspace[globalKey],
-              let tabs = appState.workspaceTabs[globalKey],
-              let tab = tabs.first(where: { $0.id == activeId })
-        else { return false }
-        return tab.kind == .terminal
-    }
 
     var body: some View {
         Group {
@@ -28,11 +14,9 @@ struct TabContentHostView: View {
                         AITabView()
                             .environmentObject(appState)
                             .environmentObject(appState.fileCache)
-                            .onAppear { webViewVisible = false }
                     case .evolution:
                         EvolutionTabView()
                             .environmentObject(appState)
-                            .onAppear { webViewVisible = false }
                     }
                 } else if let activeId = appState.activeTabIdByWorkspace[globalKey],
                           let tabs = appState.workspaceTabs[globalKey],
@@ -40,27 +24,16 @@ struct TabContentHostView: View {
 
                     switch activeTab.kind {
                     case .terminal:
-                        // Phase C1-1: Show WebView for terminal tabs
-                        TerminalContentView(
-                            webBridge: webBridge,
-                            webViewVisible: $webViewVisible
-                        )
+                        TerminalContentView(tab: activeTab)
+                            .id(activeTab.id)
                     case .editor:
-                        NativeEditorContentView(
-                            path: activeTab.payload,
-                            webViewVisible: $webViewVisible
-                        )
+                        NativeEditorContentView(path: activeTab.payload)
                         .id(activeTab.payload) // 不同 path 视为不同 View，确保切换时触发 onAppear
                     case .diff:
-                        NativeDiffContentView(
-                            path: activeTab.payload,
-                            webViewVisible: $webViewVisible
-                        )
+                        NativeDiffContentView(path: activeTab.payload)
                     case .settings:
-                        // 设置页面不需要 WebView
                         SettingsContentView()
                             .environmentObject(appState)
-                            .onAppear { webViewVisible = false }
                     }
                 } else {
                     // 已选择工作空间但没有活跃 Tab，显示快捷操作视图
@@ -70,8 +43,6 @@ struct TabContentHostView: View {
                 NoActiveTabView()
             }
         }
-        .onAppear { webViewVisible = hasActiveContent }
-        .onChange(of: hasActiveContent) { _, newValue in webViewVisible = newValue }
     }
 }
 
@@ -114,156 +85,21 @@ struct NoActiveTabView: View {
     }
 }
 
-// MARK: - Phase C1-2: Terminal Content View (WebView + Status Bar, Multi-Session)
+// MARK: - Terminal Content View
 
 struct TerminalContentView: View {
-    let webBridge: WebBridge
-    @Binding var webViewVisible: Bool
+    let tab: TabModel
     @EnvironmentObject var appState: AppState
-
-    // Track the current tab to detect tab switches
-    @State private var currentTabId: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
-            // WebView container (managed by parent CenterContentView)
-            ZStack {
-                // Show loading or error state
-                if !appState.editorWebReady {
-                    VStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("common.loading".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-                } else if case .error(let message) = appState.terminalState {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundColor(.orange)
-                        Text("Terminal Error")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Text(message)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Button("Reconnect") {
-                            appState.wsClient.reconnect()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-                } else {
-                    // WebView is visible and ready - show transparent overlay
-                    Color.clear
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+            MacSwiftTermTerminalView(appState: appState, tabId: tab.id)
+                .background(Color.black)
+            TerminalStatusBar()
+                .environmentObject(appState)
         }
         .onAppear {
-            webViewVisible = true
-            // Send enter_mode and terminal commands when terminal tab becomes active
-            if appState.editorWebReady {
-                sendTerminalMode()
-            }
-        }
-        .onDisappear {
-            // webViewVisible 由 TabContentHostView 管理，不在子视图中设置
-            // Web 侧已 terminal-only，无需在离开时切回 editor 模式
-        }
-        .onChange(of: appState.editorWebReady) { _, ready in
-            if ready {
-                sendTerminalMode()
-            }
-        }
-        .onChange(of: appState.activeTabIdByWorkspace) { _, _ in
-            // Detect tab switch within terminal tabs
-            if let tab = appState.getActiveTab(), tab.kind == .terminal {
-                if currentTabId != tab.id {
-                    currentTabId = tab.id
-                    handleTabSwitch(tab)
-                }
-            }
-        }
-        .onChange(of: appState.currentGlobalWorkspaceKey) { _, newGlobalKey in
-            // 当全局工作空间键切换时（包括项目切换），重新发送 terminal mode 命令
-            guard newGlobalKey != nil else { return }
-            guard appState.editorWebReady else { return }
-            guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
-
-            currentTabId = tab.id
-            sendTerminalMode()
-        }
-    }
-
-    private func sendTerminalMode() {
-        guard let tab = appState.getActiveTab(), tab.kind == .terminal else { return }
-        guard let ws = appState.selectedWorkspaceKey else { return }
-
-        currentTabId = tab.id
-        // 若已由 Native 侧主动触发 spawn，跳过本次，避免重复创建会话
-        if appState.pendingSpawnTabs.contains(tab.id) {
-            appState.requestTerminal()
-            return
-        }
-
-        // 传递 project 和 workspace 以便 JavaScript 端更新当前工作空间
-        webBridge.enterMode("terminal", project: appState.selectedProjectName, workspace: ws)
-
-        // Phase C1-2: Check if this tab has a session
-        if let sessionId = appState.getTerminalSessionId(for: tab.id) {
-            // Attach to existing session
-            webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
-        } else if appState.staleTerminalTabs.contains(tab.id),
-                  let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
-            // Stale tab 且有 terminalSessionId → 尝试通过服务端 attach（WS 重连场景）
-            webBridge.terminalAttach(tabId: tab.id.uuidString, sessionId: sessionId)
-        } else if appState.terminalNeedsRespawn(tab.id) {
-            // Respawn session (was stale or never had one)
-            appState.staleTerminalTabs.remove(tab.id)
-            webBridge.terminalSpawn(
-                project: appState.selectedProjectName,
-                workspace: ws,
-                tabId: tab.id.uuidString
-            )
-        } else {
-            // New tab, spawn session
-            webBridge.terminalSpawn(
-                project: appState.selectedProjectName,
-                workspace: ws,
-                tabId: tab.id.uuidString
-            )
-        }
-        appState.requestTerminal()
-    }
-
-    private func handleTabSwitch(_ tab: TabModel) {
-        guard appState.editorWebReady else { return }
-        guard let ws = appState.selectedWorkspaceKey else { return }
-        
-        // 如果这个 Tab 正在 pending spawn，跳过（避免重复 spawn）
-        if appState.pendingSpawnTabs.contains(tab.id) {
-            return
-        }
-
-        let sessionId = appState.getTerminalSessionId(for: tab.id)
-
-        // Phase C1-2: Switch to this tab's session
-        if let sessionId = sessionId {
-            // 使用回调而不是直接调用，确保使用正确的 WebBridge 实例
-            appState.onTerminalAttach?(tab.id.uuidString, sessionId)
-        } else {
-            // No session, spawn new one
-            webBridge.terminalSpawn(
-                project: appState.selectedProjectName,
-                workspace: ws,
-                tabId: tab.id.uuidString
-            )
+            appState.ensureTerminalForTab(tab)
         }
     }
 }
@@ -317,7 +153,6 @@ struct TerminalStatusBar: View {
 
 struct NativeEditorContentView: View {
     let path: String
-    @Binding var webViewVisible: Bool
     @EnvironmentObject var appState: AppState
     @State private var highlightedLine: Int?
 
@@ -349,7 +184,6 @@ struct NativeEditorContentView: View {
             EditorStatusBar(path: path)
         }
         .onAppear {
-            webViewVisible = false
             openDocumentIfNeeded(force: false)
             consumePendingRevealIfNeeded()
         }
@@ -435,7 +269,6 @@ struct EditorStatusBar: View {
 
 struct NativeDiffContentView: View {
     let path: String
-    @Binding var webViewVisible: Bool
     @EnvironmentObject var appState: AppState
 
     @State private var currentMode: DiffMode = .working
@@ -447,7 +280,6 @@ struct NativeDiffContentView: View {
             DiffStatusBar(path: path, mode: currentMode)
         }
         .onAppear {
-            webViewVisible = false
             currentMode = appState.activeDiffMode
             requestDiff()
         }

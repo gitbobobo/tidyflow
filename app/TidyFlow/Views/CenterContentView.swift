@@ -1,47 +1,27 @@
 import SwiftUI
-import os
 
 struct CenterContentView: View {
     @EnvironmentObject var appState: AppState
-    let webBridge: WebBridge
-    @State private var webViewVisible: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
-            // Native tab 栏（始终在顶部）
             if appState.selectedWorkspaceKey != nil {
                 TabStripView()
                 Divider()
             }
-            
-            // 内容区域
-            ZStack {
-                // WebView layer - 始终保持在视图树中，避免进入项目配置页面时被 SwiftUI 销毁导致终端全部断开
-                WebViewContainer(bridge: webBridge, isVisible: $webViewVisible)
-                    .opacity(shouldShowWebView && appState.selectedProjectForConfig == nil ? 1 : 0)
-                    .allowsHitTesting(shouldShowWebView && appState.selectedProjectForConfig == nil)
 
-                // 项目配置页面（优先级最高）
+            ZStack {
                 if let projectName = appState.selectedProjectForConfig {
                     ProjectConfigView(projectName: projectName)
                         .transition(.opacity)
                 } else {
-                    // Native UI layer
                     if appState.selectedWorkspaceKey != nil {
-                        TabContentHostView(
-                            webBridge: webBridge,
-                            webViewVisible: $webViewVisible
-                        )
-                        .background(shouldShowWebView ? Color.clear : Color(NSColor.windowBackgroundColor))
+                        TabContentHostView()
                     } else {
-                        // 未选择 workspace 时显示欢迎/提示视图
                         NoActiveTabView()
                     }
                 }
-            } // ZStack
-        } // VStack
-        .onAppear {
-            setupBridgeCallbacks()
+            }
         }
         .alert("tabContent.unsavedChanges".localized, isPresented: $appState.showUnsavedChangesAlert) {
             Button("common.save".localized, role: nil) {
@@ -67,88 +47,5 @@ struct CenterContentView: View {
         } message: {
             Text("tabContent.unsavedChanges.message".localized)
         }
-    }
-
-    /// Whether to show WebView (terminal tab is active and web is ready)
-    private var shouldShowWebView: Bool {
-        return webViewVisible && appState.isActiveTabTerminal && appState.editorWebReady
-    }
-
-    /// Setup WebBridge callbacks
-    private func setupBridgeCallbacks() {
-        webBridge.onReady = { [weak appState, weak webBridge] info in
-            DispatchQueue.main.async {
-                appState?.editorWebReady = true
-                // UX-1: Enable renderer-only mode when Web is ready
-                webBridge?.setRendererOnly(true)
-
-                // 在 WebView 准备好后设置 WebSocket URL
-                if let port = appState?.coreProcessManager.currentPort {
-                    webBridge?.setWsURL(port: port, token: appState?.coreProcessManager.wsAuthToken)
-                }
-            }
-        }
-
-        // Phase C1-2: Terminal callbacks (with tabId)
-        webBridge.onTerminalReady = { [weak appState, weak webBridge] tabId, sessionId, project, workspace in
-            DispatchQueue.main.async {
-                appState?.handleTerminalReady(tabId: tabId, sessionId: sessionId, project: project, workspace: workspace, webBridge: webBridge)
-            }
-        }
-
-        webBridge.onTerminalClosed = { [weak appState] tabId, sessionId, code in
-            DispatchQueue.main.async {
-                appState?.handleTerminalClosed(tabId: tabId, sessionId: sessionId, code: code)
-            }
-        }
-
-        webBridge.onTerminalError = { [weak appState] tabId, message in
-            DispatchQueue.main.async {
-                appState?.handleTerminalError(tabId: tabId, message: message)
-            }
-        }
-
-        webBridge.onTerminalConnected = { [weak appState] in
-            DispatchQueue.main.async {
-                appState?.handleTerminalConnected()
-            }
-        }
-
-        // Phase C1-2: Set terminal kill callback
-        appState.onTerminalKill = { [weak webBridge] tabId, sessionId in
-            webBridge?.terminalKill(tabId: tabId, sessionId: sessionId)
-        }
-        
-        // 设置终端 attach 回调
-        appState.onTerminalAttach = { [weak webBridge] tabId, sessionId in
-            webBridge?.terminalAttach(tabId: tabId, sessionId: sessionId)
-        }
-
-        // 设置 JS 层 WebSocket 重连回调（系统唤醒自动重连时使用）
-        appState.onReconnectJS = { [weak webBridge] in
-            webBridge?.reconnectJS()
-        }
-        
-        // 设置终端 spawn 回调，当创建新终端 Tab 时调用
-        appState.onTerminalSpawn = { [weak webBridge, weak appState] tabId, project, workspace in
-            guard let webBridge = webBridge, let appState = appState else { return }
-            // 仅当 WebView 已就绪时才发送 spawn 命令
-            if appState.editorWebReady {
-                webBridge.terminalSpawn(project: project, workspace: workspace, tabId: tabId)
-            }
-        }
-
-        // Set Core ready callback to update WebBridge with the port
-        appState.onCoreReadyWithPort = { [weak webBridge, weak appState] port in
-            webBridge?.setWsURL(port: port, token: appState?.coreProcessManager.wsAuthToken)
-        }
-
-        // If Core is already running, set the WebSocket URL now
-        if let port = appState.coreProcessManager.currentPort {
-            webBridge.setWsURL(port: port, token: appState.coreProcessManager.wsAuthToken)
-        }
-
-        appState.onEditorTabClose = nil
-        appState.onEditorFileChanged = nil
     }
 }
