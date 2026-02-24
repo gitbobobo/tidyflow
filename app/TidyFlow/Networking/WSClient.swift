@@ -52,7 +52,6 @@ class WSClient: NSObject, ObservableObject {
     weak var fileMessageHandler: FileMessageHandler?
     weak var settingsMessageHandler: SettingsMessageHandler?
     weak var terminalMessageHandler: TerminalMessageHandler?
-    weak var lspMessageHandler: LspMessageHandler?
     weak var aiMessageHandler: AIMessageHandler?
     weak var evolutionMessageHandler: EvolutionMessageHandler?
     weak var errorMessageHandler: ErrorMessageHandler?
@@ -121,9 +120,6 @@ class WSClient: NSObject, ObservableObject {
     var onProjectCommandCompleted: ((String, String, String, String, Bool, String?) -> Void)?
     // v1.30: 项目命令实时输出回调 (taskId, line)
     var onProjectCommandOutput: ((String, String) -> Void)?
-    // v1.31: LSP 诊断与状态
-    var onLspDiagnostics: ((LspDiagnosticsResult) -> Void)?
-    var onLspStatus: ((LspStatusResult) -> Void)?
     var onRemoteTermChanged: (() -> Void)?
     // v1.37: AI 任务取消确认
     var onAITaskCancelled: ((AITaskCancelled) -> Void)?

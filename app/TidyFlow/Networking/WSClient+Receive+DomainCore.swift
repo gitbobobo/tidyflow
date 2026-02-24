@@ -340,28 +340,4 @@ extension WSClient {
         }
     }
 
-    func handleLspDomain(_ action: String, json: [String: Any]) -> Bool {
-        switch action {
-        case "lsp_diagnostics":
-            if let result = LspDiagnosticsResult.from(json: json) {
-                if let handler = lspMessageHandler {
-                    handler.handleLspDiagnostics(result)
-                } else {
-                    onLspDiagnostics?(result)
-                }
-            }
-            return true
-        case "lsp_status":
-            if let result = LspStatusResult.from(json: json) {
-                if let handler = lspMessageHandler {
-                    handler.handleLspStatus(result)
-                } else {
-                    onLspStatus?(result)
-                }
-            }
-            return true
-        default:
-            return false
-        }
-    }
 }

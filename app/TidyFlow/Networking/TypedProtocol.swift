@@ -127,16 +127,6 @@ extension TerminalMessageHandler {
     func handleRemoteTermChanged() {}
 }
 
-protocol LspMessageHandler: AnyObject {
-    func handleLspDiagnostics(_ result: LspDiagnosticsResult)
-    func handleLspStatus(_ result: LspStatusResult)
-}
-
-extension LspMessageHandler {
-    func handleLspDiagnostics(_ result: LspDiagnosticsResult) {}
-    func handleLspStatus(_ result: LspStatusResult) {}
-}
-
 protocol AIMessageHandler: AnyObject {
     func handleAITaskCancelled(_ result: AITaskCancelled)
     func handleAISessionStarted(_ ev: AISessionStartedV2)

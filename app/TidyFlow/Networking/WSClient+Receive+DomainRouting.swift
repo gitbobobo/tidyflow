@@ -32,7 +32,6 @@ extension WSClient {
         ("project", "save_project_commands"),
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
-        ("lsp", "lsp_"),
         ("log", "log_"),
         ("ai", "ai_"),
         ("evolution", "evo_"),
@@ -79,8 +78,6 @@ extension WSClient {
             return handleFileDomain(action, json: json)
         case "settings":
             return handleSettingsDomain(action, json: json)
-        case "lsp":
-            return handleLspDomain(action, json: json)
         case "ai":
             return handleAiDomain(action, json: json)
         case "evolution":

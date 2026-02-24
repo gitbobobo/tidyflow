@@ -65,7 +65,6 @@ extension WSClient {
         ("project", "save_project_commands"),
         ("project", "run_project_command"),
         ("project", "cancel_project_command"),
-        ("lsp", "lsp_"),
         ("log", "log_"),
         ("ai", "ai_"),
         ("evolution", "evo_"),
@@ -775,35 +774,6 @@ extension WSClient {
             payload["task_id"] = taskId
         }
         send(payload)
-    }
-
-    // MARK: - v1.31: LSP diagnostics
-
-    /// 启动工作区 LSP 诊断
-    func requestLspStartWorkspace(project: String, workspace: String) {
-        send([
-            "type": "lsp_start_workspace",
-            "project": project,
-            "workspace": workspace
-        ])
-    }
-
-    /// 停止工作区 LSP 诊断
-    func requestLspStopWorkspace(project: String, workspace: String) {
-        send([
-            "type": "lsp_stop_workspace",
-            "project": project,
-            "workspace": workspace
-        ])
-    }
-
-    /// 拉取一次当前工作区 LSP 诊断快照
-    func requestLspGetDiagnostics(project: String, workspace: String) {
-        send([
-            "type": "lsp_get_diagnostics",
-            "project": project,
-            "workspace": workspace
-        ])
     }
 
     // MARK: - v1.37: 取消 AI 任务
