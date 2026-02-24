@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use crate::ai::AiModelSelection;
 use crate::server::context::HandlerContext;
-use crate::server::handlers::ai::{ensure_agent, normalize_part_for_wire, resolve_directory};
+use crate::server::handlers::ai::{
+    ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
+    normalize_part_for_wire, resolve_directory,
+};
 use crate::server::protocol::ServerMessage;
 
 use super::profile::profile_for_stage;
@@ -108,6 +111,42 @@ impl EvolutionManager {
             match next {
                 Ok(Some(Ok(event))) => match event {
                     crate::ai::AiEvent::Done => {
+                        let adapter_hint = match agent
+                            .session_selection_hint(&directory, &session.id)
+                            .await
+                        {
+                            Ok(Some(adapter_hint)) => adapter_hint,
+                            Ok(None) => crate::ai::AiSessionSelectionHint::default(),
+                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                        };
+                        let inferred_hint = match agent
+                            .list_messages(&directory, &session.id, Some(200))
+                            .await
+                        {
+                            Ok(messages) => {
+                                let wire_messages: Vec<crate::server::protocol::ai::MessageInfo> =
+                                    messages
+                                        .into_iter()
+                                        .map(|m| crate::server::protocol::ai::MessageInfo {
+                                            id: m.id,
+                                            role: m.role,
+                                            created_at: m.created_at,
+                                            agent: m.agent,
+                                            model_provider_id: m.model_provider_id,
+                                            model_id: m.model_id,
+                                            parts: m
+                                                .parts
+                                                .into_iter()
+                                                .map(normalize_part_for_wire)
+                                                .collect(),
+                                        })
+                                        .collect();
+                                infer_selection_hint_from_messages(&wire_messages)
+                            }
+                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                        };
+                        let selection_hint =
+                            merge_session_selection_hint(adapter_hint, inferred_hint);
                         self.broadcast(
                             ctx,
                             ServerMessage::AIChatDone {
@@ -115,6 +154,7 @@ impl EvolutionManager {
                                 workspace_name: workspace.to_string(),
                                 ai_tool: ai_tool.clone(),
                                 session_id: session.id.clone(),
+                                selection_hint,
                             },
                         )
                         .await;
@@ -134,7 +174,11 @@ impl EvolutionManager {
                         .await;
                         return Err(format!("stage stream error: {}", message));
                     }
-                    crate::ai::AiEvent::MessageUpdated { message_id, role } => {
+                    crate::ai::AiEvent::MessageUpdated {
+                        message_id,
+                        role,
+                        selection_hint,
+                    } => {
                         self.broadcast(
                             ctx,
                             ServerMessage::AIChatMessageUpdated {
@@ -144,6 +188,13 @@ impl EvolutionManager {
                                 session_id: session.id.clone(),
                                 message_id,
                                 role,
+                                selection_hint: selection_hint.map(|hint| {
+                                    crate::server::protocol::ai::SessionSelectionHint {
+                                        agent: hint.agent,
+                                        model_provider_id: hint.model_provider_id,
+                                        model_id: hint.model_id,
+                                    }
+                                }),
                             },
                         )
                         .await;
@@ -497,8 +548,8 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_judge_result_in_text, parse_judge_result_from_json};
     use super::super::{stage::next_stage, STAGES};
+    use super::{detect_judge_result_in_text, parse_judge_result_from_json};
 
     #[test]
     fn detect_judge_result_from_chat_text() {
@@ -535,10 +586,7 @@ mod tests {
     #[test]
     fn stages_should_not_contain_bootstrap() {
         // bootstrap 已从 STAGES 集合移除，manager_stage 层回归确认
-        assert!(
-            !STAGES.contains(&"bootstrap"),
-            "STAGES 不应包含 bootstrap"
-        );
+        assert!(!STAGES.contains(&"bootstrap"), "STAGES 不应包含 bootstrap");
     }
 
     #[test]

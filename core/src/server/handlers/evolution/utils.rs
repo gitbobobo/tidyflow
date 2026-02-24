@@ -39,4 +39,3 @@ pub(super) fn evolution_workspace_dir(workspace_root: &str) -> Result<PathBuf, S
 pub(super) fn workspace_key(project: &str, workspace: &str) -> String {
     format!("{}:{}", project, workspace)
 }
-

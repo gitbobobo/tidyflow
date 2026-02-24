@@ -19,7 +19,8 @@ mod utils;
 
 pub use ai_state::AIState;
 pub(crate) use utils::{
-    ensure_agent, normalize_ai_tool, normalize_part_for_wire, resolve_directory,
+    ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
+    normalize_ai_tool, normalize_part_for_wire, resolve_directory,
 };
 
 pub type SharedAIState = Arc<Mutex<AIState>>;

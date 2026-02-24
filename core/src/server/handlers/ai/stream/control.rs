@@ -111,6 +111,7 @@ pub(crate) async fn handle_ai_chat_abort(
                 workspace_name,
                 ai_tool,
                 session_id,
+                selection_hint: None,
             },
         )
         .await;

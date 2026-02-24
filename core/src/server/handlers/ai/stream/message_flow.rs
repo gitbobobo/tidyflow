@@ -6,13 +6,61 @@ use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
-use crate::ai::AiEvent;
+use crate::ai::{AiAgent, AiEvent};
 use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
 use super::super::utils::*;
 use super::super::SharedAIState;
+
+async fn resolve_selection_hint_for_done(
+    agent: &Arc<dyn AiAgent>,
+    directory: &str,
+    session_id: &str,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+) -> Option<crate::server::protocol::ai::SessionSelectionHint> {
+    let adapter_hint = match agent.session_selection_hint(directory, session_id).await {
+        Ok(Some(adapter_hint)) => adapter_hint,
+        Ok(None) => crate::ai::AiSessionSelectionHint::default(),
+        Err(e) => {
+            warn!(
+                "AIChatDone selection hint lookup failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                project_name, workspace_name, ai_tool, session_id, e
+            );
+            crate::ai::AiSessionSelectionHint::default()
+        }
+    };
+
+    let inferred_hint = match agent.list_messages(directory, session_id, Some(200)).await {
+        Ok(messages) => {
+            let wire_messages: Vec<crate::server::protocol::ai::MessageInfo> = messages
+                .into_iter()
+                .map(|m| crate::server::protocol::ai::MessageInfo {
+                    id: m.id,
+                    role: m.role,
+                    created_at: m.created_at,
+                    agent: m.agent,
+                    model_provider_id: m.model_provider_id,
+                    model_id: m.model_id,
+                    parts: m.parts.into_iter().map(normalize_part_for_wire).collect(),
+                })
+                .collect();
+            infer_selection_hint_from_messages(&wire_messages)
+        }
+        Err(e) => {
+            warn!(
+                "AIChatDone selection hint infer failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                project_name, workspace_name, ai_tool, session_id, e
+            );
+            crate::ai::AiSessionSelectionHint::default()
+        }
+    };
+
+    merge_session_selection_hint(adapter_hint, inferred_hint)
+}
 
 pub(crate) async fn handle_ai_chat_start(
     msg: &ClientMessage,
@@ -284,6 +332,7 @@ pub(crate) async fn handle_ai_chat_send(
                             workspace_name: workspace_name.clone(),
                             ai_tool: ai_tool.clone(),
                             session_id: session_id.clone(),
+                            selection_hint: None,
                         },
                     )
                     .await;
@@ -294,7 +343,11 @@ pub(crate) async fn handle_ai_chat_send(
                     match event {
                         Some(Ok(ai_event)) => {
                             let keep_running = match ai_event {
-                                AiEvent::MessageUpdated { message_id, role } => {
+                                AiEvent::MessageUpdated {
+                                    message_id,
+                                    role,
+                                    selection_hint,
+                                } => {
                                     emit_server_message(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -306,6 +359,13 @@ pub(crate) async fn handle_ai_chat_send(
                                             session_id: session_id.clone(),
                                             message_id,
                                             role,
+                                            selection_hint: selection_hint.map(|hint| {
+                                                crate::server::protocol::ai::SessionSelectionHint {
+                                                    agent: hint.agent,
+                                                    model_provider_id: hint.model_provider_id,
+                                                    model_id: hint.model_id,
+                                                }
+                                            }),
                                         },
                                     )
                                     .await
@@ -420,6 +480,15 @@ pub(crate) async fn handle_ai_chat_send(
                                 }
                                 AiEvent::Done => {
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
+                                    let selection_hint = resolve_selection_hint_for_done(
+                                        &agent,
+                                        &directory,
+                                        &session_id,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                    )
+                                    .await;
                                     let _ = emit_server_message(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -429,6 +498,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             workspace_name: workspace_name.clone(),
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
+                                            selection_hint,
                                         },
                                     )
                                     .await;
@@ -462,6 +532,15 @@ pub(crate) async fn handle_ai_chat_send(
                         None => {
                             // Hub 断开等情况下可能出现 None，确保收敛
                             status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
+                            let selection_hint = resolve_selection_hint_for_done(
+                                &agent,
+                                &directory,
+                                &session_id,
+                                &project_name,
+                                &workspace_name,
+                                &ai_tool,
+                            )
+                            .await;
                             let _ = emit_server_message(
                                 &output_tx,
                                 task_broadcast_tx,
@@ -471,6 +550,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     workspace_name: workspace_name.clone(),
                                     ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
+                                    selection_hint,
                                 },
                             )
                             .await;
@@ -689,6 +769,7 @@ pub(crate) async fn handle_ai_chat_command(
                             workspace_name: workspace_name.clone(),
                             ai_tool: ai_tool.clone(),
                             session_id: session_id.clone(),
+                            selection_hint: None,
                         },
                     )
                     .await;
@@ -699,7 +780,11 @@ pub(crate) async fn handle_ai_chat_command(
                     match event {
                         Some(Ok(ai_event)) => {
                             let keep_running = match ai_event {
-                                AiEvent::MessageUpdated { message_id, role } => {
+                                AiEvent::MessageUpdated {
+                                    message_id,
+                                    role,
+                                    selection_hint,
+                                } => {
                                     emit_server_message(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -711,6 +796,13 @@ pub(crate) async fn handle_ai_chat_command(
                                             session_id: session_id.clone(),
                                             message_id,
                                             role,
+                                            selection_hint: selection_hint.map(|hint| {
+                                                crate::server::protocol::ai::SessionSelectionHint {
+                                                    agent: hint.agent,
+                                                    model_provider_id: hint.model_provider_id,
+                                                    model_id: hint.model_id,
+                                                }
+                                            }),
                                         },
                                     )
                                     .await
@@ -773,6 +865,15 @@ pub(crate) async fn handle_ai_chat_command(
                                 }
                                 AiEvent::Done => {
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
+                                    let selection_hint = resolve_selection_hint_for_done(
+                                        &agent,
+                                        &directory,
+                                        &session_id,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                    )
+                                    .await;
                                     let _ = emit_server_message(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -782,6 +883,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             workspace_name: workspace_name.clone(),
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
+                                            selection_hint,
                                         },
                                     )
                                     .await;
@@ -814,6 +916,15 @@ pub(crate) async fn handle_ai_chat_command(
                         }
                         None => {
                             status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
+                            let selection_hint = resolve_selection_hint_for_done(
+                                &agent,
+                                &directory,
+                                &session_id,
+                                &project_name,
+                                &workspace_name,
+                                &ai_tool,
+                            )
+                            .await;
                             let _ = emit_server_message(
                                 &output_tx,
                                 task_broadcast_tx,
@@ -823,6 +934,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     workspace_name: workspace_name.clone(),
                                     ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
+                                    selection_hint,
                                 },
                             )
                             .await;

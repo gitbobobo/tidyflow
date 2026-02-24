@@ -136,6 +136,9 @@ pub(super) async fn handle_ai_session_messages(
             id: m.id,
             role: m.role,
             created_at: m.created_at,
+            agent: m.agent,
+            model_provider_id: m.model_provider_id,
+            model_id: m.model_id,
             parts: m
                 .parts
                 .into_iter()

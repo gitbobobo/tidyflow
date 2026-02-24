@@ -341,6 +341,41 @@ pub(crate) fn infer_selection_hint_from_messages(
     messages: &[crate::server::protocol::ai::MessageInfo],
 ) -> AiSessionSelectionHint {
     let mut resolved = AiSessionSelectionHint::default();
+
+    for message in messages
+        .iter()
+        .rev()
+        .filter(|m| m.role.eq_ignore_ascii_case("user"))
+    {
+        if resolved.agent.is_none() {
+            resolved.agent = message.agent.clone();
+        }
+        if resolved.model_provider_id.is_none() {
+            resolved.model_provider_id = message.model_provider_id.clone();
+        }
+        if resolved.model_id.is_none() {
+            resolved.model_id = message.model_id.clone();
+        }
+        if resolved.agent.is_some() && resolved.model_id.is_some() {
+            return resolved;
+        }
+    }
+
+    for message in messages.iter().rev() {
+        if resolved.agent.is_none() {
+            resolved.agent = message.agent.clone();
+        }
+        if resolved.model_provider_id.is_none() {
+            resolved.model_provider_id = message.model_provider_id.clone();
+        }
+        if resolved.model_id.is_none() {
+            resolved.model_id = message.model_id.clone();
+        }
+        if resolved.agent.is_some() && resolved.model_id.is_some() {
+            return resolved;
+        }
+    }
+
     for message in messages.iter().rev() {
         for part in message.parts.iter().rev() {
             let mut candidates: Vec<&serde_json::Value> = Vec::new();
@@ -612,6 +647,76 @@ pub(crate) async fn normalize_ai_image_parts(
     }
 
     Ok(Some(normalized))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::infer_selection_hint_from_messages;
+
+    #[test]
+    fn infer_selection_hint_prefers_last_user_message_metadata() {
+        let messages = vec![
+            crate::server::protocol::ai::MessageInfo {
+                id: "m1".to_string(),
+                role: "user".to_string(),
+                created_at: None,
+                agent: Some("build".to_string()),
+                model_provider_id: Some("openai".to_string()),
+                model_id: Some("gpt-4.1".to_string()),
+                parts: vec![],
+            },
+            crate::server::protocol::ai::MessageInfo {
+                id: "m2".to_string(),
+                role: "user".to_string(),
+                created_at: None,
+                agent: Some("plan".to_string()),
+                model_provider_id: Some("anthropic".to_string()),
+                model_id: Some("claude-sonnet-4".to_string()),
+                parts: vec![],
+            },
+        ];
+
+        let hint = infer_selection_hint_from_messages(&messages);
+        assert_eq!(hint.agent.as_deref(), Some("plan"));
+        assert_eq!(hint.model_provider_id.as_deref(), Some("anthropic"));
+        assert_eq!(hint.model_id.as_deref(), Some("claude-sonnet-4"));
+    }
+
+    #[test]
+    fn infer_selection_hint_falls_back_to_part_source() {
+        let messages = vec![crate::server::protocol::ai::MessageInfo {
+            id: "m1".to_string(),
+            role: "assistant".to_string(),
+            created_at: None,
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts: vec![crate::server::protocol::ai::PartInfo {
+                id: "p1".to_string(),
+                part_type: "text".to_string(),
+                text: Some("x".to_string()),
+                mime: None,
+                filename: None,
+                url: None,
+                synthetic: None,
+                ignored: None,
+                source: Some(serde_json::json!({
+                    "agent": "build",
+                    "model_provider_id": "openai",
+                    "model_id": "gpt-4.1"
+                })),
+                tool_name: None,
+                tool_call_id: None,
+                tool_state: None,
+                tool_part_metadata: None,
+            }],
+        }];
+
+        let hint = infer_selection_hint_from_messages(&messages);
+        assert_eq!(hint.agent.as_deref(), Some("build"));
+        assert_eq!(hint.model_provider_id.as_deref(), Some("openai"));
+        assert_eq!(hint.model_id.as_deref(), Some("gpt-4.1"));
+    }
 }
 
 pub(crate) fn summarize_ai_image_parts(parts: &[crate::ai::AiImagePart]) -> String {

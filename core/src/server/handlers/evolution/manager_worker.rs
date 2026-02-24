@@ -1,8 +1,8 @@
 use tokio::time::{sleep, Duration};
 use tracing::error;
 
-use crate::server::context::HandlerContext;
 use super::EvolutionManager;
+use crate::server::context::HandlerContext;
 
 impl EvolutionManager {
     pub(super) async fn spawn_worker(
@@ -35,7 +35,6 @@ impl EvolutionManager {
         ctx: HandlerContext,
     ) {
         loop {
-
             {
                 let state = self.state.lock().await;
                 let Some(entry) = state.workspaces.get(&key) else {
@@ -140,5 +139,4 @@ impl EvolutionManager {
             }
         }
     }
-
-    }
+}

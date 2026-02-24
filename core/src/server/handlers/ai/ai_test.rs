@@ -49,7 +49,11 @@ mod tests {
             .insert(session_key.to_string());
 
         let keys = state.session_subscriptions.get(conn_id).unwrap();
-        assert_eq!(keys.len(), 1, "重复 subscribe 同一 session_key 集合中只应有一条");
+        assert_eq!(
+            keys.len(),
+            1,
+            "重复 subscribe 同一 session_key 集合中只应有一条"
+        );
     }
 
     #[test]
