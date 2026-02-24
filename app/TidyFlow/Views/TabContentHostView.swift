@@ -631,6 +631,8 @@ struct EvolutionTabView: View {
     @State private var autoLoopEnabled: Bool = true
     @State private var isSessionViewerPresented: Bool = false
     @State private var viewerStage: String?
+    @State private var isBlockerSheetPresented: Bool = false
+    @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
 
     private struct EvolutionAgentDisplayItem {
         let id: String
@@ -638,6 +640,12 @@ struct EvolutionTabView: View {
         let agent: String
         let status: String
         let toolCallCount: Int
+    }
+
+    private struct EvolutionBlockerDraft {
+        var selected: Bool
+        var selectedOptionID: String
+        var answerText: String
     }
 
     private var project: String { appState.selectedProjectName }
@@ -681,6 +689,9 @@ struct EvolutionTabView: View {
             EvolutionSessionDrawerView(isSessionViewerPresented: $isSessionViewerPresented)
         }
         #endif
+        .sheet(isPresented: $isBlockerSheetPresented) {
+            blockerSheet
+        }
         .onAppear {
             refreshData()
             syncStartOptionsFromCurrentItem()
@@ -701,6 +712,145 @@ struct EvolutionTabView: View {
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
             syncStartOptionsFromCurrentItem()
         }
+        .onReceive(appState.$evolutionBlockingRequired) { value in
+            syncBlockerSheetState(value)
+        }
+    }
+
+    private var blockerSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                if let blocking = appState.evolutionBlockingRequired {
+                    Text("检测到阻塞任务，需人工完成后才能继续循环")
+                        .font(.headline)
+                    Text("触发: \(blocking.trigger)  阻塞文件: \(blocking.blockerFilePath)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                    List {
+                        ForEach(blocking.unresolvedItems, id: \.blockerID) { item in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle(isOn: bindingSelected(item.blockerID)) {
+                                    Text(item.title)
+                                }
+                                .toggleStyle(.checkbox)
+                                Text(item.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if !item.options.isEmpty {
+                                    Picker("选项", selection: bindingOption(item.blockerID)) {
+                                        Text("请选择").tag("")
+                                        ForEach(item.options, id: \.optionID) { option in
+                                            Text(option.label).tag(option.optionID)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
+                                if item.allowCustomInput || item.options.isEmpty {
+                                    TextField("输入答案", text: bindingAnswer(item.blockerID))
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    HStack {
+                        Button("关闭") {
+                            isBlockerSheetPresented = false
+                        }
+                        Spacer()
+                        Button("提交已勾选项") {
+                            submitBlockerAnswers(blocking)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    Text("暂无阻塞任务")
+                    Button("关闭") {
+                        isBlockerSheetPresented = false
+                    }
+                }
+            }
+            .padding(16)
+            .frame(minWidth: 640, minHeight: 420)
+            .navigationTitle("阻塞任务处理")
+        }
+    }
+
+    private func bindingSelected(_ blockerID: String) -> Binding<Bool> {
+        Binding(
+            get: { blockerDrafts[blockerID]?.selected ?? true },
+            set: { value in
+                var draft = blockerDrafts[blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+                draft.selected = value
+                blockerDrafts[blockerID] = draft
+            }
+        )
+    }
+
+    private func bindingOption(_ blockerID: String) -> Binding<String> {
+        Binding(
+            get: { blockerDrafts[blockerID]?.selectedOptionID ?? "" },
+            set: { value in
+                var draft = blockerDrafts[blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+                draft.selectedOptionID = value
+                blockerDrafts[blockerID] = draft
+            }
+        )
+    }
+
+    private func bindingAnswer(_ blockerID: String) -> Binding<String> {
+        Binding(
+            get: { blockerDrafts[blockerID]?.answerText ?? "" },
+            set: { value in
+                var draft = blockerDrafts[blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+                draft.answerText = value
+                blockerDrafts[blockerID] = draft
+            }
+        )
+    }
+
+    private func syncBlockerSheetState(_ value: EvolutionBlockingRequiredV2?) {
+        guard let value,
+              let ws = workspace,
+              value.project == project,
+              appState.normalizeEvolutionWorkspaceName(value.workspace) == appState.normalizeEvolutionWorkspaceName(ws) else {
+            return
+        }
+        for item in value.unresolvedItems {
+            if blockerDrafts[item.blockerID] != nil {
+                continue
+            }
+            blockerDrafts[item.blockerID] = EvolutionBlockerDraft(
+                selected: true,
+                selectedOptionID: item.options.first?.optionID ?? "",
+                answerText: ""
+            )
+        }
+        isBlockerSheetPresented = true
+    }
+
+    private func submitBlockerAnswers(_ blocking: EvolutionBlockingRequiredV2) {
+        let resolutions: [EvolutionBlockerResolutionInputV2] = blocking.unresolvedItems.compactMap { item in
+            let draft = blockerDrafts[item.blockerID] ?? EvolutionBlockerDraft(
+                selected: true,
+                selectedOptionID: "",
+                answerText: ""
+            )
+            guard draft.selected else { return nil }
+            let selectedOptionIDs = draft.selectedOptionID.isEmpty ? [] : [draft.selectedOptionID]
+            let answer = draft.answerText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return EvolutionBlockerResolutionInputV2(
+                blockerID: item.blockerID,
+                selectedOptionIDs: selectedOptionIDs,
+                answerText: answer.isEmpty ? nil : answer
+            )
+        }
+        appState.resolveEvolutionBlockers(
+            project: blocking.project,
+            workspace: blocking.workspace,
+            resolutions: resolutions
+        )
     }
 
     private var header: some View {

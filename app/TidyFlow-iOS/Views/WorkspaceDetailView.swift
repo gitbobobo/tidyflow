@@ -531,6 +531,13 @@ struct MobileEvolutionView: View {
     @State private var pendingProfileSaveSignature: String?
     @State private var pendingProfileSaveDate: Date?
     @State private var hasPendingUserProfileEdit: Bool = false
+    @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
+
+    private struct EvolutionBlockerDraft {
+        var selected: Bool
+        var selectedOptionID: String
+        var answerText: String
+    }
 
     private var item: EvolutionWorkspaceItemV2? {
         appState.evolutionItem(project: project, workspace: workspace)
@@ -607,6 +614,41 @@ struct MobileEvolutionView: View {
                 Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中或已完成的代理可进入聊天详情。")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            if let blocking = activeBlockingRequest {
+                Section("阻塞任务") {
+                    Text("存在未完成阻塞项，需人工处理后才能继续循环")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("触发: \(blocking.trigger)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    ForEach(blocking.unresolvedItems, id: \.blockerID) { item in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle(item.title, isOn: bindingSelected(item.blockerID))
+                            Text(item.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if !item.options.isEmpty {
+                                Picker("选项", selection: bindingOption(item.blockerID)) {
+                                    Text("请选择").tag("")
+                                    ForEach(item.options, id: \.optionID) { option in
+                                        Text(option.label).tag(option.optionID)
+                                    }
+                                }
+                            }
+                            if item.allowCustomInput || item.options.isEmpty {
+                                TextField("输入答案", text: bindingAnswer(item.blockerID))
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    Button("提交已勾选项") {
+                        submitBlockers(blocking)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
 
             if profiles.isEmpty {
@@ -764,6 +806,9 @@ struct MobileEvolutionView: View {
         }
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
             syncStartOptionsFromItem()
+        }
+        .onReceive(appState.$evolutionBlockingRequired) { value in
+            syncBlockingDrafts(value)
         }
         .onChange(of: appState.isConnected) { _, connected in
             guard connected else { return }
@@ -1000,5 +1045,82 @@ struct MobileEvolutionView: View {
     private func syncStartOptionsFromItem() {
         guard let item else { return }
         autoLoopEnabled = item.autoLoopEnabled
+    }
+
+    private var activeBlockingRequest: EvolutionBlockingRequiredV2? {
+        guard let blocking = appState.evolutionBlockingRequired else { return nil }
+        guard blocking.project == project else { return nil }
+        let lhs = normalizeWorkspace(blocking.workspace)
+        let rhs = normalizeWorkspace(workspace)
+        return lhs == rhs ? blocking : nil
+    }
+
+    private func syncBlockingDrafts(_ value: EvolutionBlockingRequiredV2?) {
+        guard let value = activeBlockingRequest else { return }
+        for item in value.unresolvedItems {
+            if blockerDrafts[item.blockerID] != nil { continue }
+            blockerDrafts[item.blockerID] = EvolutionBlockerDraft(
+                selected: true,
+                selectedOptionID: item.options.first?.optionID ?? "",
+                answerText: ""
+            )
+        }
+    }
+
+    private func bindingSelected(_ blockerID: String) -> Binding<Bool> {
+        Binding(
+            get: { blockerDrafts[blockerID]?.selected ?? true },
+            set: { value in
+                var draft = blockerDrafts[blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+                draft.selected = value
+                blockerDrafts[blockerID] = draft
+            }
+        )
+    }
+
+    private func bindingOption(_ blockerID: String) -> Binding<String> {
+        Binding(
+            get: { blockerDrafts[blockerID]?.selectedOptionID ?? "" },
+            set: { value in
+                var draft = blockerDrafts[blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+                draft.selectedOptionID = value
+                blockerDrafts[blockerID] = draft
+            }
+        )
+    }
+
+    private func bindingAnswer(_ blockerID: String) -> Binding<String> {
+        Binding(
+            get: { blockerDrafts[blockerID]?.answerText ?? "" },
+            set: { value in
+                var draft = blockerDrafts[blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+                draft.answerText = value
+                blockerDrafts[blockerID] = draft
+            }
+        )
+    }
+
+    private func submitBlockers(_ blocking: EvolutionBlockingRequiredV2) {
+        let resolutions = blocking.unresolvedItems.compactMap { item -> EvolutionBlockerResolutionInputV2? in
+            let draft = blockerDrafts[item.blockerID] ?? EvolutionBlockerDraft(selected: true, selectedOptionID: "", answerText: "")
+            guard draft.selected else { return nil }
+            let selectedOptionIDs = draft.selectedOptionID.isEmpty ? [] : [draft.selectedOptionID]
+            let answer = draft.answerText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return EvolutionBlockerResolutionInputV2(
+                blockerID: item.blockerID,
+                selectedOptionIDs: selectedOptionIDs,
+                answerText: answer.isEmpty ? nil : answer
+            )
+        }
+        appState.resolveEvolutionBlockers(
+            project: blocking.project,
+            workspace: blocking.workspace,
+            resolutions: resolutions
+        )
+    }
+
+    private func normalizeWorkspace(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "default" : trimmed
     }
 }

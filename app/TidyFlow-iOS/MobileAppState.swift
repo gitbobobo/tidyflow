@@ -165,6 +165,8 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
     @Published var evolutionReplayError: String?
+    @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
+    @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
@@ -178,6 +180,7 @@ final class MobileAppState: ObservableObject {
     private var evolutionPendingProfileReloadWorkspaces: Set<String> = []
     /// Evolution：profile 请求兜底定时器。
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
+    private var evolutionPendingActionByWorkspace: [String: String] = [:]
 
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
@@ -904,6 +907,8 @@ final class MobileAppState: ObservableObject {
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionPendingActionByWorkspace[key] = "start"
         wsClient.requestEvoStartWorkspace(
             project: project,
             workspace: normalizedWorkspace,
@@ -921,7 +926,22 @@ final class MobileAppState: ObservableObject {
 
     func resumeEvolution(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionPendingActionByWorkspace[key] = "resume"
         wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
+    }
+
+    func resolveEvolutionBlockers(
+        project: String,
+        workspace: String,
+        resolutions: [EvolutionBlockerResolutionInputV2]
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoResolveBlockers(
+            project: project,
+            workspace: normalizedWorkspace,
+            resolutions: resolutions
+        )
     }
 
     func updateEvolutionAgentProfile(project: String, workspace: String, profiles: [EvolutionStageProfileInfoV2]) {
@@ -2613,8 +2633,13 @@ final class MobileAppState: ObservableObject {
         wsClient.onEvoSnapshot = { [weak self] snapshot in
             guard let self else { return }
             self.evolutionScheduler = snapshot.scheduler
-            self.evolutionWorkspaceItems = snapshot.workspaceItems.sorted {
+            let items = snapshot.workspaceItems.sorted {
                 ($0.project, $0.workspace) < ($1.project, $1.workspace)
+            }
+            self.evolutionWorkspaceItems = items
+            for item in items where item.status != "interrupted" {
+                let key = self.globalWorkspaceKey(project: item.project, workspace: self.normalizeEvolutionWorkspaceName(item.workspace))
+                self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
             }
         }
 
@@ -2696,6 +2721,59 @@ final class MobileAppState: ObservableObject {
         wsClient.onEvoError = { [weak self] message in
             self?.evolutionReplayLoading = false
             self?.evolutionReplayError = message
+        }
+
+        wsClient.onEvoBlockingRequired = { [weak self] ev in
+            guard let self else { return }
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            self.evolutionBlockingRequired = EvolutionBlockingRequiredV2(
+                project: ev.project,
+                workspace: normalizedWorkspace,
+                trigger: ev.trigger,
+                cycleID: ev.cycleID,
+                stage: ev.stage,
+                blockerFilePath: ev.blockerFilePath,
+                unresolvedItems: ev.unresolvedItems
+            )
+            self.evolutionBlockers = ev.unresolvedItems
+        }
+
+        wsClient.onEvoBlockersUpdated = { [weak self] ev in
+            guard let self else { return }
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            self.evolutionBlockers = ev.unresolvedItems
+            if ev.unresolvedCount > 0 {
+                self.evolutionBlockingRequired = EvolutionBlockingRequiredV2(
+                    project: ev.project,
+                    workspace: normalizedWorkspace,
+                    trigger: "updated",
+                    cycleID: self.evolutionBlockingRequired?.cycleID,
+                    stage: self.evolutionBlockingRequired?.stage,
+                    blockerFilePath: self.evolutionBlockingRequired?.blockerFilePath ?? "",
+                    unresolvedItems: ev.unresolvedItems
+                )
+                return
+            }
+            self.evolutionBlockingRequired = nil
+            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
+            guard let pendingAction = self.evolutionPendingActionByWorkspace.removeValue(forKey: key) else {
+                return
+            }
+            if pendingAction == "start" {
+                let profiles = self.evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
+                let verify = max(1, self.evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.verifyIterationLimit ?? 3)
+                self.startEvolution(
+                    project: ev.project,
+                    workspace: normalizedWorkspace,
+                    maxVerifyIterations: verify,
+                    autoLoopEnabled: self.evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.autoLoopEnabled ?? true,
+                    profiles: profiles
+                )
+                return
+            }
+            if pendingAction == "resume" {
+                self.resumeEvolution(project: ev.project, workspace: normalizedWorkspace)
+            }
         }
 
         // AI Chat: 文件索引（@ 自动补全）
