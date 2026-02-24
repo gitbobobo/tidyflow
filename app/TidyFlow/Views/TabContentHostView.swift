@@ -800,6 +800,14 @@ struct EvolutionTabView: View {
     @State private var isSessionViewerPresented: Bool = false
     @State private var viewerStage: String?
 
+    private struct EvolutionAgentDisplayItem {
+        let id: String
+        let stage: String
+        let agent: String
+        let status: String
+        let latestMessage: String?
+    }
+
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
     private var workspaceReady: Bool { workspace != nil && !(workspace ?? "").isEmpty }
@@ -955,15 +963,11 @@ struct EvolutionTabView: View {
     }
 
     private var stageSectionsCard: some View {
-        GroupBox("本轮代理状态") {
+        GroupBox("代理列表") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("运行中的代理将置顶显示；点击状态徽章可查看聊天详情。")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                 let sortedAgents = sortedAgents()
                 if sortedAgents.isEmpty {
-                    Text("暂无运行中的代理")
+                    Text("暂无代理配置")
                         .foregroundColor(.secondary)
                 } else {
                     LazyVGrid(
@@ -971,7 +975,7 @@ struct EvolutionTabView: View {
                         alignment: .leading,
                         spacing: 12
                     ) {
-                        ForEach(sortedAgents, id: \.stage) { agent in
+                        ForEach(sortedAgents, id: \.id) { agent in
                             stageStatusCard(agent: agent)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -982,28 +986,103 @@ struct EvolutionTabView: View {
         }
     }
 
-    private func sortedAgents() -> [EvolutionAgentInfoV2] {
-        guard let item = currentItem else { return [] }
-        return item.agents.sorted { a, b in
+    private func sortedAgents() -> [EvolutionAgentDisplayItem] {
+        let runtimeAgents = currentItem?.agents ?? []
+        var runtimeByStage: [String: EvolutionAgentInfoV2] = [:]
+        for runtime in runtimeAgents {
+            let key = normalizedStageKey(runtime.stage)
+            guard !key.isEmpty else { continue }
+            if runtimeByStage[key] == nil {
+                runtimeByStage[key] = runtime
+            }
+        }
+
+        let configuredProfiles: [EvolutionStageProfileInfoV2] = {
+            if let workspace, !workspace.isEmpty {
+                return appState.evolutionProfiles(project: project, workspace: workspace)
+            }
+            let defaults = appState.evolutionDefaultProfiles.map { item in
+                let model: EvolutionModelSelectionV2? = {
+                    guard !item.providerID.isEmpty, !item.modelID.isEmpty else { return nil }
+                    return EvolutionModelSelectionV2(providerID: item.providerID, modelID: item.modelID)
+                }()
+                return EvolutionStageProfileInfoV2(
+                    stage: item.stage,
+                    aiTool: item.aiTool,
+                    mode: item.mode.isEmpty ? nil : item.mode,
+                    model: model
+                )
+            }
+            return defaults.isEmpty ? AppState.defaultEvolutionProfiles() : defaults
+        }()
+
+        var items: [EvolutionAgentDisplayItem] = []
+        var seenStages: Set<String> = []
+
+        for profile in configuredProfiles {
+            let key = normalizedStageKey(profile.stage)
+            guard !key.isEmpty else { continue }
+            guard seenStages.insert(key).inserted else { continue }
+
+            if let runtime = runtimeByStage[key] {
+                items.append(
+                    EvolutionAgentDisplayItem(
+                        id: key,
+                        stage: runtime.stage,
+                        agent: runtime.agent,
+                        status: runtime.status,
+                        latestMessage: runtime.latestMessage
+                    )
+                )
+            } else {
+                let mode = (profile.mode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let agentName = mode.isEmpty ? profile.aiTool.displayName : mode
+                items.append(
+                    EvolutionAgentDisplayItem(
+                        id: key,
+                        stage: profile.stage,
+                        agent: agentName,
+                        status: "未运行",
+                        latestMessage: nil
+                    )
+                )
+            }
+        }
+
+        // 兼容运行时存在但配置中缺失的阶段，避免状态被吞掉。
+        for runtime in runtimeAgents {
+            let key = normalizedStageKey(runtime.stage)
+            guard !key.isEmpty else { continue }
+            guard seenStages.insert(key).inserted else { continue }
+            items.append(
+                EvolutionAgentDisplayItem(
+                    id: key,
+                    stage: runtime.stage,
+                    agent: runtime.agent,
+                    status: runtime.status,
+                    latestMessage: runtime.latestMessage
+                )
+            )
+        }
+
+        return items.sorted { a, b in
             let aStatus = normalizedStageStatus(a.status)
             let bStatus = normalizedStageStatus(b.status)
             // running 置顶
             if aStatus == "running" && bStatus != "running" { return true }
             if bStatus == "running" && aStatus != "running" { return false }
             // completed 排第二
-            if (aStatus == "completed" || aStatus == "success" || aStatus == "succeeded" || aStatus == "已完成" || aStatus == "完成") &&
-               !(bStatus == "completed" || bStatus == "success" || bStatus == "succeeded" || bStatus == "已完成" || bStatus == "完成") {
+            if isCompletedStatus(aStatus) && !isCompletedStatus(bStatus) {
                 return true
             }
-            if (bStatus == "completed" || bStatus == "success" || bStatus == "succeeded" || bStatus == "已完成" || bStatus == "完成") &&
-               !(aStatus == "completed" || aStatus == "success" || aStatus == "succeeded" || aStatus == "已完成" || aStatus == "完成") {
+            if isCompletedStatus(bStatus) && !isCompletedStatus(aStatus) {
                 return false
             }
             return a.stage < b.stage
         }
     }
 
-    private func stageStatusCard(agent: EvolutionAgentInfoV2) -> some View {
+    private func stageStatusCard(agent: EvolutionAgentDisplayItem) -> some View {
         let statusText = agent.status
         let isRunning = normalizedStageStatus(statusText) == "running"
 
@@ -1019,6 +1098,11 @@ struct EvolutionTabView: View {
                     .foregroundColor(.accentColor)
                 Text(stageDisplayName(agent.stage))
                     .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(agent.agent)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
@@ -1093,15 +1177,20 @@ struct EvolutionTabView: View {
         appState.requestEvolutionSnapshot()
     }
 
-    private func runtimeAgent(for stage: String) -> EvolutionAgentInfoV2? {
-        currentItem?.agents.first { $0.stage == stage }
+    private func normalizedStageKey(_ stage: String) -> String {
+        stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func isCompletedStatus(_ status: String) -> Bool {
+        status == "completed" || status == "success" || status == "succeeded" || status == "已完成" || status == "完成"
     }
 
     private func stageStatusColor(_ status: String) -> Color {
-        switch normalizedStageStatus(status) {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
         case "running":
             return .orange
-        case "completed":
+        case _ where isCompletedStatus(normalized):
             return .green
         default:
             return .secondary
@@ -1203,7 +1292,6 @@ struct EvolutionTabView: View {
 struct EvolutionSessionDrawerView: View {
     @EnvironmentObject var appState: AppState
     @Binding var isSessionViewerPresented: Bool
-    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         VStack(spacing: 0) {
@@ -1214,7 +1302,6 @@ struct EvolutionSessionDrawerView: View {
                 Spacer()
                 Button("关闭") {
                     isSessionViewerPresented = false
-                    dismiss()
                     appState.clearEvolutionReplay()
                 }
             }
