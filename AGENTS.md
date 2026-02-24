@@ -1,7 +1,5 @@
 # AGENTS.md
 
-该文件的作用是描述代理（agents）在此项目中工作时可能遇到的常见错误与困惑点。如果你在项目中遇到任何意外情况，请告知与你协作的开发人员，并在 AGENTS.md 文件中注明此情况，以帮助后续代理避免遇到相同问题。
-
 ## 基本约束
 
 - 请使用中文与用户交流
@@ -9,15 +7,6 @@
 - 这个项目没有用户，目前还没有真正的数据，想做什么改动就做什么，不用担心。我们发布时再想办法
 - 这个项目非常新颖，完全改变模式也没关系，我们正努力把它弄成合适的形状
 - 保持 macOS 和iOS 版本功能一致
-
-## 已知坑点
-
-- 冷启动后如果直接打开 macOS 的 AI Agent 设置页，此时可能还没有选中任何工作空间，`AIProviderList/AIAgentList` 返回会被“当前选中工作空间匹配”条件丢弃，导致模式列表和模型列表一直为空。  
-  修复思路：设置页需主动触发一次 provider/agent 拉取，并在未选中工作空间时记录该次请求上下文，允许对应返回被消费。
-- `AIProviderList` 与 `AIAgentList` 到达顺序不固定，不能在收到第一类结果后立即清理临时请求上下文，否则会出现“模型列表已显示，但模式列表仍为空”。
-  修复思路：按 provider/agent 两类结果分别维护 pending 标记，只有两者都返回后再清理。
-- 聊天详情中的工具卡片如果直接对 `state/metadata` 做 `JSONSerialization.data(withJSONObject:)`，遇到 `NSDictionary/NSArray` 循环引用会在主线程递归爆栈（表现为打开/关闭详情时闪退，崩溃栈常见 `ToolCardView.jsonText` 与 `_writeJSONObject/_writeJSONArray`）。
-  修复思路：先把对象归一化为安全 JSON（带循环引用检测与深度/节点上限）再序列化；关闭详情仅通过单一状态源收起（避免同时 `binding=false` 和 `dismiss()` 的重复关闭链路）。
 
 ## 常用命令
 
@@ -50,3 +39,15 @@ xcodebuild -project app/TidyFlow.xcodeproj \
   SKIP_CORE_BUILD=1 \
   build
 ```
+
+## 日志位置（Rust Core）
+
+- Rust Core 会把结构化日志写到：`~/.tidyflow/logs/`
+- 生产环境文件名规则：`YYYY-MM-DD.log`
+- 开发环境文件名规则：`YYYY-MM-DD-dev.log`
+
+## 参考项目
+
+- [opencode](https://github.com/anomalyco/opencode): AI 工具
+- [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode): OpenCode 的插件
+- [codex](https://github.com/openai/codex): AI 工具
