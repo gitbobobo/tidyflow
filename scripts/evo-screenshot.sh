@@ -9,7 +9,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EVOLUTION_DIR="$PROJECT_ROOT/.tidyflow/evolution"
 
 CYCLE_ID=""
-CHECK_ID="v-6"
+CHECK_ID="v-4"
 STATE=""
 RUN_ID=""
 DRY_RUN=0
@@ -23,7 +23,7 @@ Evolution 截图采集辅助脚本
 
 选项:
   --cycle <id>       Cycle ID（必需）
-  --check <id>       检查项 ID（默认：v-6）
+  --check <id>       检查项 ID（默认：v-4）
   --state <state>    状态：initial|processing|complete|error（必需）
   --run-id <id>      关联 run_id（可选，默认最新）
   --dry-run          生成占位截图（用于无 GUI 场景）
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --check)
-            CHECK_ID="${2:-v-6}"
+            CHECK_ID="${2:-v-4}"
             shift 2
             ;;
         --state)
@@ -100,7 +100,7 @@ SAFE_CYCLE_ID="$(echo "$CYCLE_ID" | tr '/:' '__')"
 FILENAME="screenshot-${SAFE_CYCLE_ID}-${CHECK_ID}-${STATE}-${UTC_TS}.png"
 FILEPATH="$EVIDENCE_DIR/$FILENAME"
 REL_PATH="evidence/$FILENAME"
-RELATED_LOG_REL="runs/$RUN_ID/evidence/integration-$RUN_ID.log"
+RELATED_LOG_REL="runs/$RUN_ID/evidence/manual-flow-$RUN_ID.log"
 
 capture_success=0
 
@@ -252,7 +252,7 @@ item = {
     "type": "screenshot",
     "path": rel_path,
     "generated_by_stage": "implement",
-    "linked_criteria_ids": ["ac-3"],
+    "linked_criteria_ids": ["ac-2"],
     "summary": f"截图证据 state={state} check={check_id}",
     "created_at": now,
     "run_id": run_id,

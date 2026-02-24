@@ -39,6 +39,7 @@ print_usage() {
 
   release [--dry-run|--upload-release ...]
       本地发布链路（透传到 ./scripts/release_local.sh）
+      发布前默认要求证据完整（build_log/test_log/screenshot/diff_summary/metrics）
 EOF
 }
 
