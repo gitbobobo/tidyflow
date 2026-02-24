@@ -23,6 +23,9 @@ jobs:
 
       - name: Bash syntax check
         run: |
+          bash -n scripts/evo-run.sh
+          bash -n scripts/evo-screenshot.sh
+          bash -n scripts/release_local.sh
           bash -n scripts/build_dmg.sh
           bash -n scripts/notarize.sh
           bash -n scripts/run-app.sh
@@ -44,3 +47,9 @@ jobs:
           ./scripts/tools/gen_protocol_action_swift_rules.sh --check
           ./scripts/tools/check_protocol_action_sync.sh
           ./scripts/tools/check_version_consistency.sh
+
+      - name: Evolution quality-gate contract dry-run
+        run: |
+          CYCLE_ID="ci-dry-run-${GITHUB_RUN_ID}"
+          mkdir -p ".tidyflow/evolution/${CYCLE_ID}"
+          ./scripts/tidyflow quality-gate --cycle "${CYCLE_ID}" --step all --dry-run

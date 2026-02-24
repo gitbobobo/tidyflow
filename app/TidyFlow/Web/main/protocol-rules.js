@@ -34,7 +34,6 @@
         ["project", "save_project_commands"],
         ["project", "run_project_command"],
         ["project", "cancel_project_command"],
-        ["lsp", "lsp_"],
         ["log", "log_"],
         ["ai", "ai_"],
         ["evolution", "evo_"],

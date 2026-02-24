@@ -123,7 +123,6 @@
 		MDL000318 /* AppState+CoreWS+WSClientBinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000118 /* AppState+CoreWS+WSClientBinder.swift */; };
 		MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */; };
 		MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011A /* AppState+CoreWS+AIReconnect.swift */; };
-		MDL00031B /* AppState+CoreWS+FileLSP.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDL00011B /* AppState+CoreWS+FileLSP.swift */; };
 		MSGPK001 /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
 		QAV00001 /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = QAV00011 /* QuickActionsView.swift */; };
 		RMT00001 /* RemoteTerminalIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RMT00011 /* RemoteTerminalIndicatorView.swift */; };
@@ -279,7 +278,6 @@
 		MDL000118 /* AppState+CoreWS+WSClientBinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+WSClientBinder.swift"; sourceTree = "<group>"; };
 		MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+EvolutionSupport.swift"; sourceTree = "<group>"; };
 		MDL00011A /* AppState+CoreWS+AIReconnect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+AIReconnect.swift"; sourceTree = "<group>"; };
-		MDL00011B /* AppState+CoreWS+FileLSP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CoreWS+FileLSP.swift"; sourceTree = "<group>"; };
 		QAV00011 /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
 		RMT00011 /* RemoteTerminalIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteTerminalIndicatorView.swift; sourceTree = "<group>"; };
 		RMT00012 /* AppState+RemoteTerminals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+RemoteTerminals.swift"; sourceTree = "<group>"; };
@@ -576,7 +574,6 @@
 				MDL000118 /* AppState+CoreWS+WSClientBinder.swift */,
 				MDL000119 /* AppState+CoreWS+EvolutionSupport.swift */,
 				MDL00011A /* AppState+CoreWS+AIReconnect.swift */,
-				MDL00011B /* AppState+CoreWS+FileLSP.swift */,
 				MDL000111 /* AppState+EditorTerminal.swift */,
 				TMS00002 /* TerminalStore.swift */,
 				EDS00002 /* EditorStore.swift */,
@@ -767,7 +764,6 @@
 				MDL000318 /* AppState+CoreWS+WSClientBinder.swift in Sources */,
 				MDL000319 /* AppState+CoreWS+EvolutionSupport.swift in Sources */,
 				MDL00031A /* AppState+CoreWS+AIReconnect.swift in Sources */,
-				MDL00031B /* AppState+CoreWS+FileLSP.swift in Sources */,
 				MDL00030C /* AppState+FileOps.swift in Sources */,
 				MDL00030D /* AppState+Projects.swift in Sources */,
 				MDL00030E /* AppState+Tabs.swift in Sources */,
@@ -1042,7 +1038,6 @@
 					"AppState+CoreWS+WSClientBinder.swift",
 					"AppState+CoreWS+EvolutionSupport.swift",
 					"AppState+CoreWS+AIReconnect.swift",
-					"AppState+CoreWS+FileLSP.swift",
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
 					"AppState+Projects.swift",
@@ -1176,7 +1171,6 @@
 					"AppState+CoreWS+WSClientBinder.swift",
 					"AppState+CoreWS+EvolutionSupport.swift",
 					"AppState+CoreWS+AIReconnect.swift",
-					"AppState+CoreWS+FileLSP.swift",
 					"AppState+EditorTerminal.swift",
 					"AppState+FileOps.swift",
 					"AppState+Projects.swift",

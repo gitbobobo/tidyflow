@@ -266,14 +266,6 @@ extension WorkspaceDiagnosticsSnapshot {
     )
 }
 
-/// 工作区 LSP 运行状态快照
-struct WorkspaceLspStatusSnapshot {
-    let runningLanguages: [String]
-    let missingLanguages: [String]
-    let message: String?
-    let updatedAt: Date
-}
-
 /// 项目命令一次执行对应的本地跟踪状态（用于 task_id 路由）
 final class ProjectCommandExecutionState {
     let localExecutionId: UUID
