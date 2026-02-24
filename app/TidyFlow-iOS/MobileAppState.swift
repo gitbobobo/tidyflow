@@ -1806,6 +1806,7 @@ final class MobileAppState: ObservableObject {
         let key = aiContextKey(project: aiActiveProject, workspace: aiActiveWorkspace)
         aiChatSnapshotCache[key] = AIChatSnapshot(
             currentSessionId: aiCurrentSessionId,
+            subscribedSessionIds: aiChatStore.subscribedSessionIds,
             messages: aiChatMessages,
             isStreaming: aiIsStreaming,
             sessions: aiSessions,
@@ -1821,6 +1822,10 @@ final class MobileAppState: ObservableObject {
         if let snapshot = aiChatSnapshotCache[key] {
             aiCurrentSessionId = snapshot.currentSessionId
             aiChatStore.setCurrentSessionId(snapshot.currentSessionId)
+            aiChatStore.subscribedSessionIds = snapshot.subscribedSessionIds
+            if let currentSession = snapshot.currentSessionId, !currentSession.isEmpty {
+                aiChatStore.subscribedSessionIds.insert(currentSession)
+            }
             aiChatMessages = snapshot.messages
             aiIsStreaming = false
             aiSessions = snapshot.sessions
@@ -1830,6 +1835,7 @@ final class MobileAppState: ObservableObject {
         }
         aiCurrentSessionId = nil
         aiChatStore.setCurrentSessionId(nil)
+        aiChatStore.subscribedSessionIds = []
         aiChatMessages = []
         aiIsStreaming = false
         aiSessions = []
