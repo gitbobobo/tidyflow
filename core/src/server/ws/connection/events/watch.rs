@@ -12,7 +12,7 @@ pub(in crate::server::ws) async fn handle_watch_event(
     watch_event: WatchEvent,
     socket: &mut WebSocket,
     app_state: &SharedAppState,
-    handler_ctx: &HandlerContext,
+    _handler_ctx: &HandlerContext,
 ) {
     match watch_event {
         WatchEvent::FileChanged {
@@ -25,11 +25,6 @@ pub(in crate::server::ws) async fn handle_watch_event(
                 "File changed: project={}, workspace={}, paths={:?}",
                 project, workspace, paths
             );
-
-            handler_ctx
-                .lsp_supervisor
-                .handle_paths_changed(&project, &workspace, &paths)
-                .await;
 
             let ws_ctx =
                 crate::server::context::resolve_workspace(app_state, &project, &workspace).await;

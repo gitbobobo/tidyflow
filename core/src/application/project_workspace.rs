@@ -63,8 +63,6 @@ pub async fn cleanup_workspace_before_remove(
     project: &str,
     workspace: &str,
 ) -> Vec<String> {
-    let _ = ctx.lsp_supervisor.stop_workspace(project, workspace).await;
-
     let mut reg = ctx.terminal_registry.lock().await;
     let term_ids: Vec<String> = reg
         .list()

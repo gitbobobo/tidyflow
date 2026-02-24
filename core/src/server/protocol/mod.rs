@@ -425,20 +425,6 @@ pub enum ClientMessage {
         task_id: Option<String>,
     },
 
-    // v1.31: LSP diagnostics
-    LspStartWorkspace {
-        project: String,
-        workspace: String,
-    },
-    LspStopWorkspace {
-        project: String,
-        workspace: String,
-    },
-    LspGetDiagnostics {
-        project: String,
-        workspace: String,
-    },
-
     // v1.30: 客户端日志上报
     LogEntry {
         level: String,
@@ -1137,23 +1123,6 @@ pub enum ServerMessage {
         operation_type: String,
     },
 
-    // v1.31: LSP diagnostics / status
-    LspDiagnostics {
-        project: String,
-        workspace: String,
-        highest_severity: String, // "error" | "warning" | "info" | "none"
-        updated_at: String,       // RFC3339
-        items: Vec<LspDiagnosticInfo>,
-    },
-    LspStatus {
-        project: String,
-        workspace: String,
-        running_languages: Vec<String>,
-        missing_languages: Vec<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        message: Option<String>,
-    },
-
     // v1.39: 剪贴板图片写入结果
     ClipboardImageSet {
         ok: bool,
@@ -1567,23 +1536,6 @@ pub struct ProjectCommandInfo {
     pub interactive: bool,
 }
 
-/// LSP 诊断项（工作区相对路径）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LspDiagnosticInfo {
-    pub path: String,
-    pub line: u32,
-    pub column: u32,
-    pub end_line: u32,
-    pub end_column: u32,
-    pub severity: String, // "error" | "warning" | "info"
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    pub language: String,
-}
-
 /// 任务快照条目（iOS 重连恢复用）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSnapshotEntry {
@@ -1690,7 +1642,6 @@ pub fn v1_capabilities() -> Vec<String> {
         "terminal_persistence".to_string(),
         "pairing_v1".to_string(),
         "project_commands".to_string(),
-        "lsp_diagnostics".to_string(),
         "remote_term_tracking".to_string(),
         "task_history".to_string(),
         "evolution".to_string(),

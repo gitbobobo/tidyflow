@@ -703,8 +703,6 @@ impl CodexAppServerAgent {
                 | "write"
                 | "apply_patch"
                 | "multiedit"
-                | "lsp_diagnostics"
-                | "lsp"
                 | "bash"
                 | "glob"
                 | "list"

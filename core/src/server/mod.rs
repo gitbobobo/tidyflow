@@ -3,7 +3,6 @@ pub mod file_api;
 pub mod file_index;
 pub mod git;
 pub mod handlers;
-pub mod lsp;
 pub mod protocol;
 pub mod remote_sub_registry;
 pub mod terminal_registry;

@@ -1,5 +1,5 @@
 use axum::extract::ws::WebSocket;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::application::project_command::{cancel_project_command, run_project_command};
 use crate::application::project_workspace::select_workspace_and_spawn_terminal;
@@ -23,17 +23,6 @@ pub async fn handle_runtime_message(
                         "Terminal spawned in workspace"
                     );
                     send_message(socket, &result.message).await?;
-
-                    if let Err(err) = ctx
-                        .lsp_supervisor
-                        .start_workspace(project, workspace, result.root_path)
-                        .await
-                    {
-                        warn!(
-                            "Failed to start LSP for workspace {}/{}: {}",
-                            project, workspace, err
-                        );
-                    }
                 }
                 Err(msg) => send_message(socket, &msg).await?,
             }

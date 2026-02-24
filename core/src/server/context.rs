@@ -11,7 +11,6 @@ use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
 use crate::server::handlers::ai::SharedAIState;
-use crate::server::lsp::LspSupervisor;
 use crate::server::protocol::ServerMessage;
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::{PtyFlowGate, SharedTerminalRegistry};
@@ -153,7 +152,6 @@ pub struct HandlerContext {
     pub cmd_output_tx: mpsc::Sender<ServerMessage>,
     pub task_broadcast_tx: TaskBroadcastTx,
     pub task_history: SharedTaskHistory,
-    pub lsp_supervisor: LspSupervisor,
     pub conn_meta: ConnectionMeta,
     pub remote_sub_registry: SharedRemoteSubRegistry,
     pub ai_state: SharedAIState,

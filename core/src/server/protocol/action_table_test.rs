@@ -14,6 +14,6 @@ fn matches_known_rules() {
 #[test]
 fn rejects_unknown_rules() {
     assert!(!matches_action_domain("system", "file_list"));
-    assert!(!matches_action_domain("project", "lsp_start_workspace"));
+    assert!(!matches_action_domain("project", "unknown_action"));
     assert!(!matches_action_domain("log", "ping"));
 }

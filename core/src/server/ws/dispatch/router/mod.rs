@@ -27,7 +27,6 @@ pub(super) async fn dispatch_domain_handler(
         DomainRoute::Project => {
             core_domains::handle_project_domain(client_msg, socket, ctx).await?
         }
-        DomainRoute::Lsp => core_domains::handle_lsp_domain(client_msg, socket, ctx).await?,
         DomainRoute::Settings => {
             core_domains::handle_settings_domain(client_msg, socket, ctx).await?
         }

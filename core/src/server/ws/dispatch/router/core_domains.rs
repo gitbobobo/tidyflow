@@ -41,14 +41,6 @@ pub(super) async fn handle_project_domain(
     crate::server::handlers::project::handle_project_message(client_msg, socket, ctx).await
 }
 
-pub(super) async fn handle_lsp_domain(
-    client_msg: &ClientMessage,
-    socket: &mut WebSocket,
-    ctx: &HandlerContext,
-) -> Result<bool, String> {
-    crate::server::handlers::lsp::handle_lsp_message(client_msg, socket, ctx).await
-}
-
 pub(super) async fn handle_settings_domain(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,

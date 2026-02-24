@@ -22,9 +22,6 @@ pub(in crate::server::ws) fn domain_from_action(action: &str) -> String {
     {
         return "project".to_string();
     }
-    if action.starts_with("lsp_") {
-        return "lsp".to_string();
-    }
     if action.starts_with("client_settings") {
         return "settings".to_string();
     }

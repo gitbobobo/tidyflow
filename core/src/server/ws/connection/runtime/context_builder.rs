@@ -2,7 +2,6 @@ use crate::server::context::{
     ConnectionMeta, HandlerContext, SharedAppState, SharedRunningAITasks, SharedRunningCommands,
     SharedTaskHistory, TaskBroadcastTx,
 };
-use crate::server::lsp::LspSupervisor;
 use crate::server::remote_sub_registry::SharedRemoteSubRegistry;
 use crate::server::terminal_registry::SharedTerminalRegistry;
 
@@ -23,7 +22,6 @@ pub(in crate::server::ws) fn build_handler_context(
     shared_state: &RuntimeSharedState,
     channels: &RuntimeChannels,
 ) -> HandlerContext {
-    let lsp_supervisor = LspSupervisor::new(channels.cmd_output_tx.clone());
     HandlerContext {
         app_state: app_state.clone(),
         terminal_registry: registry,
@@ -36,7 +34,6 @@ pub(in crate::server::ws) fn build_handler_context(
         cmd_output_tx: channels.cmd_output_tx.clone(),
         task_broadcast_tx,
         task_history,
-        lsp_supervisor,
         conn_meta: conn_meta.clone(),
         remote_sub_registry: remote_sub_registry.clone(),
         ai_state,
