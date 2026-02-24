@@ -1156,7 +1156,6 @@ final class MobileAppState: ObservableObject {
         evolutionReplayMessages = ev.toChatMessages()
         evolutionReplayLoading = false
         evolutionReplayError = nil
-        evolutionReplayRequest = nil
         return true
     }
 
@@ -2655,7 +2654,14 @@ final class MobileAppState: ObservableObject {
                 return
             }
             let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
-            self.evolutionReplayRequest = nil
+            self.evolutionReplayRequest = (
+                project: ev.project,
+                workspace: normalizedWorkspace,
+                aiTool: aiTool,
+                sessionId: ev.sessionID,
+                cycleId: ev.cycleID,
+                stage: ev.stage
+            )
             self.evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
             self.evolutionReplayMessages = []
             self.evolutionReplayError = nil

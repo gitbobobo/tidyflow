@@ -497,10 +497,19 @@ extension AppState {
             return
         }
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(ev.workspace)
-        evolutionReplayRequest = nil
+        evolutionReplayRequest = (
+            project: ev.project,
+            workspace: normalizedWorkspace,
+            aiTool: aiTool,
+            sessionId: ev.sessionID,
+            cycleId: ev.cycleID,
+            stage: ev.stage
+        )
         evolutionReplayTitle = "\(normalizedWorkspace) · \(ev.stage) · \(ev.cycleID)"
         evolutionReplayError = nil
         evolutionReplayLoading = false
+        evolutionReplayStore.clearAll()
+        evolutionReplayStore.setCurrentSessionId(ev.sessionID)
 
         let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let session = AISessionInfo(

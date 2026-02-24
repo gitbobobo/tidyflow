@@ -1317,23 +1317,20 @@ struct EvolutionSessionDrawerView: View {
                 Text(error)
                     .foregroundColor(.red)
                     .padding()
+            } else if appState.evolutionReplayStore.messages.isEmpty {
+                Text("暂无消息")
+                    .foregroundColor(.secondary)
+                    .padding()
             } else {
-                List {
-                    ForEach(appState.evolutionReplayMessages) { message in
-                        // 消息展示（简化版）
-                        VStack(alignment: .leading) {
-                            Text(message.role.rawValue.capitalized)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            ForEach(message.parts) { part in
-                                if let text = part.text {
-                                    Text(text)
-                                }
-                            }
-                        }
-                    }
-                }
-                .listStyle(.plain)
+                MessageListView(
+                    messages: appState.evolutionReplayStore.messages,
+                    sessionToken: appState.evolutionReplayStore.currentSessionId,
+                    onQuestionReply: { _, _ in },
+                    onQuestionReject: { _ in },
+                    onQuestionReplyAsMessage: { _ in },
+                    onOpenLinkedSession: nil
+                )
+                .environmentObject(appState.evolutionReplayStore)
             }
         }
         #if os(macOS)
