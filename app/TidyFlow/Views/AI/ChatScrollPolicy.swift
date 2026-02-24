@@ -10,6 +10,9 @@ enum ChatScrollEvent: Equatable {
     case messageAppended
     case messageIncremented
     case userScrolled(nearBottom: Bool)
+    /// 用户开始交互（手势、滚轮等），立即暂停自动滚动，
+    /// 后续由 nearBottom 状态决定是否恢复。
+    case userInteractionBegan
     case jumpToBottomClicked
     case sessionSwitched
 }
@@ -29,6 +32,9 @@ struct ChatScrollConfiguration: Equatable {
     let autoResumeThreshold: CGFloat
     let renderBufferCount: Int
     let incrementThrottleInterval: TimeInterval
+    /// 近底部确认超时时间：仅当最近一次确认在底部的时间在此范围内时才允许自动滚动。
+    /// 用于解决滚动检测延迟导致的竞态条件（尤其是 macOS 鼠标滚轮）。
+    let nearBottomConfirmationTimeout: TimeInterval
     let animation: ChatScrollAnimation
 
     init(
@@ -37,6 +43,7 @@ struct ChatScrollConfiguration: Equatable {
         autoResumeThreshold: CGFloat? = nil,
         renderBufferCount: Int = 12,
         incrementThrottleInterval: TimeInterval = 0.12,
+        nearBottomConfirmationTimeout: TimeInterval = 0.5,
         animation: ChatScrollAnimation = .default
     ) {
         self.bottomTolerance = bottomTolerance
@@ -44,6 +51,7 @@ struct ChatScrollConfiguration: Equatable {
         self.autoResumeThreshold = autoResumeThreshold ?? (nearBottomThreshold ?? bottomTolerance)
         self.renderBufferCount = renderBufferCount
         self.incrementThrottleInterval = incrementThrottleInterval
+        self.nearBottomConfirmationTimeout = nearBottomConfirmationTimeout
         self.animation = animation
     }
 }
@@ -87,6 +95,8 @@ final class ChatScrollPolicy {
     let configuration: ChatScrollConfiguration
 
     private var lastIncrementScrollAt: Date?
+    /// 最近一次确认处于底部附近的时间戳；用于跨帧竞态保护。
+    private(set) var lastNearBottomConfirmedAt: Date?
 
     init(
         initialAutoFollow: Bool = true,
@@ -96,6 +106,10 @@ final class ChatScrollPolicy {
         self.autoFollow = initialAutoFollow
         self.nearBottom = initialNearBottom
         self.configuration = configuration
+        // 初始化时若在底部附近，立即确认
+        if initialNearBottom {
+            self.lastNearBottomConfirmedAt = Date()
+        }
     }
 
     var isAutoScrollEnabled: Bool {
@@ -106,17 +120,25 @@ final class ChatScrollPolicy {
         [.autoFollow(autoFollow), .nearBottom(nearBottom)]
     }
 
+    /// 检查近底部确认是否仍然有效（未过期）
+    var isNearBottomConfirmationFresh: Bool {
+        guard let confirmedAt = lastNearBottomConfirmedAt else { return false }
+        return Date().timeIntervalSince(confirmedAt) < configuration.nearBottomConfirmationTimeout
+    }
+
     @discardableResult
     func reduce(event: ChatScrollEvent, now: Date = Date()) -> ChatScrollDecision {
         let action: ChatScrollDecision.Action
 
         switch event {
         case .messageAppended:
-            action = handleMessageAppended()
+            action = handleMessageAppended(now: now)
         case .messageIncremented:
             action = handleMessageIncremented(now: now)
         case .userScrolled(let updatedNearBottom):
-            action = handleUserScrolled(updatedNearBottom: updatedNearBottom)
+            action = handleUserScrolled(updatedNearBottom: updatedNearBottom, now: now)
+        case .userInteractionBegan:
+            action = handleUserInteractionBegan()
         case .jumpToBottomClicked:
             action = handleJumpToBottomClicked(now: now)
         case .sessionSwitched:
@@ -131,13 +153,17 @@ final class ChatScrollPolicy {
         reduce(event: event, now: now).shouldScrollToBottom
     }
 
-    private func handleMessageAppended() -> ChatScrollDecision.Action {
+    private func handleMessageAppended(now: Date) -> ChatScrollDecision.Action {
         guard autoFollow else { return .none }
+        // 额外校验：仅当最近确认过在底部附近时才滚动，防止竞态
+        guard isNearBottomConfirmationFreshAt(now) else { return .none }
         return .scrollToBottom
     }
 
     private func handleMessageIncremented(now: Date) -> ChatScrollDecision.Action {
         guard autoFollow else { return .none }
+        // 额外校验：仅当最近确认过在底部附近时才滚动，防止竞态
+        guard isNearBottomConfirmationFreshAt(now) else { return .none }
         guard let lastIncrementScrollAt else {
             self.lastIncrementScrollAt = now
             return .throttledScrollToBottom
@@ -152,11 +178,16 @@ final class ChatScrollPolicy {
         return .throttledScrollToBottom
     }
 
-    private func handleUserScrolled(updatedNearBottom: Bool) -> ChatScrollDecision.Action {
+    private func handleUserScrolled(updatedNearBottom: Bool, now: Date) -> ChatScrollDecision.Action {
         nearBottom = updatedNearBottom
+
+        if updatedNearBottom {
+            lastNearBottomConfirmedAt = now
+        }
 
         if autoFollow, !updatedNearBottom {
             autoFollow = false
+            lastNearBottomConfirmedAt = nil
             return .none
         }
 
@@ -168,10 +199,23 @@ final class ChatScrollPolicy {
         return .none
     }
 
+    /// 用户开始滚动交互（手势/滚轮等），立即暂停自动跟随。
+    /// 后续由 nearBottom 状态恢复决定是否重新开启。
+    private func handleUserInteractionBegan() -> ChatScrollDecision.Action {
+        guard autoFollow else { return .none }
+        // 仅当不在底部附近时才暂停（避免误触）
+        if !nearBottom {
+            autoFollow = false
+            lastNearBottomConfirmedAt = nil
+        }
+        return .none
+    }
+
     private func handleJumpToBottomClicked(now: Date) -> ChatScrollDecision.Action {
         autoFollow = true
         nearBottom = true
         lastIncrementScrollAt = now
+        lastNearBottomConfirmedAt = now
         return .scrollToBottom
     }
 
@@ -179,6 +223,13 @@ final class ChatScrollPolicy {
         autoFollow = true
         nearBottom = true
         lastIncrementScrollAt = now
+        lastNearBottomConfirmedAt = now
         return .scrollToBottom
+    }
+
+    /// 检查指定时刻近底部确认是否仍新鲜
+    private func isNearBottomConfirmationFreshAt(_ now: Date) -> Bool {
+        guard let confirmedAt = lastNearBottomConfirmedAt else { return false }
+        return now.timeIntervalSince(confirmedAt) < configuration.nearBottomConfirmationTimeout
     }
 }

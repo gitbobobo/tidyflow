@@ -41,6 +41,10 @@ struct MessageListView: View {
     @State private var lastDisplayMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
     @State private var jumpToBottomRequestID: Int = 0
+    #if os(macOS)
+    /// macOS 滚轮事件监听器句柄
+    @State private var scrollWheelMonitor: Any?
+    #endif
 
     private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
@@ -155,6 +159,14 @@ struct MessageListView: View {
             .onAppear {
                 initializeScrollPolicyStateIfNeeded()
                 scrollToBottom(proxy: proxy, animated: false)
+                #if os(macOS)
+                installScrollWheelMonitor()
+                #endif
+            }
+            .onDisappear {
+                #if os(macOS)
+                removeScrollWheelMonitor()
+                #endif
             }
             .onChange(of: sessionToken) { _, _ in
                 handleSessionTokenChangeIfNeeded()
@@ -167,6 +179,7 @@ struct MessageListView: View {
             }
             .onChange(of: viewportHeight) { _, _ in
                 guard isAutoFollowActive else { return }
+                guard isNearBottom else { return }
                 scrollToBottom(proxy: proxy, animated: false)
             }
         }
@@ -204,7 +217,7 @@ struct MessageListView: View {
 
     @ViewBuilder
     private func messageStack() -> some View {
-        VStack(spacing: 16) {
+        LazyVStack(spacing: 16) {
             ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
                 MessageBubble(
                     message: message,
@@ -256,6 +269,9 @@ struct MessageListView: View {
             // 近底部状态变化时同步通知 policy（处理用户手动滚回底部的场景）
             _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: nearBottom))
             isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
+        } else if nearBottom {
+            // 即使状态未变，也刷新 policy 的近底部确认时间戳
+            _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
         }
     }
 
@@ -301,6 +317,9 @@ struct MessageListView: View {
     private func handleTailChanged(proxy: ScrollViewProxy) {
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
         guard decision.shouldScrollToBottom else { return }
+        // 安全检查：仅当视口仍在底部附近时才自动滚动。
+        // 处理手势/滚轮检测和 PreferenceKey 更新之间的竞态条件。
+        guard isNearBottom else { return }
         scrollToBottom(proxy: proxy, animated: false)
     }
 
@@ -338,7 +357,32 @@ struct MessageListView: View {
         } else {
             action()
         }
+        // 自动滚动后刷新近底部确认时间戳
+        _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
     }
+
+    // MARK: - macOS 滚轮事件监听
+
+    #if os(macOS)
+    /// 安装全局滚轮事件监听，检测 macOS 鼠标滚轮滚动（DragGesture 无法捕获）。
+    private func installScrollWheelMonitor() {
+        guard scrollWheelMonitor == nil else { return }
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [self] event in
+            // 仅处理有意义的纵向滚动
+            guard abs(event.scrollingDeltaY) > 1.0 else { return event }
+            handleUserScrollGesture()
+            return event
+        }
+    }
+
+    /// 移除滚轮事件监听
+    private func removeScrollWheelMonitor() {
+        if let monitor = scrollWheelMonitor {
+            NSEvent.removeMonitor(monitor)
+            scrollWheelMonitor = nil
+        }
+    }
+    #endif
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
         let items: [String] = message.parts.compactMap { part in
