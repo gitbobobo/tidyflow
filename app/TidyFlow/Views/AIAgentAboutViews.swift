@@ -67,6 +67,7 @@ struct AIAgentSection: View {
             }
         }
         .formStyle(.grouped)
+        .settingsPageTopInset()
     }
 
     private var commitBinding: Binding<String?> {
@@ -134,5 +135,6 @@ struct AboutSection: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+        .settingsPageTopInset()
     }
 }

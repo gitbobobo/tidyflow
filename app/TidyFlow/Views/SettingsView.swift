@@ -40,6 +40,29 @@ struct SettingsContentView: View {
     }
 }
 
+private struct SettingsPageTopInsetModifier: ViewModifier {
+    let height: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Color.clear.frame(height: 8)
+            }
+            .padding(.top, height)
+        #else
+        content
+        #endif
+    }
+}
+
+extension View {
+    func settingsPageTopInset(_ height: CGFloat = 32) -> some View {
+        modifier(SettingsPageTopInsetModifier(height: height))
+    }
+}
+
 // MARK: - 自定义命令配置部分
 
 struct CustomCommandsSection: View {
@@ -182,6 +205,7 @@ struct CustomCommandsSection: View {
             }
         }
         .formStyle(.grouped)
+        .settingsPageTopInset()
         .sheet(isPresented: $showingAddSheet) {
             CommandEditSheet(
                 command: CustomCommand(),

@@ -20,6 +20,7 @@ struct EvolutionDefaultConfigSection: View {
             }
         }
         .formStyle(.grouped)
+        .settingsPageTopInset()
         .onAppear {
             editableProfiles = appState.evolutionDefaultProfiles
         }
