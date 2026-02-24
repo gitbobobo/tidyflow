@@ -13,45 +13,29 @@ use super::utils::*;
 /// - `git rev-parse --abbrev-ref HEAD` for current branch
 /// - `git for-each-ref refs/heads --format="%(refname:short)"` for branch list
 pub fn git_branches(workspace_root: &Path) -> Result<GitBranchesResult, GitError> {
-    // Check if it's a git repo
-    if get_git_repo_root(workspace_root).is_none() {
-        return Err(GitError::NotAGitRepo);
-    }
-
-    // Get current branch
-    let current_output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(GitError::IoError)?;
-
-    let current = if current_output.status.success() {
-        String::from_utf8_lossy(&current_output.stdout)
-            .trim()
-            .to_string()
-    } else {
-        "HEAD".to_string() // Detached HEAD state
+    let repo = gix::discover(workspace_root).map_err(|_| GitError::NotAGitRepo)?;
+    let current = match repo.head_name() {
+        Ok(Some(name)) => name.shorten().to_string(),
+        Ok(None) => "HEAD".to_string(),
+        Err(_) => "HEAD".to_string(),
     };
 
-    // Get all local branches
-    let branches_output = Command::new("git")
-        .args(["for-each-ref", "refs/heads", "--format=%(refname:short)"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(GitError::IoError)?;
-
+    let refs = repo
+        .references()
+        .map_err(|e| GitError::CommandFailed(format!("Failed to list references: {}", e)))?;
     let mut branches = Vec::new();
-    if branches_output.status.success() {
-        let stdout = String::from_utf8_lossy(&branches_output.stdout);
-        for line in stdout.lines() {
-            let name = line.trim();
-            if !name.is_empty() {
-                branches.push(GitBranchInfo {
-                    name: name.to_string(),
-                });
-            }
+    let iter = refs
+        .local_branches()
+        .map_err(|e| GitError::CommandFailed(format!("Failed to list local branches: {}", e)))?;
+    for item in iter {
+        let reference = item
+            .map_err(|e| GitError::CommandFailed(format!("Failed to iterate branch refs: {}", e)))?;
+        let name = reference.name().shorten().to_string();
+        if !name.is_empty() {
+            branches.push(GitBranchInfo { name });
         }
     }
+    branches.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(GitBranchesResult { current, branches })
 }

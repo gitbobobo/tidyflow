@@ -3,7 +3,6 @@
 //! Provides common types, constants, and utility functions used across git operations.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Maximum diff size in bytes (1MB)
 pub const MAX_DIFF_SIZE: usize = 1_048_576;
@@ -268,35 +267,18 @@ pub fn validate_path(workspace_root: &Path, path: &str) -> Result<PathBuf, GitEr
 
 /// Check if workspace is in a git repository and get repo root
 pub fn get_git_repo_root(workspace_root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(workspace_root)
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Some(root)
-    } else {
-        None
-    }
+    let repo = gix::discover(workspace_root).ok()?;
+    let workdir = repo.workdir()?;
+    Some(workdir.to_string_lossy().to_string())
 }
 
 /// Check if a file is binary
 pub fn check_binary(workspace_root: &Path, path: &str) -> bool {
-    let output = Command::new("git")
-        .args(["diff", "--numstat", "--", path])
-        .current_dir(workspace_root)
-        .output();
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            // Binary files show as "-\t-\t" in numstat
-            stdout.starts_with("-\t-\t")
-        }
-        Err(_) => false,
-    }
+    let full_path = workspace_root.join(path);
+    let Ok(bytes) = std::fs::read(&full_path) else {
+        return false;
+    };
+    bytes.contains(&0)
 }
 
 /// Truncate text if it exceeds MAX_DIFF_SIZE
@@ -316,44 +298,27 @@ pub fn truncate_if_needed(text: &str) -> (String, bool) {
 
 /// Get the short SHA of HEAD
 pub fn get_short_head_sha(workspace_root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(workspace_root)
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
-    }
+    let repo = gix::discover(workspace_root).ok()?;
+    let id = repo.head_id().ok()?;
+    let hex = id.to_string();
+    Some(hex.chars().take(7).collect())
 }
 
 /// Check if currently in a rebase state
 pub fn is_rebasing(workspace_root: &Path) -> bool {
-    // Check for rebase-merge directory (interactive rebase)
-    let rebase_merge = workspace_root.join(".git/rebase-merge");
+    let repo = match gix::discover(workspace_root) {
+        Ok(repo) => repo,
+        Err(_) => return false,
+    };
+
+    let rebase_merge = repo.git_dir().join("rebase-merge");
     if rebase_merge.exists() {
         return true;
     }
 
-    // Check for rebase-apply directory (am-style rebase)
-    let rebase_apply = workspace_root.join(".git/rebase-apply");
+    let rebase_apply = repo.git_dir().join("rebase-apply");
     if rebase_apply.exists() {
         return true;
-    }
-
-    // Also check via git command for worktrees
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-path", "rebase-merge"])
-        .current_dir(workspace_root)
-        .output();
-
-    if let Ok(out) = output {
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !path.is_empty() && std::path::Path::new(&path).exists() {
-            return true;
-        }
     }
 
     false
@@ -361,41 +326,23 @@ pub fn is_rebasing(workspace_root: &Path) -> bool {
 
 /// Check if currently in a merge state
 pub fn is_merging(workspace_root: &Path) -> bool {
-    let merge_head = workspace_root.join(".git/MERGE_HEAD");
-    if merge_head.exists() {
-        return true;
-    }
-
-    // Check via git command for worktrees
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-path", "MERGE_HEAD"])
-        .current_dir(workspace_root)
-        .output();
-
-    if let Ok(out) = output {
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !path.is_empty() && std::path::Path::new(&path).exists() {
-            return true;
-        }
-    }
-
-    false
+    gix::discover(workspace_root)
+        .ok()
+        .map(|repo| repo.git_dir().join("MERGE_HEAD").exists())
+        .unwrap_or(false)
 }
 
 /// Get list of conflicted files
 pub fn get_conflict_files(workspace_root: &Path) -> Vec<String> {
-    let output = Command::new("git")
-        .args(["diff", "--name-only", "--diff-filter=U"])
-        .current_dir(workspace_root)
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
+    let status = crate::server::git::status::git_status(workspace_root);
+    match status {
+        Ok(result) => result
+            .items
+            .into_iter()
+            .filter(|it| it.code == "U")
+            .map(|it| it.path)
             .collect(),
-        _ => vec![],
+        Err(_) => vec![],
     }
 }
 
