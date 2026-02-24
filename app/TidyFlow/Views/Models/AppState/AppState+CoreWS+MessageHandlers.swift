@@ -127,22 +127,6 @@ final class AppStateTerminalMessageHandlerAdapter: TerminalMessageHandler {
     }
 }
 
-final class AppStateLspMessageHandlerAdapter: LspMessageHandler {
-    weak var appState: AppState?
-
-    init(appState: AppState) {
-        self.appState = appState
-    }
-
-    func handleLspDiagnostics(_ result: LspDiagnosticsResult) {
-        appState?.handleLspDiagnostics(result)
-    }
-
-    func handleLspStatus(_ result: LspStatusResult) {
-        appState?.handleLspStatus(result)
-    }
-}
-
 final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     weak var appState: AppState?
 

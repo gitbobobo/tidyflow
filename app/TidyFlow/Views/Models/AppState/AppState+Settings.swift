@@ -161,7 +161,7 @@ extension AppState {
         }
     }
 
-    /// 处理命令输出事件：仅刷新最后一行（诊断来源已切换为 LSP）
+    /// 处理命令输出事件：仅刷新最后一行
     func handleProjectCommandOutput(taskId: String, line: String) {
         // 本地任务
         if let executionId = projectCommandExecutionIdByRemoteTaskId[taskId],

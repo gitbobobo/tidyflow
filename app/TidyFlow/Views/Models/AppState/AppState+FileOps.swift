@@ -6,6 +6,17 @@ import AppKit
 extension AppState {
     // MARK: - File Index API
 
+    func handleFileIndexResult(_ result: FileIndexResult) {
+        let cache = FileIndexCache(
+            items: result.items,
+            truncated: result.truncated,
+            updatedAt: Date(),
+            isLoading: false,
+            error: nil
+        )
+        fileIndexCache[result.workspace] = cache
+    }
+
     func fetchFileIndex(workspaceKey: String) {
         guard connectionState == .connected else {
             var cache = fileIndexCache[workspaceKey] ?? FileIndexCache.empty()

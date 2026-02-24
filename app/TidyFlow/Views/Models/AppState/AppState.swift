@@ -105,17 +105,12 @@ class AppState: ObservableObject {
     var wsFileMessageHandler: FileMessageHandler?
     var wsSettingsMessageHandler: SettingsMessageHandler?
     var wsTerminalMessageHandler: TerminalMessageHandler?
-    var wsLspMessageHandler: LspMessageHandler?
     var wsAIMessageHandler: AIMessageHandler?
     var wsEvolutionMessageHandler: EvolutionMessageHandler?
     var wsErrorMessageHandler: ErrorMessageHandler?
 
     // 项目命令诊断快照（key: projectName:workspaceName）
     @Published var workspaceDiagnostics: [String: WorkspaceDiagnosticsSnapshot] = [:]
-    // LSP 运行状态快照（key: projectName:workspaceName）
-    @Published var workspaceLspStatus: [String: WorkspaceLspStatusSnapshot] = [:]
-    // LSP 诊断加载状态（key: projectName:workspaceName）
-    @Published var workspaceLspLoading: [String: Bool] = [:]
 
     // 项目命令执行跟踪（用于基于 task_id 路由 started/output/completed）
     var projectCommandExecutions: [UUID: ProjectCommandExecutionState] = [:]

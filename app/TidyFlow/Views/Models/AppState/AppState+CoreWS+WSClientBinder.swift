@@ -23,11 +23,6 @@ extension AppState {
                 self?.wsClient.requestEvoSnapshot()
                 // 重连后尝试附着已有终端会话
                 self?.requestTerminalReattach()
-                if let self, let ws = self.selectedWorkspaceKey {
-                    self.markLspLoading(project: self.selectedProjectName, workspace: ws, loading: true)
-                    self.wsClient.requestLspStartWorkspace(project: self.selectedProjectName, workspace: ws)
-                    self.wsClient.requestLspGetDiagnostics(project: self.selectedProjectName, workspace: ws)
-                }
             } else if !(self?.wsClient.isIntentionalDisconnect ?? true),
                       self?.coreProcessManager.isRunning == true {
                 // 意外断连且 Core 仍在运行，触发自动重连
@@ -43,7 +38,6 @@ extension AppState {
         let fileHandler = AppStateFileMessageHandlerAdapter(appState: self)
         let settingsHandler = AppStateSettingsMessageHandlerAdapter(appState: self)
         let terminalHandler = AppStateTerminalMessageHandlerAdapter(appState: self)
-        let lspHandler = AppStateLspMessageHandlerAdapter(appState: self)
         let aiHandler = AppStateAIMessageHandlerAdapter(appState: self)
         let evolutionHandler = AppStateEvolutionMessageHandlerAdapter(appState: self)
         let errorHandler = AppStateErrorMessageHandlerAdapter(appState: self)
@@ -52,7 +46,6 @@ extension AppState {
         wsFileMessageHandler = fileHandler
         wsSettingsMessageHandler = settingsHandler
         wsTerminalMessageHandler = terminalHandler
-        wsLspMessageHandler = lspHandler
         wsAIMessageHandler = aiHandler
         wsEvolutionMessageHandler = evolutionHandler
         wsErrorMessageHandler = errorHandler
@@ -61,7 +54,6 @@ extension AppState {
         wsClient.fileMessageHandler = fileHandler
         wsClient.settingsMessageHandler = settingsHandler
         wsClient.terminalMessageHandler = terminalHandler
-        wsClient.lspMessageHandler = lspHandler
         wsClient.aiMessageHandler = aiHandler
         wsClient.evolutionMessageHandler = evolutionHandler
         wsClient.errorMessageHandler = errorHandler
