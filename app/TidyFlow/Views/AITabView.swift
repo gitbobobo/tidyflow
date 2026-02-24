@@ -28,6 +28,7 @@ struct AITabView: View {
     @State private var sawCodexPlanProposalInCurrentTurn: Bool = false
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
     @State private var presentedSubAgentSession: SubAgentSessionRoute?
+    @State private var mainMessageListScrollSessionToken: Int = 0
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
 
@@ -80,6 +81,7 @@ struct AITabView: View {
             resetAIContext()
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
+            mainMessageListScrollSessionToken += 1
             requestCurrentSessionStatus()
             guard let newSessionId else { return }
 
@@ -169,7 +171,8 @@ struct AITabView: View {
                         }
                     } else {
                         MessageListView(
-                            messages: appState.subAgentViewerMessages,
+                            messages: appState.subAgentViewerStore.messages,
+                            sessionToken: appState.subAgentViewerStore.currentSessionId,
                             onQuestionReply: { _, _ in },
                             onQuestionReject: { _ in },
                             onQuestionReplyAsMessage: { _ in },
@@ -330,8 +333,10 @@ struct AITabView: View {
                     isLoading: isLoadingMessages
                 )
             } else {
+                let currentSessionId = aiChatStore.currentSessionId ?? ""
                 MessageListView(
                     messages: aiChatStore.messages,
+                    sessionToken: aiChatStore.currentSessionId,
                     onQuestionReply: handleQuestionReply,
                     onQuestionReject: handleQuestionReject,
                     onQuestionReplyAsMessage: handleQuestionReplyAsMessage,
@@ -339,6 +344,7 @@ struct AITabView: View {
                         openLinkedSessionDetail(sessionId: sessionId, sourceToolName: "task")
                     }
                 )
+                .id("main-session-\(appState.aiChatTool.rawValue)-\(currentSessionId)-\(mainMessageListScrollSessionToken)")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

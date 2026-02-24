@@ -19,6 +19,7 @@ struct MobileAIChatView: View {
     @State private var sawCodexPlanProposalInCurrentTurn = false
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
     @State private var presentedSubAgentSession: MobileSubAgentSessionRoute?
+    @State private var mainMessageListScrollSessionToken: Int = 0
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -169,6 +170,7 @@ struct MobileAIChatView: View {
                     } else {
                         MessageListView(
                             messages: appState.subAgentViewerStore.messages,
+                            sessionToken: appState.subAgentViewerStore.currentSessionId,
                             onQuestionReply: { _, _ in },
                             onQuestionReject: { _ in },
                             onQuestionReplyAsMessage: { _ in },
@@ -208,6 +210,7 @@ struct MobileAIChatView: View {
             appState.closeAIChat()
         }
         .onChange(of: appState.aiCurrentSessionId) { _, _ in
+            mainMessageListScrollSessionToken += 1
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
         }
@@ -244,8 +247,10 @@ struct MobileAIChatView: View {
                     isLoading: isLoadingMessages
                 )
             } else {
+                let currentSessionId = appState.aiCurrentSessionId ?? ""
                 MessageListView(
                     messages: appState.aiChatMessages,
+                    sessionToken: appState.aiCurrentSessionId,
                     onQuestionReply: { request, answers in
                         handleQuestionReply(request: request, answers: answers)
                     },
@@ -267,6 +272,7 @@ struct MobileAIChatView: View {
                     }
                 )
                 .environmentObject(appState.aiChatStore)
+                .id("main-session-\(appState.aiChatTool.rawValue)-\(currentSessionId)-\(mainMessageListScrollSessionToken)")
             }
         }
         .background(systemGroupedBackgroundColor)
