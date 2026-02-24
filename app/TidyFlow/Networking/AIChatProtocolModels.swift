@@ -206,6 +206,9 @@ struct AIProtocolMessageInfo {
     let id: String
     let role: String
     let createdAt: Int64?
+    let agent: String?
+    let modelProviderID: String?
+    let modelID: String?
     let parts: [AIProtocolPartInfo]
 
     static func from(json: [String: Any]) -> AIProtocolMessageInfo? {
@@ -213,8 +216,19 @@ struct AIProtocolMessageInfo {
               let role = json["role"] as? String else { return nil }
         let createdAtRaw = json["created_at"]
         let createdAt: Int64? = createdAtRaw == nil ? nil : parseInt64(createdAtRaw)
+        let agent = parseOptionalString(json["agent"])
+        let modelProviderID = parseOptionalString(json["model_provider_id"])
+        let modelID = parseOptionalString(json["model_id"])
         let parts = (json["parts"] as? [[String: Any]] ?? []).compactMap { AIProtocolPartInfo.from(json: $0) }
-        return AIProtocolMessageInfo(id: id, role: role, createdAt: createdAt, parts: parts)
+        return AIProtocolMessageInfo(
+            id: id,
+            role: role,
+            createdAt: createdAt,
+            agent: agent,
+            modelProviderID: modelProviderID,
+            modelID: modelID,
+            parts: parts
+        )
     }
 }
 
@@ -225,6 +239,7 @@ struct AIChatMessageUpdatedV2 {
     let sessionId: String
     let messageId: String
     let role: String
+    let selectionHint: AISessionSelectionHint?
 
     static func from(json: [String: Any]) -> AIChatMessageUpdatedV2? {
         guard let projectName = json["project_name"] as? String,
@@ -233,7 +248,16 @@ struct AIChatMessageUpdatedV2 {
               let sessionId = json["session_id"] as? String,
               let messageId = json["message_id"] as? String,
               let role = json["role"] as? String else { return nil }
-        return AIChatMessageUpdatedV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId, messageId: messageId, role: role)
+        let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
+        return AIChatMessageUpdatedV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            messageId: messageId,
+            role: role,
+            selectionHint: selectionHint
+        )
     }
 }
 
@@ -297,13 +321,21 @@ struct AIChatDoneV2 {
     let workspaceName: String
     let aiTool: AIChatTool
     let sessionId: String
+    let selectionHint: AISessionSelectionHint?
 
     static func from(json: [String: Any]) -> AIChatDoneV2? {
         guard let projectName = json["project_name"] as? String,
               let workspaceName = json["workspace_name"] as? String,
               let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
-        return AIChatDoneV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId)
+        let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
+        return AIChatDoneV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            selectionHint: selectionHint
+        )
     }
 }
 

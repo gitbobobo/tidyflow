@@ -1,16 +1,107 @@
 import Foundation
 
 extension AppState {
+    private func aiSelectionHintLogDict(_ hint: AISessionSelectionHint?) -> [String: Any]? {
+        guard let hint, !hint.isEmpty else { return nil }
+        var dict: [String: Any] = [:]
+        if let agent = hint.agent { dict["agent"] = agent }
+        if let provider = hint.modelProviderID { dict["model_provider_id"] = provider }
+        if let model = hint.modelID { dict["model_id"] = model }
+        return dict.isEmpty ? nil : dict
+    }
+
+    private func aiSelectionModelLogDict(_ model: AIModelSelection?) -> [String: Any]? {
+        guard let model else { return nil }
+        return [
+            "provider_id": model.providerID,
+            "model_id": model.modelID
+        ]
+    }
+
+    private func sendAISelectionPipelineLog(
+        event: String,
+        tool: AIChatTool,
+        sessionId: String,
+        messageId: String? = nil,
+        primaryHint: AISessionSelectionHint?,
+        inferredHint: AISessionSelectionHint?,
+        effectiveHint: AISessionSelectionHint?,
+        messagesCount: Int? = nil
+    ) {
+        var detail: [String: Any] = [
+            "event": event,
+            "tool": tool.rawValue,
+            "session_id": sessionId,
+            "selected_tool": aiChatTool.rawValue,
+            "current_agent": selectedAgent(for: tool) ?? ""
+        ]
+        if let messageId, !messageId.isEmpty {
+            detail["message_id"] = messageId
+        }
+        if let messagesCount {
+            detail["messages_count"] = messagesCount
+        }
+        if let currentModel = aiSelectionModelLogDict(selectedModel(for: tool)) {
+            detail["current_model"] = currentModel
+        }
+        if let primaryHint = aiSelectionHintLogDict(primaryHint) {
+            detail["primary_hint"] = primaryHint
+        }
+        if let inferredHint = aiSelectionHintLogDict(inferredHint) {
+            detail["inferred_hint"] = inferredHint
+        }
+        if let effectiveHint = aiSelectionHintLogDict(effectiveHint) {
+            detail["effective_hint"] = effectiveHint
+        }
+        let detailText: String? = {
+            guard JSONSerialization.isValidJSONObject(detail),
+                  let data = try? JSONSerialization.data(withJSONObject: detail, options: []),
+                  let text = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            return text
+        }()
+        wsClient.sendLogEntry(
+            level: "DEBUG",
+            category: "ai_selection_sync_pipeline",
+            msg: "ai selection pipeline \(event)",
+            detail: detailText
+        )
+    }
+
+    private func mergedAISessionSelectionHint(
+        primary: AISessionSelectionHint?,
+        fallback: AISessionSelectionHint?
+    ) -> AISessionSelectionHint? {
+        if primary == nil { return fallback }
+        if fallback == nil { return primary }
+        let merged = AISessionSelectionHint(
+            agent: primary?.agent ?? fallback?.agent,
+            modelProviderID: primary?.modelProviderID ?? fallback?.modelProviderID,
+            modelID: primary?.modelID ?? fallback?.modelID
+        )
+        return merged.isEmpty ? nil : merged
+    }
+
     func handleAISessionStarted(_ ev: AISessionStartedV2) {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
 
         let store = aiStore(for: ev.aiTool)
         store.setCurrentSessionId(ev.sessionId)
+        sendAISelectionPipelineLog(
+            event: "session_started_received",
+            tool: ev.aiTool,
+            sessionId: ev.sessionId,
+            primaryHint: ev.selectionHint,
+            inferredHint: nil,
+            effectiveHint: ev.selectionHint
+        )
         applyAISessionSelectionHint(
             ev.selectionHint,
             sessionId: ev.sessionId,
-            for: ev.aiTool
+            for: ev.aiTool,
+            trigger: "session_started"
         )
         let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
         let session = AISessionInfo(
@@ -73,10 +164,22 @@ extension AppState {
         )
         store.replaceMessages(mapped)
         store.replaceQuestionRequests(restoredQuestions)
-        applyAISessionSelectionHint(
-            ev.selectionHint,
+        let inferredHint = inferAISessionSelectionHintFromMessages(ev.messages)
+        let effectiveHint = mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
+        sendAISelectionPipelineLog(
+            event: "session_messages_received",
+            tool: ev.aiTool,
             sessionId: ev.sessionId,
-            for: ev.aiTool
+            primaryHint: ev.selectionHint,
+            inferredHint: inferredHint,
+            effectiveHint: effectiveHint,
+            messagesCount: ev.messages.count
+        )
+        applyAISessionSelectionHint(
+            effectiveHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool,
+            trigger: "session_messages"
         )
         TFLog.app.info(
             "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
@@ -135,6 +238,21 @@ extension AppState {
             "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
         )
         store.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
+        sendAISelectionPipelineLog(
+            event: "message_updated_received",
+            tool: ev.aiTool,
+            sessionId: ev.sessionId,
+            messageId: ev.messageId,
+            primaryHint: ev.selectionHint,
+            inferredHint: nil,
+            effectiveHint: ev.selectionHint
+        )
+        applyAISessionSelectionHint(
+            ev.selectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool,
+            trigger: "message_updated"
+        )
         setBadgeRunning(true, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
     }
@@ -154,7 +272,8 @@ extension AppState {
         applyAISessionSelectionHintFromPart(
             ev.part,
             sessionId: ev.sessionId,
-            for: ev.aiTool
+            for: ev.aiTool,
+            trigger: "part_updated"
         )
         setBadgeRunning(true, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
@@ -191,6 +310,20 @@ extension AppState {
         store.clearAbortPendingIfMatches(ev.sessionId)
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
+        sendAISelectionPipelineLog(
+            event: "chat_done_received",
+            tool: ev.aiTool,
+            sessionId: ev.sessionId,
+            primaryHint: ev.selectionHint,
+            inferredHint: nil,
+            effectiveHint: ev.selectionHint
+        )
+        applyAISessionSelectionHint(
+            ev.selectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool,
+            trigger: "chat_done"
+        )
         store.handleChatDone(sessionId: ev.sessionId)
         if store.currentSessionId == ev.sessionId {
             wsClient.requestAISessionMessages(

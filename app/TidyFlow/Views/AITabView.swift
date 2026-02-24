@@ -777,19 +777,13 @@ struct AITabView: View {
                 agent: agent
             )
         case let .command(command, arguments, imageParts, model, agent, fileRefs):
-            let commandText: String = {
-                let trimmedArguments = arguments.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmedArguments.isEmpty {
-                    return "/\(command)"
-                }
-                return "/\(command) \(trimmedArguments)"
-            }()
-            appState.wsClient.requestAIChatSend(
+            appState.wsClient.requestAIChatCommand(
                 projectName: projectName,
                 workspaceName: workspaceName,
                 aiTool: aiTool,
                 sessionId: sessionId,
-                message: commandText,
+                command: command,
+                arguments: arguments,
                 fileRefs: fileRefs,
                 imageParts: imageParts,
                 model: model,
@@ -813,7 +807,12 @@ struct AITabView: View {
         }()
 
         guard let hint, !hint.isEmpty else { return }
-        appState.applyAISessionSelectionHint(hint, sessionId: sessionId, for: aiTool)
+        appState.applyAISessionSelectionHint(
+            hint,
+            sessionId: sessionId,
+            for: aiTool,
+            trigger: "pending_send"
+        )
     }
 
     private func pendingSelectionHint(
@@ -1063,19 +1062,13 @@ struct AITabView: View {
         if let sessionId = aiChatStore.currentSessionId {
             // 已有会话，直接发送
             if let slash = slashCommand {
-                let commandText: String = {
-                    let trimmedArguments = slash.arguments.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmedArguments.isEmpty {
-                        return "/\(slash.name)"
-                    }
-                    return "/\(slash.name) \(trimmedArguments)"
-                }()
-                appState.wsClient.requestAIChatSend(
+                appState.wsClient.requestAIChatCommand(
                     projectName: appState.selectedProjectName,
                     workspaceName: ws,
                     aiTool: aiTool,
                     sessionId: sessionId,
-                    message: commandText,
+                    command: slash.name,
+                    arguments: slash.arguments,
                     fileRefs: fileRefsParam,
                     imageParts: imageParts,
                     model: model,

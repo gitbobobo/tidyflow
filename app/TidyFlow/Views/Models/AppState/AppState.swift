@@ -555,6 +555,10 @@ class AppState: ObservableObject {
         aiSelectedAgentByTool[tool] ?? nil
     }
 
+    func selectedModel(for tool: AIChatTool) -> AIModelSelection? {
+        aiSelectedModelByTool[tool] ?? nil
+    }
+
     func aiProviders(for tool: AIChatTool) -> [AIProviderInfo] {
         aiProvidersByTool[tool] ?? []
     }
@@ -570,27 +574,139 @@ class AppState: ObservableObject {
         }
     }
 
+    private func aiSelectionHintDict(_ hint: AISessionSelectionHint?) -> [String: Any]? {
+        guard let hint, !hint.isEmpty else { return nil }
+        var dict: [String: Any] = [:]
+        if let agent = hint.agent { dict["agent"] = agent }
+        if let provider = hint.modelProviderID { dict["model_provider_id"] = provider }
+        if let model = hint.modelID { dict["model_id"] = model }
+        return dict.isEmpty ? nil : dict
+    }
+
+    private func aiSelectionModelDict(_ model: AIModelSelection?) -> [String: Any]? {
+        guard let model else { return nil }
+        return [
+            "provider_id": model.providerID,
+            "model_id": model.modelID
+        ]
+    }
+
+    private func aiSelectionSyncDetailString(_ payload: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return text
+    }
+
+    private func emitAISelectionSyncLog(
+        event: String,
+        tool: AIChatTool,
+        sessionId: String,
+        trigger: String,
+        hint: AISessionSelectionHint?,
+        beforeAgent: String?,
+        beforeModel: AIModelSelection?,
+        afterAgent: String?,
+        afterModel: AIModelSelection?,
+        unresolved: AISessionSelectionHint?,
+        extra: [String: Any]
+    ) {
+        var detail: [String: Any] = [
+            "event": event,
+            "trigger": trigger,
+            "tool": tool.rawValue,
+            "session_id": sessionId,
+            "selected_tool": aiChatTool.rawValue,
+            "before_agent": beforeAgent ?? "",
+            "after_agent": afterAgent ?? ""
+        ]
+        if let hint = aiSelectionHintDict(hint) {
+            detail["hint"] = hint
+        }
+        if let beforeModel = aiSelectionModelDict(beforeModel) {
+            detail["before_model"] = beforeModel
+        }
+        if let afterModel = aiSelectionModelDict(afterModel) {
+            detail["after_model"] = afterModel
+        }
+        if let unresolved = aiSelectionHintDict(unresolved) {
+            detail["unresolved"] = unresolved
+        }
+        for (key, value) in extra {
+            detail[key] = value
+        }
+
+        wsClient.sendLogEntry(
+            level: "DEBUG",
+            category: "ai_selection_sync",
+            msg: "ai selection sync \(event)",
+            detail: aiSelectionSyncDetailString(detail)
+        )
+    }
+
     /// 尝试应用历史会话的输入选择提示；若模型/代理列表尚未准备好则缓存待重试。
     func applyAISessionSelectionHint(
         _ hint: AISessionSelectionHint?,
         sessionId: String,
-        for tool: AIChatTool
+        for tool: AIChatTool,
+        trigger: String = "unknown"
     ) {
         let trimmedSession = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSession.isEmpty else { return }
 
+        let beforeAgent = selectedAgent(for: tool)
+        let beforeModel = selectedModel(for: tool)
+
         guard let hint, !hint.isEmpty else {
             aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = nil
+            emitAISelectionSyncLog(
+                event: "skip_empty_hint",
+                tool: tool,
+                sessionId: trimmedSession,
+                trigger: trigger,
+                hint: nil,
+                beforeAgent: beforeAgent,
+                beforeModel: beforeModel,
+                afterAgent: beforeAgent,
+                afterModel: beforeModel,
+                unresolved: nil,
+                extra: [:]
+            )
             TFLog.app.debug(
                 "AI selection_hint skipped: empty hint, ai_tool=\(tool.rawValue, privacy: .public), session_id=\(trimmedSession, privacy: .public)"
             )
             return
         }
 
-        guard aiStore(for: tool).currentSessionId == trimmedSession else {
+        let store = aiStore(for: tool)
+        let currentSessionId = store.currentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isCurrentSession = currentSessionId == trimmedSession
+        let isSessionBindingPending =
+            (currentSessionId == nil || currentSessionId?.isEmpty == true) &&
+            store.subscribedSessionIds.contains(trimmedSession)
+
+        guard isCurrentSession || isSessionBindingPending else {
             // 只对当前会话生效，防止跨会话串台。
             aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = nil
-            let currentSession = self.aiStore(for: tool).currentSessionId ?? ""
+            let currentSession = currentSessionId ?? ""
+            emitAISelectionSyncLog(
+                event: "skip_session_mismatch",
+                tool: tool,
+                sessionId: trimmedSession,
+                trigger: trigger,
+                hint: hint,
+                beforeAgent: beforeAgent,
+                beforeModel: beforeModel,
+                afterAgent: beforeAgent,
+                afterModel: beforeModel,
+                unresolved: nil,
+                extra: [
+                    "current_session_id": currentSession,
+                    "binding_pending": isSessionBindingPending
+                ]
+            )
             TFLog.app.debug(
                 "AI selection_hint skipped: session mismatch, ai_tool=\(tool.rawValue, privacy: .public), event_session_id=\(trimmedSession, privacy: .public), current_session_id=\(currentSession, privacy: .public)"
             )
@@ -598,13 +714,41 @@ class AppState: ObservableObject {
         }
 
         let unresolved = applyAISessionSelectionHintResolved(hint, for: tool)
+        let afterAgent = selectedAgent(for: tool)
+        let afterModel = selectedModel(for: tool)
         if let unresolved, !unresolved.isEmpty {
             aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = unresolved
+            emitAISelectionSyncLog(
+                event: "pending_unresolved",
+                tool: tool,
+                sessionId: trimmedSession,
+                trigger: trigger,
+                hint: hint,
+                beforeAgent: beforeAgent,
+                beforeModel: beforeModel,
+                afterAgent: afterAgent,
+                afterModel: afterModel,
+                unresolved: unresolved,
+                extra: [:]
+            )
             TFLog.app.info(
                 "AI selection_hint pending: ai_tool=\(tool.rawValue, privacy: .public), session_id=\(trimmedSession, privacy: .public), unresolved_agent=\(unresolved.agent ?? "", privacy: .public), unresolved_provider=\(unresolved.modelProviderID ?? "", privacy: .public), unresolved_model=\(unresolved.modelID ?? "", privacy: .public)"
             )
         } else {
             aiPendingSessionSelectionHintsByTool[tool]?[trimmedSession] = nil
+            emitAISelectionSyncLog(
+                event: "applied",
+                tool: tool,
+                sessionId: trimmedSession,
+                trigger: trigger,
+                hint: hint,
+                beforeAgent: beforeAgent,
+                beforeModel: beforeModel,
+                afterAgent: afterAgent,
+                afterModel: afterModel,
+                unresolved: nil,
+                extra: [:]
+            )
             TFLog.app.info(
                 "AI selection_hint applied: ai_tool=\(tool.rawValue, privacy: .public), session_id=\(trimmedSession, privacy: .public), agent=\(hint.agent ?? "", privacy: .public), provider=\(hint.modelProviderID ?? "", privacy: .public), model=\(hint.modelID ?? "", privacy: .public)"
             )
@@ -757,12 +901,14 @@ class AppState: ObservableObject {
         }
         if let containsMatched = agents.first(where: {
             let nameKey = normalizeSelectionHintKey($0.name)
-            if !nameKey.isEmpty, normalizedRaw.contains(nameKey) {
+            if !nameKey.isEmpty,
+               (normalizedRaw.contains(nameKey) || nameKey.contains(normalizedRaw)) {
                 return true
             }
             guard let mode = $0.mode else { return false }
             let modeKey = normalizeSelectionHintKey(mode)
-            return !modeKey.isEmpty && normalizedRaw.contains(modeKey)
+            return !modeKey.isEmpty &&
+                (normalizedRaw.contains(modeKey) || modeKey.contains(normalizedRaw))
         }) {
             return containsMatched.name
         }
@@ -846,10 +992,50 @@ class AppState: ObservableObject {
     func applyAISessionSelectionHintFromPart(
         _ part: AIProtocolPartInfo,
         sessionId: String,
-        for tool: AIChatTool
+        for tool: AIChatTool,
+        trigger: String = "part_updated"
     ) {
         guard let hint = inferAISessionSelectionHint(from: part), !hint.isEmpty else { return }
-        applyAISessionSelectionHint(hint, sessionId: sessionId, for: tool)
+        applyAISessionSelectionHint(hint, sessionId: sessionId, for: tool, trigger: trigger)
+    }
+
+    func inferAISessionSelectionHintFromMessages(_ messages: [AIProtocolMessageInfo]) -> AISessionSelectionHint? {
+        for message in messages.reversed() where message.role.caseInsensitiveCompare("user") == .orderedSame {
+            let hint = AISessionSelectionHint(
+                agent: message.agent,
+                modelProviderID: message.modelProviderID,
+                modelID: message.modelID
+            )
+            if !hint.isEmpty {
+                return hint
+            }
+        }
+        for message in messages.reversed() {
+            let hint = AISessionSelectionHint(
+                agent: message.agent,
+                modelProviderID: message.modelProviderID,
+                modelID: message.modelID
+            )
+            if !hint.isEmpty {
+                return hint
+            }
+        }
+
+        for message in messages.reversed() where message.role.caseInsensitiveCompare("user") == .orderedSame {
+            for part in message.parts.reversed() {
+                if let hint = inferAISessionSelectionHint(from: part), !hint.isEmpty {
+                    return hint
+                }
+            }
+        }
+        for message in messages.reversed() {
+            for part in message.parts.reversed() {
+                if let hint = inferAISessionSelectionHint(from: part), !hint.isEmpty {
+                    return hint
+                }
+            }
+        }
+        return nil
     }
 
     private func inferAISessionSelectionHint(from part: AIProtocolPartInfo) -> AISessionSelectionHint? {
