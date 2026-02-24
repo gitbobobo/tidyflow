@@ -54,6 +54,7 @@
 		AIC0000A /* ToolCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00009 /* ToolCardView.swift */; };
 		AIC0001B /* ToolQuestionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0001C /* ToolQuestionPromptView.swift */; };
 		AIC0001D /* ChatInputRepresentables.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0001E /* ChatInputRepresentables.swift */; };
+		AIC0001F /* ChatScrollPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00020 /* ChatScrollPolicy.swift */; };
 		AIC0000C /* AutocompleteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0000B /* AutocompleteState.swift */; };
 		AIC0000E /* AutocompletePopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0000D /* AutocompletePopupView.swift */; };
 		AIC00010 /* DiffModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0000F /* DiffModels.swift */; };
@@ -62,6 +63,7 @@
 		AIC00016 /* UnifiedDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00015 /* UnifiedDiffView.swift */; };
 		AIC00018 /* MarkdownTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00017 /* MarkdownTextView.swift */; };
 		AIC0001A /* AIChatEmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00019 /* AIChatEmptyStateView.swift */; };
+
 		B3A0000A /* AIChatProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A0001A /* AIChatProtocolModels.swift */; };
 		B3A00005 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00015 /* WSClient.swift */; };
 		B3A00006 /* ProtocolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00016 /* ProtocolModels.swift */; };
@@ -156,6 +158,7 @@
 		UX100004 /* ProjectCommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100014 /* ProjectCommandEditSheet.swift */; };
 		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
 /* End PBXBuildFile section */
+		TST10001 /* ChatScrollPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10011 /* ChatScrollPolicyTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -198,6 +201,8 @@
 		MOB00042 /* WorkspaceTasksView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkspaceTasksView.swift; sourceTree = "<group>"; };
 		MOB00043 /* MobileCommandIconView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileCommandIconView.swift; sourceTree = "<group>"; };
 		MOB00054 /* DisconnectBannerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DisconnectBannerView.swift; sourceTree = "<group>"; };
+		TST10011 /* ChatScrollPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollPolicyTests.swift; sourceTree = "<group>"; };
+		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -217,6 +222,7 @@
 		AIC00009 /* ToolCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ToolCardView.swift"; sourceTree = "<group>"; };
 		AIC0001C /* ToolQuestionPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ToolQuestionPromptView.swift"; sourceTree = "<group>"; };
 		AIC0001E /* ChatInputRepresentables.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ChatInputRepresentables.swift"; sourceTree = "<group>"; };
+		AIC00020 /* ChatScrollPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ChatScrollPolicy.swift"; sourceTree = "<group>"; };
 		AIC0000B /* AutocompleteState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AutocompleteState.swift"; sourceTree = "<group>"; };
 		AIC0000D /* AutocompletePopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AutocompletePopupView.swift"; sourceTree = "<group>"; };
 		AIC0000F /* DiffModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/DiffModels.swift"; sourceTree = "<group>"; };
@@ -225,6 +231,7 @@
 		AIC00015 /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/DiffView/UnifiedDiffView.swift"; sourceTree = "<group>"; };
 		AIC00017 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MarkdownTextView.swift"; sourceTree = "<group>"; };
 		AIC00019 /* AIChatEmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatEmptyStateView.swift"; sourceTree = "<group>"; };
+
 		B3A00015 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		B3A00016 /* ProtocolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolModels.swift; sourceTree = "<group>"; };
 		B3A00017 /* AnyCodable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnyCodable.swift; sourceTree = "<group>"; };
@@ -363,6 +370,7 @@
 				AIC00009 /* ToolCardView.swift */,
 				AIC0001C /* ToolQuestionPromptView.swift */,
 				AIC0001E /* ChatInputRepresentables.swift */,
+				AIC00020 /* ChatScrollPolicy.swift */,
 				AIC0000B /* AutocompleteState.swift */,
 				AIC0000D /* AutocompletePopupView.swift */,
 				AIC0000F /* DiffModels.swift */,
@@ -370,6 +378,7 @@
 				AIC00013 /* DiffInlineHighlighter.swift */,
 				AIC00015 /* UnifiedDiffView.swift */,
 				AIC00019 /* AIChatEmptyStateView.swift */,
+
 				B3A00013 /* TabStripView.swift */,
 				TST00012 /* ToastOverlayView.swift */,
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
@@ -443,6 +452,7 @@
 				A100000F /* Products */,
 				3F9CC65A7A1E66F0E34B1056 /* TidyFlow-iOS */,
 				9EA3BB2541DC7D7F23729AD7 /* Frameworks */,
+				TST10030 /* TidyFlowTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -450,8 +460,17 @@
 			isa = PBXGroup;
 			children = (
 				A1000010 /* TidyFlow-Debug.app */,
+				TST10020 /* TidyFlowTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		TST10030 /* TidyFlowTests */ = {
+			isa = PBXGroup;
+			children = (
+				TST10011 /* ChatScrollPolicyTests.swift */,
+			);
+			path = TidyFlowTests;
 			sourceTree = "<group>";
 		};
 		A1000020 /* TidyFlow */ = {
@@ -598,6 +617,22 @@
 			productReference = A1000010 /* TidyFlow-Debug.app */;
 			productType = "com.apple.product-type.application";
 		};
+		TST100A0 /* TidyFlowTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = TST100C0 /* Build configuration list for PBXNativeTarget "TidyFlowTests" */;
+			buildPhases = (
+				TST100B0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				TST100D0 /* PBXTargetDependency */,
+			);
+			name = TidyFlowTests;
+			productName = TidyFlowTests;
+			productReference = TST10020 /* TidyFlowTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -610,6 +645,10 @@
 				TargetAttributes = {
 					A100000A = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					TST100A0 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = A100000A;
 					};
 				};
 			};
@@ -632,6 +671,7 @@
 			projectRoot = "";
 			targets = (
 				A100000A /* TidyFlow */,
+				TST100A0 /* TidyFlowTests */,
 			);
 		};
 /* End PBXProject section */
@@ -761,6 +801,7 @@
 				AIC00008 /* ChatInputView.swift in Sources */,
 				AIC0000A /* ToolCardView.swift in Sources */,
 				AIC0001B /* ToolQuestionPromptView.swift in Sources */,
+				AIC0001F /* ChatScrollPolicy.swift in Sources */,
 				AIC0001D /* ChatInputRepresentables.swift in Sources */,
 				AIC0000C /* AutocompleteState.swift in Sources */,
 				AIC0000E /* AutocompletePopupView.swift in Sources */,
@@ -769,6 +810,7 @@
 				AIC00014 /* DiffInlineHighlighter.swift in Sources */,
 				AIC00016 /* UnifiedDiffView.swift in Sources */,
 				AIC0001A /* AIChatEmptyStateView.swift in Sources */,
+
 				B3A00008 /* NativeGitPanelView.swift in Sources */,
 				SPL00006 /* FloatingPanelController.swift in Sources */,
 				SPL00007 /* GitPanelSections.swift in Sources */,
@@ -807,7 +849,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		TST100B0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				TST10001 /* ChatScrollPolicyTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		TST100E0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000008 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A100000A;
+			remoteInfo = TidyFlow;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		TST100D0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A100000A /* TidyFlow */;
+			targetProxy = TST100E0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		L10N0020 /* Localizable.strings */ = {
@@ -1070,6 +1138,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.app.debug;
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphone*]" = cn.tidyflow.ios.debug;
 				PRODUCT_NAME = "TidyFlow-Debug";
+				SWIFT_MODULE_NAME = TidyFlow;
 				"PRODUCT_NAME[sdk=iphone*]" = TidyFlow;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1212,6 +1281,38 @@
 			};
 			name = Release;
 		};
+		TST100C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				GENERATE_INFOPLIST_FILE = YES;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TidyFlow-Debug.app/Contents/MacOS/TidyFlow-Debug";
+			};
+			name = Debug;
+		};
+		TST100C2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				GENERATE_INFOPLIST_FILE = YES;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TidyFlow-Debug.app/Contents/MacOS/TidyFlow-Debug";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1229,6 +1330,15 @@
 			buildConfigurations = (
 				A100001A /* Debug */,
 				A100001B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		TST100C0 /* Build configuration list for PBXNativeTarget "TidyFlowTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TST100C1 /* Debug */,
+				TST100C2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
