@@ -98,16 +98,8 @@ struct ProjectBranchView: View {
         appState.diagnosticsSnapshot(for: currentWorkspaceGlobalKey)
     }
 
-    /// 当前工作空间 LSP 是否正在加载
-    private var isLspLoading: Bool {
-        appState.isLspLoading(for: currentWorkspaceGlobalKey)
-    }
-
     /// 顶部圆点颜色：诊断语义（Error/Warning/Info/None）
     private var diagnosticsColor: Color {
-        if isLspLoading && appState.connectionState == .connected {
-            return .gray
-        }
         return diagnosticsSnapshot.highestSeverity.dotColor
     }
 
@@ -121,9 +113,6 @@ struct ProjectBranchView: View {
             diagnosticsSnapshot.items.count,
             connectionText
         )
-        if isLspLoading && appState.connectionState == .connected {
-            return "\(base)\n\("toolbar.diagnostics.loading".localized)"
-        }
         if appState.connectionState == .connected {
             return base
         }
@@ -199,10 +188,6 @@ private struct WorkspaceIssuePopoverView: View {
         appState.diagnosticsSnapshot(for: workspaceGlobalKey)
     }
 
-    private var lspStatus: WorkspaceLspStatusSnapshot? {
-        appState.lspStatusSnapshot(for: workspaceGlobalKey)
-    }
-
     private var groupedPaths: [String] {
         let keys = Set(snapshot.items.map { $0.displayPath })
         return keys.sorted()
@@ -241,38 +226,13 @@ private struct WorkspaceIssuePopoverView: View {
 
             Divider()
 
-            if let status = lspStatus, !status.missingLanguages.isEmpty {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(.orange)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("toolbar.diagnostics.missingServers".localized)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.primary)
-                        Text(
-                            String(
-                                format: "toolbar.diagnostics.missingServersDetail".localized,
-                                status.missingLanguages.joined(separator: ", ")
-                            )
-                        )
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                Divider()
-            }
-
             if snapshot.items.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
-                    Image(systemName: appState.isLspLoading(for: workspaceGlobalKey) ? "hourglass" : "checkmark.circle")
+                    Image(systemName: "checkmark.circle")
                         .font(.system(size: 26))
                         .foregroundColor(.secondary.opacity(0.6))
-                    Text(appState.isLspLoading(for: workspaceGlobalKey) ? "toolbar.diagnostics.loading".localized : "toolbar.diagnostics.noIssues".localized)
+                    Text("toolbar.diagnostics.noIssues".localized)
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                     Spacer()

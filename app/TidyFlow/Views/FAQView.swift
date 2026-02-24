@@ -19,23 +19,7 @@ struct FAQItem: Identifiable {
 
 /// FAQ 静态数据源
 enum FAQData {
-    static let items: [FAQItem] = [
-        FAQItem(
-            titleKey: "help.faq.lsp.title",
-            blocks: [
-                .text("help.faq.lsp.desc"),
-                .text("help.faq.lsp.step1"),
-                .command("brew install xcode-build-server"),
-                .text("help.faq.lsp.step2"),
-                .command("xcode-build-server config -workspace *.xcworkspace -scheme YourScheme"),
-                .text("help.faq.lsp.step2.or"),
-                .command("xcode-build-server config -project *.xcodeproj -scheme YourScheme"),
-                .text("help.faq.lsp.step2.hint"),
-                .text("help.faq.lsp.step3"),
-                .text("help.faq.lsp.footer"),
-            ]
-        ),
-    ]
+    static let items: [FAQItem] = []
 }
 
 // MARK: - 可复制命令行视图
