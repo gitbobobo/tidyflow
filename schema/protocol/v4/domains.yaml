@@ -12,8 +12,6 @@ domains:
     action_rule: prefix("git_") | one_of("cancel_ai_task")
   - id: project
     action_rule: prefix("list_","select_","import_","create_","remove_","project_","workspace_","save_project_commands","run_project_command","cancel_project_command")
-  - id: lsp
-    action_rule: prefix("lsp_")
   - id: settings
     action_rule: contains("client_settings")
   - id: log

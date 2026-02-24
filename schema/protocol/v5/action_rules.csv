@@ -21,7 +21,6 @@ prefix,project,workspace_
 prefix,project,save_project_commands
 prefix,project,run_project_command
 prefix,project,cancel_project_command
-prefix,lsp,lsp_
 contains,settings,client_settings
 prefix,log,log_
 prefix,ai,ai_
