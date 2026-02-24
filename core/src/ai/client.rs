@@ -1761,10 +1761,16 @@ impl AiAgent for OpenCodeAgent {
                                 })
                             });
 
-                            let text = part
-                                .get("text")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                            let text = if part_type == "subtask" {
+                                part.get("prompt")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .or_else(|| {
+                                        part.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                    })
+                            } else {
+                                part.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                            };
 
                             let mime = part
                                 .get("mime")
@@ -1816,7 +1822,7 @@ impl AiAgent for OpenCodeAgent {
                                 props.get("partID").and_then(|v| v.as_str()).unwrap_or("");
                             let field = props.get("field").and_then(|v| v.as_str()).unwrap_or("");
                             let delta = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                            if delta.is_empty() || field != "text" {
+                            if delta.is_empty() || (field != "text" && field != "prompt") {
                                 return None;
                             }
 
@@ -2150,10 +2156,16 @@ impl AiAgent for OpenCodeAgent {
                                     })
                                 });
 
-                            let text = part
-                                .get("text")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                            let text = if part_type == "subtask" {
+                                part.get("prompt")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .or_else(|| {
+                                        part.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                    })
+                            } else {
+                                part.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                            };
 
                             let mime = part
                                 .get("mime")
@@ -2204,7 +2216,7 @@ impl AiAgent for OpenCodeAgent {
                                 props.get("partID").and_then(|v| v.as_str()).unwrap_or("");
                             let field = props.get("field").and_then(|v| v.as_str()).unwrap_or("");
                             let delta = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
-                            if delta.is_empty() || field != "text" {
+                            if delta.is_empty() || (field != "text" && field != "prompt") {
                                 return None;
                             }
 
