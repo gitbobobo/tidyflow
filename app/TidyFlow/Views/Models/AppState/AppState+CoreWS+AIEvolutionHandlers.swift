@@ -482,9 +482,6 @@ extension AppState {
         evolutionReplayError = nil
         evolutionReplayLoading = false
 
-        let workspaceKey = globalWorkspaceKey(projectName: ev.project, workspaceName: normalizedWorkspace)
-        showWorkspaceSpecialPage(workspaceKey: workspaceKey, page: .aiChat)
-
         let updatedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let session = AISessionInfo(
             projectName: ev.project,
