@@ -150,7 +150,9 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 【对话输出限制】
 - 不输出决策内容
 - 不输出 JSON 正文
-- 仅输出一行状态：`direction stage persisted` 或 `direction stage failed`
+- 必须输出两行，且仅两行：
+  - 第 1 行：`决策摘要：<方向决策摘要，包含 selected_type、首要任务与证据策略，120 字以内>`
+  - 第 2 行：`状态：direction stage persisted` 或 `状态：direction stage failed`
 "####;
 
 pub const STAGE_PLAN_PROMPT: &str = r####"
@@ -280,7 +282,9 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 【对话输出限制】
 - 不输出计划正文
-- 仅输出一行状态：`plan stage persisted` 或 `plan stage failed`
+- 必须输出两行，且仅两行：
+  - 第 1 行：`任务摘要：<计划摘要，包含最高优先级 work_item、关键验证检查与主要风险，120 字以内>`
+  - 第 2 行：`状态：plan stage persisted` 或 `状态：plan stage failed`
 "####;
 
 pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
@@ -418,7 +422,9 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 
 【对话输出限制】
 - 不输出实现细节正文
-- 仅输出一行状态：`implement stage persisted` 或 `implement stage failed`
+- 必须输出两行，且仅两行：
+  - 第 1 行：`任务摘要：<实施摘要，包含完成情况、关键改动范围与主要阻塞/风险，120 字以内>`
+  - 第 2 行：`状态：implement stage persisted` 或 `状态：implement stage failed`
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
@@ -580,7 +586,9 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 
 【对话输出限制】
 - 不输出验证细节正文
-- 仅输出一行状态：`verify stage persisted` 或 `verify stage failed`
+- 必须输出两行，且仅两行：
+  - 第 1 行：`验证摘要：<验证结论摘要，包含整体通过/失败趋势、关键失败项或证据缺口，120 字以内>`
+  - 第 2 行：`状态：verify stage persisted` 或 `状态：verify stage failed`
 "####;
 
 pub const STAGE_JUDGE_PROMPT: &str = r####"
@@ -711,7 +719,9 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 
 【对话输出限制】
 - 不输出裁决细节正文
-- 仅输出一行状态：`judge stage persisted` 或 `judge stage failed`
+- 必须输出两行，且仅两行：
+  - 第 1 行：`裁决摘要：<裁决摘要，包含整体判定、关键依据与下一步动作，120 字以内；禁止使用“result: pass/fail”字样>`
+  - 第 2 行：`状态：judge stage persisted` 或 `状态：judge stage failed`
 "####;
 
 pub const STAGE_REPORT_PROMPT: &str = r####"
@@ -876,5 +886,7 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 
 【对话输出限制】
 - 不输出报告正文
-- 仅输出一行状态：`report stage persisted` 或 `report stage failed`
+- 必须输出两行，且仅两行：
+  - 第 1 行：`报告摘要：<报告摘要，包含本轮结论、证据完整度与下一轮建议，120 字以内>`
+  - 第 2 行：`状态：report stage persisted` 或 `状态：report stage failed`
 "####;
