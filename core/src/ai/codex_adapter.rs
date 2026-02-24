@@ -1153,6 +1153,66 @@ impl CodexAppServerAgent {
         Some((item_id, field, payload))
     }
 
+    /// Codex 事件名在版本迭代中可能变化，这里为未知 delta 事件提供文本兜底映射。
+    fn extract_generic_text_delta(method: &str, params: &Value) -> Option<(String, String, String, String)> {
+        let method_lower = method.to_ascii_lowercase();
+        let looks_like_delta = method_lower.contains("delta");
+        if !looks_like_delta {
+            return None;
+        }
+
+        // 已有专用分支处理的事件不走兜底，避免重复推送。
+        if Self::method_in(
+            method,
+            &[
+                "item/agentMessage/delta",
+                "item/reasoning/textDelta",
+                "item/reasoning/summaryTextDelta",
+                "item/commandExecution/outputDelta",
+                "item/commandExecution/terminalInteraction",
+                "item/fileChange/outputDelta",
+                "item/mcpToolCall/progress",
+                "item/plan/delta",
+            ],
+        ) {
+            return None;
+        }
+
+        let item_id = params
+            .get("itemId")
+            .or_else(|| params.get("item_id"))
+            .or_else(|| params.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if item_id.is_empty() {
+            return None;
+        }
+
+        let delta = params
+            .get("delta")
+            .or_else(|| params.get("textDelta"))
+            .or_else(|| params.get("text_delta"))
+            .or_else(|| params.get("contentDelta"))
+            .or_else(|| params.get("content_delta"))
+            .or_else(|| params.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if delta.is_empty() {
+            return None;
+        }
+
+        let part_type = if method_lower.contains("reason") {
+            "reasoning".to_string()
+        } else {
+            "text".to_string()
+        };
+
+        Some((item_id.clone(), item_id, part_type, delta))
+    }
+
     fn map_turn_item_to_message(
         turn_id: &str,
         index: usize,
@@ -1673,7 +1733,30 @@ impl CodexAppServerAgent {
                                         active_turns.lock().await.remove(&session_id);
                                         break;
                                     }
-                                    _ => {}
+                                    _ => {
+                                        if let Some((message_id, part_id, part_type, delta)) =
+                                            CodexAppServerAgent::extract_generic_text_delta(
+                                                event.method.as_str(),
+                                                &params,
+                                            )
+                                        {
+                                            if !known_assistant_messages.contains(&message_id) {
+                                                known_assistant_messages.insert(message_id.clone());
+                                                let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                    message_id: message_id.clone(),
+                                                    role: "assistant".to_string(),
+                                                    selection_hint: None,
+                                                }));
+                                            }
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                message_id,
+                                                part_id,
+                                                part_type,
+                                                field: "text".to_string(),
+                                                delta,
+                                            }));
+                                        }
+                                    }
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
