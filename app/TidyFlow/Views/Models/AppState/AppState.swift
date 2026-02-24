@@ -167,6 +167,8 @@ class AppState: ObservableObject {
     @Published var evolutionScheduler: EvolutionSchedulerInfoV2 = .empty
     @Published var evolutionWorkspaceItems: [EvolutionWorkspaceItemV2] = []
     @Published var evolutionStageProfilesByWorkspace: [String: [EvolutionStageProfileInfoV2]] = [:]
+    /// Evolution 全局默认阶段配置（替代 per-workspace 配置，由设置页面管理）
+    @Published var evolutionDefaultProfiles: [EvolutionEditableProfile] = []
     @Published var evolutionReplayTitle: String = ""
     @Published var evolutionReplayMessages: [AIChatMessage] = []
     @Published var evolutionReplayLoading: Bool = false
@@ -358,6 +360,9 @@ class AppState: ObservableObject {
         self.switchAIContext(to: aiChatTool)
 
         setupCommands()
+
+        // 从 UserDefaults 加载 Evolution 全局默认配置
+        loadEvolutionDefaultProfiles()
 
         // 转发 taskManager 变更到 AppState，驱动侧边栏等视图刷新
         taskManagerCancellable = taskManager.objectWillChange

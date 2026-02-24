@@ -357,3 +357,61 @@ extension AppState {
         selectWorkspace(projectId: project.id, workspaceName: workspaceName)
     }
 }
+
+// MARK: - Evolution 全局默认配置持久化
+
+extension AppState {
+    private static let evolutionDefaultProfilesKey = "evolution_default_profiles_v1"
+
+    /// 从 UserDefaults 加载 Evolution 全局默认配置
+    func loadEvolutionDefaultProfiles() {
+        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKey),
+           let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            let loaded = jsonArray.compactMap { dict -> EvolutionEditableProfile? in
+                guard let id = dict["id"] as? String,
+                      let stage = dict["stage"] as? String,
+                      let aiToolRaw = dict["aiTool"] as? String,
+                      let aiTool = AIChatTool(rawValue: aiToolRaw) else { return nil }
+                return EvolutionEditableProfile(
+                    id: id,
+                    stage: stage,
+                    aiTool: aiTool,
+                    mode: dict["mode"] as? String ?? "",
+                    providerID: dict["providerID"] as? String ?? "",
+                    modelID: dict["modelID"] as? String ?? ""
+                )
+            }
+            if !loaded.isEmpty {
+                evolutionDefaultProfiles = loaded
+                return
+            }
+        }
+        // 尚未配置：用默认结果初始化
+        evolutionDefaultProfiles = AppState.defaultEvolutionEditableProfiles()
+    }
+
+    /// 保存 Evolution 全局默认配置到 UserDefaults
+    func saveEvolutionDefaultProfiles(_ profiles: [EvolutionEditableProfile]) {
+        evolutionDefaultProfiles = profiles
+        let jsonArray: [[String: Any]] = profiles.map { profile in
+            [
+                "id": profile.id,
+                "stage": profile.stage,
+                "aiTool": profile.aiTool.rawValue,
+                "mode": profile.mode,
+                "providerID": profile.providerID,
+                "modelID": profile.modelID
+            ]
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: jsonArray) {
+            UserDefaults.standard.set(data, forKey: Self.evolutionDefaultProfilesKey)
+        }
+    }
+
+    /// 生成默认的每个 Stage EvolutionEditableProfile
+    static func defaultEvolutionEditableProfiles() -> [EvolutionEditableProfile] {
+        ["direction", "plan", "implement", "verify", "judge", "report"].map { stage in
+            EvolutionEditableProfile(id: stage, stage: stage, aiTool: .codex, mode: "", providerID: "", modelID: "")
+        }
+    }
+}

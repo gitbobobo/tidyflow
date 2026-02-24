@@ -145,6 +145,7 @@
 		SPL00042 /* GitCacheState+Operations.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00032 /* GitCacheState+Operations.swift */; };
 		SPL00043 /* CommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00033 /* CommandEditSheet.swift */; };
 		SPL00044 /* AIAgentAboutViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPL00034 /* AIAgentAboutViews.swift */; };
+		EVO00001 /* EvolutionDefaultConfigSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = EVO00011 /* EvolutionDefaultConfigSection.swift */; };
 		TMS00001 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TMS00002 /* TerminalStore.swift */; };
 		TPR00001 /* TypedProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = TPR00002 /* TypedProtocol.swift */; };
 		TST00001 /* ToastManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST00011 /* ToastManager.swift */; };
@@ -293,6 +294,7 @@
 		SPL00031 /* GitCacheState+DiffStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+DiffStatus.swift"; sourceTree = "<group>"; };
 		SPL00032 /* GitCacheState+Operations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GitCacheState+Operations.swift"; sourceTree = "<group>"; };
 		SPL00033 /* CommandEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandEditSheet.swift; sourceTree = "<group>"; };
+		EVO00011 /* EvolutionDefaultConfigSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvolutionDefaultConfigSection.swift; sourceTree = "<group>"; };
 		SPL00034 /* AIAgentAboutViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAgentAboutViews.swift; sourceTree = "<group>"; };
 		TMS00002 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		TPR00002 /* TypedProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedProtocol.swift; sourceTree = "<group>"; };
@@ -327,6 +329,7 @@
 				B3A00019 /* BranchPickerView.swift */,
 				2AEE0BA92F2F0BAA009B67A9 /* CenterContentView.swift */,
 				SPL00033 /* CommandEditSheet.swift */,
+				EVO00011 /* EvolutionDefaultConfigSection.swift */,
 				B3A00011 /* CommandPaletteView.swift */,
 				SPL00024 /* ExplorerView.swift */,
 				FAQ00011 /* FAQView.swift */,
@@ -774,6 +777,7 @@
 				SET00001 /* SettingsView.swift in Sources */,
 				SPL00043 /* CommandEditSheet.swift in Sources */,
 				SPL00044 /* AIAgentAboutViews.swift in Sources */,
+				EVO00001 /* EvolutionDefaultConfigSection.swift in Sources */,
 				QAV00001 /* QuickActionsView.swift in Sources */,
 				B3A00005 /* WSClient.swift in Sources */,
 				SPL00004 /* WSClient+Send.swift in Sources */,

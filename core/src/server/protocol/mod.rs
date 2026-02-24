@@ -1629,6 +1629,8 @@ pub struct EvolutionAgentInfo {
     pub stage: String,
     pub agent: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_message: Option<String>,
 }
 
 /// Evolution 调度器信息

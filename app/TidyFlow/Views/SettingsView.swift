@@ -25,12 +25,18 @@ struct SettingsContentView: View {
                 }
                 .environmentObject(appState)
 
+            EvolutionDefaultConfigSection()
+                .tabItem {
+                    Label("settings.evolution".localized, systemImage: "arrow.triangle.2.circlepath")
+                }
+                .environmentObject(appState)
+
             AboutSection()
                 .tabItem {
                     Label("settings.about".localized, systemImage: "info.circle")
                 }
         }
-        .frame(width: 550, height: 400)
+        .frame(width: 580, height: 520)
     }
 }
 

@@ -322,3 +322,14 @@
 "projectConfig.interactive.hint" = "在新终端标签页中执行命令（前台任务），而非作为后台任务运行";
 "projectConfig.noCommands" = "暂无命令配置";
 "projectConfig.noCommands.hint" = "添加命令后可在工作空间中作为后台任务运行";
+
+"settings.evolution" = "Evolution 配置";
+"settings.evolution.title" = "Evolution 全局默认配置";
+"settings.evolution.footer" = "配置每个阶段默认使用的 AI 工具、模式和模型";
+"settings.evolution.aiTool" = "AI 工具";
+"settings.evolution.mode" = "模式";
+"settings.evolution.model" = "模型";
+"settings.evolution.defaultMode" = "默认模式";
+"settings.evolution.defaultModel" = "默认模型";
+"settings.evolution.noModes" = "暂无可用模式";
+"settings.evolution.noModels" = "暂无可用模型";

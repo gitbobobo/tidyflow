@@ -245,7 +245,7 @@ impl EvolutionManager {
         Some((session.ai_tool, session.session_id))
     }
 
-    pub(super) async fn build_snapshot(&self) -> SnapshotResult {
+    pub(super) async fn build_snapshot(&self, ctx: &HandlerContext) -> SnapshotResult {
         let state = self.state.lock().await;
         let running_count = state
             .workspaces
@@ -258,10 +258,18 @@ impl EvolutionManager {
             .filter(|w| w.status == "queued")
             .count() as u32;
 
-        let mut workspace_items: Vec<EvolutionWorkspaceItem> = state
-            .workspaces
-            .values()
-            .map(|w| EvolutionWorkspaceItem {
+        let mut workspace_items: Vec<EvolutionWorkspaceItem> = Vec::new();
+
+        for w in state.workspaces.values() {
+            let agents = build_agents(
+                &w.stage_statuses,
+                &w.stage_sessions,
+                &ctx.ai_state,
+                &w.workspace_root,
+            )
+            .await;
+
+            workspace_items.push(EvolutionWorkspaceItem {
                 project: w.project.clone(),
                 workspace: w.workspace.clone(),
                 cycle_id: w.cycle_id.clone(),
@@ -271,10 +279,11 @@ impl EvolutionManager {
                 auto_loop_enabled: w.auto_loop_enabled,
                 verify_iteration: w.verify_iteration,
                 verify_iteration_limit: w.verify_iteration_limit,
-                agents: build_agents(&w.stage_statuses),
+                agents,
                 active_agents: active_agents(&w.stage_statuses),
-            })
-            .collect();
+            });
+        }
+
         workspace_items.sort_by(|a, b| {
             (a.project.clone(), a.workspace.clone()).cmp(&(b.project.clone(), b.workspace.clone()))
         });

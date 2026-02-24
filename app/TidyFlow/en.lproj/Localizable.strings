@@ -322,3 +322,14 @@
 "projectConfig.interactive.hint" = "Opens a new terminal tab to run the command (foreground task), instead of running as a background task";
 "projectConfig.noCommands" = "No Commands Configured";
 "projectConfig.noCommands.hint" = "Add commands to run as background tasks in workspaces";
+
+"settings.evolution" = "Evolution Config";
+"settings.evolution.title" = "Evolution Default Configuration";
+"settings.evolution.footer" = "Configure the default AI tool, mode and model for each stage";
+"settings.evolution.aiTool" = "AI Tool";
+"settings.evolution.mode" = "Mode";
+"settings.evolution.model" = "Model";
+"settings.evolution.defaultMode" = "Default Mode";
+"settings.evolution.defaultModel" = "Default Model";
+"settings.evolution.noModes" = "No modes available";
+"settings.evolution.noModels" = "No models available";

@@ -765,12 +765,14 @@ struct EvolutionAgentInfoV2 {
     let stage: String
     let agent: String
     let status: String
+    let latestMessage: String?
 
     static func from(json: [String: Any]) -> EvolutionAgentInfoV2? {
         guard let stage = json["stage"] as? String,
               let agent = json["agent"] as? String,
               let status = json["status"] as? String else { return nil }
-        return EvolutionAgentInfoV2(stage: stage, agent: agent, status: status)
+        let latestMessage = parseOptionalString(json["latest_message"])
+        return EvolutionAgentInfoV2(stage: stage, agent: agent, status: status, latestMessage: latestMessage)
     }
 }
 

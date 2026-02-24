@@ -36,7 +36,7 @@ pub(super) async fn handle_message(
                 stage_profiles: stage_profiles.clone(),
             };
             manager.start_workspace(req, ctx).await?;
-            send_snapshot(socket, &manager).await?;
+            send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
         ClientMessage::EvoStopWorkspace {
@@ -47,21 +47,21 @@ pub(super) async fn handle_message(
             manager
                 .stop_workspace(project, workspace, reason.clone(), ctx)
                 .await?;
-            send_snapshot(socket, &manager).await?;
+            send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
         ClientMessage::EvoStopAll { reason } => {
             manager.stop_all(reason.clone(), ctx).await;
-            send_snapshot(socket, &manager).await?;
+            send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
         ClientMessage::EvoResumeWorkspace { project, workspace } => {
             manager.resume_workspace(project, workspace, ctx).await?;
-            send_snapshot(socket, &manager).await?;
+            send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
         ClientMessage::EvoGetSnapshot { .. } => {
-            send_snapshot(socket, &manager).await?;
+            send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
         ClientMessage::EvoOpenStageChat {
@@ -163,8 +163,9 @@ pub(super) async fn handle_message(
 async fn send_snapshot(
     socket: &mut WebSocket,
     manager: &super::EvolutionManager,
+    ctx: &HandlerContext,
 ) -> Result<(), String> {
-    let snapshot = manager.build_snapshot().await;
+    let snapshot = manager.build_snapshot(ctx).await;
     send_message(
         socket,
         &ServerMessage::EvoSnapshot {

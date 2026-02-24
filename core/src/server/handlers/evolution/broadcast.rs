@@ -24,6 +24,8 @@ impl EvolutionManager {
             verify_iteration,
             verify_limit,
             stage_statuses,
+            stage_sessions,
+            workspace_root,
         ) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
@@ -39,8 +41,18 @@ impl EvolutionManager {
                 entry.verify_iteration,
                 entry.verify_iteration_limit,
                 entry.stage_statuses.clone(),
+                entry.stage_sessions.clone(),
+                entry.workspace_root.clone(),
             )
         };
+
+        let agents = build_agents(
+            &stage_statuses,
+            &stage_sessions,
+            &ctx.ai_state,
+            &workspace_root,
+        )
+        .await;
 
         self.broadcast(
             ctx,
@@ -57,7 +69,7 @@ impl EvolutionManager {
                 global_loop_round: round,
                 verify_iteration,
                 verify_iteration_limit: verify_limit,
-                agents: build_agents(&stage_statuses),
+                agents,
                 active_agents: active_agents(&stage_statuses),
             },
         )
@@ -65,7 +77,7 @@ impl EvolutionManager {
     }
 
     pub(super) async fn broadcast_scheduler(&self, ctx: &HandlerContext) {
-        let snapshot = self.build_snapshot().await;
+        let snapshot = self.build_snapshot(ctx).await;
         self.broadcast(
             ctx,
             ServerMessage::EvoSchedulerUpdated {
