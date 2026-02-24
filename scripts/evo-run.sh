@@ -1,88 +1,866 @@
 #!/bin/bash
 # Evolution 统一执行入口
 # 用法:
-#   ./scripts/evo-run.sh --cycle <cycle_id> [--run-id <run_id>]
-#   ./scripts/evo-run.sh --cycle <cycle_id> --step build|integration|all
+#   ./scripts/evo-run.sh --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration]
 #
-# 功能：
-#   - 幂等执行：按 run_id 隔离结果，重复执行不污染旧结果
-#   - 结构化输出：build_log、test_log、diff_summary 固定路径
-#   - 失败返回非零退出码并输出结果目录路径
+# 目标：
+#   1) 固定执行序列：unit -> core build -> macOS build -> iOS build -> integration
+#   2) 统一结构化日志与失败锚点
+#   3) 统一证据索引写入契约（原子写入 + 幂等合并）
 
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EVOLUTION_DIR="$PROJECT_ROOT/.tidyflow/evolution"
 
-# 默认参数
 CYCLE_ID=""
 RUN_ID=""
 STEP="all"
 VERBOSE=0
 DRY_RUN=0
 
-# 日志前缀
 LOG_PREFIX="[evo][run]"
-# ============================================
-# 结构化日志函数
-# ============================================
-log_structured() {
-    local LEVEL="$1"       # INFO, WARN, FAILED, SUCCESS
-    local STAGE="$2"       # build, integration, rollback, anchor
-    local CHECK_ID="$3"    # v-1, v-2, v-3
-    local ATTEMPT_NUM="${4:-1}"  # 尝试次数
-    
-    echo "[evo][$STAGE] $LEVEL cycle=$CYCLE_ID stage=implement check=$CHECK_ID attempt=$ATTEMPT_NUM"
+
+# 检查 ID（与 plan.execution.json 对齐）
+CHECK_UNIT="v-1"
+CHECK_CORE_BUILD="v-2"
+CHECK_MACOS_BUILD="v-3"
+CHECK_IOS_BUILD="v-4"
+CHECK_INTEGRATION="v-5"
+CHECK_INDEX_AUDIT="v-7"
+CHECK_DIFF_AUDIT="v-8"
+
+FAILURE_CHECK_ID=""
+FAILURE_STAGE=""
+FAILURE_LOG_PATH=""
+FAILURE_REASON=""
+
+REQUIRED_EVIDENCE_TYPES="build_log,test_log,screenshot,diff_summary,metrics"
+
+usage() {
+    cat <<'USAGE'
+Evolution 统一执行入口
+
+用法:
+  ./scripts/evo-run.sh --cycle <id> [options]
+
+选项:
+  --cycle <id>       Cycle ID（必需）
+  --run-id <id>      Run ID（默认：UTC 时间戳）
+  --step <step>      执行步骤：build|integration|all（默认：all）
+  --verbose, -v      详细输出
+  --dry-run          模拟执行，不实际构建
+  --help, -h         显示帮助
+USAGE
 }
 
-# 获取上一稳定运行 ID（用于 rollback 建议）
+log_structured() {
+    local level="$1"
+    local stage="$2"
+    local check_id="$3"
+    local attempt="${4:-1}"
+    local exit_code="${5:-0}"
+    local message="${6:-}"
+
+    echo "[evo][$stage] level=$level cycle=$CYCLE_ID run=$RUN_ID check=$check_id attempt=$attempt exit=$exit_code msg=$message"
+}
+
+record_failure() {
+    local stage="$1"
+    local check_id="$2"
+    local log_path="$3"
+    local reason="$4"
+
+    FAILURE_STAGE="$stage"
+    FAILURE_CHECK_ID="$check_id"
+    FAILURE_LOG_PATH="$log_path"
+    FAILURE_REASON="$reason"
+
+    echo "[evo][anchor] 失败锚点 check=$check_id log=$log_path reason=$reason"
+    local prev_run
+    prev_run="$(get_previous_stable_run_id)"
+    if [ -n "$prev_run" ]; then
+        echo "[evo][rollback] 建议回退到上一稳定 run_id: $prev_run"
+    else
+        echo "[evo][rollback] 尚无可回退 run_id，请检查 evidence.index.json"
+    fi
+}
+
 get_previous_stable_run_id() {
-    local INDEX_PATH="$EVIDENCE_INDEX"
-    
-    if [ ! -f "$INDEX_PATH" ]; then
+    if [ ! -f "$EVIDENCE_INDEX" ]; then
         echo ""
         return
     fi
-    
-    # 查找最近成功的 run_id（不包括当前 run）
-    local PREV_RUN=$(python3 -c "
+
+    python3 - "$EVIDENCE_INDEX" "$RUN_ID" <<'PY'
 import json
 import sys
+from pathlib import Path
+
+index_path = Path(sys.argv[1])
+current_run = sys.argv[2]
+
 try:
-    with open('$INDEX_PATH', 'r') as f:
-        data = json.load(f)
-    runs = data.get('runs', [])
-    # 过滤出成功的 run，按 run_id 倒序
-    successful = [r for r in runs if r.get('outcome') == 'success' and r.get('run_id') != '$RUN_ID']
-    if successful:
-        # 最新的成功 run
-        print(successful[-1].get('run_id', ''))
-except:
-    pass
-" 2>/dev/null)
-    
-    echo "$PREV_RUN"
+    data = json.loads(index_path.read_text(encoding='utf-8'))
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+runs = data.get("runs", [])
+if not isinstance(runs, list):
+    print("")
+    raise SystemExit(0)
+
+success = []
+for run in runs:
+    if not isinstance(run, dict):
+        continue
+    run_id = run.get("run_id")
+    if not run_id or run_id == current_run:
+        continue
+    if run.get("outcome") == "success":
+        success.append(run_id)
+
+if success:
+    success.sort()
+    print(success[-1])
+else:
+    print("")
+PY
 }
 
-# 输出失败定位信息（rollback + anchor）
-dump_failure_anchors() {
-    local FAILED_STAGE="$1"  # build 或 integration
-    local LOG_FILE="$2"      # 日志文件路径
-    
-    # Log anchor
-    echo "[evo][anchor] 查看: $LOG_FILE"
-    
-    # Rollback suggestion
-    local PREV_RUN=$(get_previous_stable_run_id)
-    if [ -n "$PREV_RUN" ]; then
-        echo "[evo][rollback] 回退到上一稳定写入点: $PREV_RUN"
+record_check_result() {
+    local check_id="$1"
+    local kind="$2"
+    local result="$3"
+    local log_path="$4"
+    local exit_code="$5"
+    local note="$6"
+
+    printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$check_id" "$kind" "$result" "$log_path" "$exit_code" "$note" >> "$CHECK_RESULTS_FILE"
+}
+
+append_evidence_line() {
+    local evidence_type="$1"
+    local path="$2"
+    local check_id="$3"
+    local criteria_csv="$4"
+    local summary="$5"
+
+    printf "%s\t%s\t%s\t%s\t%s\n" "$evidence_type" "$path" "$check_id" "$criteria_csv" "$summary" >> "$EVIDENCE_LINES_FILE"
+}
+
+ensure_parent_dir() {
+    local path="$1"
+    mkdir -p "$(dirname "$path")"
+}
+
+run_unit_tests() {
+    local check_id="$CHECK_UNIT"
+    local log_file="$UNIT_LOG"
+
+    log_structured "INFO" "build" "$check_id" 1 0 "start"
+    ensure_parent_dir "$log_file"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        {
+            echo "=== ${check_id} unit ==="
+            echo "[evo][build] dry-run: ./scripts/tidyflow test"
+            echo "test result: ok. 0 failed; dry-run simulated"
+            echo "UNIT SUCCESS"
+        } > "$log_file"
     else
-        echo "[evo][rollback] 无上一稳定写入点（请检查 evidence.index.json）"
+        set +e
+        ./scripts/tidyflow test > "$log_file" 2>&1
+        local exit_code=$?
+        set -e
+        if [ $exit_code -ne 0 ]; then
+            log_structured "FAILED" "build" "$check_id" 1 "$exit_code" "unit_failed"
+            record_failure "build" "$check_id" "$log_file" "unit tests failed"
+            record_check_result "$check_id" "unit" "fail" "$log_file" "$exit_code" "单元测试失败"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "Rust Core 单元测试日志（失败）"
+            return $exit_code
+        fi
+        if ! rg -q "test result: ok|ok\." "$log_file"; then
+            log_structured "FAILED" "build" "$check_id" 1 1 "unit_marker_missing"
+            record_failure "build" "$check_id" "$log_file" "missing pass marker"
+            record_check_result "$check_id" "unit" "fail" "$log_file" "1" "测试日志未命中通过标记"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "Rust Core 单元测试日志（标记缺失）"
+            return 1
+        fi
     fi
+
+    log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
+    record_check_result "$check_id" "unit" "pass" "$log_file" "0" "单元测试通过"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "Rust Core 单元测试日志"
+    return 0
 }
 
+run_core_build() {
+    local check_id="$CHECK_CORE_BUILD"
+    local log_file="$CORE_BUILD_LOG"
 
-# 解析参数
+    log_structured "INFO" "build" "$check_id" 1 0 "start"
+    ensure_parent_dir "$log_file"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        {
+            echo "=== ${check_id} core build ==="
+            echo "[evo][build] dry-run: cargo build --manifest-path core/Cargo.toml --release"
+            echo "BUILD SUCCESS"
+        } > "$log_file"
+    else
+        set +e
+        cargo build --manifest-path core/Cargo.toml --release > "$log_file" 2>&1
+        local exit_code=$?
+        set -e
+        if [ $exit_code -ne 0 ]; then
+            log_structured "FAILED" "build" "$check_id" 1 "$exit_code" "core_build_failed"
+            record_failure "build" "$check_id" "$log_file" "core build failed"
+            record_check_result "$check_id" "build" "fail" "$log_file" "$exit_code" "Core 构建失败"
+            append_evidence_line "build_log" "$log_file" "$check_id" "ac-1" "Core release 构建日志（失败）"
+            return $exit_code
+        fi
+        echo "BUILD SUCCESS" >> "$log_file"
+    fi
+
+    log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
+    record_check_result "$check_id" "build" "pass" "$log_file" "0" "Core 构建通过"
+    append_evidence_line "build_log" "$log_file" "$check_id" "ac-1" "Core release 构建日志"
+    return 0
+}
+
+run_macos_build() {
+    local check_id="$CHECK_MACOS_BUILD"
+    local log_file="$MACOS_BUILD_LOG"
+
+    log_structured "INFO" "build" "$check_id" 1 0 "start"
+    ensure_parent_dir "$log_file"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        {
+            echo "=== ${check_id} macOS build ==="
+            echo "[evo][build] dry-run: xcodebuild -destination 'platform=macOS'"
+            echo "BUILD SUCCEEDED"
+        } > "$log_file"
+    else
+        set +e
+        xcodebuild -project app/TidyFlow.xcodeproj \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            SKIP_CORE_BUILD=1 \
+            build > "$log_file" 2>&1
+        local exit_code=$?
+        set -e
+        if [ $exit_code -ne 0 ]; then
+            log_structured "FAILED" "build" "$check_id" 1 "$exit_code" "macos_build_failed"
+            record_failure "build" "$check_id" "$log_file" "macOS build failed"
+            record_check_result "$check_id" "build" "fail" "$log_file" "$exit_code" "macOS 构建失败"
+            append_evidence_line "build_log" "$log_file" "$check_id" "ac-1" "macOS Debug 构建日志（失败）"
+            return $exit_code
+        fi
+    fi
+
+    log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
+    record_check_result "$check_id" "build" "pass" "$log_file" "0" "macOS 构建通过"
+    append_evidence_line "build_log" "$log_file" "$check_id" "ac-1" "macOS Debug 构建日志"
+    return 0
+}
+
+run_ios_build() {
+    local check_id="$CHECK_IOS_BUILD"
+    local log_file="$IOS_BUILD_LOG"
+
+    log_structured "INFO" "build" "$check_id" 1 0 "start"
+    ensure_parent_dir "$log_file"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        {
+            echo "=== ${check_id} iOS build ==="
+            echo "[evo][build] dry-run: xcodebuild -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6'"
+            echo "BUILD SUCCEEDED"
+        } > "$log_file"
+    else
+        set +e
+        xcodebuild -project app/TidyFlow.xcodeproj \
+            -scheme TidyFlow \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' \
+            -derivedDataPath build \
+            SKIP_CORE_BUILD=1 \
+            build > "$log_file" 2>&1
+        local exit_code=$?
+        set -e
+        if [ $exit_code -ne 0 ]; then
+            log_structured "FAILED" "build" "$check_id" 1 "$exit_code" "ios_build_failed"
+            record_failure "build" "$check_id" "$log_file" "iOS build failed"
+            record_check_result "$check_id" "build" "fail" "$log_file" "$exit_code" "iOS 构建失败"
+            append_evidence_line "build_log" "$log_file" "$check_id" "ac-1" "iOS Simulator Debug 构建日志（失败）"
+            return $exit_code
+        fi
+    fi
+
+    log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
+    record_check_result "$check_id" "build" "pass" "$log_file" "0" "iOS 构建通过"
+    append_evidence_line "build_log" "$log_file" "$check_id" "ac-1" "iOS Simulator Debug 构建日志"
+    return 0
+}
+
+run_integration_check() {
+    local check_id="$CHECK_INTEGRATION"
+    local log_file="$INTEGRATION_LOG"
+
+    log_structured "INFO" "integration" "$check_id" 1 0 "start"
+    ensure_parent_dir "$log_file"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        {
+            echo "=== ${check_id} integration ==="
+            echo "[evo][integration] dry-run: verify app/core artifacts"
+            echo "[evo][integration] Core binary exists: simulated"
+            echo "[evo][integration] macOS app exists: simulated"
+            echo "INTEGRATION SUCCESS"
+        } > "$log_file"
+    else
+        set +e
+        {
+            echo "=== ${check_id} integration ==="
+            CORE_BINARY="$PROJECT_ROOT/core/target/release/tidyflow-core"
+            if [ ! -f "$CORE_BINARY" ]; then
+                echo "[evo][integration] ERROR: Core 二进制不存在: $CORE_BINARY"
+                exit 1
+            fi
+            echo "[evo][integration] Core binary: $CORE_BINARY"
+
+            APP_PATH="$PROJECT_ROOT/build/Build/Products/Debug/TidyFlow.app"
+            if [ ! -d "$APP_PATH" ]; then
+                APP_PATH="$PROJECT_ROOT/build/Build/Products/Debug/TidyFlow-Debug.app"
+            fi
+            if [ ! -d "$APP_PATH" ]; then
+                echo "[evo][integration] ERROR: Debug App 不存在"
+                exit 1
+            fi
+            echo "[evo][integration] App bundle: $APP_PATH"
+
+            echo "[evo][integration] ws probe: skipped (requires runtime)"
+            echo "INTEGRATION SUCCESS"
+        } > "$log_file" 2>&1
+        local exit_code=$?
+        set -e
+        if [ $exit_code -ne 0 ]; then
+            log_structured "FAILED" "integration" "$check_id" 1 "$exit_code" "integration_failed"
+            record_failure "integration" "$check_id" "$log_file" "integration failed"
+            record_check_result "$check_id" "integration" "fail" "$log_file" "$exit_code" "集成检查失败"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2,ac-5" "集成检查日志（失败）"
+            return $exit_code
+        fi
+    fi
+
+    log_structured "SUCCESS" "integration" "$check_id" 1 0 "done"
+    record_check_result "$check_id" "integration" "pass" "$log_file" "0" "集成检查通过"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-2,ac-5" "集成检查日志"
+    return 0
+}
+
+run_sequence_all() {
+    run_unit_tests || return $?
+    run_core_build || return $?
+    run_macos_build || return $?
+    run_ios_build || return $?
+    run_integration_check || return $?
+    return 0
+}
+
+run_sequence_build() {
+    run_unit_tests || return $?
+    run_core_build || return $?
+    run_macos_build || return $?
+    run_ios_build || return $?
+    return 0
+}
+
+run_sequence_integration() {
+    run_integration_check || return $?
+    return 0
+}
+
+# 更新 evidence.index.json（原子写入 + 幂等合并）
+update_evidence_index() {
+    local final_outcome="$1"
+
+    if ! EVIDENCE_LINES_PATH="$EVIDENCE_LINES_FILE" CHECK_RESULTS_PATH="$CHECK_RESULTS_FILE" python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$STEP" "$final_outcome" "$FAILURE_CHECK_ID" "$FAILURE_LOG_PATH" "$FAILURE_REASON" "$REQUIRED_EVIDENCE_TYPES" <<'PY'
+import hashlib
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+cycle_dir = Path(sys.argv[1])
+cycle_id = sys.argv[2]
+run_id = sys.argv[3]
+step = sys.argv[4]
+outcome = sys.argv[5]
+failed_check = sys.argv[6]
+failed_log = sys.argv[7]
+failed_reason = sys.argv[8]
+required_types = [x.strip() for x in sys.argv[9].split(',') if x.strip()]
+
+index_path = cycle_dir / "evidence.index.json"
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def read_json(path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        backup = path.with_name(path.name + ".corrupted." + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+        path.rename(backup)
+        return {
+            "$schema_version": "1.0",
+            "cycle_id": cycle_id,
+            "updated_at": now,
+            "evidence": [],
+            "failure_context": {
+                "failed_check_id": "index-load",
+                "timestamp": now,
+                "error_message": f"原索引损坏，已备份到 {backup.name}: {e}",
+                "log_keywords": ["[evo][evidence]", "index corrupted"],
+                "screenshot_path": None,
+            },
+            "completeness": {
+                "required_types": required_types,
+                "present_types": [],
+                "missing_types": required_types,
+                "completeness_ratio": 0.0,
+            },
+            "runs": [],
+        }
+
+
+def to_rel(path_str):
+    p = Path(path_str)
+    if p.is_absolute():
+        try:
+            return str(p.relative_to(cycle_dir)).replace("\\", "/")
+        except Exception:
+            return str(p).replace("\\", "/")
+    return path_str.replace("\\", "/")
+
+
+def abs_path(path_str):
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    return cycle_dir / p
+
+
+def sha1_8(path):
+    if not path.exists() or not path.is_file():
+        return ""
+    h = hashlib.sha1()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()[:8]
+
+
+def ensure_list(v):
+    return v if isinstance(v, list) else []
+
+
+data = read_json(index_path)
+if not isinstance(data, dict):
+    data = {}
+
+data["$schema_version"] = "1.0"
+data["cycle_id"] = cycle_id
+
+existing = ensure_list(data.get("evidence"))
+legacy = ensure_list(data.get("evidence_items"))
+for item in legacy:
+    if item not in existing:
+        existing.append(item)
+
+index_by_key = {}
+for item in existing:
+    if not isinstance(item, dict):
+        continue
+    item_run = item.get("run_id", "")
+    item_check = item.get("check_id", "")
+    artifact_hash = item.get("artifact_hash", "")
+    path = item.get("path", "")
+    key = f"{item_run}:{item_check}:{path}:{artifact_hash}"
+    index_by_key[key] = item
+
+lines_path = Path(os.environ.get("EVIDENCE_LINES_PATH", ""))
+if lines_path.exists():
+    for raw in lines_path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        parts = raw.split("\t", 4)
+        if len(parts) < 5:
+            continue
+        ev_type, path_str, check_id, criteria_csv, summary = parts
+        rel = to_rel(path_str)
+        target = abs_path(path_str)
+        artifact_hash = sha1_8(target)
+        criteria_ids = [x for x in criteria_csv.split(',') if x]
+        ev_id_seed = f"{run_id}:{check_id}:{artifact_hash or rel}"
+        ev_id = "ev-" + hashlib.sha1(ev_id_seed.encode("utf-8")).hexdigest()[:12]
+        item = {
+            "evidence_id": ev_id,
+            "type": ev_type,
+            "path": rel,
+            "generated_by_stage": "implement",
+            "linked_criteria_ids": criteria_ids,
+            "summary": summary,
+            "created_at": now,
+            "run_id": run_id,
+            "check_id": check_id,
+            "artifact_hash": artifact_hash,
+            "status": "valid" if target.exists() else "missing",
+        }
+        key = f"{run_id}:{check_id}:{rel}:{artifact_hash}"
+        if key in index_by_key and isinstance(index_by_key[key], dict):
+            old = index_by_key[key]
+            old_id = old.get("evidence_id")
+            old_created = old.get("created_at")
+            if old_id:
+                item["evidence_id"] = old_id
+            if old_created:
+                item["created_at"] = old_created
+        index_by_key[key] = item
+
+all_items = list(index_by_key.values())
+all_items.sort(key=lambda x: (x.get("run_id", ""), x.get("path", "")))
+
+# 兜底修复：确保 evidence_id 唯一（历史数据可能已存在重复）
+seen_ids = set()
+for item in all_items:
+    if not isinstance(item, dict):
+        continue
+    eid = item.get("evidence_id", "")
+    if not eid or eid in seen_ids:
+        seed = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{item.get('path', '')}:{item.get('artifact_hash', '')}"
+        item["evidence_id"] = "ev-" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+        eid = item["evidence_id"]
+    seen_ids.add(eid)
+
+data["evidence"] = all_items
+data["evidence_items"] = all_items
+
+present_types = sorted({item.get("type") for item in all_items if item.get("type") and item.get("status") != "missing"})
+missing_types = sorted([t for t in required_types if t not in present_types])
+ratio = 0.0
+if required_types:
+    ratio = round((len(required_types) - len(missing_types)) / len(required_types), 4)
+
+data["completeness"] = {
+    "required_types": required_types,
+    "present_types": present_types,
+    "missing_types": missing_types,
+    "completeness_ratio": ratio,
+}
+
+if failed_check:
+    data["failure_context"] = {
+        "failed_check_id": failed_check,
+        "timestamp": now,
+        "error_message": failed_reason or "执行失败",
+        "log_keywords": ["[evo][build]", "[evo][integration]", "[evo][rollback]", "[evo][anchor]"],
+        "screenshot_path": None,
+        "log_path": to_rel(failed_log) if failed_log else None,
+    }
+else:
+    data["failure_context"] = None
+
+runs = ensure_list(data.get("runs"))
+run_map = {}
+for run in runs:
+    if isinstance(run, dict) and run.get("run_id"):
+        run_map[run["run_id"]] = run
+
+run_map[run_id] = {
+    "run_id": run_id,
+    "executed_at": now,
+    "step": step,
+    "outcome": outcome,
+    "failed_check_id": failed_check or None,
+}
+
+data["runs"] = sorted(run_map.values(), key=lambda x: x.get("run_id", ""))
+data["updated_at"] = now
+
+fd, temp_path = tempfile.mkstemp(prefix="evidence.index.", suffix=".tmp", dir=str(cycle_dir))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(temp_path, index_path)
+except Exception:
+    try:
+        os.unlink(temp_path)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+    then
+        echo "$LOG_PREFIX [index] FAILED: 写入 evidence.index.json 失败"
+        return 1
+    fi
+
+    return 0
+}
+
+# 证据完整性校验 + metrics 输出
+validate_evidence_and_metrics() {
+    if ! CHECK_RESULTS_PATH="$CHECK_RESULTS_FILE" EVIDENCE_LINES_PATH="$EVIDENCE_LINES_FILE" python3 - "$CYCLE_DIR" "$RUN_ID" "$METRICS_JSON" "$DIFF_SUMMARY" <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+cycle_dir = Path(sys.argv[1])
+run_id = sys.argv[2]
+metrics_path = Path(sys.argv[3])
+diff_path = Path(sys.argv[4])
+index_path = cycle_dir / "evidence.index.json"
+now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+if not index_path.exists():
+    raise SystemExit("index not found")
+
+data = json.loads(index_path.read_text(encoding="utf-8"))
+evidence = data.get("evidence", [])
+if not isinstance(evidence, list):
+    evidence = []
+
+run_evidence = [e for e in evidence if isinstance(e, dict) and e.get("run_id") == run_id]
+
+errors = []
+warnings = []
+id_seen = set()
+
+def path_exists(rel):
+    p = cycle_dir / rel
+    return p.exists(), p
+
+type_ext = {
+    "build_log": {".log", ".txt"},
+    "test_log": {".log", ".txt"},
+    "screenshot": {".png", ".jpg", ".jpeg"},
+    "diff_summary": {".md", ".txt"},
+    "metrics": {".json"},
+    "custom": set(),
+}
+
+for item in run_evidence:
+    eid = item.get("evidence_id")
+    if eid in id_seen:
+        errors.append(f"evidence_id 重复: {eid}")
+    id_seen.add(eid)
+
+    rel = item.get("path", "")
+    ok, abs_p = path_exists(rel)
+    if not ok:
+        errors.append(f"路径不存在: {rel}")
+
+    t = item.get("type")
+    ext = abs_p.suffix.lower() if ok else Path(rel).suffix.lower()
+    expected = type_ext.get(t, set())
+    if expected and ext not in expected:
+        errors.append(f"类型不匹配: type={t} path={rel}")
+
+updated_at = data.get("updated_at", now)
+for item in run_evidence:
+    c = item.get("created_at", now)
+    if c > updated_at:
+        errors.append(f"时间序错误: created_at>{updated_at} ({item.get('evidence_id')})")
+
+required_types = ["build_log", "test_log", "screenshot", "diff_summary", "metrics"]
+present_types = sorted({i.get("type") for i in run_evidence if i.get("status") != "missing"})
+missing_types = sorted([t for t in required_types if t not in present_types])
+completeness_ratio = round((len(required_types) - len(missing_types)) / len(required_types), 4)
+
+check_results = []
+check_lines = Path(os.environ.get("CHECK_RESULTS_PATH", ""))
+if check_lines.exists():
+    for raw in check_lines.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        parts = raw.split("\t", 5)
+        if len(parts) < 6:
+            continue
+        cid, kind, result, log_path, exit_code, note = parts
+        check_results.append({
+            "check_id": cid,
+            "kind": kind,
+            "result": result,
+            "log_path": str(Path(log_path)),
+            "exit_code": int(exit_code),
+            "note": note,
+        })
+
+check_map = {c["check_id"]: c for c in check_results}
+
+def evidence_ids_for(criteria_id):
+    return [i.get("evidence_id") for i in run_evidence if criteria_id in (i.get("linked_criteria_ids") or [])]
+
+screenshot_states = []
+for item in run_evidence:
+    if item.get("type") != "screenshot":
+        continue
+    path = item.get("path", "")
+    for state in ["initial", "processing", "complete", "error"]:
+        if f"-{state}-" in path:
+            screenshot_states.append(state)
+
+ac_results = []
+
+ac1_status = "pass"
+for cid in ["v-2", "v-3", "v-4"]:
+    if check_map.get(cid, {}).get("result") != "pass":
+        ac1_status = "fail"
+if not any(i.get("type") == "build_log" for i in run_evidence):
+    ac1_status = "fail"
+ac_results.append({"criteria_id": "ac-1", "status": ac1_status, "evidence_ids": evidence_ids_for("ac-1")})
+
+ac2_status = "pass"
+for cid in ["v-1", "v-5"]:
+    if check_map.get(cid, {}).get("result") != "pass":
+        ac2_status = "fail"
+if not any(i.get("type") == "test_log" for i in run_evidence):
+    ac2_status = "fail"
+ac_results.append({"criteria_id": "ac-2", "status": ac2_status, "evidence_ids": evidence_ids_for("ac-2")})
+
+has_initial = "initial" in screenshot_states
+has_processing = "processing" in screenshot_states
+has_final = ("complete" in screenshot_states) or ("error" in screenshot_states)
+if has_initial and has_processing and has_final:
+    ac3_status = "pass"
+elif any(screenshot_states):
+    ac3_status = "not_met"
+else:
+    ac3_status = "undetermined"
+ac_results.append({"criteria_id": "ac-3", "status": ac3_status, "evidence_ids": evidence_ids_for("ac-3")})
+
+ac4_status = "pass"
+if errors:
+    ac4_status = "fail"
+if not any(i.get("type") == "diff_summary" for i in run_evidence):
+    ac4_status = "fail"
+if not any(i.get("type") == "metrics" for i in run_evidence):
+    ac4_status = "fail"
+ac_results.append({"criteria_id": "ac-4", "status": ac4_status, "evidence_ids": evidence_ids_for("ac-4")})
+
+ac5_status = "pass"
+for cid in ["v-5"]:
+    if check_map.get(cid, {}).get("result") != "pass":
+        ac5_status = "fail"
+if not any(i.get("type") == "diff_summary" for i in run_evidence):
+    ac5_status = "fail"
+if not any(i.get("type") == "test_log" for i in run_evidence):
+    ac5_status = "fail"
+ac_results.append({"criteria_id": "ac-5", "status": ac5_status, "evidence_ids": evidence_ids_for("ac-5")})
+
+pass_checks = len([c for c in check_results if c["result"] == "pass"])
+total_checks = len(check_results)
+quality_gate_pass_rate = round(pass_checks / total_checks, 4) if total_checks else 0.0
+
+v3 = check_map.get("v-3", {}).get("result") == "pass"
+v4 = check_map.get("v-4", {}).get("result") == "pass"
+parity_ratio = 1.0 if v3 and v4 else 0.0
+
+if ac3_status != "pass":
+    warnings.append("截图证据未达到 initial+processing+complete|error 最小集")
+
+metrics = {
+    "$schema_version": "1.0",
+    "run_id": run_id,
+    "generated_at": now,
+    "checks": check_results,
+    "ac_results": ac_results,
+    "validation": {
+        "errors": errors,
+        "warnings": warnings,
+        "path_valid": len(errors) == 0,
+        "id_unique": len(errors) == 0,
+    },
+    "metrics": {
+        "evidence_completeness_ratio": completeness_ratio,
+        "quality_gate_pass_rate": quality_gate_pass_rate,
+        "cross_platform_parity_rate": parity_ratio,
+        "required_types": required_types,
+        "present_types": present_types,
+        "missing_types": missing_types,
+    },
+}
+
+metrics_path.parent.mkdir(parents=True, exist_ok=True)
+metrics_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+summary_lines = []
+summary_lines.append("## 证据差异摘要")
+summary_lines.append("")
+summary_lines.append(f"- run_id: `{run_id}`")
+summary_lines.append(f"- generated_at: `{now}`")
+summary_lines.append("")
+summary_lines.append("### 检查执行结果")
+for c in check_results:
+    summary_lines.append(f"- {c['check_id']} ({c['kind']}): {c['result']} exit={c['exit_code']} log=`{c['log_path']}`")
+summary_lines.append("")
+summary_lines.append("### 证据完整度")
+summary_lines.append(f"- completeness_ratio: {completeness_ratio}")
+summary_lines.append(f"- present_types: {', '.join(present_types) if present_types else 'none'}")
+summary_lines.append(f"- missing_types: {', '.join(missing_types) if missing_types else 'none'}")
+summary_lines.append("")
+summary_lines.append("### AC 判定")
+for ac in ac_results:
+    ids = ", ".join(ac["evidence_ids"]) if ac["evidence_ids"] else "none"
+    summary_lines.append(f"- {ac['criteria_id']}: {ac['status']} (evidence: {ids})")
+summary_lines.append("")
+if errors:
+    summary_lines.append("### 阻断问题")
+    for e in errors:
+        summary_lines.append(f"- {e}")
+    summary_lines.append("")
+if warnings:
+    summary_lines.append("### 告警")
+    for w in warnings:
+        summary_lines.append(f"- {w}")
+    summary_lines.append("")
+if ac3_status != "pass":
+    summary_lines.append("### 截图补证命令")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state initial`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state processing`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state complete`")
+    summary_lines.append("")
+
+summary_lines.append("### 变更统计")
+summary_lines.append(f"- 新增证据: {len(run_evidence)}")
+summary_lines.append("- 删除证据: 0")
+summary_lines.append("- 变更证据: 0")
+
+
+diff_path.parent.mkdir(parents=True, exist_ok=True)
+diff_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+PY
+    then
+        echo "$LOG_PREFIX [metrics] FAILED: 证据完整性校验失败"
+        return 1
+    fi
+
+    append_evidence_line "metrics" "$METRICS_JSON" "$CHECK_INDEX_AUDIT" "ac-4,ac-5" "证据完整性与一致性校验指标"
+    append_evidence_line "diff_summary" "$DIFF_SUMMARY" "$CHECK_DIFF_AUDIT" "ac-4,ac-5" "证据差异摘要"
+    return 0
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cycle)
@@ -106,28 +884,17 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            echo "Evolution 统一执行入口"
-            echo ""
-            echo "用法:"
-            echo "  $0 --cycle <cycle_id> [options]"
-            echo ""
-            echo "选项:"
-            echo "  --cycle <id>       Cycle ID（必需）"
-            echo "  --run-id <id>      Run ID（默认：时间戳）"
-            echo "  --step <step>      执行步骤：build|integration|all（默认：all）"
-            echo "  --verbose, -v      详细输出"
-            echo "  --dry-run          模拟执行，不实际构建"
-            echo "  --help, -h         显示帮助"
+            usage
             exit 0
             ;;
         *)
             echo "$LOG_PREFIX ERROR: 未知参数: $1"
+            usage
             exit 1
             ;;
     esac
 done
 
-# 校验必需参数
 if [ -z "$CYCLE_ID" ]; then
     echo "$LOG_PREFIX ERROR: 必须指定 --cycle"
     exit 1
@@ -139,476 +906,94 @@ if [ ! -d "$CYCLE_DIR" ]; then
     exit 1
 fi
 
-# 生成 run_id（幂等隔离）
 if [ -z "$RUN_ID" ]; then
-    RUN_ID="$(date +%Y%m%d-%H%M%S)"
+    RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 fi
 
-# 结果目录（按 run_id 隔离）
 RESULT_DIR="$CYCLE_DIR/runs/$RUN_ID"
 EVIDENCE_DIR="$RESULT_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR"
 
-# 日志文件路径
-BUILD_LOG="$EVIDENCE_DIR/build-$RUN_ID.log"
-TEST_LOG="$EVIDENCE_DIR/integration-$RUN_ID.log"
+UNIT_LOG="$EVIDENCE_DIR/unit-$RUN_ID.log"
+CORE_BUILD_LOG="$EVIDENCE_DIR/core-build-$RUN_ID.log"
+MACOS_BUILD_LOG="$EVIDENCE_DIR/macos-build-$RUN_ID.log"
+IOS_BUILD_LOG="$EVIDENCE_DIR/ios-build-$RUN_ID.log"
+INTEGRATION_LOG="$EVIDENCE_DIR/integration-$RUN_ID.log"
+METRICS_JSON="$EVIDENCE_DIR/metrics-$RUN_ID.json"
 DIFF_SUMMARY="$EVIDENCE_DIR/diff-$RUN_ID.md"
+CHECK_RESULTS_FILE="$RESULT_DIR/.check-results.tsv"
+EVIDENCE_LINES_FILE="$RESULT_DIR/.evidence-lines.tsv"
 EVIDENCE_INDEX="$CYCLE_DIR/evidence.index.json"
 
-RUN_COMMAND="$0 --cycle $CYCLE_ID --run-id $RUN_ID --step $STEP"
-if [ "$VERBOSE" = "1" ]; then
-    RUN_COMMAND="$RUN_COMMAND --verbose"
-fi
-if [ "$DRY_RUN" = "1" ]; then
-    RUN_COMMAND="$RUN_COMMAND --dry-run"
-fi
+: > "$CHECK_RESULTS_FILE"
+: > "$EVIDENCE_LINES_FILE"
 
-echo "$LOG_PREFIX 开始执行"
-echo "$LOG_PREFIX Cycle: $CYCLE_ID"
-echo "$LOG_PREFIX Run ID: $RUN_ID"
-echo "$LOG_PREFIX Step: $STEP"
+echo "$LOG_PREFIX 开始执行 cycle=$CYCLE_ID run=$RUN_ID step=$STEP dry_run=$DRY_RUN"
 echo "$LOG_PREFIX 结果目录: $RESULT_DIR"
 
-# 记录执行前证据索引状态
-PRE_INDEX="$RESULT_DIR/.pre_evidence_index.json"
-if [ -f "$CYCLE_DIR/evidence.index.json" ]; then
-    cp "$CYCLE_DIR/evidence.index.json" "$PRE_INDEX"
-fi
-
-# ============================================
-# Step: Build
-# ============================================
-update_evidence_index() {
-    local STEP_NAME="$1"
-    local OUTCOME="$2"
-    local EVIDENCE_LINES="${3:-}"
-    local INDEX_PATH="$EVIDENCE_INDEX"
-
-    if ! EVIDENCE_LINES="$EVIDENCE_LINES" python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$STEP_NAME" "$OUTCOME" "$RUN_COMMAND" <<'PY'
-import sys
-import json
-import os
-import hashlib
-import tempfile
-from datetime import datetime, timezone
-
-cycle_dir, cycle_id, run_id, step, outcome, command = sys.argv[1:7]
-index_path = os.path.join(cycle_dir, "evidence.index.json")
-now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-def compute_artifact_hash(file_path):
-    """Compute SHA1 hash of file content (first 8 chars)"""
-    if not os.path.isfile(file_path):
-        return None
-    try:
-        sha1 = hashlib.sha1()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                sha1.update(chunk)
-        return sha1.hexdigest()[:8]
-    except Exception:
-        return None
-
-def load_index(path):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except json.JSONDecodeError as e:
-        print(f"ERROR: index corrupted: {e}", file=sys.stderr)
-        return {"__error__": {"type": "corrupted", "message": str(e)}}
-    except Exception as e:
-        print(f"ERROR: index load failed: {e}", file=sys.stderr)
-        return {"__error__": {"type": "load_failed", "message": str(e)}}
-
-data = load_index(index_path)
-
-# Handle corrupted index gracefully
-if isinstance(data, dict) and "__error__" in data:
-    error_info = data["__error__"]
-    backup_path = index_path + ".corrupted." + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    if os.path.exists(index_path):
-        os.rename(index_path, backup_path)
-        print(f"WARNING: corrupted index backed up to {backup_path}", file=sys.stderr)
-    data = {}
-else:
-    error_info = None
-
-if not isinstance(data, dict):
-    data = {}
-
-data["$schema_version"] = "1.0"
-data["cycle_id"] = cycle_id
-
-evidence_items = data.get("evidence_items", [])
-if not isinstance(evidence_items, list):
-    evidence_items = []
-
-# Index by check_id + artifact_hash for idempotent merge
-index_by_key = {}
-for item in evidence_items:
-    if not isinstance(item, dict):
-        continue
-    criteria_ids = item.get("linked_criteria_ids", [])
-    artifact_hash = item.get("artifact_hash", "")
-    criteria_key = ",".join(sorted(criteria_ids)) if criteria_ids else ""
-    key = f"{criteria_key}:{artifact_hash}"
-    index_by_key[key] = item
-
-for raw_line in os.environ.get("EVIDENCE_LINES", "").splitlines():
-    line = raw_line.strip()
-    if not line:
-        continue
-    parts = line.split("\t", 4)
-    if len(parts) < 5:
-        continue
-    evidence_type, path, stage, criteria_csv, summary = parts
-    path = path.strip()
-    if not path:
-        continue
-    if os.path.isabs(path):
-        rel_path = os.path.relpath(path, cycle_dir)
-    else:
-        rel_path = path
-    rel_path = rel_path.replace("\\", "/")
-    
-    # Compute artifact_hash from file content
-    abs_path = path if os.path.isabs(path) else os.path.join(cycle_dir, path)
-    artifact_hash = compute_artifact_hash(abs_path) or ""
-    
-    linked_criteria_ids = [c for c in criteria_csv.split(",") if c]
-    criteria_key = ",".join(sorted(linked_criteria_ids)) if linked_criteria_ids else ""
-    merge_key = f"{criteria_key}:{artifact_hash}"
-    
-    evidence_id = "ev-" + hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:8]
-    item = {
-        "evidence_id": evidence_id,
-        "type": evidence_type,
-        "path": rel_path,
-        "artifact_hash": artifact_hash,
-        "generated_by_stage": stage,
-        "linked_criteria_ids": linked_criteria_ids,
-        "summary": summary,
-        "created_at": now,
-        "run_id": run_id,
-    }
-    
-    # Preserve existing evidence_id if merging same check_id+artifact_hash
-    existing = index_by_key.get(merge_key)
-    if isinstance(existing, dict) and existing.get("evidence_id"):
-        item["evidence_id"] = existing.get("evidence_id")
-    index_by_key[merge_key] = item
-
-data["evidence_items"] = sorted(index_by_key.values(), key=lambda x: x.get("path", ""))
-
-runs = data.get("runs", [])
-if not isinstance(runs, list):
-    runs = []
-
-run_map = {}
-for run in runs:
-    if not isinstance(run, dict):
-        continue
-    run_id_key = run.get("run_id")
-    if run_id_key:
-        run_map[run_id_key] = run
-
-run_map[run_id] = {
-    "run_id": run_id,
-    "executed_at": now,
-    "step": step,
-    "outcome": outcome,
-    "command": command,
-}
-
-data["runs"] = sorted(run_map.values(), key=lambda x: x.get("run_id", ""))
-data["updated_at"] = now
-
-# Atomic write: write to temp file then rename
-temp_dir = os.path.dirname(index_path) or "."
-temp_fd, temp_path = tempfile.mkstemp(suffix=".json", dir=temp_dir)
-try:
-    with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    os.rename(temp_path, index_path)
-except Exception as e:
-    if os.path.exists(temp_path):
-        os.unlink(temp_path)
-    error_context = {
-        "error": "index_write_failed",
-        "message": str(e),
-        "cycle_id": cycle_id,
-        "run_id": run_id,
-        "index_path": index_path,
-        "evidence_items_count": len(data.get("evidence_items", [])),
-        "runs_count": len(data.get("runs", [])),
-    }
-    print(json.dumps(error_context, ensure_ascii=False), file=sys.stderr)
-    sys.exit(1)
-PY
-    then
-        echo "$LOG_PREFIX [index] FAILED 写入 evidence.index.json"
-        echo "$LOG_PREFIX [index] cycle=$CYCLE_ID run=$RUN_ID step=$STEP_NAME outcome=$OUTCOME"
-        echo "$LOG_PREFIX [index] 结果目录: $RESULT_DIR"
-        return 1
-    fi
-
-    echo "$LOG_PREFIX [index] 更新完成: $INDEX_PATH"
-    return 0
-}
-
-run_build() {
-    echo "$LOG_PREFIX [build] 开始构建..."
-    echo "$LOG_PREFIX [build] 时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    
-    if [ "$DRY_RUN" = "1" ]; then
-        echo "$LOG_PREFIX [build] DRY RUN: 模拟执行构建步骤"
-        echo "[evo][build] DRY RUN 模拟" >> "$BUILD_LOG"
-        echo "BUILD SUCCESS (dry-run)" >> "$BUILD_LOG"
-        echo "$LOG_PREFIX [build] DRY RUN SUCCESS"
-        return 0
-    fi
-    
-    local BUILD_START=$(date +%s)
-    local BUILD_EXIT=0
-    
-    # 构建 Rust Core
-    {
-        echo "=== Rust Core Build ==="
-        echo "[evo][build] 构建开始: tidyflow-core"
-        cd "$PROJECT_ROOT/core"
-        cargo build --release 2>&1
-        echo "[evo][build] 构建结束: tidyflow-core 退出码=$?"
-    } >> "$BUILD_LOG" 2>&1 || BUILD_EXIT=$?
-    
-    # 构建 Swift App
-    {
-        echo ""
-        echo "=== Swift App Build ==="
-        echo "[evo][build] 构建开始: TidyFlow.app"
-        cd "$PROJECT_ROOT"
-        xcodebuild -project app/TidyFlow.xcodeproj \
-            -scheme TidyFlow \
-            -configuration Debug \
-            -derivedDataPath build \
-            SKIP_CORE_BUILD=1 \
-            build 2>&1
-        local XCODE_EXIT=$?
-        echo "[evo][build] 构建结束: TidyFlow.app 退出码=$XCODE_EXIT"
-        
-        if [ $XCODE_EXIT -eq 0 ]; then
-            echo "BUILD SUCCESS"
-        fi
-    } >> "$BUILD_LOG" 2>&1 || BUILD_EXIT=$?
-    
-    local BUILD_END=$(date +%s)
-    local BUILD_DURATION=$((BUILD_END - BUILD_START))
-    
-    echo "$LOG_PREFIX [build] 耗时: ${BUILD_DURATION}s"
-    echo "$LOG_PREFIX [build] 日志: $BUILD_LOG"
-    
-    if [ $BUILD_EXIT -ne 0 ]; then
-        log_structured "FAILED" "build" "v-1" 1
-        dump_failure_anchors "build" "$BUILD_LOG"
-        return $BUILD_EXIT
-    fi
-    
-    # 校验构建产物
-    if ! grep -q "BUILD SUCCESS" "$BUILD_LOG"; then
-        log_structured "FAILED" "build" "v-1" 1
-        dump_failure_anchors "build" "$BUILD_LOG"
-        return 1
-    fi
-    
-    echo "$LOG_PREFIX [build] SUCCESS"
-    local BUILD_EVIDENCE_LINES=""
-    BUILD_EVIDENCE_LINES+="build_log"$'\t'"$BUILD_LOG"$'\t'"implement"$'\t'"ac-1"$'\t'"构建日志"$'\n'
-    update_evidence_index "build" "success" "$BUILD_EVIDENCE_LINES" || return 1
-    return 0
-}
-
-# ============================================
-# Step: Integration
-# ============================================
-run_integration() {
-    echo "$LOG_PREFIX [integration] 开始集成测试..."
-    echo "$LOG_PREFIX [integration] 时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    
-    if [ "$DRY_RUN" = "1" ]; then
-        echo "$LOG_PREFIX [integration] DRY RUN: 模拟执行集成测试"
-        echo "[evo][run] DRY RUN 模拟" >> "$TEST_LOG"
-        echo "[evo][run] app/core 启动测试开始 (dry-run)" >> "$TEST_LOG"
-        echo "[evo][run] Core 二进制就绪: (simulated)" >> "$TEST_LOG"
-        echo "[evo][run] App 产物就绪: (simulated)" >> "$TEST_LOG"
-        echo "[evo][ws] 连接测试 - 跳过（dry-run）" >> "$TEST_LOG"
-        echo "INTEGRATION SUCCESS (dry-run)" >> "$TEST_LOG"
-        echo "$LOG_PREFIX [integration] DRY RUN SUCCESS"
-        return 0
-    fi
-    
-    local TEST_START=$(date +%s)
-    local TEST_EXIT=0
-    
-    {
-        echo "=== Integration Test ==="
-        echo "[evo][run] app/core 启动测试开始"
-        
-        # 检查 Core 二进制
-        CORE_BINARY="$PROJECT_ROOT/core/target/release/tidyflow-core"
-        if [ ! -f "$CORE_BINARY" ]; then
-            echo "[evo][run] ERROR: Core 二进制不存在"
-            exit 1
-        fi
-        echo "[evo][run] Core 二进制就绪: $CORE_BINARY"
-        
-        # 检查 App 产物
-        APP_PATH="$PROJECT_ROOT/build/Build/Products/Debug/TidyFlow-Debug.app"
-        if [ ! -d "$APP_PATH" ]; then
-            echo "[evo][run] ERROR: App 产物不存在"
-            exit 1
-        fi
-        echo "[evo][run] App 产物就绪: $APP_PATH"
-        
-        # 模拟集成检查（实际项目中可启动服务并验证 WebSocket 通信）
-        echo "[evo][run] 模拟集成验证..."
-        echo "[evo][ws] 连接测试 - 跳过（需要完整环境）"
-        echo "[evo][run] 集成测试完成"
-        echo "INTEGRATION SUCCESS"
-        
-    } >> "$TEST_LOG" 2>&1 || TEST_EXIT=$?
-    
-    local TEST_END=$(date +%s)
-    local TEST_DURATION=$((TEST_END - TEST_START))
-    
-    echo "$LOG_PREFIX [integration] 耗时: ${TEST_DURATION}s"
-    echo "$LOG_PREFIX [integration] 日志: $TEST_LOG"
-    
-    if [ $TEST_EXIT -ne 0 ]; then
-        log_structured "FAILED" "integration" "v-2" 1
-        dump_failure_anchors "integration" "$TEST_LOG"
-        return $TEST_EXIT
-    fi
-    
-    if ! grep -q "INTEGRATION SUCCESS" "$TEST_LOG"; then
-        log_structured "FAILED" "integration" "v-2" 1
-        dump_failure_anchors "integration" "$TEST_LOG"
-        return 1
-    fi
-    
-    echo "$LOG_PREFIX [integration] SUCCESS"
-    local INTEGRATION_EVIDENCE_LINES=""
-    INTEGRATION_EVIDENCE_LINES+="test_log"$'\t'"$TEST_LOG"$'\t'"implement"$'\t'"ac-2"$'\t'"集成测试日志"$'\n'
-    update_evidence_index "integration" "success" "$INTEGRATION_EVIDENCE_LINES" || return 1
-    return 0
-}
-
-# ============================================
-# Generate Diff Summary
-# ============================================
-generate_diff_summary() {
-    echo "$LOG_PREFIX [diff] 生成证据差异摘要..."
-    
-    cat > "$DIFF_SUMMARY" << EOF
-## 证据差异摘要
-
-**Run ID**: $RUN_ID
-**生成时间**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-### 本次执行产出
-
-| 证据类型 | 路径 |
-|---------|------|
-| build_log | \`$BUILD_LOG\` |
-| test_log | \`$TEST_LOG\` |
-| diff_summary | \`$DIFF_SUMMARY\` |
-
-### 证据统计
-
-- 新增证据: 3
-- 删除证据: 0
-- 变更证据: 0
-
-### 关联验收标准
-
-- ac-1: build_log, test_log ✓
-- ac-2: test_log, diff_summary ✓
-
-### 备注
-
-本次为 Evolution 基础设施初始建设，统一执行入口已创建。
-EOF
-    
-    echo "$LOG_PREFIX [diff] 差异摘要: $DIFF_SUMMARY"
-}
-
-# ============================================
-# Main Execution
-# ============================================
 MAIN_EXIT=0
-
 case "$STEP" in
+    all)
+        run_sequence_all || MAIN_EXIT=$?
+        ;;
     build)
-        run_build || MAIN_EXIT=$?
+        run_sequence_build || MAIN_EXIT=$?
         ;;
     integration)
-        run_integration || MAIN_EXIT=$?
-        ;;
-    all)
-        run_build || MAIN_EXIT=$?
-        if [ $MAIN_EXIT -eq 0 ]; then
-            run_integration || MAIN_EXIT=$?
-        fi
+        run_sequence_integration || MAIN_EXIT=$?
         ;;
     *)
         echo "$LOG_PREFIX ERROR: 未知步骤: $STEP"
-        exit 1
+        MAIN_EXIT=2
         ;;
 esac
 
-# 始终生成差异摘要
-generate_diff_summary
+# 先落地基础证据（日志类），再做一致性校验并补充 metrics/diff
+BASE_OUTCOME="success"
+if [ $MAIN_EXIT -ne 0 ]; then
+    if [ "$STEP" = "all" ] || [ "$STEP" = "build" ]; then
+        BASE_OUTCOME="partial"
+    else
+        BASE_OUTCOME="failed"
+    fi
+fi
+
+if ! update_evidence_index "$BASE_OUTCOME"; then
+    if [ $MAIN_EXIT -eq 0 ]; then
+        MAIN_EXIT=1
+    fi
+fi
+
+# 不论主流程是否失败，都尝试生成 metrics + diff（最小可复核）
+if ! validate_evidence_and_metrics; then
+    if [ $MAIN_EXIT -eq 0 ]; then
+        MAIN_EXIT=1
+    fi
+fi
 
 FINAL_OUTCOME="success"
 if [ $MAIN_EXIT -ne 0 ]; then
-    if [ "$STEP" = "all" ]; then
+    if [ "$STEP" = "all" ] || [ "$STEP" = "build" ]; then
         FINAL_OUTCOME="partial"
     else
         FINAL_OUTCOME="failed"
     fi
 fi
 
-FINAL_EVIDENCE_LINES=""
-if [ -f "$BUILD_LOG" ]; then
-    FINAL_EVIDENCE_LINES+="build_log"$'\t'"$BUILD_LOG"$'\t'"implement"$'\t'"ac-1"$'\t'"构建日志"$'\n'
-fi
-if [ -f "$TEST_LOG" ]; then
-    FINAL_EVIDENCE_LINES+="test_log"$'\t'"$TEST_LOG"$'\t'"implement"$'\t'"ac-2"$'\t'"集成测试日志"$'\n'
-fi
-if [ -f "$DIFF_SUMMARY" ]; then
-    FINAL_EVIDENCE_LINES+="diff_summary"$'\t'"$DIFF_SUMMARY"$'\t'"implement"$'\t'"ac-1,ac-2,ac-3"$'\t'"证据差异摘要"$'\n'
+# 第二次写入，补充 metrics/diff 证据与最终 outcome。
+if ! update_evidence_index "$FINAL_OUTCOME"; then
+    if [ $MAIN_EXIT -eq 0 ]; then
+        MAIN_EXIT=1
+    fi
 fi
 
-INDEX_EXIT=0
-update_evidence_index "$STEP" "$FINAL_OUTCOME" "$FINAL_EVIDENCE_LINES" || INDEX_EXIT=$?
-if [ $INDEX_EXIT -ne 0 ] && [ $MAIN_EXIT -eq 0 ]; then
-    MAIN_EXIT=$INDEX_EXIT
-fi
-
-# 输出结果
 echo ""
 echo "============================================"
 echo "$LOG_PREFIX 执行完成"
-echo "$LOG_PREFIX 结果目录: $RESULT_DIR"
-echo "$LOG_PREFIX 退出码: $MAIN_EXIT"
+echo "$LOG_PREFIX run=$RUN_ID exit=$MAIN_EXIT outcome=$FINAL_OUTCOME"
+echo "$LOG_PREFIX evidence_index=$EVIDENCE_INDEX"
+echo "$LOG_PREFIX metrics=$METRICS_JSON"
+echo "$LOG_PREFIX diff=$DIFF_SUMMARY"
 echo "============================================"
-
-if [ $MAIN_EXIT -ne 0 ]; then
-    echo "$LOG_PREFIX FAILED"
-    echo "$LOG_PREFIX 查看日志:"
-    echo "  cat $BUILD_LOG"
-    echo "  cat $TEST_LOG"
-fi
 
 exit $MAIN_EXIT
