@@ -695,10 +695,16 @@ class AppState: ObservableObject {
         var unresolvedAgent = hint.agent
         var unresolvedProvider = hint.modelProviderID
         var unresolvedModel = hint.modelID
+        var resolvedAgentInfo: AIAgentInfo?
 
         if let rawAgent = hint.agent, let resolvedAgent = resolveAIAgentName(rawAgent, for: tool) {
             setAISelectedAgent(resolvedAgent, for: tool)
+            resolvedAgentInfo = aiAgents(for: tool).first(where: { $0.name == resolvedAgent })
             unresolvedAgent = nil
+        }
+
+        if hint.modelID == nil, let resolvedAgentInfo {
+            applyAgentDefaultModel(resolvedAgentInfo, for: tool)
         }
 
         if let rawModel = hint.modelID {
@@ -731,6 +737,35 @@ class AppState: ObservableObject {
         if let caseInsensitive = agents.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
             return caseInsensitive.name
         }
+        let normalizedRaw = normalizeSelectionHintKey(trimmed)
+        if let normalizedNameMatched = agents.first(where: {
+            normalizeSelectionHintKey($0.name) == normalizedRaw
+        }) {
+            return normalizedNameMatched.name
+        }
+        if let modeMatched = agents.first(where: {
+            guard let mode = $0.mode, !mode.isEmpty else { return false }
+            return mode.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            return modeMatched.name
+        }
+        if let normalizedModeMatched = agents.first(where: {
+            guard let mode = $0.mode, !mode.isEmpty else { return false }
+            return normalizeSelectionHintKey(mode) == normalizedRaw
+        }) {
+            return normalizedModeMatched.name
+        }
+        if let containsMatched = agents.first(where: {
+            let nameKey = normalizeSelectionHintKey($0.name)
+            if !nameKey.isEmpty, normalizedRaw.contains(nameKey) {
+                return true
+            }
+            guard let mode = $0.mode else { return false }
+            let modeKey = normalizeSelectionHintKey(mode)
+            return !modeKey.isEmpty && normalizedRaw.contains(modeKey)
+        }) {
+            return containsMatched.name
+        }
         return nil
     }
 
@@ -744,15 +779,53 @@ class AppState: ObservableObject {
         let providers = aiProvidersByTool[tool] ?? []
         guard !providers.isEmpty else { return nil }
 
-        let providerHint = rawProviderHint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let providerHint, !providerHint.isEmpty {
-            let matchedProvider = providers.first {
-                $0.id == providerHint || $0.id.caseInsensitiveCompare(providerHint) == .orderedSame
+        if rawProviderHint == nil,
+           let slash = modelID.firstIndex(of: "/") {
+            let providerCandidate = String(modelID[..<slash]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelCandidate = String(modelID[modelID.index(after: slash)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !providerCandidate.isEmpty,
+               !modelCandidate.isEmpty,
+               let selection = resolveAIModelSelection(
+                   modelID: modelCandidate,
+                   providerHint: providerCandidate,
+                   for: tool
+               ) {
+                return selection
             }
+        }
+
+        let providerHint = rawProviderHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModelID = self.normalizeSelectionHintKey(modelID)
+        let modelMatches: (AIModelInfo) -> Bool = { model in
+            if model.id == modelID || model.id.caseInsensitiveCompare(modelID) == .orderedSame {
+                return true
+            }
+            if !normalizedModelID.isEmpty, self.normalizeSelectionHintKey(model.id) == normalizedModelID {
+                return true
+            }
+            if model.name.caseInsensitiveCompare(modelID) == .orderedSame {
+                return true
+            }
+            return !normalizedModelID.isEmpty && self.normalizeSelectionHintKey(model.name) == normalizedModelID
+        }
+
+        let providerMatchesHint: (AIProviderInfo, String) -> Bool = { provider, hint in
+            if provider.id == hint || provider.id.caseInsensitiveCompare(hint) == .orderedSame {
+                return true
+            }
+            if provider.name.caseInsensitiveCompare(hint) == .orderedSame {
+                return true
+            }
+            let normalizedHint = self.normalizeSelectionHintKey(hint)
+            guard !normalizedHint.isEmpty else { return false }
+            return self.normalizeSelectionHintKey(provider.id) == normalizedHint ||
+                self.normalizeSelectionHintKey(provider.name) == normalizedHint
+        }
+
+        if let providerHint, !providerHint.isEmpty {
+            let matchedProvider = providers.first { providerMatchesHint($0, providerHint) }
             guard let provider = matchedProvider else { return nil }
-            if let model = provider.models.first(where: {
-                $0.id == modelID || $0.id.caseInsensitiveCompare(modelID) == .orderedSame
-            }) {
+            if let model = provider.models.first(where: modelMatches) {
                 return AIModelSelection(providerID: provider.id, modelID: model.id)
             }
             return nil
@@ -760,7 +833,7 @@ class AppState: ObservableObject {
 
         var matches: [AIModelSelection] = []
         for provider in providers {
-            for model in provider.models where model.id == modelID || model.id.caseInsensitiveCompare(modelID) == .orderedSame {
+            for model in provider.models where modelMatches(model) {
                 matches.append(AIModelSelection(providerID: provider.id, modelID: model.id))
             }
         }
@@ -768,6 +841,119 @@ class AppState: ObservableObject {
             return matches[0]
         }
         return nil
+    }
+
+    func applyAISessionSelectionHintFromPart(
+        _ part: AIProtocolPartInfo,
+        sessionId: String,
+        for tool: AIChatTool
+    ) {
+        guard let hint = inferAISessionSelectionHint(from: part), !hint.isEmpty else { return }
+        applyAISessionSelectionHint(hint, sessionId: sessionId, for: tool)
+    }
+
+    private func inferAISessionSelectionHint(from part: AIProtocolPartInfo) -> AISessionSelectionHint? {
+        var resolvedAgent: String?
+        var resolvedProvider: String?
+        var resolvedModel: String?
+
+        let sources: [[String: Any]] = [part.source, part.toolPartMetadata, part.toolState].compactMap { $0 }
+        for source in sources {
+            if resolvedAgent == nil {
+                resolvedAgent = findSelectionHintValue(
+                    in: source,
+                    keys: [
+                        "agent",
+                        "agent_name",
+                        "selected_agent",
+                        "current_agent",
+                        "mode",
+                        "mode_id",
+                        "current_mode_id",
+                        "selected_mode_id",
+                        "collaboration_mode",
+                    ]
+                )
+            }
+            if resolvedProvider == nil {
+                resolvedProvider = findSelectionHintValue(
+                    in: source,
+                    keys: [
+                        "model_provider_id",
+                        "provider_id",
+                        "provider",
+                        "model_provider",
+                    ]
+                )
+            }
+            if resolvedModel == nil {
+                resolvedModel = findSelectionHintValue(
+                    in: source,
+                    keys: [
+                        "model_id",
+                        "model",
+                        "current_model_id",
+                        "selected_model_id",
+                    ]
+                )
+            }
+            if resolvedAgent != nil && resolvedModel != nil {
+                break
+            }
+        }
+
+        let hint = AISessionSelectionHint(
+            agent: resolvedAgent,
+            modelProviderID: resolvedProvider,
+            modelID: resolvedModel
+        )
+        return hint.isEmpty ? nil : hint
+    }
+
+    private func findSelectionHintValue(in value: Any?, keys: [String]) -> String? {
+        guard let value else { return nil }
+        let normalizedKeys = Set(keys.map(normalizeSelectionHintKey))
+        var queue: [Any] = [value]
+        var cursor = 0
+        while cursor < queue.count {
+            let current = queue[cursor]
+            cursor += 1
+
+            if let dict = current as? [String: Any] {
+                for (key, nested) in dict {
+                    if normalizedKeys.contains(normalizeSelectionHintKey(key)),
+                       let parsed = parseSelectionHintScalar(nested) {
+                        return parsed
+                    }
+                    queue.append(nested)
+                }
+                continue
+            }
+            if let array = current as? [Any] {
+                queue.append(contentsOf: array)
+            }
+        }
+        return nil
+    }
+
+    private func parseSelectionHintScalar(_ value: Any?) -> String? {
+        switch value {
+        case let text as String:
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let number as NSNumber:
+            let text = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        default:
+            return nil
+        }
+    }
+
+    private func normalizeSelectionHintKey(_ raw: String) -> String {
+        raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
     }
 
     private func refreshMergedAISessions() {

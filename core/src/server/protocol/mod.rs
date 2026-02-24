@@ -1236,6 +1236,8 @@ pub enum ServerMessage {
         session_id: String,
         title: String,
         updated_at: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_hint: Option<ai::SessionSelectionHint>,
     },
     #[serde(rename = "ai_session_list")]
     AISessionListV2 {

@@ -9,6 +9,7 @@ struct AISessionStartedV2 {
     let sessionId: String
     let title: String
     let updatedAt: Int64
+    let selectionHint: AISessionSelectionHint?
 
     static func from(json: [String: Any]) -> AISessionStartedV2? {
         guard let projectName = json["project_name"] as? String,
@@ -17,13 +18,15 @@ struct AISessionStartedV2 {
               let sessionId = json["session_id"] as? String,
               let title = json["title"] as? String else { return nil }
         let updatedAt = parseInt64(json["updated_at"])
+        let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
         return AISessionStartedV2(
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
             title: title,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            selectionHint: selectionHint
         )
     }
 }

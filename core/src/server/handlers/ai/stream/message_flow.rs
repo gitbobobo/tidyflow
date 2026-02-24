@@ -45,6 +45,23 @@ pub(crate) async fn handle_ai_chat_start(
 
     let session = agent.create_session(&directory, &title).await?;
 
+    let selection_hint = match agent.session_selection_hint(&directory, &session.id).await {
+        Ok(hint) => hint.and_then(|adapter_hint| {
+            merge_session_selection_hint(adapter_hint, crate::ai::AiSessionSelectionHint::default())
+        }),
+        Err(e) => {
+            warn!(
+                "AIChatStart selection hint lookup failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                project_name,
+                workspace_name,
+                ai_tool,
+                session.id,
+                e
+            );
+            None
+        }
+    };
+
     {
         let mut ai = ai_state.lock().await;
         let dir_key = tool_directory_key(&ai_tool, &directory);
@@ -58,6 +75,7 @@ pub(crate) async fn handle_ai_chat_start(
         session_id: session.id,
         title: session.title,
         updated_at: session.updated_at,
+        selection_hint,
     };
     send_message(socket, &msg).await?;
     let _ = task_broadcast_tx.send(TaskBroadcastEvent {

@@ -93,6 +93,11 @@ struct AITabView: View {
                     return
                 }
                 pendingSendRequest = nil
+                applyPendingSelectionHintIfNeeded(
+                    pending.kind,
+                    sessionId: newSessionId,
+                    aiTool: pending.aiTool
+                )
                 sendPendingRequest(
                     pending.kind,
                     sessionId: newSessionId,
@@ -775,6 +780,35 @@ struct AITabView: View {
         }
     }
 
+    private func applyPendingSelectionHintIfNeeded(
+        _ kind: PendingAIRequestKind,
+        sessionId: String,
+        aiTool: AIChatTool
+    ) {
+        let hint: AISessionSelectionHint? = {
+            switch kind {
+            case let .message(_, _, model, agent, _):
+                return pendingSelectionHint(model: model, agent: agent)
+            case let .command(_, _, _, model, agent, _):
+                return pendingSelectionHint(model: model, agent: agent)
+            }
+        }()
+
+        guard let hint, !hint.isEmpty else { return }
+        appState.applyAISessionSelectionHint(hint, sessionId: sessionId, for: aiTool)
+    }
+
+    private func pendingSelectionHint(
+        model: [String: String]?,
+        agent: String?
+    ) -> AISessionSelectionHint {
+        AISessionSelectionHint(
+            agent: agent,
+            modelProviderID: model?["provider_id"],
+            modelID: model?["model_id"]
+        )
+    }
+
     /// 会话标题仅从非空输入提取；空输入（如仅图片）返回 nil 以触发后端默认标题。
     private func sessionStartTitle(from text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -990,13 +1024,18 @@ struct AITabView: View {
         let agentName = appState.aiSelectedAgent
         let aiTool = appState.aiChatTool
 
-        // 严格模式：以代理回传的 user message 为准，发送后先等待回传。
         autocomplete.reset()
-        aiChatStore.beginAwaitingUserEcho()
+        if slashCommand == nil {
+            aiChatStore.beginAwaitingUserEcho()
+        } else {
+            aiChatStore.beginAwaitingAssistantOnly()
+        }
         aiChatStore.isStreaming = true
 
-        // 插入用户消息占位（无 messageId），等待服务端 user echo 绑定真实 ID。
-        aiChatStore.insertUserPlaceholder(text: text)
+        if slashCommand == nil {
+            // 插入用户消息占位（无 messageId），等待服务端 user echo 绑定真实 ID。
+            aiChatStore.insertUserPlaceholder(text: text)
+        }
 
         // 发送请求已入队后立即清空输入区；消息展示以代理回传的 user message 为准。
         inputText = ""

@@ -7,6 +7,11 @@ extension AppState {
 
         let store = aiStore(for: ev.aiTool)
         store.setCurrentSessionId(ev.sessionId)
+        applyAISessionSelectionHint(
+            ev.selectionHint,
+            sessionId: ev.sessionId,
+            for: ev.aiTool
+        )
         let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
         let session = AISessionInfo(
             projectName: ev.projectName,
@@ -146,6 +151,11 @@ extension AppState {
             "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
         )
         store.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
+        applyAISessionSelectionHintFromPart(
+            ev.part,
+            sessionId: ev.sessionId,
+            for: ev.aiTool
+        )
         setBadgeRunning(true, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
     }
@@ -182,6 +192,15 @@ extension AppState {
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
         store.handleChatDone(sessionId: ev.sessionId)
+        if store.currentSessionId == ev.sessionId {
+            wsClient.requestAISessionMessages(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                limit: 200
+            )
+        }
         setBadgeRunning(false, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
     }
