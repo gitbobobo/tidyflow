@@ -305,14 +305,6 @@
 /* 帮助 / FAQ */
 "help.faq" = "常见问题";
 "help.faq.windowTitle" = "常见问题";
-"help.faq.lsp.title" = "Swift LSP 报错 \"Cannot find type in scope\"";
-"help.faq.lsp.desc" = "这通常是因为语言服务器找不到 Xcode 构建配置。";
-"help.faq.lsp.step1" = "1. 安装 xcode-build-server：";
-"help.faq.lsp.step2" = "2. 在项目根目录执行：";
-"help.faq.lsp.step2.or" = "或者对于 .xcodeproj：";
-"help.faq.lsp.step2.hint" = "将 YourScheme 替换为实际的 Xcode Scheme 名称（在 Xcode 工具栏可见，如 TidyFlow）。";
-"help.faq.lsp.step3" = "3. 重启编辑器或语言服务器。";
-"help.faq.lsp.footer" = "完成后 LSP 即可正确识别项目中定义的所有类型。";
 "projectConfig.path" = "路径：";
 "projectConfig.commands" = "命令配置";
 "projectConfig.addCommand" = "添加命令";

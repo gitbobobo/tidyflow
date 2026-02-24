@@ -129,8 +129,6 @@
 "toolbar.diagnostics.severity.warning" = "Warning";
 "toolbar.diagnostics.severity.info" = "Info";
 "toolbar.diagnostics.severity.none" = "No issues";
-"toolbar.diagnostics.missingServers" = "Some language servers are unavailable";
-"toolbar.diagnostics.missingServersDetail" = "Skipped languages: %@. Install corresponding language servers and reopen workspace.";
 "toolbar.diagnostics.loading" = "Diagnostics loading...";
 "toolbar.diagnostics.countErrors" = "Errors %d";
 "toolbar.diagnostics.countWarnings" = "Warnings %d";
@@ -305,14 +303,6 @@
 /* Help / FAQ */
 "help.faq" = "FAQ";
 "help.faq.windowTitle" = "Frequently Asked Questions";
-"help.faq.lsp.title" = "Swift LSP reports \"Cannot find type in scope\"";
-"help.faq.lsp.desc" = "This usually means the language server cannot find the Xcode build configuration.";
-"help.faq.lsp.step1" = "1. Install xcode-build-server:";
-"help.faq.lsp.step2" = "2. In the project root, run:";
-"help.faq.lsp.step2.or" = "or for .xcodeproj:";
-"help.faq.lsp.step2.hint" = "Replace YourScheme with the actual Xcode scheme name (visible in Xcode toolbar, e.g. TidyFlow).";
-"help.faq.lsp.step3" = "3. Restart the editor or language server.";
-"help.faq.lsp.footer" = "After this, the LSP should correctly resolve all types defined in the project.";
 "projectConfig.path" = "Path:";
 "projectConfig.commands" = "Commands";
 "projectConfig.addCommand" = "Add Command";
