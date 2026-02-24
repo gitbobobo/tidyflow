@@ -42,9 +42,11 @@ private struct SettingsPageTopInsetModifier: ViewModifier {
         #if os(macOS)
         content
             .safeAreaInset(edge: .top, spacing: 0) {
-                Color.clear.frame(height: 8)
+                Color.clear.frame(height: height)
             }
-            .padding(.top, height)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: 48)
+            }
         #else
         content
         #endif
@@ -52,7 +54,7 @@ private struct SettingsPageTopInsetModifier: ViewModifier {
 }
 
 extension View {
-    func settingsPageTopInset(_ height: CGFloat = 32) -> some View {
+    func settingsPageTopInset(_ height: CGFloat = 64) -> some View {
         modifier(SettingsPageTopInsetModifier(height: height))
     }
 }

@@ -242,9 +242,6 @@ struct TidyFlowApp: App {
                 .environmentObject(appState.paletteState)
                 .environmentObject(localizationManager)
                 .environment(\.locale, localizationManager.locale)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    Color.clear.frame(height: 8)
-                }
                 .frame(minWidth: 500, minHeight: 400)
                 .preferredColorScheme(.dark)
         }
