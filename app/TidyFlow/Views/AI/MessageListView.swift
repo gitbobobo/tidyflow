@@ -36,12 +36,14 @@ struct MessageListView: View {
     @State private var isNearBottom: Bool = true
     @State private var shouldAutoScroll: Bool = true
     @State private var isUserDragging: Bool = false
+    @State private var lastUserScrollEventAt: TimeInterval = 0
     @State private var visibleMessageIDs: Set<String> = []
 
     private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
     private let bottomTolerance: CGFloat = 36
     private let renderBufferCount: Int = 12
+    private let userScrollInteractionWindow: TimeInterval = 0.25
 
     /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
     private var tailChangeToken: String {
@@ -201,6 +203,7 @@ struct MessageListView: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { _ in
+                        markUserScrollInteraction()
                         if !isUserDragging {
                             isUserDragging = true
                         }
@@ -209,12 +212,19 @@ struct MessageListView: View {
                         if isUserDragging {
                             isUserDragging = false
                         }
-                        let shouldFollow = isNearBottom
-                        if shouldAutoScroll != shouldFollow {
-                            shouldAutoScroll = shouldFollow
+                        if !isNearBottom, shouldAutoScroll {
+                            shouldAutoScroll = false
                         }
                     }
             )
+#if os(macOS) || os(iOS)
+            .background(
+                MessageListUserScrollObserver {
+                    markUserScrollInteraction()
+                }
+                .frame(width: 0, height: 0)
+            )
+#endif
             .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
                 guard abs(newHeight - viewportHeight) > 0.5 else { return }
                 viewportHeight = newHeight
@@ -227,7 +237,7 @@ struct MessageListView: View {
             }
             .onChange(of: tailChangeToken) {
                 guard shouldAutoScroll else { return }
-                scrollToBottom(proxy: proxy, animated: true)
+                scrollToBottom(proxy: proxy, animated: false)
             }
         }
     }
@@ -236,18 +246,23 @@ struct MessageListView: View {
         guard viewportHeight > 0 else { return }
         let distanceToBottom = max(0, bottomAnchorMaxY - viewportHeight)
         let nearBottomNow = distanceToBottom <= bottomTolerance
+        let now = Date().timeIntervalSinceReferenceDate
+        let userInteractingNow = isUserDragging || (now - lastUserScrollEventAt <= userScrollInteractionWindow)
         if nearBottomNow != isNearBottom {
             isNearBottom = nearBottomNow
         }
 
-        // 只有用户主动拖拽离开底部时才关闭自动跟随，避免流式增量误判。
         if nearBottomNow {
             if !shouldAutoScroll {
                 shouldAutoScroll = true
             }
-        } else if isUserDragging && shouldAutoScroll {
+        } else if userInteractingNow && shouldAutoScroll {
             shouldAutoScroll = false
         }
+    }
+
+    private func markUserScrollInteraction() {
+        lastUserScrollEventAt = Date().timeIntervalSinceReferenceDate
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
@@ -392,6 +407,177 @@ private struct MessageListBottomAnchorKey: PreferenceKey {
         value = nextValue()
     }
 }
+
+#if os(macOS)
+private struct MessageListUserScrollObserver: NSViewRepresentable {
+    let onUserScroll: () -> Void
+
+    func makeNSView(context: Context) -> MessageListScrollObserverNSView {
+        let view = MessageListScrollObserverNSView()
+        view.onUserScroll = onUserScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: MessageListScrollObserverNSView, context: Context) {
+        nsView.onUserScroll = onUserScroll
+        nsView.attachIfNeeded()
+    }
+}
+
+private final class MessageListScrollObserverNSView: NSView {
+    var onUserScroll: (() -> Void)?
+
+    private weak var observedClipView: NSClipView?
+    private var boundsObserver: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        attachIfNeeded()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        attachIfNeeded()
+    }
+
+    deinit {
+        detachObserver()
+    }
+
+    func attachIfNeeded() {
+        if boundsObserver != nil {
+            return
+        }
+        guard let scrollView = resolveEnclosingScrollView() else {
+            return
+        }
+
+        let clipView = scrollView.contentView
+        clipView.postsBoundsChangedNotifications = true
+        observedClipView = clipView
+        boundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isUserInitiatedScrollEvent else { return }
+            self.onUserScroll?()
+        }
+    }
+
+    private func detachObserver() {
+        if let boundsObserver {
+            NotificationCenter.default.removeObserver(boundsObserver)
+            self.boundsObserver = nil
+        }
+        observedClipView = nil
+    }
+
+    private func resolveEnclosingScrollView() -> NSScrollView? {
+        var cursor: NSView? = self
+        while let view = cursor {
+            if let scroll = view as? NSScrollView {
+                return scroll
+            }
+            cursor = view.superview
+        }
+        return nil
+    }
+
+    private var isUserInitiatedScrollEvent: Bool {
+        guard let event = NSApp.currentEvent else { return false }
+        switch event.type {
+        case .scrollWheel, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+            return true
+        default:
+            return false
+        }
+    }
+}
+#elseif os(iOS)
+private struct MessageListUserScrollObserver: UIViewRepresentable {
+    let onUserScroll: () -> Void
+
+    func makeUIView(context: Context) -> MessageListScrollObserverUIView {
+        let view = MessageListScrollObserverUIView()
+        view.onUserScroll = onUserScroll
+        return view
+    }
+
+    func updateUIView(_ uiView: MessageListScrollObserverUIView, context: Context) {
+        uiView.onUserScroll = onUserScroll
+        uiView.attachIfNeeded()
+    }
+}
+
+private final class MessageListScrollObserverUIView: UIView {
+    var onUserScroll: (() -> Void)?
+
+    private weak var observedScrollView: UIScrollView?
+    private var panStateObserver: NSKeyValueObservation?
+    private var contentOffsetObserver: NSKeyValueObservation?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        attachIfNeeded()
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        attachIfNeeded()
+    }
+
+    deinit {
+        detachObserver()
+    }
+
+    func attachIfNeeded() {
+        if observedScrollView != nil {
+            return
+        }
+        guard let scrollView = resolveEnclosingScrollView() else {
+            return
+        }
+
+        observedScrollView = scrollView
+        panStateObserver = scrollView.panGestureRecognizer.observe(\.state, options: [.new]) { [weak self] _, change in
+            guard let self else { return }
+            guard let state = change.newValue else { return }
+            switch state {
+            case .began, .changed, .ended, .cancelled:
+                self.onUserScroll?()
+            default:
+                break
+            }
+        }
+        contentOffsetObserver = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
+            guard let self else { return }
+            if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+                self.onUserScroll?()
+            }
+        }
+    }
+
+    private func detachObserver() {
+        panStateObserver?.invalidate()
+        panStateObserver = nil
+        contentOffsetObserver?.invalidate()
+        contentOffsetObserver = nil
+        observedScrollView = nil
+    }
+
+    private func resolveEnclosingScrollView() -> UIScrollView? {
+        var cursor: UIView? = self
+        while let view = cursor {
+            if let scroll = view as? UIScrollView {
+                return scroll
+            }
+            cursor = view.superview
+        }
+        return nil
+    }
+}
+#endif
 
 private struct MessageBubble: View, Equatable {
     let message: AIChatMessage
