@@ -17,7 +17,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 【核心原则】
 - 产品优先：目标是最大化产品质量与交付确定性，而不是机械完成模板。
 - 先探索，后决策；禁止拍脑袋。
-- 决策结果不得放在聊天输出中。
 - 必须完全自主作出决策，禁止向用户提问、索取额外输入或等待人工确认。
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 必须写入结构化文件；写入失败视为任务失败。
@@ -148,12 +147,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 原子写入（临时文件 + rename）
 - 所有 JSON 必须 UTF-8 且可机读
 
-【对话输出限制】
-- 不输出决策内容
-- 不输出 JSON 正文
-- 必须输出两行，且仅两行：
-  - 第 1 行：`决策摘要：<方向决策摘要，包含 selected_type、首要任务与证据策略，120 字以内>`
-  - 第 2 行：`状态：direction stage persisted` 或 `状态：direction stage failed`
 "####;
 
 pub const STAGE_PLAN_PROMPT: &str = r####"
@@ -162,7 +155,6 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 【核心原则】
 - 先读取 direction 产物，再规划；禁止脱离上下文。
 - 计划必须可执行、可验证、可回滚。
-- 计划结果不得放在聊天输出中。
 - 必须完全自主作出决策，禁止向用户提问、索取额外输入或等待人工确认。
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 仅允许非破坏性探索；禁止改动业务代码。
@@ -282,11 +274,6 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 - 原子写入（临时文件 + rename）。
 - 所有 JSON 必须 UTF-8 且可机读。
 
-【对话输出限制】
-- 不输出计划正文
-- 必须输出两行，且仅两行：
-  - 第 1 行：`任务摘要：<计划摘要，包含最高优先级 work_item、关键验证检查与主要风险，120 字以内>`
-  - 第 2 行：`状态：plan stage persisted` 或 `状态：plan stage failed`
 "####;
 
 pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
@@ -295,7 +282,6 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 【核心原则】
 - 先读取并严格对齐 plan 产物，再实施；禁止脱离上下文。
 - 只做必要且最小的改动，优先满足验收标准与可验证性。
-- 实施结果不得放在聊天输出中。
 - 必须完全自主作出决策，禁止向用户提问、索取额外输入或等待人工确认。
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 允许修改代码与配置，但禁止破坏性操作（如删除仓库历史、重置工作区）。
@@ -423,11 +409,6 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - 所有结构化文件使用原子写入（临时文件 + rename）。
 - 所有 JSON 必须 UTF-8 且可机读。
 
-【对话输出限制】
-- 不输出实现细节正文
-- 必须输出两行，且仅两行：
-  - 第 1 行：`任务摘要：<实施摘要，包含完成情况、关键改动范围与主要阻塞/风险，120 字以内>`
-  - 第 2 行：`状态：implement stage persisted` 或 `状态：implement stage failed`
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
@@ -436,7 +417,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 【核心原则】
 - 先读取 direction/plan/implement 产物，再执行验证；禁止脱离上下文。
 - 验证阶段以"证明或证伪验收标准"为目标，不做功能扩展。
-- 验证结果不得放在聊天输出中。
 - 必须完全自主作出决策，禁止向用户提问、索取额外输入或等待人工确认。
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 默认禁止修改业务代码；仅允许生成验证证据与报告文件。
@@ -588,11 +568,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - 所有结构化文件使用原子写入（临时文件 + rename）。
 - 所有 JSON 必须 UTF-8 且可机读。
 
-【对话输出限制】
-- 不输出验证细节正文
-- 必须输出两行，且仅两行：
-  - 第 1 行：`验证摘要：<验证结论摘要，包含整体通过/失败趋势、关键失败项或证据缺口，120 字以内>`
-  - 第 2 行：`状态：verify stage persisted` 或 `状态：verify stage failed`
 "####;
 
 pub const STAGE_JUDGE_PROMPT: &str = r####"
@@ -601,7 +576,6 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 【核心原则】
 - 先读取 direction/plan/implement/verify 产物与证据，再裁决；禁止脱离上下文。
 - 裁决目标是对本轮是否满足验收标准给出明确结论，并给出下一步流转。
-- 裁决结果不得放在聊天输出中。
 - 必须完全自主作出决策，禁止向用户提问、索取额外输入或等待人工确认。
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 默认禁止修改业务代码；仅允许生成裁决文件与必要摘要文件。
@@ -722,11 +696,6 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - 所有结构化文件使用原子写入（临时文件 + rename）。
 - 所有 JSON 必须 UTF-8 且可机读。
 
-【对话输出限制】
-- 不输出裁决细节正文
-- 必须输出两行，且仅两行：
-  - 第 1 行：`裁决摘要：<裁决摘要，包含整体判定、关键依据与下一步动作，120 字以内；禁止使用“result: pass/fail”字样>`
-  - 第 2 行：`状态：judge stage persisted` 或 `状态：judge stage failed`
 "####;
 
 pub const STAGE_REPORT_PROMPT: &str = r####"
@@ -735,7 +704,6 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 【核心原则】
 - 先读取全部阶段产物与证据，再生成报告；禁止脱离上下文。
 - 报告目标是沉淀本轮 cycle 的可复核结论、证据与后续建议，不做新决策实现。
-- 报告内容不得放在聊天输出中。
 - 必须完全自主作出决策，禁止向用户提问、索取额外输入或等待人工确认。
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 禁止修改业务代码；仅允许生成报告与结构化汇总文件。
@@ -890,9 +858,4 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - 所有结构化文件使用原子写入（临时文件 + rename）。
 - 所有 JSON 必须 UTF-8 且可机读。
 
-【对话输出限制】
-- 不输出报告正文
-- 必须输出两行，且仅两行：
-  - 第 1 行：`报告摘要：<报告摘要，包含本轮结论、证据完整度与下一轮建议，120 字以内>`
-  - 第 2 行：`状态：report stage persisted` 或 `状态：report stage failed`
 "####;

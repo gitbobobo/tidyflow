@@ -28,17 +28,6 @@ fn parse_judge_result_text(value: &str) -> Option<bool> {
     None
 }
 
-fn detect_judge_result_in_text(text: &str) -> Option<bool> {
-    let normalized = text.to_ascii_lowercase();
-    if normalized.contains("\"result\":\"fail\"") || normalized.contains("result: fail") {
-        return Some(false);
-    }
-    if normalized.contains("\"result\":\"pass\"") || normalized.contains("result: pass") {
-        return Some(true);
-    }
-    None
-}
-
 fn parse_judge_result_from_json(value: &serde_json::Value) -> Option<bool> {
     let overall = value
         .pointer("/overall_result/result")
@@ -239,7 +228,6 @@ impl EvolutionManager {
             .await?;
 
         let mut judge_pass = true;
-        let mut streamed_judge_result: Option<bool> = None;
         loop {
             let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
             match next {
@@ -344,13 +332,6 @@ impl EvolutionManager {
                             tool_call_count_changed =
                                 self.record_stage_tool_call(key, stage, call_key).await;
                         }
-                        if stage == "judge" {
-                            if let Some(text) = part.text.as_deref() {
-                                if let Some(parsed) = detect_judge_result_in_text(text) {
-                                    streamed_judge_result = Some(parsed);
-                                }
-                            }
-                        }
                         self.broadcast(
                             ctx,
                             ServerMessage::AIChatPartUpdated {
@@ -374,11 +355,6 @@ impl EvolutionManager {
                         field,
                         delta,
                     } => {
-                        if stage == "judge" {
-                            if let Some(parsed) = detect_judge_result_in_text(&delta) {
-                                streamed_judge_result = Some(parsed);
-                            }
-                        }
                         let tool_call_count_changed = if part_type == "tool" {
                             self.record_stage_tool_call(key, stage, &part_id).await
                         } else {
@@ -458,8 +434,11 @@ impl EvolutionManager {
 
                     if let Some(parsed) = file_judge_result {
                         judge_pass = parsed;
-                    } else if let Some(parsed) = streamed_judge_result {
-                        judge_pass = parsed;
+                    } else {
+                        return Err(
+                            "judge structured result missing: require judge.result.json or stage.judge.json with pass/fail"
+                                .to_string(),
+                        );
                     }
                 }
             } else {
@@ -828,17 +807,7 @@ impl EvolutionManager {
 #[cfg(test)]
 mod tests {
     use super::super::{stage::next_stage, STAGES};
-    use super::{detect_judge_result_in_text, parse_judge_result_from_json};
-
-    #[test]
-    fn detect_judge_result_from_chat_text() {
-        assert_eq!(
-            detect_judge_result_in_text("{\"result\":\"fail\"}"),
-            Some(false)
-        );
-        assert_eq!(detect_judge_result_in_text("result: pass"), Some(true));
-        assert_eq!(detect_judge_result_in_text("judge stage persisted"), None);
-    }
+    use super::parse_judge_result_from_json;
 
     #[test]
     fn parse_judge_result_json_schema() {
