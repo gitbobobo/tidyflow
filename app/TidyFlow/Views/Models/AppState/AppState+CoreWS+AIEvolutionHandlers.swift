@@ -609,6 +609,69 @@ extension AppState {
     func handleEvolutionError(_ message: String) {
         evolutionReplayLoading = false
         evolutionReplayError = message
+        for key in evolutionEvidenceLoadingByWorkspace.keys {
+            evolutionEvidenceLoadingByWorkspace[key] = false
+            evolutionEvidenceErrorByWorkspace[key] = message
+        }
+        let promptCallbacks = evolutionEvidencePromptCompletionByWorkspace
+        evolutionEvidencePromptCompletionByWorkspace.removeAll()
+        for (_, completion) in promptCallbacks {
+            completion(nil, message)
+        }
+        let readRequests = evolutionEvidenceReadRequestByWorkspace
+        evolutionEvidenceReadRequestByWorkspace.removeAll()
+        for (_, request) in readRequests {
+            request.completion(nil, message)
+        }
+    }
+
+    func handleEvolutionEvidenceSnapshot(_ snapshot: EvolutionEvidenceSnapshotV2) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(snapshot.workspace)
+        let key = globalWorkspaceKey(projectName: snapshot.project, workspaceName: normalizedWorkspace)
+        evolutionEvidenceSnapshotsByWorkspace[key] = snapshot
+        evolutionEvidenceLoadingByWorkspace[key] = false
+        evolutionEvidenceErrorByWorkspace[key] = nil
+    }
+
+    func handleEvolutionEvidenceRebuildPrompt(_ prompt: EvolutionEvidenceRebuildPromptV2) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(prompt.workspace)
+        let key = globalWorkspaceKey(projectName: prompt.project, workspaceName: normalizedWorkspace)
+        if let completion = evolutionEvidencePromptCompletionByWorkspace.removeValue(forKey: key) {
+            completion(prompt, nil)
+        }
+    }
+
+    func handleEvolutionEvidenceItemChunk(_ chunk: EvolutionEvidenceItemChunkV2) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(chunk.workspace)
+        let key = globalWorkspaceKey(projectName: chunk.project, workspaceName: normalizedWorkspace)
+        guard var request = evolutionEvidenceReadRequestByWorkspace[key] else { return }
+        guard request.itemID == chunk.itemID else { return }
+
+        guard chunk.offset == request.expectedOffset else {
+            evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
+            request.completion(nil, "证据分块偏移不连续，读取已中断")
+            return
+        }
+
+        request.totalSizeBytes = chunk.totalSizeBytes
+        request.mimeType = chunk.mimeType
+        request.content.append(contentsOf: chunk.content)
+        request.expectedOffset = chunk.nextOffset
+
+        if chunk.eof {
+            evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
+            request.completion((mimeType: request.mimeType, content: request.content), nil)
+            return
+        }
+
+        evolutionEvidenceReadRequestByWorkspace[key] = request
+        wsClient.requestEvoReadEvidenceItem(
+            project: request.project,
+            workspace: request.workspace,
+            itemID: request.itemID,
+            offset: request.expectedOffset,
+            limit: request.limit
+        )
     }
 
     func handleAISessionSubscribeAck() {

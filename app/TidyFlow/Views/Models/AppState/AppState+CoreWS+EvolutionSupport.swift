@@ -13,6 +13,76 @@ extension AppState {
         wsClient.requestEvoGetAgentProfile(project: project, workspace: normalizedWorkspace)
     }
 
+    // MARK: - Evidence
+
+    func requestEvolutionEvidenceSnapshot(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionEvidenceLoadingByWorkspace[key] = true
+        evolutionEvidenceErrorByWorkspace[key] = nil
+        wsClient.requestEvoEvidenceSnapshot(project: project, workspace: normalizedWorkspace)
+    }
+
+    func requestEvolutionEvidenceRebuildPrompt(
+        project: String,
+        workspace: String,
+        completion: @escaping (_ prompt: EvolutionEvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionEvidencePromptCompletionByWorkspace[key] = completion
+        wsClient.requestEvoEvidenceRebuildPrompt(project: project, workspace: normalizedWorkspace)
+    }
+
+    func readEvolutionEvidenceItem(
+        project: String,
+        workspace: String,
+        itemID: String,
+        limit: UInt32? = 262_144,
+        completion: @escaping (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionEvidenceReadRequestByWorkspace[key] = EvolutionEvidenceReadRequestState(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            limit: limit,
+            expectedOffset: 0,
+            totalSizeBytes: nil,
+            mimeType: "application/octet-stream",
+            content: [],
+            completion: completion
+        )
+        wsClient.requestEvoReadEvidenceItem(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            offset: 0,
+            limit: limit
+        )
+    }
+
+    func evidenceSnapshot(project: String, workspace: String) -> EvolutionEvidenceSnapshotV2? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        return evolutionEvidenceSnapshotsByWorkspace[key]
+    }
+
+    func consumeAIChatOneShotHint(project: String, workspace: String) -> String? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        let hint = aiChatOneShotHintByWorkspace[key]
+        aiChatOneShotHintByWorkspace.removeValue(forKey: key)
+        return hint
+    }
+
+    func setAIChatOneShotHint(project: String, workspace: String, message: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        aiChatOneShotHintByWorkspace[key] = message
+    }
+
     /// 先拉齐每个 AI 工具的 provider/agent 列表，再拉取 Evolution profile，避免冷启动时读到默认配置。
     func requestEvolutionSelectorResourcesThenProfile(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)

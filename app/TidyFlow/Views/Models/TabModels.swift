@@ -43,6 +43,7 @@ enum TabKind: String, Codable {
 enum WorkspaceSpecialPage: String, Codable {
     case aiChat
     case evolution
+    case evidence
 }
 
 struct TabModel: Identifiable, Codable, Equatable {

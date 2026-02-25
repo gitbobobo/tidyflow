@@ -29,6 +29,7 @@ struct AITabView: View {
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
     @State private var presentedSubAgentSession: SubAgentSessionRoute?
     @State private var mainMessageListScrollSessionToken: Int = 0
+    @State private var aiChatHintMessage: String?
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
 
@@ -66,6 +67,7 @@ struct AITabView: View {
         .onAppear {
             restoreAIContextOnAppear()
             requestCurrentSessionStatus()
+            consumeOneShotHintIfNeeded()
         }
         .onDisappear {
             // 用 previousSnapshotKey（onAppear 时记录的工作空间）而非 currentSnapshotKey，
@@ -78,9 +80,11 @@ struct AITabView: View {
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             resetAIContext()
+            consumeOneShotHintIfNeeded()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             resetAIContext()
+            consumeOneShotHintIfNeeded()
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
             mainMessageListScrollSessionToken += 1
@@ -261,6 +265,32 @@ struct AITabView: View {
     private var mainPane: some View {
         VStack(spacing: 0) {
             toolbar
+            if let aiChatHintMessage, !aiChatHintMessage.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.on.clipboard")
+                        .foregroundColor(.accentColor)
+                    Text(aiChatHintMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button {
+                        self.aiChatHintMessage = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(controlBackgroundColor)
+                .overlay(
+                    Rectangle()
+                        .frame(height: 1)
+                        .foregroundColor(separatorColor),
+                    alignment: .bottom
+                )
+            }
             messageArea
                 .overlay {
                     // 弹出层可见时，点击消息区域关闭
@@ -284,6 +314,14 @@ struct AITabView: View {
             inputArea
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func consumeOneShotHintIfNeeded() {
+        guard let workspace = appState.selectedWorkspaceKey, !workspace.isEmpty else { return }
+        guard let message = appState.consumeAIChatOneShotHint(project: appState.selectedProjectName, workspace: workspace) else {
+            return
+        }
+        aiChatHintMessage = message
     }
 
     private var toolbar: some View {

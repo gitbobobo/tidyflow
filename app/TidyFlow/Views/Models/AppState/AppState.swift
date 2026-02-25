@@ -3,6 +3,18 @@ import Combine
 
 // MARK: - v1.24: 剪贴板模型
 
+struct EvolutionEvidenceReadRequestState {
+    let project: String
+    let workspace: String
+    let itemID: String
+    let limit: UInt32?
+    var expectedOffset: UInt64
+    var totalSizeBytes: UInt64?
+    var mimeType: String
+    var content: [UInt8]
+    let completion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+}
+
 class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
@@ -171,6 +183,10 @@ class AppState: ObservableObject {
     @Published var evolutionReplayStore: AIChatStore = AIChatStore()
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
+    @Published var evolutionEvidenceSnapshotsByWorkspace: [String: EvolutionEvidenceSnapshotV2] = [:]
+    @Published var evolutionEvidenceLoadingByWorkspace: [String: Bool] = [:]
+    @Published var evolutionEvidenceErrorByWorkspace: [String: String] = [:]
+    @Published var aiChatOneShotHintByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerMessages: [AIChatMessage] = []
     @Published var subAgentViewerLoading: Bool = false
@@ -224,6 +240,10 @@ class AppState: ObservableObject {
     var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
     /// Evolution：记录某工作空间等待重试的动作（start/resume）。
     var evolutionPendingActionByWorkspace: [String: String] = [:]
+    /// Evidence：等待中的重建提示词请求（按 workspace key 聚合）
+    var evolutionEvidencePromptCompletionByWorkspace: [String: (_ prompt: EvolutionEvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
+    /// Evidence：分块读取上下文（按 workspace key，仅串行读取）
+    var evolutionEvidenceReadRequestByWorkspace: [String: EvolutionEvidenceReadRequestState] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]
