@@ -87,8 +87,10 @@ if [ -z "$RUN_ID" ]; then
 fi
 
 CYCLE_DIR=".tidyflow/evolution/$CYCLE_ID"
-EVIDENCE_DIR="$CYCLE_DIR/evidence"
-mkdir -p "$EVIDENCE_DIR"
+EVIDENCE_ROOT="$CYCLE_DIR/evidence"
+EVIDENCE_LOG_DIR="$EVIDENCE_ROOT/logs"
+EVIDENCE_SCREENSHOT_DIR="$EVIDENCE_ROOT/screenshots"
+mkdir -p "$EVIDENCE_LOG_DIR" "$EVIDENCE_SCREENSHOT_DIR"
 
 echo "[evo] quality_gate_invoked cycle_id=$CYCLE_ID run_id=$RUN_ID step=$STEP dry_run=$DRY_RUN"
 write_event_log "quality_gate_invoked" "dry_run=$DRY_RUN"
@@ -131,6 +133,13 @@ run_verify() {
     fi
     local item_count
     item_count="$(jq '.items | length' "$evidence_index" 2>/dev/null || echo 0)"
+    local invalid_count
+    invalid_count="$(find "$EVIDENCE_ROOT" -type f \
+        ! -name '*.log' ! -name '*.png' | wc -l | tr -d ' ')"
+    if [ "${invalid_count:-0}" != "0" ]; then
+        echo "[evo][verify] 证据目录存在非法文件类型，仅允许 .log/.png: $EVIDENCE_ROOT" >&2
+        return 1
+    fi
     echo "[evo] evidence_index_updated cycle_id=$CYCLE_ID items_total=$item_count"
     write_event_log "evidence_index_updated" "items_total=$item_count"
     echo "[evo] quality_gate_script_resolved script=./scripts/evo-run.sh"
