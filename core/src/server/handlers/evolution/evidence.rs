@@ -243,27 +243,6 @@ fn build_rebuild_prompt_sync(
     let mut detected_platforms = detect_platforms(workspace_root, &evidence_root);
     dedup_sort_platforms(&mut detected_platforms);
 
-    let subsystem_lines = if detected_subsystems.is_empty() {
-        "- 暂未识别到子系统，请先扫描仓库并向用户确认目标子系统后再执行。".to_string()
-    } else {
-        detected_subsystems
-            .iter()
-            .map(|s| format!("- {}（kind={}，path={}）", s.id, s.kind, s.path))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    let platform_lines = if detected_platforms.is_empty() {
-        "- 暂未识别到明确平台，请先识别平台并向用户确认，再创建对应的端到端测试基础设施。"
-            .to_string()
-    } else {
-        detected_platforms
-            .iter()
-            .map(|p| format!("- {}：必须建立可执行 E2E 测试与真实截图证据链路。", p))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
     let cross_apple_platform_note = if ["ios", "macos", "tvos"]
         .iter()
         .all(|p| detected_platforms.iter().any(|x| x == p))
@@ -288,27 +267,10 @@ fn build_rebuild_prompt_sync(
 3. 使用真实数据执行端到端流程并采集截图/日志。
 4. 产出并维护 evidence.index.json，确保证据可追溯、可复核、可排序展示。
 
-【子系统识别结果（来自 TidyFlow）】
-{subsystem_lines}
-
-【平台识别结果（来自 TidyFlow）】
-{platform_lines}
-
 【平台覆盖要求】
 - {cross_apple_platform_note}
 - 每个平台都要有独立的端到端测试入口与证据目录。
 - 如果平台识别不确定，先停下来询问用户，不允许猜测。
-
-【证据目录与文件格式要求（强制）】
-- 证据根目录固定为：{evidence_root}
-- 索引文件固定为：{index_file}
-- 平台目录结构示例：
-  - .tidyflow/evidence/ios/...
-  - .tidyflow/evidence/macos/...
-  - .tidyflow/evidence/tvos/...
-- 每个平台下至少包含：
-  - screenshot 证据（真实界面截图）
-  - log 证据（真实执行日志）
 
 【evidence.index.json 契约（必须满足）】
 ```json
@@ -346,8 +308,6 @@ fn build_rebuild_prompt_sync(
         workspace = workspace,
         evidence_root = evidence_root.to_string_lossy(),
         index_file = index_file.to_string_lossy(),
-        subsystem_lines = subsystem_lines,
-        platform_lines = platform_lines,
         cross_apple_platform_note = cross_apple_platform_note,
     );
 
