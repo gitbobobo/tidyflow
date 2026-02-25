@@ -16,6 +16,12 @@
 - [ ] 检查 `evidence.index.json` 包含：`evidence/failure_context/completeness/runs`
 - [ ] 检查 `completeness.required_types` 覆盖 `build_log/test_log/screenshot/diff_summary/metrics`
 - [ ] 若失败，确认日志包含失败锚点与上一稳定 `run_id` 回退建议
+- [ ] 执行 AC->check->evidence 对照核验：
+  - ac-1 => `v-3,v-5` => `screenshot,build_log`
+  - ac-2 => `v-2,v-4` => `test_log,diff_summary`
+  - ac-3 => `v-1,v-2,v-3` => `test_log,screenshot`
+- [ ] 核对 `v-3` 证据必须同时覆盖 macOS+iOS 且状态为 `empty/loading/ready`
+- [ ] 若任一 AC 缺失 minimum_evidence，判定为阻断项，不允许发布
 
 ## 3. 架构护栏检查
 

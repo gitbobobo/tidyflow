@@ -1,54 +1,58 @@
 # Evolution 验收协议与证据基线
 
-> 文档版本：1.2 | 更新日期：2026-02-24
+> 文档版本：1.3 | 更新日期：2026-02-25
 
-本文档与 `plan.execution.json` 对齐，定义 AC、检查项与证据映射，保证 verify/judge 可判定。
+本文档对齐 `plan.execution.json`（cycle: `2026-02-25T04-28-04-101Z`），用于让 verify/judge 直接消费 AC->check->evidence 映射。
 
-## 1. 验收标准（AC）
+## 1. 验收标准（AC）映射契约
 
-| ID | 定义 | 最小证据 |
-|----|------|----------|
-| ac-1 | 构建链路通过（core+macOS+iOS） | `build_log` |
-| ac-2 | 单测与集成链路通过 | `test_log` |
-| ac-3 | UI 三态截图达标 | `screenshot` |
-| ac-4 | 证据完整性与一致性可判定 | `metrics`, `diff_summary` |
-| ac-5 | 失败锚点可回溯且可给出回退建议 | `test_log`, `diff_summary` |
+| AC | 定义 | check_id 映射 | minimum_evidence |
+|----|------|---------------|------------------|
+| ac-1 | 跨端关键流程具备可判定闭环（截图证据与双端构建同时满足） | `v-3`, `v-5` | `screenshot`, `build_log` |
+| ac-2 | 失败可定位（integration 结果可追溯到日志与差异摘要） | `v-2`, `v-4` | `test_log`, `diff_summary` |
+| ac-3 | 证据完整性可核验（测试日志+跨端三态截图） | `v-1`, `v-2`, `v-3` | `test_log`, `screenshot` |
+
+判定约束：
+- 每条 AC 至少 1 个 `check_id` 且至少 1 个 `minimum_evidence`。
+- 缺失任一 `minimum_evidence` 时，该 AC 不能判定为 `pass`。
+- 证据必须可通过 `run_id/trace_id/check_id` 关联。
 
 ## 2. 检查项（V）
 
-| ID | kind | 命令/方法 | 期望证据 |
-|----|------|-----------|----------|
-| v-1 | unit | `./scripts/tidyflow test` | `test_log` |
-| v-2 | build | `cargo build --manifest-path core/Cargo.toml --release` | `build_log` |
-| v-3 | build | `xcodebuild ... -destination 'platform=macOS' ...` | `build_log` |
-| v-4 | build | `xcodebuild ... -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' ...` | `build_log` |
-| v-5 | integration | `./scripts/evo-run.sh --cycle <cycle_id> --step all` | `test_log` |
-| v-6 | e2e/manual | `./scripts/evo-screenshot.sh ... --state initial|processing|complete|error` | `screenshot` |
-| v-7 | manual | 核对 `evidence.index.json` 一致性 | `metrics` |
-| v-8 | manual | 审阅 `diff-<run_id>.md` 与执行结果一致性 | `diff_summary` |
+| ID | kind | 命令/方法 | 期望 |
+|----|------|-----------|------|
+| v-1 | unit | `./scripts/tidyflow test` | 核心单测通过并输出可解析 `test_log` |
+| v-2 | integration | `./scripts/evo-run.sh --step integration` | integration 通过并输出结构化日志 |
+| v-3 | e2e | `./scripts/evo-screenshot.sh --platform both --states empty,loading,ready` | macOS/iOS 三态截图齐全并可回溯 |
+| v-4 | manual | 抽查 `evidence.index.json` 与日志锚点关联 | 可用 `run_id/trace_id` 串联日志与证据 |
+| v-5 | build | `xcodebuild`（macOS + iOS） | 双端构建通过，无平台特异性回归 |
 
-## 3. 固定执行顺序
+## 3. 可观测性与失败锚点
 
-`v-1 -> v-2 -> v-3 -> v-4 -> v-5`
+关键流程日志关键词：
+- `CROSS_PLATFORM_FLOW_START`
+- `CROSS_PLATFORM_FLOW_SUCCESS`
+- `CROSS_PLATFORM_FLOW_FAIL`
+- `EVIDENCE_INDEX_WRITE_OK`
+- `EVIDENCE_INDEX_WRITE_FAIL`
 
-- 任一失败时，后续高风险步骤必须停止。
-- 失败输出必须包含：`failed_check_id`、日志锚点、上一稳定 `run_id` 回退建议。
+关键指标（至少可从日志或 metrics 文件提取）：
+- `cross_platform_flow_pass_rate`
+- `evidence_missing_rate`
+- `e2e_screenshot_completion_rate`
 
-## 4. 判定规则
+失败输出要求：
+- 必须包含 `failed_check_id` 与失败日志路径。
+- 必须输出回退建议（上一稳定 `run_id`）。
 
-- `build_log` 缺失：`ac-1 = fail`
-- `test_log` 缺失：`ac-2 = fail`
-- 截图不足三态：`ac-3 = not_met`
-- 索引校验失败（路径/类型/ID/时间序）：`ac-4 = fail`
-- 无失败锚点或无回退建议：`ac-5 = fail`
+## 4. 证据输出要求
 
-## 5. 输出要求
-
-实现阶段至少产出：
-
+实现/验证阶段最小输出集：
 - `runs/<run_id>/evidence/*.log`
-- `runs/<run_id>/evidence/metrics-<run_id>.json`
-- `runs/<run_id>/evidence/diff-<run_id>.md`
+- `runs/<run_id>/evidence/*-metrics-<run_id>.json`
+- `runs/<run_id>/evidence/*-diff-<run_id>.md`
+- `artifacts/screenshots/macOS/*.png`
+- `artifacts/screenshots/iOS/*.png`
 - `evidence.index.json`
 
-verify/judge 必须基于这些产物做自动或半自动判定，不依赖聊天文本。
+verify/judge 必须基于以上产物自动或半自动判定，不依赖聊天文本解释。
