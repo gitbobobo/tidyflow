@@ -34,7 +34,7 @@ screenshot-<cycle_id>-<check_id>-<platform>-<state>-<utc_ts>.png
 2. 每端按 `empty/loading/ready` 依次采集截图。
 3. 将产物放入本 cycle `evidence/` 目录，并写入 `evidence.index.json`。
 
-无 GUI 环境时允许先生成 `synthetic_baseline`（脚本产物），但必须满足最小质量门槛（见第 5 节）；若连基线图也无法产出，才允许登记缺失项并写明 `missing_reason`。
+无 GUI 环境时不允许生成 synthetic/占位截图充当证据；若无法采集真实截图，必须显式登记缺失项并写明 `missing_reason`，由 direction/verify/judge 阶段据实判定为证据不足。
 
 ## 4. 索引字段要求
 
