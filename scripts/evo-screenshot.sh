@@ -1,7 +1,7 @@
 #!/bin/bash
 # Evolution 截图采集辅助脚本
 # 用法:
-#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --state initial|processing|complete|error [--run-id <run_id>] [--dry-run]
+#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --platform macOS|iOS --state empty|loading|ready [--run-id <run_id>] [--dry-run]
 
 set -euo pipefail
 
@@ -10,6 +10,7 @@ EVOLUTION_DIR="$PROJECT_ROOT/.tidyflow/evolution"
 
 CYCLE_ID=""
 CHECK_ID="v-4"
+PLATFORM="macOS"
 STATE=""
 RUN_ID=""
 DRY_RUN=0
@@ -19,12 +20,13 @@ usage() {
 Evolution 截图采集辅助脚本
 
 用法:
-  ./scripts/evo-screenshot.sh --cycle <cycle_id> --state <state> [options]
+  ./scripts/evo-screenshot.sh --cycle <cycle_id> --platform <macOS|iOS> --state <state> [options]
 
 选项:
   --cycle <id>       Cycle ID（必需）
   --check <id>       检查项 ID（默认：v-4）
-  --state <state>    状态：initial|processing|complete|error（必需）
+  --platform <name>  平台：macOS|iOS（默认：macOS）
+  --state <state>    状态：empty|loading|ready（必需）
   --run-id <id>      关联 run_id（可选，默认最新）
   --dry-run          生成占位截图（用于无 GUI 场景）
   --help, -h         显示帮助
@@ -39,6 +41,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --check)
             CHECK_ID="${2:-v-4}"
+            shift 2
+            ;;
+        --platform)
+            PLATFORM="${2:-macOS}"
             shift 2
             ;;
         --state)
@@ -70,11 +76,20 @@ if [ -z "$CYCLE_ID" ]; then
     exit 1
 fi
 
-case "$STATE" in
-    initial|processing|complete|error)
+case "$PLATFORM" in
+    macOS|iOS)
         ;;
     *)
-        echo "[evo][evidence] ERROR: --state 仅支持 initial|processing|complete|error"
+        echo "[evo][evidence] ERROR: --platform 仅支持 macOS|iOS"
+        exit 1
+        ;;
+esac
+
+case "$STATE" in
+    empty|loading|ready)
+        ;;
+    *)
+        echo "[evo][evidence] ERROR: --state 仅支持 empty|loading|ready"
         exit 1
         ;;
 esac
@@ -85,8 +100,8 @@ if [ ! -d "$CYCLE_DIR" ]; then
     exit 1
 fi
 
-EVIDENCE_DIR="$CYCLE_DIR/evidence"
-mkdir -p "$EVIDENCE_DIR"
+SCREENSHOT_DIR="$CYCLE_DIR/artifacts/screenshots/$PLATFORM"
+mkdir -p "$SCREENSHOT_DIR"
 
 if [ -z "$RUN_ID" ] && [ -d "$CYCLE_DIR/runs" ]; then
     RUN_ID="$(ls -1 "$CYCLE_DIR/runs" 2>/dev/null | sort | tail -n 1 || true)"
@@ -96,11 +111,11 @@ if [ -z "$RUN_ID" ]; then
 fi
 
 UTC_TS="$(date -u +%Y%m%dT%H%M%SZ)"
-SAFE_CYCLE_ID="$(echo "$CYCLE_ID" | tr '/:' '__')"
-FILENAME="screenshot-${SAFE_CYCLE_ID}-${CHECK_ID}-${STATE}-${UTC_TS}.png"
-FILEPATH="$EVIDENCE_DIR/$FILENAME"
-REL_PATH="evidence/$FILENAME"
-RELATED_LOG_REL="runs/$RUN_ID/evidence/manual-flow-$RUN_ID.log"
+FILENAME="screenshot-${RUN_ID}-${CHECK_ID}-${PLATFORM}-${STATE}-${UTC_TS}.png"
+FILEPATH="$SCREENSHOT_DIR/$FILENAME"
+REL_PATH="artifacts/screenshots/$PLATFORM/$FILENAME"
+PLATFORM_LOWER="$(echo "$PLATFORM" | tr '[:upper:]' '[:lower:]')"
+RELATED_LOG_REL="runs/$RUN_ID/evidence/${PLATFORM_LOWER}-${CHECK_ID}-$RUN_ID.log"
 
 capture_success=0
 
@@ -126,23 +141,24 @@ fi
 
 if [ "$capture_success" != "1" ]; then
     echo "[evo][evidence] ERROR: 截图失败"
-    echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE --run-id $RUN_ID"
+    echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $PLATFORM --state $STATE --run-id $RUN_ID"
 
     DIFF_PATH="$CYCLE_DIR/runs/$RUN_ID/evidence/diff-$RUN_ID.md"
     mkdir -p "$(dirname "$DIFF_PATH")"
     {
         echo ""
         echo "### 截图缺失记录"
+        echo "- platform: $PLATFORM"
         echo "- state: $STATE"
         echo "- reason: screenshot capture failed"
-        echo "- retry: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --state $STATE --run-id $RUN_ID"
+        echo "- retry: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $PLATFORM --state $STATE --run-id $RUN_ID"
     } >> "$DIFF_PATH"
     exit 1
 fi
 
 echo "[evo][evidence] 截图保存成功: $FILEPATH"
 
-python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$STATE" "$REL_PATH" "$RELATED_LOG_REL" <<'PY'
+python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$PLATFORM" "$STATE" "$REL_PATH" "$RELATED_LOG_REL" <<'PY'
 import hashlib
 import json
 import os
@@ -155,9 +171,10 @@ cycle_dir = Path(sys.argv[1])
 cycle_id = sys.argv[2]
 run_id = sys.argv[3]
 check_id = sys.argv[4]
-state = sys.argv[5]
-rel_path = sys.argv[6]
-related_log_rel = sys.argv[7]
+platform = sys.argv[5]
+state = sys.argv[6]
+rel_path = sys.argv[7]
+related_log_rel = sys.argv[8]
 
 index_path = cycle_dir / "evidence.index.json"
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -237,14 +254,15 @@ index_by_key = {}
 for item in existing:
     if not isinstance(item, dict):
         continue
-    key = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{item.get('metadata', {}).get('state', '')}"
-    if key.endswith(":") or key.count(":") < 2:
+    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    key = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{meta.get('platform', '')}:{meta.get('state', '')}"
+    if key.endswith(":") or key.count(":") < 3:
         key = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{item.get('path', '')}:{item.get('artifact_hash', '')}"
     index_by_key[key] = item
 
 artifact_path = cycle_dir / rel_path
 artifact_hash = sha1_8(artifact_path)
-seed = f"{run_id}:{check_id}:{state}"
+seed = f"{run_id}:{check_id}:{platform}:{state}"
 evidence_id = "ev-" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
 
 item = {
@@ -252,20 +270,21 @@ item = {
     "type": "screenshot",
     "path": rel_path,
     "generated_by_stage": "implement",
-    "linked_criteria_ids": ["ac-2"],
-    "summary": f"截图证据 state={state} check={check_id}",
+    "linked_criteria_ids": ["ac-3"],
+    "summary": f"截图证据 platform={platform} state={state} check={check_id}",
     "created_at": now,
     "run_id": run_id,
     "check_id": check_id,
     "artifact_hash": artifact_hash,
     "status": "valid",
     "metadata": {
+        "platform": platform,
         "state": state,
         "related_test_log": related_log_rel,
     },
 }
 
-key = f"{run_id}:{check_id}:{state}"
+key = f"{run_id}:{check_id}:{platform}:{state}"
 if key in index_by_key and isinstance(index_by_key[key], dict):
     old = index_by_key[key]
     if old.get("evidence_id"):
@@ -308,5 +327,5 @@ except Exception:
 PY
 
 echo "[evo][evidence] 索引更新成功"
-echo "[evo][evidence] check=$CHECK_ID state=$STATE run_id=$RUN_ID"
+echo "[evo][evidence] check=$CHECK_ID platform=$PLATFORM state=$STATE run_id=$RUN_ID"
 echo "[evo][evidence] related_log=$RELATED_LOG_REL"
