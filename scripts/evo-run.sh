@@ -4,7 +4,7 @@
 #   ./scripts/evo-run.sh [verify] --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration|verify]
 #
 # 目标：
-#   1) 固定执行序列：acceptance -> unit -> core build -> macOS build -> iOS build -> screenshot -> integration
+#   1) 固定执行序列：unit -> integration -> e2e(screenshot) -> manual（build 独立门禁）
 #   2) 统一结构化日志与失败锚点
 #   3) 统一证据索引写入契约（原子写入 + 幂等合并）
 
@@ -22,15 +22,17 @@ DRY_RUN=0
 LOG_PREFIX="[evo][run]"
 
 # 检查 ID（与 plan.execution.json 对齐）
-CHECK_ACCEPTANCE="v-1"
-CHECK_CORE_BUILD="v-2"
-CHECK_MACOS_BUILD="v-3"
-CHECK_IOS_BUILD="v-4"
-CHECK_VERIFY_GATE="v-5"
-CHECK_SCREENSHOT="v-6"
-CHECK_UNIT="v-7"
+CHECK_UNIT="v-1"
 CHECK_INTEGRATION="v-2"
-CHECK_METRICS="$CHECK_VERIFY_GATE"
+CHECK_SCREENSHOT="v-3"
+CHECK_MANUAL="v-4"
+CHECK_BUILD="v-5"
+CHECK_CORE_BUILD="$CHECK_BUILD"
+CHECK_MACOS_BUILD="$CHECK_BUILD"
+CHECK_IOS_BUILD="$CHECK_BUILD"
+CHECK_ACCEPTANCE="$CHECK_MANUAL"
+CHECK_VERIFY_GATE="$CHECK_MANUAL"
+CHECK_METRICS="$CHECK_MANUAL"
 
 FAILURE_CHECK_ID=""
 FAILURE_STAGE=""
@@ -229,7 +231,7 @@ PY
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=multi exit_code=$exit_code"
             record_failure "verify" "$check_id" "$log_file" "acceptance mapping 校验失败"
             record_check_result "$check_id" "manual" "fail" "$log_file" "$exit_code" "acceptance mapping 校验失败"
-            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1" "acceptance mapping 校验日志（失败）"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-2" "acceptance mapping 校验日志（失败）"
             return $exit_code
         fi
     fi
@@ -237,7 +239,7 @@ PY
     log_structured "SUCCESS" "verify" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=multi"
     record_check_result "$check_id" "manual" "pass" "$log_file" "0" "acceptance mapping 校验通过"
-    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1" "acceptance mapping 校验日志"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-2" "acceptance mapping 校验日志"
     return 0
 }
 
@@ -310,7 +312,7 @@ run_core_build() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=core exit_code=$exit_code"
             record_failure "build" "$check_id" "$log_file" "core build failed"
             record_check_result "$check_id" "build" "fail" "$log_file" "$exit_code" "Core 构建失败"
-            append_evidence_line "build_log" "$log_file" "$check_id" "ac-2" "Core release 构建日志（失败）"
+            append_evidence_line "build_log" "$log_file" "$check_id" "ac-3" "Core release 构建日志（失败）"
             return $exit_code
         fi
         echo "BUILD SUCCESS" >> "$log_file"
@@ -319,7 +321,7 @@ run_core_build() {
     log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=core"
     record_check_result "$check_id" "build" "pass" "$log_file" "0" "Core 构建通过"
-    append_evidence_line "build_log" "$log_file" "$check_id" "ac-2" "Core release 构建日志"
+    append_evidence_line "build_log" "$log_file" "$check_id" "ac-3" "Core release 构建日志"
     return 0
 }
 
@@ -353,7 +355,7 @@ run_macos_build() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=macOS exit_code=$exit_code"
             record_failure "build" "$check_id" "$log_file" "macOS build failed"
             record_check_result "$check_id" "build" "fail" "$log_file" "$exit_code" "macOS 构建失败"
-            append_evidence_line "build_log" "$log_file" "$check_id" "ac-2" "macOS Debug 构建日志（失败）"
+            append_evidence_line "build_log" "$log_file" "$check_id" "ac-3" "macOS Debug 构建日志（失败）"
             return $exit_code
         fi
     fi
@@ -361,7 +363,7 @@ run_macos_build() {
     log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=macOS"
     record_check_result "$check_id" "build" "pass" "$log_file" "0" "macOS 构建通过"
-    append_evidence_line "build_log" "$log_file" "$check_id" "ac-2" "macOS Debug 构建日志"
+    append_evidence_line "build_log" "$log_file" "$check_id" "ac-3" "macOS Debug 构建日志"
     return 0
 }
 
@@ -395,7 +397,7 @@ run_ios_build() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=iOS exit_code=$exit_code"
             record_failure "build" "$check_id" "$log_file" "iOS build failed"
             record_check_result "$check_id" "build" "fail" "$log_file" "$exit_code" "iOS 构建失败"
-            append_evidence_line "build_log" "$log_file" "$check_id" "ac-2" "iOS Simulator Debug 构建日志（失败）"
+            append_evidence_line "build_log" "$log_file" "$check_id" "ac-3" "iOS Simulator Debug 构建日志（失败）"
             return $exit_code
         fi
     fi
@@ -403,7 +405,7 @@ run_ios_build() {
     log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=iOS"
     record_check_result "$check_id" "build" "pass" "$log_file" "0" "iOS 构建通过"
-    append_evidence_line "build_log" "$log_file" "$check_id" "ac-2" "iOS Simulator Debug 构建日志"
+    append_evidence_line "build_log" "$log_file" "$check_id" "ac-3" "iOS Simulator Debug 构建日志"
     return 0
 }
 
@@ -430,14 +432,14 @@ run_screenshot_capture() {
         emit_event "EVO_CHECK_FAIL" "$check_id" "platform=multi screenshot_state=empty,loading,ready exit_code=$exit_code"
         record_failure "screenshot" "$check_id" "$log_file" "截图采集失败 platform=both states=empty,loading,ready"
         record_check_result "$check_id" "manual" "fail" "$log_file" "$exit_code" "截图采集失败 platform=both states=empty,loading,ready"
-        append_evidence_line "test_log" "$log_file" "$check_id" "ac-3" "截图采集执行日志（失败）"
+        append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-3" "截图采集执行日志（失败）"
         return $exit_code
     fi
 
     log_structured "SUCCESS" "screenshot" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=multi"
     record_check_result "$check_id" "manual" "pass" "$log_file" "0" "截图采集通过（macOS+iOS 三态）"
-    append_evidence_line "test_log" "$log_file" "$check_id" "ac-3" "截图采集执行日志"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-3" "截图采集执行日志"
     return 0
 }
 
@@ -488,7 +490,7 @@ run_integration_check() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=multi exit_code=$exit_code"
             record_failure "integration" "$check_id" "$log_file" "integration failed"
             record_check_result "$check_id" "integration" "fail" "$log_file" "$exit_code" "集成检查失败"
-            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "集成检查日志（失败）"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-2" "集成检查日志（失败）"
             return $exit_code
         fi
     fi
@@ -496,33 +498,30 @@ run_integration_check() {
     log_structured "SUCCESS" "integration" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=multi"
     record_check_result "$check_id" "integration" "pass" "$log_file" "0" "集成检查通过"
-    append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "集成检查日志"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-2" "集成检查日志"
     return 0
 }
 
 run_sequence_all() {
-    run_acceptance_mapping_check || return $?
     run_unit_tests || return $?
+    run_integration_check || return $?
+    run_screenshot_capture || return $?
+    run_acceptance_mapping_check || return $?
     run_core_build || return $?
     run_macos_build || return $?
     run_ios_build || return $?
-    run_screenshot_capture || return $?
-    run_integration_check || return $?
     return 0
 }
 
 run_sequence_build() {
-    run_acceptance_mapping_check || return $?
-    run_unit_tests || return $?
     run_core_build || return $?
     run_macos_build || return $?
     run_ios_build || return $?
-    run_screenshot_capture || return $?
     return 0
 }
 
 run_sequence_integration() {
-    run_acceptance_mapping_check || return $?
+    run_unit_tests || return $?
     run_integration_check || return $?
     return 0
 }
@@ -883,7 +882,7 @@ if check_lines.exists():
         })
 
 present_check_ids = {c.get("check_id") for c in check_results}
-inferred_ids = ["v-1", "v-2", "v-3", "v-4", "v-6", "v-7"]
+inferred_ids = ["v-1", "v-2", "v-3", "v-4", "v-5"]
 for cid in inferred_ids:
     if cid in present_check_ids:
         continue
@@ -900,7 +899,7 @@ for cid in inferred_ids:
     })
 
 check_results.append({
-    "check_id": "v-5",
+    "check_id": "v-4",
     "kind": "manual",
     "result": "pass",
     "log_path": str(metrics_path),
@@ -926,27 +925,27 @@ for item in run_evidence:
 ac_results = []
 
 ac1_status = "pass"
-for cid in ["v-1", "v-5"]:
+for cid in ["v-2", "v-3", "v-4"]:
     if check_map.get(cid, {}).get("result") != "pass":
         ac1_status = "fail"
-if "diff_summary" not in present_types_set:
+if "test_log" not in present_types_set:
     ac1_status = "fail"
-if "metrics" not in present_types_set:
+if "screenshot" not in present_types_set:
     ac1_status = "fail"
 ac_results.append({"criteria_id": "ac-1", "status": ac1_status, "evidence_ids": evidence_ids_for("ac-1")})
 
 ac2_status = "pass"
-for cid in ["v-2", "v-3", "v-4", "v-7"]:
+for cid in ["v-1", "v-2", "v-4"]:
     if check_map.get(cid, {}).get("result") != "pass":
         ac2_status = "fail"
-if not any(i.get("type") == "build_log" for i in run_evidence):
-    ac2_status = "fail"
 if not any(i.get("type") == "test_log" for i in run_evidence):
+    ac2_status = "fail"
+if "diff_summary" not in present_types_set:
     ac2_status = "fail"
 ac_results.append({"criteria_id": "ac-2", "status": ac2_status, "evidence_ids": evidence_ids_for("ac-2")})
 
 ac3_status = "pass"
-for cid in ["v-6", "v-5"]:
+for cid in ["v-3", "v-5"]:
     if check_map.get(cid, {}).get("result") != "pass":
         ac3_status = "fail"
 for platform in ["macOS", "iOS"]:
@@ -954,7 +953,7 @@ for platform in ["macOS", "iOS"]:
         ac3_status = "not_met" if ac3_status == "pass" else ac3_status
 if not any(i.get("type") == "screenshot" for i in run_evidence):
     ac3_status = "undetermined"
-if "metrics" not in present_types_set:
+if "build_log" not in present_types_set:
     ac3_status = "fail"
 ac_results.append({"criteria_id": "ac-3", "status": ac3_status, "evidence_ids": evidence_ids_for("ac-3")})
 
@@ -963,8 +962,8 @@ total_checks = len(check_results)
 quality_gate_pass_rate = round(pass_checks / total_checks, 4) if total_checks else 0.0
 
 v3 = check_map.get("v-3", {}).get("result") == "pass"
-v4 = check_map.get("v-4", {}).get("result") == "pass"
-parity_ratio = 1.0 if v3 and v4 else 0.0
+v5 = check_map.get("v-5", {}).get("result") == "pass"
+parity_ratio = 1.0 if v3 and v5 else 0.0
 
 if ac3_status != "pass":
     warnings.append("截图证据未达到 macOS+iOS 的 empty+loading+ready 最小集")
@@ -983,7 +982,7 @@ if step in {"all", "build"}:
         gate_failures.append("ac-3 未通过")
 
 for c in check_results:
-    if c["check_id"] == "v-5":
+    if c["check_id"] == "v-4":
         c["result"] = "fail" if gate_failures else "pass"
         c["exit_code"] = 1 if gate_failures else 0
         c["note"] = "证据完整性硬门禁失败" if gate_failures else "证据完整性硬门禁通过"
@@ -1052,12 +1051,12 @@ if warnings:
     summary_lines.append("")
 if ac3_status != "pass":
     summary_lines.append("### 截图补证命令")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform macOS --state empty --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform macOS --state loading --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform macOS --state ready --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform iOS --state empty --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform iOS --state loading --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform iOS --state ready --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --platform macOS --state empty --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --platform macOS --state loading --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --platform macOS --state ready --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --platform iOS --state empty --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --platform iOS --state loading --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-3 --platform iOS --state ready --run-id <run_id>`")
     summary_lines.append("")
 
 summary_lines.append("### 变更统计")
@@ -1079,8 +1078,8 @@ PY
     fi
 
     record_check_result "$CHECK_METRICS" "manual" "pass" "$METRICS_JSON" "0" "证据完整性与一致性校验通过"
-    append_evidence_line "metrics" "$METRICS_JSON" "$CHECK_METRICS" "ac-1,ac-3" "证据完整性与一致性校验指标"
-    append_evidence_line "diff_summary" "$DIFF_SUMMARY" "$CHECK_VERIFY_GATE" "ac-1" "证据差异摘要"
+    append_evidence_line "metrics" "$METRICS_JSON" "$CHECK_METRICS" "ac-1,ac-2,ac-3" "证据完整性与一致性校验指标"
+    append_evidence_line "diff_summary" "$DIFF_SUMMARY" "$CHECK_VERIFY_GATE" "ac-1,ac-2" "证据差异摘要"
     return 0
 }
 

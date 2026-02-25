@@ -50,7 +50,7 @@ print_usage() {
       - 版本一致性检查
 
   quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration|verify] [--dry-run]
-      运行 Evolution 质量门禁链路（unit -> core build -> macOS build -> iOS build -> integration）
+      运行 Evolution 质量门禁链路（unit -> integration -> e2e -> manual，build 独立门禁）
 
   build dmg [--skip-core] [--sign] [--identity "..."]
       构建 DMG（透传到 ./scripts/build_dmg.sh）

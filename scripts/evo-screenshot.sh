@@ -29,7 +29,7 @@ Evolution 截图采集辅助脚本
   --cycle <id>       Cycle ID（必需）
   --check <id>       检查项 ID（默认：v-3）
   --platform <name>  平台：macOS|iOS|both|macos|ios（默认：macOS）
-  --state <state>    状态：empty|loading|ready（与 --states 二选一）
+  --state <state>    状态：empty|loading|ready（兼容 initial|processing|complete|error）
   --states <list>    逗号分隔状态列表，如 empty,loading,ready（与 --state 二选一）
   --run-id <id>      关联 run_id（可选，默认最新）
   --dry-run          生成占位截图（用于无 GUI 场景）
@@ -117,16 +117,44 @@ else
     IFS=',' read -r -a TARGET_STATES <<< "$STATES"
 fi
 
-for s in "${TARGET_STATES[@]}"; do
-    case "$s" in
+normalize_state() {
+    local input="$1"
+    case "$input" in
         empty|loading|ready)
+            echo "$input"
+            return 0
+            ;;
+        initial)
+            echo "empty"
+            return 0
+            ;;
+        processing)
+            echo "loading"
+            return 0
+            ;;
+        complete|error)
+            echo "ready"
+            return 0
             ;;
         *)
-            echo "[evo][evidence] ERROR: 状态仅支持 empty|loading|ready，当前: $s"
-            exit 1
+            return 1
             ;;
     esac
+}
+
+declare -a NORMALIZED_STATES=()
+for s in "${TARGET_STATES[@]}"; do
+    normalized="$(normalize_state "$s" || true)"
+    if [ -z "$normalized" ]; then
+        echo "[evo][evidence] ERROR: 状态仅支持 empty|loading|ready（兼容 initial|processing|complete|error），当前: $s"
+        exit 1
+    fi
+    if [ "$normalized" != "$s" ]; then
+        echo "[evo][evidence] WARN: 旧状态 '$s' 已映射为 '$normalized'（deprecated）"
+    fi
+    NORMALIZED_STATES+=("$normalized")
 done
+TARGET_STATES=("${NORMALIZED_STATES[@]}")
 
 declare -a TARGET_PLATFORMS=()
 if [ "$PLATFORM" = "both" ]; then
@@ -163,18 +191,20 @@ capture_one() {
     related_log_rel="runs/$RUN_ID/evidence/${platform_lower}-${CHECK_ID}-$RUN_ID.log"
 
     local capture_success=0
+    local capture_mode="screen"
     if [ "$DRY_RUN" = "1" ]; then
         python3 - "$filepath" <<'PY'
 import base64
 import sys
 from pathlib import Path
 
-# 1x1 PNG
-png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W1Z0AAAAASUVORK5CYII="
+# 64x64 PNG（避免 1x1 占位导致 verify 无法复核）
+png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAV0lEQVR4nO3PQQ0AIBDAsAP/nkEEj4ZkVbDtmVk/OzrgVQNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgPaBRMVAhQf2R4wAAAAAElFTkSuQmCC"
 out = Path(sys.argv[1])
 out.write_bytes(base64.b64decode(png_b64))
 PY
         capture_success=1
+        capture_mode="dry_run"
     else
         if screencapture -x "$filepath" 2>/dev/null; then
             if [ -f "$filepath" ] && [ -s "$filepath" ]; then
@@ -185,6 +215,7 @@ PY
 
     if [ "$capture_success" != "1" ]; then
         echo "[evo][evidence] CROSS_PLATFORM_FLOW_FAIL cycle_id=$CYCLE_ID check_id=$CHECK_ID run_id=$RUN_ID platform=$platform state=$state reason=screenshot_capture_failed"
+        echo "[evo][evidence] failed_check_id=$CHECK_ID log_path=runs/$RUN_ID/evidence/${CHECK_ID}-screenshots-$RUN_ID.log screenshot_path=$rel_path"
         echo "[evo][evidence] ERROR: 截图失败"
         echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $platform --state $state --run-id $RUN_ID"
 
@@ -203,7 +234,7 @@ PY
 
     echo "[evo][evidence] 截图保存成功: $filepath"
 
-    if ! python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$platform" "$state" "$rel_path" "$related_log_rel" <<'PY'
+    if ! python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$platform" "$state" "$rel_path" "$related_log_rel" "$capture_mode" <<'PY'
 import hashlib
 import json
 import os
@@ -220,6 +251,7 @@ platform = sys.argv[5]
 state = sys.argv[6]
 rel_path = sys.argv[7]
 related_log_rel = sys.argv[8]
+capture_mode = sys.argv[9]
 
 index_path = cycle_dir / "evidence.index.json"
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -334,6 +366,7 @@ item = {
         "platform": platform,
         "state": state,
         "related_test_log": related_log_rel,
+        "capture_mode": capture_mode,
     },
 }
 
