@@ -1,70 +1,65 @@
 # Evolution UI 截图证据策略
 
-> 文档版本：1.1 | 更新日期：2026-02-24
+> 文档版本：1.2 | 更新日期：2026-02-25
 
 ## 1. 必采状态
 
-每次验证至少采集以下三态：
+每次验证至少采集以下三态（macOS 与 iOS 同构）：
 
-- `initial`
-- `processing`
-- `complete` 或 `error`
+- `empty`
+- `loading`
+- `ready`
 
-最小合格集：`initial + processing + (complete|error)`。
+最小合格集：每个平台均为 `empty + loading + ready`。
 
 ## 2. 命名与路径
 
 统一命名：
 
 ```text
-screenshot-<cycle_id>-<check_id>-<state>-<utc_ts>.png
+screenshot-<cycle_id>-<check_id>-<platform>-<state>-<utc_ts>.png
 ```
 
 示例：
 
 ```text
-.tidyflow/evolution/<cycle_id>/evidence/screenshot-2026-02-24T12-01-45Z_tidyflow_default_xxx-v-6-processing-20260224T123501Z.png
+.tidyflow/evolution/<cycle_id>/evidence/screenshot-2026-02-25T06-00-02-292Z-v-5-ios-loading-20260225T061122Z.png
 ```
 
-命名必须能反查 `cycle_id/check_id/state`。
+命名必须可反查：`cycle_id/check_id/platform/state`。
 
-## 3. 采集命令
+## 3. 采集步骤（v-5）
 
-```bash
-./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state initial
-./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state processing
-./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state complete
-```
+1. 在 macOS 与 iOS 分别打开 AI 聊天核心页。
+2. 每端按 `empty/loading/ready` 依次采集截图。
+3. 将产物放入本 cycle `evidence/` 目录，并写入 `evidence.index.json`。
 
-无 GUI 环境可用：
+无 GUI 环境时允许先生成 `synthetic_baseline`（脚本产物），但必须满足最小质量门槛（见第 5 节）；若连基线图也无法产出，才允许登记缺失项并写明 `missing_reason`。
 
-```bash
-./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --state initial --dry-run
-```
+## 4. 索引字段要求
 
-## 4. 日志关联
-
-截图写入索引时需附加：
-
+截图条目至少包含：
+- `type=screenshot`
+- `check_id=v-5`
 - `run_id`
-- `check_id`
-- `metadata.state`
-- `metadata.related_test_log`
-
-这样可从截图回溯到同一 run 的 `test_log`。
+- `summary`（包含平台与状态）
+- `status` 与 `missing_reason`（若缺失）
 
 ## 5. 失败处理
 
 截图失败时必须：
+- 输出可直接执行的补拍步骤；
+- 在证据索引中记录 `status=missing` 与 `missing_reason`；
+- 不阻断其它证据写入。
 
-- 立即输出重试命令；
-- 在 `runs/<run_id>/evidence/diff-<run_id>.md` 追加缺失原因；
-- 保留其他证据，不阻断索引更新。
+截图质量校验（v-5 最小门槛）：
+- 分辨率不得低于 `720x1280`（或同等像素量）；
+- 双端三态 6 张图的 `sha256` 不得全部相同；
+- `summary` 或附加校验文件必须能反查 `platform/state`。
 
 ## 6. 跨端一致性要求
 
 发布前需同时确认：
-
 - macOS 构建证据（v-3）存在；
 - iOS 构建证据（v-4）存在；
-- UI 三态截图已归档并可追溯。
+- `v-5` 的双端三态截图均可追溯到同一 `run_id`。
