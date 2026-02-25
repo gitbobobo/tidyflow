@@ -317,9 +317,6 @@ struct MessageListView: View {
     private func handleTailChanged(proxy: ScrollViewProxy) {
         let decision = scrollPolicy.reduce(event: tailChangeEvent())
         guard decision.shouldScrollToBottom else { return }
-        // 安全检查：仅当视口仍在底部附近时才自动滚动。
-        // 处理手势/滚轮检测和 PreferenceKey 更新之间的竞态条件。
-        guard isNearBottom else { return }
         scrollToBottom(proxy: proxy, animated: false)
     }
 
@@ -357,8 +354,6 @@ struct MessageListView: View {
         } else {
             action()
         }
-        // 程序化滚动后立即同步状态，避免等待异步 PreferenceKey 更新导致的竞态
-        isNearBottom = true
         // 自动滚动后刷新近底部确认时间戳
         _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
     }
