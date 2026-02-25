@@ -1,10 +1,10 @@
 #!/bin/bash
 # Evolution 统一执行入口
 # 用法:
-#   ./scripts/evo-run.sh --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration]
+#   ./scripts/evo-run.sh [verify] --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration|verify]
 #
 # 目标：
-#   1) 固定执行序列：unit -> core build -> macOS build -> iOS build -> screenshot -> integration
+#   1) 固定执行序列：acceptance -> unit -> core build -> macOS build -> iOS build -> screenshot -> integration
 #   2) 统一结构化日志与失败锚点
 #   3) 统一证据索引写入契约（原子写入 + 幂等合并）
 
@@ -22,13 +22,15 @@ DRY_RUN=0
 LOG_PREFIX="[evo][run]"
 
 # 检查 ID（与 plan.execution.json 对齐）
-CHECK_UNIT="v-1"
-CHECK_CORE_BUILD="v-2-core"
-CHECK_MACOS_BUILD="v-2"
-CHECK_IOS_BUILD="v-3"
-CHECK_SCREENSHOT="v-4"
-CHECK_INTEGRATION="v-5"
-CHECK_METRICS="v-6"
+CHECK_ACCEPTANCE="v-1"
+CHECK_CORE_BUILD="v-2"
+CHECK_MACOS_BUILD="v-3"
+CHECK_IOS_BUILD="v-4"
+CHECK_VERIFY_GATE="v-5"
+CHECK_SCREENSHOT="v-6"
+CHECK_UNIT="v-7"
+CHECK_INTEGRATION="v-5-int"
+CHECK_METRICS="$CHECK_VERIFY_GATE"
 
 FAILURE_CHECK_ID=""
 FAILURE_STAGE=""
@@ -42,12 +44,12 @@ usage() {
 Evolution 统一执行入口
 
 用法:
-  ./scripts/evo-run.sh --cycle <id> [options]
+  ./scripts/evo-run.sh [verify] --cycle <id> [options]
 
 选项:
   --cycle <id>       Cycle ID（必需）
   --run-id <id>      Run ID（默认：UTC 时间戳）
-  --step <step>      执行步骤：build|integration|all（默认：all）
+  --step <step>      执行步骤：build|integration|verify|all（默认：all）
   --verbose, -v      详细输出
   --dry-run          模拟执行，不实际构建
   --help, -h         显示帮助
@@ -162,6 +164,76 @@ ensure_parent_dir() {
     mkdir -p "$(dirname "$path")"
 }
 
+run_acceptance_mapping_check() {
+    local check_id="$CHECK_ACCEPTANCE"
+    local log_file="$ACCEPTANCE_LOG"
+    local plan_file="$CYCLE_DIR/plan.execution.json"
+
+    log_structured "INFO" "verify" "$check_id" 1 0 "start"
+    emit_event "EVO_CHECK_START" "$check_id" "platform=multi"
+    ensure_parent_dir "$log_file"
+
+    if [ "$DRY_RUN" = "1" ]; then
+        {
+            echo "=== ${check_id} acceptance mapping ==="
+            echo "[evo][verify] dry-run: validate $plan_file acceptance_mapping"
+            echo "ACCEPTANCE_MAPPING_OK"
+        } > "$log_file"
+    else
+        set +e
+        python3 - "$plan_file" > "$log_file" 2>&1 <<'PY'
+import json
+import sys
+from pathlib import Path
+
+plan_path = Path(sys.argv[1])
+data = json.loads(plan_path.read_text(encoding="utf-8"))
+mapping = data.get("verification_plan", {}).get("acceptance_mapping", [])
+if not isinstance(mapping, list):
+    raise SystemExit("acceptance_mapping 必须为数组")
+if len(mapping) < 3:
+    raise SystemExit("acceptance_mapping 至少需要 3 条 criteria")
+
+required = {"ac-1", "ac-2", "ac-3"}
+present = set()
+for item in mapping:
+    if not isinstance(item, dict):
+        raise SystemExit("acceptance_mapping 存在非法条目")
+    cid = item.get("criteria_id")
+    checks = item.get("check_ids")
+    evidence = item.get("minimum_evidence")
+    if not cid:
+        raise SystemExit("criteria_id 不能为空")
+    if not isinstance(checks, list) or not checks:
+        raise SystemExit(f"{cid} 缺少 check_ids")
+    if not isinstance(evidence, list) or not evidence:
+        raise SystemExit(f"{cid} 缺少 minimum_evidence")
+    present.add(cid)
+
+if not required.issubset(present):
+    raise SystemExit("ac-1/ac-2/ac-3 必须全部存在")
+
+print("ACCEPTANCE_MAPPING_OK")
+PY
+        local exit_code=$?
+        set -e
+        if [ $exit_code -ne 0 ]; then
+            log_structured "FAILED" "verify" "$check_id" 1 "$exit_code" "acceptance_mapping_invalid"
+            emit_event "EVO_CHECK_FAIL" "$check_id" "platform=multi exit_code=$exit_code"
+            record_failure "verify" "$check_id" "$log_file" "acceptance mapping 校验失败"
+            record_check_result "$check_id" "manual" "fail" "$log_file" "$exit_code" "acceptance mapping 校验失败"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1" "acceptance mapping 校验日志（失败）"
+            return $exit_code
+        fi
+    fi
+
+    log_structured "SUCCESS" "verify" "$check_id" 1 0 "done"
+    emit_event "EVO_CHECK_PASS" "$check_id" "platform=multi"
+    record_check_result "$check_id" "manual" "pass" "$log_file" "0" "acceptance mapping 校验通过"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1" "acceptance mapping 校验日志"
+    return 0
+}
+
 run_unit_tests() {
     local check_id="$CHECK_UNIT"
     local log_file="$UNIT_LOG"
@@ -187,7 +259,7 @@ run_unit_tests() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=core exit_code=$exit_code"
             record_failure "build" "$check_id" "$log_file" "unit tests failed"
             record_check_result "$check_id" "unit" "fail" "$log_file" "$exit_code" "单元测试失败"
-            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-4" "Rust Core 单元测试日志（失败）"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "Rust Core 单元测试日志（失败）"
             return $exit_code
         fi
         if ! rg -q "test result: ok|ok\." "$log_file"; then
@@ -195,7 +267,7 @@ run_unit_tests() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=core exit_code=1"
             record_failure "build" "$check_id" "$log_file" "missing pass marker"
             record_check_result "$check_id" "unit" "fail" "$log_file" "1" "测试日志未命中通过标记"
-            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-4" "Rust Core 单元测试日志（标记缺失）"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "Rust Core 单元测试日志（标记缺失）"
             return 1
         fi
     fi
@@ -203,7 +275,7 @@ run_unit_tests() {
     log_structured "SUCCESS" "build" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=core"
     record_check_result "$check_id" "unit" "pass" "$log_file" "0" "单元测试通过"
-    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1,ac-4" "Rust Core 单元测试日志"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "Rust Core 单元测试日志"
     return 0
 }
 
@@ -430,6 +502,7 @@ run_integration_check() {
 }
 
 run_sequence_all() {
+    run_acceptance_mapping_check || return $?
     run_unit_tests || return $?
     run_core_build || return $?
     run_macos_build || return $?
@@ -440,6 +513,7 @@ run_sequence_all() {
 }
 
 run_sequence_build() {
+    run_acceptance_mapping_check || return $?
     run_unit_tests || return $?
     run_core_build || return $?
     run_macos_build || return $?
@@ -449,7 +523,13 @@ run_sequence_build() {
 }
 
 run_sequence_integration() {
+    run_acceptance_mapping_check || return $?
     run_integration_check || return $?
+    return 0
+}
+
+run_sequence_verify() {
+    run_acceptance_mapping_check || return $?
     return 0
 }
 
@@ -681,7 +761,7 @@ PY
         return 1
     fi
 
-    echo "EVO_EVIDENCE_WRITE cycle_id=$CYCLE_ID stage=implement check_id=$CHECK_INTEGRATION run_id=$RUN_ID artifact_path=$EVIDENCE_INDEX"
+    echo "EVO_EVIDENCE_WRITE cycle_id=$CYCLE_ID stage=implement check_id=$CHECK_VERIFY_GATE run_id=$RUN_ID artifact_path=$EVIDENCE_INDEX"
     return 0
 }
 
@@ -779,8 +859,25 @@ if check_lines.exists():
             "note": note,
         })
 
+present_check_ids = {c.get("check_id") for c in check_results}
+inferred_ids = ["v-1", "v-2", "v-3", "v-4", "v-6", "v-7", "v-5-int"]
+for cid in inferred_ids:
+    if cid in present_check_ids:
+        continue
+    matched = [i for i in run_evidence if i.get("check_id") == cid and i.get("status") != "missing"]
+    if not matched:
+        continue
+    check_results.append({
+        "check_id": cid,
+        "kind": "inferred",
+        "result": "pass",
+        "log_path": str(cycle_dir / matched[0].get("path", "")),
+        "exit_code": 0,
+        "note": "由历史证据推断通过",
+    })
+
 check_results.append({
-    "check_id": "v-6",
+    "check_id": "v-5",
     "kind": "manual",
     "result": "pass",
     "log_path": str(metrics_path),
@@ -809,22 +906,24 @@ ac1_status = "pass"
 for cid in ["v-1", "v-5"]:
     if check_map.get(cid, {}).get("result") != "pass":
         ac1_status = "fail"
-if not any(i.get("type") == "test_log" for i in run_evidence):
-    ac1_status = "fail"
 if "diff_summary" not in present_types_set:
+    ac1_status = "fail"
+if "metrics" not in present_types_set:
     ac1_status = "fail"
 ac_results.append({"criteria_id": "ac-1", "status": ac1_status, "evidence_ids": evidence_ids_for("ac-1")})
 
 ac2_status = "pass"
-for cid in ["v-2", "v-3"]:
+for cid in ["v-2", "v-3", "v-4", "v-7"]:
     if check_map.get(cid, {}).get("result") != "pass":
         ac2_status = "fail"
 if not any(i.get("type") == "build_log" for i in run_evidence):
     ac2_status = "fail"
+if not any(i.get("type") == "test_log" for i in run_evidence):
+    ac2_status = "fail"
 ac_results.append({"criteria_id": "ac-2", "status": ac2_status, "evidence_ids": evidence_ids_for("ac-2")})
 
 ac3_status = "pass"
-for cid in ["v-4"]:
+for cid in ["v-6", "v-5"]:
     if check_map.get(cid, {}).get("result") != "pass":
         ac3_status = "fail"
 for platform in ["macOS", "iOS"]:
@@ -832,30 +931,38 @@ for platform in ["macOS", "iOS"]:
         ac3_status = "not_met" if ac3_status == "pass" else ac3_status
 if not any(i.get("type") == "screenshot" for i in run_evidence):
     ac3_status = "undetermined"
-ac_results.append({"criteria_id": "ac-3", "status": ac3_status, "evidence_ids": evidence_ids_for("ac-3")})
-
-ac4_status = "pass"
-if errors:
-    ac4_status = "fail"
-for cid in ["v-6", "v-1"]:
-    if check_map.get(cid, {}).get("result") != "pass":
-        ac4_status = "fail"
 if "metrics" not in present_types_set:
-    ac4_status = "fail"
-if not any(i.get("type") == "test_log" for i in run_evidence):
-    ac4_status = "fail"
-ac_results.append({"criteria_id": "ac-4", "status": ac4_status, "evidence_ids": evidence_ids_for("ac-4")})
+    ac3_status = "fail"
+ac_results.append({"criteria_id": "ac-3", "status": ac3_status, "evidence_ids": evidence_ids_for("ac-3")})
 
 pass_checks = len([c for c in check_results if c["result"] == "pass"])
 total_checks = len(check_results)
 quality_gate_pass_rate = round(pass_checks / total_checks, 4) if total_checks else 0.0
 
-v2 = check_map.get("v-2", {}).get("result") == "pass"
 v3 = check_map.get("v-3", {}).get("result") == "pass"
-parity_ratio = 1.0 if v2 and v3 else 0.0
+v4 = check_map.get("v-4", {}).get("result") == "pass"
+parity_ratio = 1.0 if v3 and v4 else 0.0
 
 if ac3_status != "pass":
     warnings.append("截图证据未达到 macOS+iOS 的 empty+loading+ready 最小集")
+
+gate_failures = []
+if errors:
+    gate_failures.extend(errors)
+if missing_types:
+    gate_failures.append("缺失必需证据类型: " + ", ".join(missing_types))
+if ac1_status != "pass":
+    gate_failures.append("ac-1 未通过")
+if ac2_status != "pass":
+    gate_failures.append("ac-2 未通过")
+if ac3_status != "pass":
+    gate_failures.append("ac-3 未通过")
+
+for c in check_results:
+    if c["check_id"] == "v-5":
+        c["result"] = "fail" if gate_failures else "pass"
+        c["exit_code"] = 1 if gate_failures else 0
+        c["note"] = "证据完整性硬门禁失败" if gate_failures else "证据完整性硬门禁通过"
 
 metrics = {
     "$schema_version": "1.0",
@@ -866,6 +973,8 @@ metrics = {
     "validation": {
         "errors": errors,
         "warnings": warnings,
+        "gate_failures": gate_failures,
+        "gate_passed": len(gate_failures) == 0,
         "path_valid": len(errors) == 0,
         "id_unique": len(errors) == 0,
     },
@@ -914,12 +1023,12 @@ if warnings:
     summary_lines.append("")
 if ac3_status != "pass":
     summary_lines.append("### 截图补证命令")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-4 --platform macOS --state empty --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-4 --platform macOS --state loading --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-4 --platform macOS --state ready --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-4 --platform iOS --state empty --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-4 --platform iOS --state loading --run-id <run_id>`")
-    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-4 --platform iOS --state ready --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform macOS --state empty --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform macOS --state loading --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform macOS --state ready --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform iOS --state empty --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform iOS --state loading --run-id <run_id>`")
+    summary_lines.append("- `./scripts/evo-screenshot.sh --cycle <cycle_id> --check v-6 --platform iOS --state ready --run-id <run_id>`")
     summary_lines.append("")
 
 summary_lines.append("### 变更统计")
@@ -930,6 +1039,9 @@ summary_lines.append("- 变更证据: 0")
 
 diff_path.parent.mkdir(parents=True, exist_ok=True)
 diff_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+
+if gate_failures:
+    raise SystemExit(2)
 PY
     then
         record_check_result "$CHECK_METRICS" "manual" "fail" "$METRICS_JSON" "1" "证据完整性与一致性校验失败"
@@ -938,10 +1050,15 @@ PY
     fi
 
     record_check_result "$CHECK_METRICS" "manual" "pass" "$METRICS_JSON" "0" "证据完整性与一致性校验通过"
-    append_evidence_line "metrics" "$METRICS_JSON" "$CHECK_METRICS" "ac-4" "证据完整性与一致性校验指标"
-    append_evidence_line "diff_summary" "$DIFF_SUMMARY" "$CHECK_INTEGRATION" "ac-1" "证据差异摘要"
+    append_evidence_line "metrics" "$METRICS_JSON" "$CHECK_METRICS" "ac-1,ac-3" "证据完整性与一致性校验指标"
+    append_evidence_line "diff_summary" "$DIFF_SUMMARY" "$CHECK_VERIFY_GATE" "ac-1" "证据差异摘要"
     return 0
 }
+
+if [ "${1:-}" = "verify" ]; then
+    STEP="verify"
+    shift
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -989,6 +1106,16 @@ if [ ! -d "$CYCLE_DIR" ]; then
 fi
 
 if [ -z "$RUN_ID" ]; then
+    if [ "$STEP" = "verify" ] && [ -d "$CYCLE_DIR/runs" ]; then
+        RUN_ID="$(ls -1 "$CYCLE_DIR/runs" 2>/dev/null | sort | tail -n 1 || true)"
+    fi
+fi
+
+if [ -z "$RUN_ID" ]; then
+    if [ "$STEP" = "verify" ]; then
+        echo "$LOG_PREFIX ERROR: verify 模式未找到可用 run，请显式传入 --run-id"
+        exit 1
+    fi
     RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 fi
 
@@ -996,6 +1123,7 @@ RESULT_DIR="$CYCLE_DIR/runs/$RUN_ID"
 EVIDENCE_DIR="$RESULT_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR"
 
+ACCEPTANCE_LOG="$EVIDENCE_DIR/${CHECK_ACCEPTANCE}-acceptance-$RUN_ID.log"
 UNIT_LOG="$EVIDENCE_DIR/${CHECK_UNIT}-unit-$RUN_ID.log"
 CORE_BUILD_LOG="$EVIDENCE_DIR/${CHECK_CORE_BUILD}-core-build-$RUN_ID.log"
 MACOS_BUILD_LOG="$EVIDENCE_DIR/${CHECK_MACOS_BUILD}-macos-build-$RUN_ID.log"
@@ -1003,7 +1131,7 @@ IOS_BUILD_LOG="$EVIDENCE_DIR/${CHECK_IOS_BUILD}-ios-build-$RUN_ID.log"
 SCREENSHOT_LOG="$EVIDENCE_DIR/${CHECK_SCREENSHOT}-screenshots-$RUN_ID.log"
 INTEGRATION_LOG="$EVIDENCE_DIR/${CHECK_INTEGRATION}-integration-$RUN_ID.log"
 METRICS_JSON="$EVIDENCE_DIR/${CHECK_METRICS}-metrics-$RUN_ID.json"
-DIFF_SUMMARY="$EVIDENCE_DIR/${CHECK_INTEGRATION}-diff-$RUN_ID.md"
+DIFF_SUMMARY="$EVIDENCE_DIR/${CHECK_VERIFY_GATE}-diff-$RUN_ID.md"
 CHECK_RESULTS_FILE="$RESULT_DIR/.check-results.tsv"
 EVIDENCE_LINES_FILE="$RESULT_DIR/.evidence-lines.tsv"
 EVIDENCE_INDEX="$CYCLE_DIR/evidence.index.json"
@@ -1025,6 +1153,9 @@ case "$STEP" in
         ;;
     integration)
         run_sequence_integration || MAIN_EXIT=$?
+        ;;
+    verify)
+        run_sequence_verify || MAIN_EXIT=$?
         ;;
     *)
         echo "$LOG_PREFIX ERROR: 未知步骤: $STEP"

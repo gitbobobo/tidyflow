@@ -1,7 +1,7 @@
 #!/bin/bash
 # Evolution 截图采集辅助脚本
 # 用法:
-#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --platform macOS|iOS --state empty|loading|ready [--run-id <run_id>] [--dry-run]
+#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --platform macOS|iOS|macos|ios --state empty|loading|ready [--run-id <run_id>] [--dry-run]
 
 set -euo pipefail
 
@@ -20,12 +20,12 @@ usage() {
 Evolution 截图采集辅助脚本
 
 用法:
-  ./scripts/evo-screenshot.sh --cycle <cycle_id> --platform <macOS|iOS> --state <state> [options]
+  ./scripts/evo-screenshot.sh --cycle <cycle_id> --platform <macOS|iOS|macos|ios> --state <state> [options]
 
 选项:
   --cycle <id>       Cycle ID（必需）
   --check <id>       检查项 ID（默认：v-4）
-  --platform <name>  平台：macOS|iOS（默认：macOS）
+  --platform <name>  平台：macOS|iOS|macos|ios（默认：macOS）
   --state <state>    状态：empty|loading|ready（必需）
   --run-id <id>      关联 run_id（可选，默认最新）
   --dry-run          生成占位截图（用于无 GUI 场景）
@@ -77,10 +77,14 @@ if [ -z "$CYCLE_ID" ]; then
 fi
 
 case "$PLATFORM" in
-    macOS|iOS)
+    macOS|macos)
+        PLATFORM="macOS"
+        ;;
+    iOS|ios)
+        PLATFORM="iOS"
         ;;
     *)
-        echo "[evo][evidence] ERROR: --platform 仅支持 macOS|iOS"
+        echo "[evo][evidence] ERROR: --platform 仅支持 macOS|iOS|macos|ios"
         exit 1
         ;;
 esac

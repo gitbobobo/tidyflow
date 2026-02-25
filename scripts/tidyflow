@@ -49,7 +49,7 @@ print_usage() {
       - 协议 action 规则同步检查
       - 版本一致性检查
 
-  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration] [--dry-run]
+  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration|verify] [--dry-run]
       运行 Evolution 质量门禁链路（unit -> core build -> macOS build -> iOS build -> integration）
 
   build dmg [--skip-core] [--sign] [--identity "..."]
