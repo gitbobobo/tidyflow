@@ -197,13 +197,18 @@ pub fn check_branch_divergence_local(
     let mut current = repo
         .try_find_reference(&current_ref)
         .map_err(|e| GitError::CommandFailed(format!("Failed to find branch: {}", e)))?
-        .ok_or_else(|| GitError::CommandFailed(format!("Local branch '{}' not found", current_branch)))?;
+        .ok_or_else(|| {
+            GitError::CommandFailed(format!("Local branch '{}' not found", current_branch))
+        })?;
 
     let mut default = repo
         .try_find_reference(&default_ref)
         .map_err(|e| GitError::CommandFailed(format!("Failed to find branch: {}", e)))?
         .ok_or_else(|| {
-            GitError::CommandFailed(format!("Local default branch '{}' not found", default_branch))
+            GitError::CommandFailed(format!(
+                "Local default branch '{}' not found",
+                default_branch
+            ))
         })?;
 
     let current_id = current
@@ -265,7 +270,8 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
 
     let mut items = Vec::new();
     for item in &mut iter {
-        let item = item.map_err(|e| GitError::CommandFailed(format!("Status iteration failed: {}", e)))?;
+        let item =
+            item.map_err(|e| GitError::CommandFailed(format!("Status iteration failed: {}", e)))?;
         match item {
             gix::status::Item::IndexWorktree(change) => {
                 if let Some(entry) = index_worktree_item_to_entry(change) {
@@ -328,7 +334,10 @@ pub fn git_log(workspace_root: &Path, limit: usize) -> Result<GitLogResult, GitE
                 };
                 let ref_name = reference.name().shorten().to_string();
                 if let Ok(id) = reference.peel_to_id() {
-                    refs_by_commit.entry(id.to_string()).or_default().push(ref_name);
+                    refs_by_commit
+                        .entry(id.to_string())
+                        .or_default()
+                        .push(ref_name);
                 }
             }
         }
@@ -344,14 +353,17 @@ pub fn git_log(workspace_root: &Path, limit: usize) -> Result<GitLogResult, GitE
 
     let mut entries = Vec::new();
     for info in walk.take(limit) {
-        let info = info.map_err(|e| GitError::CommandFailed(format!("Failed to read commit info: {}", e)))?;
+        let info = info
+            .map_err(|e| GitError::CommandFailed(format!("Failed to read commit info: {}", e)))?;
         let commit = info
             .object()
             .map_err(|e| GitError::CommandFailed(format!("Failed to read commit object: {}", e)))?;
 
         let full_sha = commit.id().to_string();
         let sha: String = full_sha.chars().take(7).collect();
-        let message = bstr_to_string(commit.message_raw_sloppy()).trim().to_string();
+        let message = bstr_to_string(commit.message_raw_sloppy())
+            .trim()
+            .to_string();
         let author = commit
             .author()
             .map(|a| bstr_to_string(a.name))
@@ -397,7 +409,9 @@ pub fn git_show(workspace_root: &Path, sha: &str) -> Result<GitShowResult, GitEr
     let author = bstr_to_string(author_sig.name).trim().to_string();
     let author_email = bstr_to_string(author_sig.email).trim().to_string();
     let date = commit.time().map(git_time_to_iso).unwrap_or_default();
-    let message = bstr_to_string(commit.message_raw_sloppy()).trim().to_string();
+    let message = bstr_to_string(commit.message_raw_sloppy())
+        .trim()
+        .to_string();
 
     let current_tree = commit
         .tree()

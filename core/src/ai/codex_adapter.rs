@@ -1152,7 +1152,10 @@ impl CodexAppServerAgent {
     }
 
     /// Codex 事件名在版本迭代中可能变化，这里为未知 delta 事件提供文本兜底映射。
-    fn extract_generic_text_delta(method: &str, params: &Value) -> Option<(String, String, String, String)> {
+    fn extract_generic_text_delta(
+        method: &str,
+        params: &Value,
+    ) -> Option<(String, String, String, String)> {
         let method_lower = method.to_ascii_lowercase();
         let looks_like_delta = method_lower.contains("delta");
         if !looks_like_delta {

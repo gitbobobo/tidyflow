@@ -28,8 +28,9 @@ pub fn git_branches(workspace_root: &Path) -> Result<GitBranchesResult, GitError
         .local_branches()
         .map_err(|e| GitError::CommandFailed(format!("Failed to list local branches: {}", e)))?;
     for item in iter {
-        let reference = item
-            .map_err(|e| GitError::CommandFailed(format!("Failed to iterate branch refs: {}", e)))?;
+        let reference = item.map_err(|e| {
+            GitError::CommandFailed(format!("Failed to iterate branch refs: {}", e))
+        })?;
         let name = reference.name().shorten().to_string();
         if !name.is_empty() {
             branches.push(GitBranchInfo { name });

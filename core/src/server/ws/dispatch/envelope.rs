@@ -46,9 +46,12 @@ impl MsgpackCompatValue {
                     .map(|b| Value::Number(Number::from(b)))
                     .collect(),
             ),
-            MsgpackCompatValue::Array(items) => {
-                Value::Array(items.into_iter().map(MsgpackCompatValue::into_json).collect())
-            }
+            MsgpackCompatValue::Array(items) => Value::Array(
+                items
+                    .into_iter()
+                    .map(MsgpackCompatValue::into_json)
+                    .collect(),
+            ),
             MsgpackCompatValue::Object(map) => {
                 let mut out = Map::with_capacity(map.len());
                 for (k, v) in map {

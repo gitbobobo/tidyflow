@@ -2097,7 +2097,8 @@ impl AiAgent for OpenCodeAgent {
         let arguments_owned = arguments.to_string();
         let manager = self.manager.clone();
 
-        let (local_tx, local_rx) = tokio::sync::mpsc::unbounded_channel::<Result<AiEvent, String>>();
+        let (local_tx, local_rx) =
+            tokio::sync::mpsc::unbounded_channel::<Result<AiEvent, String>>();
 
         tokio::spawn(async move {
             let client = OpenCodeClient::from_manager(&manager);
@@ -2181,15 +2182,13 @@ impl AiAgent for OpenCodeAgent {
                     created_at: info.created_at,
                     agent: Self::normalize_optional_token(info.agent.clone().or(info.mode.clone())),
                     model_provider_id: Self::normalize_optional_token(
-                        info
-                            .model
+                        info.model
                             .as_ref()
                             .and_then(|m| m.provider_id.clone())
                             .or_else(|| info.provider_id.clone()),
                     ),
                     model_id: Self::normalize_optional_token(
-                        info
-                            .model
+                        info.model
                             .as_ref()
                             .and_then(|m| m.model_id.clone())
                             .or_else(|| info.model_id.clone()),

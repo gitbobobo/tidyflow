@@ -10,8 +10,8 @@ use crate::server::protocol::ClientMessage;
 
 static EVOLUTION_MANAGER: OnceLock<Arc<EvolutionManager>> = OnceLock::new();
 
-mod broadcast;
 mod blocker;
+mod broadcast;
 mod consts;
 mod manager_persistence;
 mod manager_stage;
