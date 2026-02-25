@@ -1,7 +1,8 @@
 #!/bin/bash
 # Evolution 截图采集辅助脚本
 # 用法:
-#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --platform macOS|iOS|macos|ios --state empty|loading|ready [--run-id <run_id>] [--dry-run]
+#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --platform macOS|iOS|both --state empty|loading|ready [--run-id <run_id>] [--dry-run]
+#   ./scripts/evo-screenshot.sh --cycle <cycle_id> --check <check_id> --platform both --states empty,loading,ready [--run-id <run_id>] [--dry-run]
 
 set -euo pipefail
 
@@ -9,9 +10,10 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EVOLUTION_DIR="$PROJECT_ROOT/.tidyflow/evolution"
 
 CYCLE_ID=""
-CHECK_ID="v-4"
+CHECK_ID="v-3"
 PLATFORM="macOS"
 STATE=""
+STATES=""
 RUN_ID=""
 DRY_RUN=0
 
@@ -20,13 +22,15 @@ usage() {
 Evolution 截图采集辅助脚本
 
 用法:
-  ./scripts/evo-screenshot.sh --cycle <cycle_id> --platform <macOS|iOS|macos|ios> --state <state> [options]
+  ./scripts/evo-screenshot.sh --cycle <cycle_id> --platform <macOS|iOS|both|macos|ios> --state <state> [options]
+  ./scripts/evo-screenshot.sh --cycle <cycle_id> --platform both --states <s1,s2,...> [options]
 
 选项:
   --cycle <id>       Cycle ID（必需）
-  --check <id>       检查项 ID（默认：v-4）
-  --platform <name>  平台：macOS|iOS|macos|ios（默认：macOS）
-  --state <state>    状态：empty|loading|ready（必需）
+  --check <id>       检查项 ID（默认：v-3）
+  --platform <name>  平台：macOS|iOS|both|macos|ios（默认：macOS）
+  --state <state>    状态：empty|loading|ready（与 --states 二选一）
+  --states <list>    逗号分隔状态列表，如 empty,loading,ready（与 --state 二选一）
   --run-id <id>      关联 run_id（可选，默认最新）
   --dry-run          生成占位截图（用于无 GUI 场景）
   --help, -h         显示帮助
@@ -40,7 +44,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --check)
-            CHECK_ID="${2:-v-4}"
+            CHECK_ID="${2:-v-3}"
             shift 2
             ;;
         --platform)
@@ -49,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --state)
             STATE="${2:-}"
+            shift 2
+            ;;
+        --states)
+            STATES="${2:-}"
             shift 2
             ;;
         --run-id)
@@ -83,29 +91,55 @@ case "$PLATFORM" in
     iOS|ios)
         PLATFORM="iOS"
         ;;
+    both)
+        PLATFORM="both"
+        ;;
     *)
-        echo "[evo][evidence] ERROR: --platform 仅支持 macOS|iOS|macos|ios"
+        echo "[evo][evidence] ERROR: --platform 仅支持 macOS|iOS|both|macos|ios"
         exit 1
         ;;
 esac
 
-case "$STATE" in
-    empty|loading|ready)
-        ;;
-    *)
-        echo "[evo][evidence] ERROR: --state 仅支持 empty|loading|ready"
-        exit 1
-        ;;
-esac
+if [ -n "$STATE" ] && [ -n "$STATES" ]; then
+    echo "[evo][evidence] ERROR: --state 与 --states 不能同时指定"
+    exit 1
+fi
+
+if [ -z "$STATE" ] && [ -z "$STATES" ]; then
+    echo "[evo][evidence] ERROR: 必须指定 --state 或 --states"
+    exit 1
+fi
+
+declare -a TARGET_STATES=()
+if [ -n "$STATE" ]; then
+    TARGET_STATES=("$STATE")
+else
+    IFS=',' read -r -a TARGET_STATES <<< "$STATES"
+fi
+
+for s in "${TARGET_STATES[@]}"; do
+    case "$s" in
+        empty|loading|ready)
+            ;;
+        *)
+            echo "[evo][evidence] ERROR: 状态仅支持 empty|loading|ready，当前: $s"
+            exit 1
+            ;;
+    esac
+done
+
+declare -a TARGET_PLATFORMS=()
+if [ "$PLATFORM" = "both" ]; then
+    TARGET_PLATFORMS=("macOS" "iOS")
+else
+    TARGET_PLATFORMS=("$PLATFORM")
+fi
 
 CYCLE_DIR="$EVOLUTION_DIR/$CYCLE_ID"
 if [ ! -d "$CYCLE_DIR" ]; then
     echo "[evo][evidence] ERROR: Cycle 目录不存在: $CYCLE_DIR"
     exit 1
 fi
-
-SCREENSHOT_DIR="$CYCLE_DIR/artifacts/screenshots/$PLATFORM"
-mkdir -p "$SCREENSHOT_DIR"
 
 if [ -z "$RUN_ID" ] && [ -d "$CYCLE_DIR/runs" ]; then
     RUN_ID="$(ls -1 "$CYCLE_DIR/runs" 2>/dev/null | sort | tail -n 1 || true)"
@@ -114,17 +148,23 @@ if [ -z "$RUN_ID" ]; then
     RUN_ID="manual-$(date -u +%Y%m%d-%H%M%S)"
 fi
 
-UTC_TS="$(date -u +%Y%m%dT%H%M%SZ)"
-FILENAME="screenshot-${RUN_ID}-${CHECK_ID}-${PLATFORM}-${STATE}-${UTC_TS}.png"
-FILEPATH="$SCREENSHOT_DIR/$FILENAME"
-REL_PATH="artifacts/screenshots/$PLATFORM/$FILENAME"
-PLATFORM_LOWER="$(echo "$PLATFORM" | tr '[:upper:]' '[:lower:]')"
-RELATED_LOG_REL="runs/$RUN_ID/evidence/${PLATFORM_LOWER}-${CHECK_ID}-$RUN_ID.log"
+capture_one() {
+    local platform="$1"
+    local state="$2"
+    local screenshot_dir="$CYCLE_DIR/artifacts/screenshots/$platform"
+    mkdir -p "$screenshot_dir"
 
-capture_success=0
+    local utc_ts filename filepath rel_path platform_lower related_log_rel
+    utc_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    filename="screenshot-${RUN_ID}-${CHECK_ID}-${platform}-${state}-${utc_ts}.png"
+    filepath="$screenshot_dir/$filename"
+    rel_path="artifacts/screenshots/$platform/$filename"
+    platform_lower="$(echo "$platform" | tr '[:upper:]' '[:lower:]')"
+    related_log_rel="runs/$RUN_ID/evidence/${platform_lower}-${CHECK_ID}-$RUN_ID.log"
 
-if [ "$DRY_RUN" = "1" ]; then
-    python3 - "$FILEPATH" <<'PY'
+    local capture_success=0
+    if [ "$DRY_RUN" = "1" ]; then
+        python3 - "$filepath" <<'PY'
 import base64
 import sys
 from pathlib import Path
@@ -134,35 +174,36 @@ png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCA
 out = Path(sys.argv[1])
 out.write_bytes(base64.b64decode(png_b64))
 PY
-    capture_success=1
-else
-    if screencapture -x "$FILEPATH" 2>/dev/null; then
-        if [ -f "$FILEPATH" ] && [ -s "$FILEPATH" ]; then
-            capture_success=1
+        capture_success=1
+    else
+        if screencapture -x "$filepath" 2>/dev/null; then
+            if [ -f "$filepath" ] && [ -s "$filepath" ]; then
+                capture_success=1
+            fi
         fi
     fi
-fi
 
-if [ "$capture_success" != "1" ]; then
-    echo "[evo][evidence] ERROR: 截图失败"
-    echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $PLATFORM --state $STATE --run-id $RUN_ID"
+    if [ "$capture_success" != "1" ]; then
+        echo "[evo][evidence] CROSS_PLATFORM_FLOW_FAIL cycle_id=$CYCLE_ID check_id=$CHECK_ID run_id=$RUN_ID platform=$platform state=$state reason=screenshot_capture_failed"
+        echo "[evo][evidence] ERROR: 截图失败"
+        echo "[evo][evidence] 重试命令: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $platform --state $state --run-id $RUN_ID"
 
-    DIFF_PATH="$CYCLE_DIR/runs/$RUN_ID/evidence/diff-$RUN_ID.md"
-    mkdir -p "$(dirname "$DIFF_PATH")"
-    {
-        echo ""
-        echo "### 截图缺失记录"
-        echo "- platform: $PLATFORM"
-        echo "- state: $STATE"
-        echo "- reason: screenshot capture failed"
-        echo "- retry: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $PLATFORM --state $STATE --run-id $RUN_ID"
-    } >> "$DIFF_PATH"
-    exit 1
-fi
+        DIFF_PATH="$CYCLE_DIR/runs/$RUN_ID/evidence/diff-$RUN_ID.md"
+        mkdir -p "$(dirname "$DIFF_PATH")"
+        {
+            echo ""
+            echo "### 截图缺失记录"
+            echo "- platform: $platform"
+            echo "- state: $state"
+            echo "- reason: screenshot capture failed"
+            echo "- retry: ./scripts/evo-screenshot.sh --cycle $CYCLE_ID --check $CHECK_ID --platform $platform --state $state --run-id $RUN_ID"
+        } >> "$DIFF_PATH"
+        return 1
+    fi
 
-echo "[evo][evidence] 截图保存成功: $FILEPATH"
+    echo "[evo][evidence] 截图保存成功: $filepath"
 
-python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$PLATFORM" "$STATE" "$REL_PATH" "$RELATED_LOG_REL" <<'PY'
+    if ! python3 - "$CYCLE_DIR" "$CYCLE_ID" "$RUN_ID" "$CHECK_ID" "$platform" "$state" "$rel_path" "$related_log_rel" <<'PY'
 import hashlib
 import json
 import os
@@ -282,7 +323,7 @@ item = {
     "type": "screenshot",
     "path": rel_path,
     "generated_by_stage": "implement",
-    "linked_criteria_ids": ["ac-3"],
+    "linked_criteria_ids": ["ac-1", "ac-3"],
     "summary": f"截图证据 platform={platform} state={state} check={check_id}",
     "created_at": now,
     "run_id": run_id,
@@ -340,7 +381,21 @@ except Exception:
         pass
     raise
 PY
+    then
+        echo "[evo][evidence] EVIDENCE_INDEX_WRITE_FAIL cycle_id=$CYCLE_ID check_id=$CHECK_ID run_id=$RUN_ID platform=$platform state=$state"
+        return 1
+    fi
 
-echo "[evo][evidence] 索引更新成功"
-echo "[evo][evidence] check=$CHECK_ID platform=$PLATFORM state=$STATE run_id=$RUN_ID"
-echo "[evo][evidence] related_log=$RELATED_LOG_REL"
+    echo "[evo][evidence] EVIDENCE_INDEX_WRITE_OK cycle_id=$CYCLE_ID check_id=$CHECK_ID run_id=$RUN_ID platform=$platform state=$state"
+    echo "[evo][evidence] check=$CHECK_ID platform=$platform state=$state run_id=$RUN_ID"
+    echo "[evo][evidence] related_log=$related_log_rel"
+    return 0
+}
+
+echo "[evo][evidence] CROSS_PLATFORM_FLOW_START cycle_id=$CYCLE_ID check_id=$CHECK_ID run_id=$RUN_ID platform=$PLATFORM states=${TARGET_STATES[*]}"
+for platform in "${TARGET_PLATFORMS[@]}"; do
+    for state in "${TARGET_STATES[@]}"; do
+        capture_one "$platform" "$state" || exit 1
+    done
+done
+echo "[evo][evidence] CROSS_PLATFORM_FLOW_SUCCESS cycle_id=$CYCLE_ID check_id=$CHECK_ID run_id=$RUN_ID platform=$PLATFORM states=${TARGET_STATES[*]}"

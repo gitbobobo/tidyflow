@@ -29,7 +29,7 @@ CHECK_IOS_BUILD="v-4"
 CHECK_VERIFY_GATE="v-5"
 CHECK_SCREENSHOT="v-6"
 CHECK_UNIT="v-7"
-CHECK_INTEGRATION="v-5-int"
+CHECK_INTEGRATION="v-2"
 CHECK_METRICS="$CHECK_VERIFY_GATE"
 
 FAILURE_CHECK_ID=""
@@ -74,6 +74,12 @@ emit_event() {
     echo "$event cycle_id=$CYCLE_ID stage=implement check_id=$check_id run_id=$RUN_ID $extra"
 }
 
+emit_flow_event() {
+    local status="$1"
+    local detail="${2:-}"
+    echo "CROSS_PLATFORM_FLOW_${status} cycle_id=$CYCLE_ID stage=implement run_id=$RUN_ID step=$STEP $detail"
+}
+
 record_failure() {
     local stage="$1"
     local check_id="$2"
@@ -85,6 +91,7 @@ record_failure() {
     FAILURE_LOG_PATH="$log_path"
     FAILURE_REASON="$reason"
 
+    emit_flow_event "FAIL" "check_id=$check_id stage=$stage reason=$reason"
     echo "[evo][anchor] 失败锚点 check=$check_id log=$log_path reason=$reason"
     local prev_run
     prev_run="$(get_previous_stable_run_id)"
@@ -403,37 +410,29 @@ run_ios_build() {
 run_screenshot_capture() {
     local check_id="$CHECK_SCREENSHOT"
     local log_file="$SCREENSHOT_LOG"
-    local platform=""
-    local state=""
 
     log_structured "INFO" "screenshot" "$check_id" 1 0 "start"
     emit_event "EVO_CHECK_START" "$check_id" "platform=multi"
     ensure_parent_dir "$log_file"
     : > "$log_file"
 
-    for platform in macOS iOS; do
-        for state in empty loading ready; do
-            local cmd=(./scripts/evo-screenshot.sh --cycle "$CYCLE_ID" --check "$check_id" --platform "$platform" --state "$state" --run-id "$RUN_ID")
-            if [ "$DRY_RUN" = "1" ]; then
-                cmd+=(--dry-run)
-            fi
+    local cmd=(./scripts/evo-screenshot.sh --cycle "$CYCLE_ID" --check "$check_id" --platform both --states empty,loading,ready --run-id "$RUN_ID")
+    if [ "$DRY_RUN" = "1" ]; then
+        cmd+=(--dry-run)
+    fi
 
-            echo "[evo][screenshot] platform=$platform state=$state begin" >> "$log_file"
-            set +e
-            "${cmd[@]}" >> "$log_file" 2>&1
-            local exit_code=$?
-            set -e
-            if [ $exit_code -ne 0 ]; then
-                log_structured "FAILED" "screenshot" "$check_id" 1 "$exit_code" "screenshot_capture_failed"
-                emit_event "EVO_CHECK_FAIL" "$check_id" "platform=$platform screenshot_state=$state exit_code=$exit_code"
-                record_failure "screenshot" "$check_id" "$log_file" "截图采集失败 platform=$platform state=$state"
-                record_check_result "$check_id" "manual" "fail" "$log_file" "$exit_code" "截图采集失败 platform=$platform state=$state"
-                append_evidence_line "test_log" "$log_file" "$check_id" "ac-3" "截图采集执行日志（失败）"
-                return $exit_code
-            fi
-            emit_event "EVO_SCREENSHOT_STATE" "$check_id" "platform=$platform screenshot_state=$state"
-        done
-    done
+    set +e
+    "${cmd[@]}" >> "$log_file" 2>&1
+    local exit_code=$?
+    set -e
+    if [ $exit_code -ne 0 ]; then
+        log_structured "FAILED" "screenshot" "$check_id" 1 "$exit_code" "screenshot_capture_failed"
+        emit_event "EVO_CHECK_FAIL" "$check_id" "platform=multi screenshot_state=empty,loading,ready exit_code=$exit_code"
+        record_failure "screenshot" "$check_id" "$log_file" "截图采集失败 platform=both states=empty,loading,ready"
+        record_check_result "$check_id" "manual" "fail" "$log_file" "$exit_code" "截图采集失败 platform=both states=empty,loading,ready"
+        append_evidence_line "test_log" "$log_file" "$check_id" "ac-3" "截图采集执行日志（失败）"
+        return $exit_code
+    fi
 
     log_structured "SUCCESS" "screenshot" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=multi"
@@ -489,7 +488,7 @@ run_integration_check() {
             emit_event "EVO_CHECK_FAIL" "$check_id" "platform=multi exit_code=$exit_code"
             record_failure "integration" "$check_id" "$log_file" "integration failed"
             record_check_result "$check_id" "integration" "fail" "$log_file" "$exit_code" "集成检查失败"
-            append_evidence_line "test_log" "$log_file" "$check_id" "ac-1" "集成检查日志（失败）"
+            append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "集成检查日志（失败）"
             return $exit_code
         fi
     fi
@@ -497,7 +496,7 @@ run_integration_check() {
     log_structured "SUCCESS" "integration" "$check_id" 1 0 "done"
     emit_event "EVO_CHECK_PASS" "$check_id" "platform=multi"
     record_check_result "$check_id" "integration" "pass" "$log_file" "0" "集成检查通过"
-    append_evidence_line "test_log" "$log_file" "$check_id" "ac-1" "集成检查日志"
+    append_evidence_line "test_log" "$log_file" "$check_id" "ac-2" "集成检查日志"
     return 0
 }
 
@@ -768,16 +767,18 @@ except Exception:
 PY
     then
         echo "$LOG_PREFIX [index] FAILED: 写入 evidence.index.json 失败"
+        echo "EVIDENCE_INDEX_WRITE_FAIL cycle_id=$CYCLE_ID stage=implement check_id=$CHECK_VERIFY_GATE run_id=$RUN_ID artifact_path=$EVIDENCE_INDEX"
         return 1
     fi
 
+    echo "EVIDENCE_INDEX_WRITE_OK cycle_id=$CYCLE_ID stage=implement check_id=$CHECK_VERIFY_GATE run_id=$RUN_ID artifact_path=$EVIDENCE_INDEX"
     echo "EVO_EVIDENCE_WRITE cycle_id=$CYCLE_ID stage=implement check_id=$CHECK_VERIFY_GATE run_id=$RUN_ID artifact_path=$EVIDENCE_INDEX"
     return 0
 }
 
 # 证据完整性校验 + metrics 输出
 validate_evidence_and_metrics() {
-    if ! CHECK_RESULTS_PATH="$CHECK_RESULTS_FILE" EVIDENCE_LINES_PATH="$EVIDENCE_LINES_FILE" python3 - "$CYCLE_DIR" "$RUN_ID" "$METRICS_JSON" "$DIFF_SUMMARY" <<'PY'
+    if ! CHECK_RESULTS_PATH="$CHECK_RESULTS_FILE" EVIDENCE_LINES_PATH="$EVIDENCE_LINES_FILE" python3 - "$CYCLE_DIR" "$RUN_ID" "$METRICS_JSON" "$DIFF_SUMMARY" "$STEP" <<'PY'
 import json
 import os
 from datetime import datetime, timezone
@@ -788,6 +789,7 @@ cycle_dir = Path(sys.argv[1])
 run_id = sys.argv[2]
 metrics_path = Path(sys.argv[3])
 diff_path = Path(sys.argv[4])
+step = sys.argv[5]
 index_path = cycle_dir / "evidence.index.json"
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -845,7 +847,10 @@ for item in run_evidence:
     if c > updated_at:
         errors.append(f"时间序错误: created_at>{updated_at} ({item.get('evidence_id')})")
 
-required_types = ["build_log", "test_log", "screenshot", "diff_summary", "metrics"]
+if step in {"integration", "verify"}:
+    required_types = ["test_log", "diff_summary", "metrics"]
+else:
+    required_types = ["build_log", "test_log", "screenshot", "diff_summary", "metrics"]
 present_types_set = {
     i.get("type")
     for i in run_evidence
@@ -878,7 +883,7 @@ if check_lines.exists():
         })
 
 present_check_ids = {c.get("check_id") for c in check_results}
-inferred_ids = ["v-1", "v-2", "v-3", "v-4", "v-6", "v-7", "v-5-int"]
+inferred_ids = ["v-1", "v-2", "v-3", "v-4", "v-6", "v-7"]
 for cid in inferred_ids:
     if cid in present_check_ids:
         continue
@@ -969,12 +974,13 @@ if errors:
     gate_failures.extend(errors)
 if missing_types:
     gate_failures.append("缺失必需证据类型: " + ", ".join(missing_types))
-if ac1_status != "pass":
-    gate_failures.append("ac-1 未通过")
-if ac2_status != "pass":
-    gate_failures.append("ac-2 未通过")
-if ac3_status != "pass":
-    gate_failures.append("ac-3 未通过")
+if step in {"all", "build"}:
+    if ac1_status != "pass":
+        gate_failures.append("ac-1 未通过")
+    if ac2_status != "pass":
+        gate_failures.append("ac-2 未通过")
+    if ac3_status != "pass":
+        gate_failures.append("ac-3 未通过")
 
 for c in check_results:
     if c["check_id"] == "v-5":
@@ -1000,6 +1006,11 @@ metrics = {
         "evidence_completeness_ratio": completeness_ratio,
         "quality_gate_pass_rate": quality_gate_pass_rate,
         "cross_platform_parity_rate": parity_ratio,
+        "cross_platform_flow_pass_rate": quality_gate_pass_rate,
+        "evidence_missing_rate": round(len(missing_types) / len(required_types), 4) if required_types else 0.0,
+        "e2e_screenshot_completion_rate": round(
+            (len(screenshot_state_map["macOS"]) + len(screenshot_state_map["iOS"])) / 6, 4
+        ),
         "required_types": required_types,
         "present_types": present_types,
         "missing_types": missing_types,
@@ -1137,6 +1148,15 @@ if [ -z "$RUN_ID" ]; then
     RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 fi
 
+case "$STEP" in
+    integration|verify)
+        REQUIRED_EVIDENCE_TYPES="test_log,diff_summary,metrics"
+        ;;
+    *)
+        REQUIRED_EVIDENCE_TYPES="build_log,test_log,screenshot,diff_summary,metrics"
+        ;;
+esac
+
 RESULT_DIR="$CYCLE_DIR/runs/$RUN_ID"
 EVIDENCE_DIR="$RESULT_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR"
@@ -1160,6 +1180,7 @@ EVIDENCE_INDEX="$CYCLE_DIR/evidence.index.json"
 echo "$LOG_PREFIX 开始执行 cycle=$CYCLE_ID run=$RUN_ID step=$STEP dry_run=$DRY_RUN"
 echo "$LOG_PREFIX 结果目录: $RESULT_DIR"
 emit_event "EVO_PLAN_START" "none" "platform=multi"
+emit_flow_event "START" "check_id=none"
 
 MAIN_EXIT=0
 case "$STEP" in
@@ -1251,5 +1272,10 @@ echo "$LOG_PREFIX evidence_index=$EVIDENCE_INDEX"
 echo "$LOG_PREFIX metrics=$METRICS_JSON"
 echo "$LOG_PREFIX diff=$DIFF_SUMMARY"
 echo "============================================"
+if [ $MAIN_EXIT -eq 0 ]; then
+    emit_flow_event "SUCCESS" "check_id=$CHECK_VERIFY_GATE"
+else
+    emit_flow_event "FAIL" "check_id=${FAILURE_CHECK_ID:-unknown} reason=${FAILURE_REASON:-main_exit_nonzero}"
+fi
 
 exit $MAIN_EXIT
