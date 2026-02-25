@@ -629,7 +629,11 @@ data["cycle_id"] = cycle_id
 
 existing = ensure_list(data.get("evidence"))
 legacy = ensure_list(data.get("evidence_items"))
+legacy_items = ensure_list(data.get("items"))
 for item in legacy:
+    if item not in existing:
+        existing.append(item)
+for item in legacy_items:
     if item not in existing:
         existing.append(item)
 
@@ -637,6 +641,9 @@ index_by_key = {}
 for item in existing:
     if not isinstance(item, dict):
         continue
+    if not item.get("run_id") or not item.get("check_id"):
+        if item.get("status") not in {"missing", "legacy_unscoped"}:
+            item["status"] = "legacy_unscoped"
     item_run = item.get("run_id", "")
     item_check = item.get("check_id", "")
     artifact_hash = item.get("artifact_hash", "")
@@ -699,9 +706,12 @@ for item in all_items:
     seen_ids.add(eid)
 
 data["evidence"] = all_items
-data["evidence_items"] = all_items
 
-present_types = sorted({item.get("type") for item in all_items if item.get("type") and item.get("status") != "missing"})
+present_types = sorted({
+    item.get("type")
+    for item in all_items
+    if item.get("type") and item.get("status") not in {"missing", "legacy_unscoped"}
+})
 missing_types = sorted([t for t in required_types if t not in present_types])
 ratio = 0.0
 if required_types:
@@ -790,6 +800,10 @@ if not isinstance(evidence, list):
     evidence = []
 
 run_evidence = [e for e in evidence if isinstance(e, dict) and e.get("run_id") == run_id]
+run_evidence = [
+    e for e in run_evidence
+    if e.get("check_id") and e.get("status") != "legacy_unscoped"
+]
 
 errors = []
 warnings = []
@@ -832,7 +846,11 @@ for item in run_evidence:
         errors.append(f"时间序错误: created_at>{updated_at} ({item.get('evidence_id')})")
 
 required_types = ["build_log", "test_log", "screenshot", "diff_summary", "metrics"]
-present_types_set = {i.get("type") for i in run_evidence if i.get("status") != "missing"}
+present_types_set = {
+    i.get("type")
+    for i in run_evidence
+    if i.get("status") not in {"missing", "legacy_unscoped"}
+}
 # 当前校验步骤会在本函数末尾生成 metrics/diff 产物，因此在完整度判定中视为已提供。
 present_types_set.add("metrics")
 present_types_set.add("diff_summary")

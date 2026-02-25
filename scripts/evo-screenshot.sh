@@ -253,11 +253,19 @@ if isinstance(legacy, list):
     for item in legacy:
         if item not in existing:
             existing.append(item)
+legacy_items = data.get("items", [])
+if isinstance(legacy_items, list):
+    for item in legacy_items:
+        if item not in existing:
+            existing.append(item)
 
 index_by_key = {}
 for item in existing:
     if not isinstance(item, dict):
         continue
+    if not item.get("run_id") or not item.get("check_id"):
+        if item.get("status") not in {"missing", "legacy_unscoped"}:
+            item["status"] = "legacy_unscoped"
     meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     key = f"{item.get('run_id', '')}:{item.get('check_id', '')}:{meta.get('platform', '')}:{meta.get('state', '')}"
     if key.endswith(":") or key.count(":") < 3:
@@ -301,9 +309,12 @@ all_items = list(index_by_key.values())
 all_items.sort(key=lambda x: (x.get("run_id", ""), x.get("path", "")))
 
 data["evidence"] = all_items
-data["evidence_items"] = all_items
 
-present_types = sorted({i.get("type") for i in all_items if i.get("status") != "missing"})
+present_types = sorted({
+    i.get("type")
+    for i in all_items
+    if i.get("status") not in {"missing", "legacy_unscoped"}
+})
 missing_types = sorted([t for t in required_types if t not in present_types])
 ratio = round((len(required_types) - len(missing_types)) / len(required_types), 4)
 
