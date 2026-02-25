@@ -165,6 +165,80 @@ pub(super) async fn handle_message(
             send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
+        ClientMessage::EvoGetEvidenceSnapshot { project, workspace } => {
+            let payload = manager.get_evidence_snapshot(project, workspace, ctx).await?;
+            send_message(
+                socket,
+                &ServerMessage::EvoEvidenceSnapshot {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    evidence_root: payload.evidence_root,
+                    index_file: payload.index_file,
+                    index_exists: payload.index_exists,
+                    detected_subsystems: payload.detected_subsystems,
+                    detected_platforms: payload.detected_platforms,
+                    items: payload.items,
+                    issues: payload.issues,
+                    updated_at: payload.updated_at,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
+        ClientMessage::EvoGetEvidenceRebuildPrompt { project, workspace } => {
+            let payload = manager
+                .get_evidence_rebuild_prompt(project, workspace, ctx)
+                .await?;
+            send_message(
+                socket,
+                &ServerMessage::EvoEvidenceRebuildPrompt {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    prompt: payload.prompt,
+                    evidence_root: payload.evidence_root,
+                    index_file: payload.index_file,
+                    detected_subsystems: payload.detected_subsystems,
+                    detected_platforms: payload.detected_platforms,
+                    generated_at: payload.generated_at,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
+        ClientMessage::EvoReadEvidenceItem {
+            project,
+            workspace,
+            item_id,
+            offset,
+            limit,
+        } => {
+            let payload = manager
+                .read_evidence_item_chunk(
+                    project,
+                    workspace,
+                    item_id,
+                    *offset,
+                    *limit,
+                    ctx,
+                )
+                .await?;
+            send_message(
+                socket,
+                &ServerMessage::EvoEvidenceItemChunk {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    item_id: payload.item_id,
+                    offset: payload.offset,
+                    next_offset: payload.next_offset,
+                    eof: payload.eof,
+                    total_size_bytes: payload.total_size_bytes,
+                    mime_type: payload.mime_type,
+                    content: payload.content,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }

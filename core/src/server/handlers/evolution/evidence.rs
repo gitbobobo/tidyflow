@@ -1,0 +1,937 @@
+use std::collections::HashSet;
+use std::fs;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Component, Path, PathBuf};
+
+use chrono::Utc;
+use serde::Deserialize;
+use walkdir::WalkDir;
+
+use crate::server::context::{resolve_workspace, HandlerContext};
+use crate::server::protocol::{
+    EvolutionEvidenceIssueInfo, EvolutionEvidenceItemInfo, EvolutionEvidenceSubsystemInfo,
+};
+
+use super::EvolutionManager;
+
+const EVIDENCE_ROOT_RELATIVE: &str = ".tidyflow/evidence";
+const EVIDENCE_INDEX_RELATIVE: &str = ".tidyflow/evidence/evidence.index.json";
+const CHUNK_DEFAULT_LIMIT: usize = 256 * 1024;
+const CHUNK_MAX_LIMIT: usize = 512 * 1024;
+
+const ALLOWED_PLATFORMS: &[&str] = &["ios", "macos", "tvos", "watchos", "visionos", "custom"];
+const ALLOWED_TYPES: &[&str] = &["screenshot", "log"];
+
+#[derive(Debug)]
+pub(super) struct EvidenceSnapshotPayload {
+    pub(super) evidence_root: String,
+    pub(super) index_file: String,
+    pub(super) index_exists: bool,
+    pub(super) detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
+    pub(super) detected_platforms: Vec<String>,
+    pub(super) items: Vec<EvolutionEvidenceItemInfo>,
+    pub(super) issues: Vec<EvolutionEvidenceIssueInfo>,
+    pub(super) updated_at: String,
+}
+
+#[derive(Debug)]
+pub(super) struct EvidenceRebuildPromptPayload {
+    pub(super) prompt: String,
+    pub(super) evidence_root: String,
+    pub(super) index_file: String,
+    pub(super) detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
+    pub(super) detected_platforms: Vec<String>,
+    pub(super) generated_at: String,
+}
+
+#[derive(Debug)]
+pub(super) struct EvidenceChunkPayload {
+    pub(super) item_id: String,
+    pub(super) offset: u64,
+    pub(super) next_offset: u64,
+    pub(super) eof: bool,
+    pub(super) total_size_bytes: u64,
+    pub(super) mime_type: String,
+    pub(super) content: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EvidenceIndexRaw {
+    #[serde(rename = "$schema_version")]
+    schema_version: Option<String>,
+    updated_at: Option<String>,
+    items: Vec<EvidenceItemRaw>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EvidenceItemRaw {
+    id: String,
+    platform: String,
+    #[serde(rename = "type")]
+    evidence_type: String,
+    order: u32,
+    path: String,
+    title: String,
+    description: String,
+    scenario: Option<String>,
+    subsystem: Option<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ValidatedEvidenceItem {
+    item_id: String,
+    platform: String,
+    evidence_type: String,
+    order: u32,
+    path: String,
+    title: String,
+    description: String,
+    scenario: Option<String>,
+    subsystem: Option<String>,
+    created_at: Option<String>,
+    full_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct ValidatedEvidenceIndex {
+    updated_at: String,
+    items: Vec<ValidatedEvidenceItem>,
+    issues: Vec<EvolutionEvidenceIssueInfo>,
+}
+
+impl EvolutionManager {
+    pub(super) async fn get_evidence_snapshot(
+        &self,
+        project: &str,
+        workspace: &str,
+        ctx: &HandlerContext,
+    ) -> Result<EvidenceSnapshotPayload, String> {
+        let ws = resolve_workspace(&ctx.app_state, project, workspace)
+            .await
+            .map_err(|e| e.to_string())?;
+        let workspace_root = ws.root_path.clone();
+
+        tokio::task::spawn_blocking(move || build_snapshot_sync(&workspace_root))
+            .await
+            .map_err(|e| format!("build evidence snapshot task failed: {}", e))?
+    }
+
+    pub(super) async fn get_evidence_rebuild_prompt(
+        &self,
+        project: &str,
+        workspace: &str,
+        ctx: &HandlerContext,
+    ) -> Result<EvidenceRebuildPromptPayload, String> {
+        let ws = resolve_workspace(&ctx.app_state, project, workspace)
+            .await
+            .map_err(|e| e.to_string())?;
+        let workspace_root = ws.root_path.clone();
+        let project_name = project.to_string();
+        let workspace_name = workspace.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            build_rebuild_prompt_sync(&workspace_root, &project_name, &workspace_name)
+        })
+        .await
+        .map_err(|e| format!("build evidence rebuild prompt task failed: {}", e))?
+    }
+
+    pub(super) async fn read_evidence_item_chunk(
+        &self,
+        project: &str,
+        workspace: &str,
+        item_id: &str,
+        offset: u64,
+        limit: Option<u32>,
+        ctx: &HandlerContext,
+    ) -> Result<EvidenceChunkPayload, String> {
+        let ws = resolve_workspace(&ctx.app_state, project, workspace)
+            .await
+            .map_err(|e| e.to_string())?;
+        let workspace_root = ws.root_path.clone();
+        let item_id = item_id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            read_evidence_item_chunk_sync(&workspace_root, &item_id, offset, limit)
+        })
+        .await
+        .map_err(|e| format!("read evidence item chunk task failed: {}", e))?
+    }
+}
+
+fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload, String> {
+    let evidence_root = workspace_root.join(EVIDENCE_ROOT_RELATIVE);
+    let index_file = workspace_root.join(EVIDENCE_INDEX_RELATIVE);
+
+    let detected_subsystems = detect_subsystems(workspace_root);
+    let mut detected_platforms = detect_platforms(workspace_root, &evidence_root);
+    let mut issues: Vec<EvolutionEvidenceIssueInfo> = Vec::new();
+    let mut items: Vec<EvolutionEvidenceItemInfo> = Vec::new();
+    let updated_at: String;
+    let index_exists = index_file.exists();
+
+    if index_exists {
+        match load_and_validate_index(&index_file, &evidence_root) {
+            Ok(index) => {
+                updated_at = index.updated_at;
+                issues.extend(index.issues);
+                for item in index.items {
+                    let metadata = fs::metadata(&item.full_path).ok();
+                    let exists = metadata.is_some();
+                    let size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
+                    if !exists {
+                        issues.push(issue_warning(
+                            "item_file_missing",
+                            format!("证据文件不存在: {}", item.path),
+                        ));
+                    }
+                    detected_platforms.push(item.platform.clone());
+                    items.push(EvolutionEvidenceItemInfo {
+                        item_id: item.item_id,
+                        platform: item.platform,
+                        evidence_type: item.evidence_type,
+                        order: item.order,
+                        path: item.path.clone(),
+                        title: item.title,
+                        description: item.description,
+                        scenario: item.scenario,
+                        subsystem: item.subsystem,
+                        created_at: item.created_at,
+                        size_bytes,
+                        exists,
+                        mime_type: infer_mime_type(&item.path),
+                    });
+                }
+            }
+            Err(err) => {
+                updated_at = now_rfc3339();
+                issues.push(issue_warning("index_invalid", err));
+            }
+        }
+    } else {
+        updated_at = now_rfc3339();
+        issues.push(issue_warning(
+            "index_missing",
+            format!("未找到证据索引文件: {}", index_file.display()),
+        ));
+    }
+
+    dedup_sort_platforms(&mut detected_platforms);
+    sort_evidence_items(&mut items);
+
+    Ok(EvidenceSnapshotPayload {
+        evidence_root: evidence_root.to_string_lossy().to_string(),
+        index_file: index_file.to_string_lossy().to_string(),
+        index_exists,
+        detected_subsystems,
+        detected_platforms,
+        items,
+        issues,
+        updated_at,
+    })
+}
+
+fn build_rebuild_prompt_sync(
+    workspace_root: &Path,
+    project: &str,
+    workspace: &str,
+) -> Result<EvidenceRebuildPromptPayload, String> {
+    let evidence_root = workspace_root.join(EVIDENCE_ROOT_RELATIVE);
+    let index_file = workspace_root.join(EVIDENCE_INDEX_RELATIVE);
+    let detected_subsystems = detect_subsystems(workspace_root);
+    let mut detected_platforms = detect_platforms(workspace_root, &evidence_root);
+    dedup_sort_platforms(&mut detected_platforms);
+
+    let subsystem_lines = if detected_subsystems.is_empty() {
+        "- 暂未识别到子系统，请先扫描仓库并向用户确认目标子系统后再执行。".to_string()
+    } else {
+        detected_subsystems
+            .iter()
+            .map(|s| format!("- {}（kind={}，path={}）", s.id, s.kind, s.path))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let platform_lines = if detected_platforms.is_empty() {
+        "- 暂未识别到明确平台，请先识别平台并向用户确认，再创建对应的端到端测试基础设施。"
+            .to_string()
+    } else {
+        detected_platforms
+            .iter()
+            .map(|p| format!("- {}：必须建立可执行 E2E 测试与真实截图证据链路。", p))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let cross_apple_platform_note = if ["ios", "macos", "tvos"]
+        .iter()
+        .all(|p| detected_platforms.iter().any(|x| x == p))
+    {
+        "已识别 iOS + macOS + tvOS：三端都必须各自具备端到端测试基础设施、真实截图与日志证据，禁止缺任一端。"
+    } else {
+        "若项目支持 iOS/macOS/tvOS，必须覆盖每个平台，缺失平台需先向用户确认是否支持。"
+    };
+
+    let prompt = format!(
+        r#"你是 TidyFlow 的执行代理。请重建当前工作空间的全链路证据体系，并严格遵循以下规则。
+
+【工作空间上下文】
+- project: {project}
+- workspace: {workspace}
+- evidence_root: {evidence_root}
+- evidence_index_file: {index_file}
+
+【目标】
+1. 识别仓库中的子系统与运行平台。
+2. 为每个平台建立端到端测试基础设施与执行脚本。
+3. 使用真实数据执行端到端流程并采集截图/日志。
+4. 产出并维护 evidence.index.json，确保证据可追溯、可复核、可排序展示。
+
+【子系统识别结果（来自 TidyFlow）】
+{subsystem_lines}
+
+【平台识别结果（来自 TidyFlow）】
+{platform_lines}
+
+【平台覆盖要求】
+- {cross_apple_platform_note}
+- 每个平台都要有独立的端到端测试入口与证据目录。
+- 如果平台识别不确定，先停下来询问用户，不允许猜测。
+
+【证据目录与文件格式要求（强制）】
+- 证据根目录固定为：{evidence_root}
+- 索引文件固定为：{index_file}
+- 平台目录结构示例：
+  - .tidyflow/evidence/ios/...
+  - .tidyflow/evidence/macos/...
+  - .tidyflow/evidence/tvos/...
+- 每个平台下至少包含：
+  - screenshot 证据（真实界面截图）
+  - log 证据（真实执行日志）
+
+【evidence.index.json 契约（必须满足）】
+```json
+{{
+  "$schema_version": "1.0",
+  "updated_at": "RFC3339 UTC",
+  "items": [
+    {{
+      "id": "ev-001",
+      "platform": "ios|macos|tvos|watchos|visionos|custom",
+      "type": "screenshot|log",
+      "order": 10,
+      "path": "ios/screenshots/login-01.png",
+      "title": "登录页",
+      "description": "输入手机号前状态",
+      "scenario": "可选",
+      "subsystem": "可选",
+      "created_at": "可选"
+    }}
+  ]
+}}
+```
+- 必填字段：id/platform/type/order/path/title/description
+- path 必须是相对 evidence_root 的相对路径，禁止绝对路径和 `..`
+- order 用于平台内时序排序，数值越小越靠前
+
+【执行约束（强制）】
+- 必须使用真实数据，禁止 mock，禁止占位，禁止伪造截图。
+- 禁止把“未执行”写成“已完成”。
+- 任一步骤缺少必要信息时，立即停止并向用户提问，不允许自行补假设继续推进。
+- 输出中必须明确列出：已完成项、未完成项、阻塞项、下一步问题。
+
+现在开始执行：先扫描子系统与平台，再给出分平台的端到端测试计划和证据采集计划。"#,
+        project = project,
+        workspace = workspace,
+        evidence_root = evidence_root.to_string_lossy(),
+        index_file = index_file.to_string_lossy(),
+        subsystem_lines = subsystem_lines,
+        platform_lines = platform_lines,
+        cross_apple_platform_note = cross_apple_platform_note,
+    );
+
+    Ok(EvidenceRebuildPromptPayload {
+        prompt,
+        evidence_root: evidence_root.to_string_lossy().to_string(),
+        index_file: index_file.to_string_lossy().to_string(),
+        detected_subsystems,
+        detected_platforms,
+        generated_at: now_rfc3339(),
+    })
+}
+
+fn read_evidence_item_chunk_sync(
+    workspace_root: &Path,
+    item_id: &str,
+    offset: u64,
+    limit: Option<u32>,
+) -> Result<EvidenceChunkPayload, String> {
+    let evidence_root = workspace_root.join(EVIDENCE_ROOT_RELATIVE);
+    let index_file = workspace_root.join(EVIDENCE_INDEX_RELATIVE);
+    let index = load_and_validate_index(&index_file, &evidence_root)?;
+    let item = index
+        .items
+        .iter()
+        .find(|x| x.item_id == item_id)
+        .ok_or_else(|| format!("evidence item not found: {}", item_id))?;
+
+    let mut file = fs::File::open(&item.full_path)
+        .map_err(|e| format!("open evidence item failed ({}): {}", item.full_path.display(), e))?;
+    let total_size_bytes = file
+        .metadata()
+        .map_err(|e| format!("read evidence item metadata failed: {}", e))?
+        .len();
+    if offset > total_size_bytes {
+        return Err(format!(
+            "offset out of range: offset={}, total_size={}",
+            offset, total_size_bytes
+        ));
+    }
+
+    let limit = limit
+        .map(|v| usize::try_from(v).unwrap_or(CHUNK_DEFAULT_LIMIT))
+        .unwrap_or(CHUNK_DEFAULT_LIMIT)
+        .clamp(1, CHUNK_MAX_LIMIT);
+    let remaining = usize::try_from(total_size_bytes.saturating_sub(offset))
+        .map_err(|_| "file too large to chunk on this platform".to_string())?;
+    let chunk_len = remaining.min(limit);
+
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("seek evidence item failed: {}", e))?;
+
+    let mut content = vec![0u8; chunk_len];
+    if chunk_len > 0 {
+        file.read_exact(&mut content)
+            .map_err(|e| format!("read evidence item chunk failed: {}", e))?;
+    }
+    let next_offset = offset.saturating_add(chunk_len as u64);
+
+    Ok(EvidenceChunkPayload {
+        item_id: item.item_id.clone(),
+        offset,
+        next_offset,
+        eof: next_offset >= total_size_bytes,
+        total_size_bytes,
+        mime_type: infer_mime_type(&item.path),
+        content,
+    })
+}
+
+fn load_and_validate_index(
+    index_file: &Path,
+    evidence_root: &Path,
+) -> Result<ValidatedEvidenceIndex, String> {
+    let content = fs::read_to_string(index_file)
+        .map_err(|e| format!("read evidence index failed ({}): {}", index_file.display(), e))?;
+    let raw: EvidenceIndexRaw =
+        serde_json::from_str(&content).map_err(|e| format!("parse evidence index failed: {}", e))?;
+
+    let schema_version = raw
+        .schema_version
+        .ok_or_else(|| "evidence.index.json 缺少 $schema_version".to_string())?;
+    if schema_version.trim() != "1.0" {
+        return Err(format!(
+            "evidence.index.json $schema_version 不支持: {}",
+            schema_version
+        ));
+    }
+    let updated_at = raw
+        .updated_at
+        .ok_or_else(|| "evidence.index.json 缺少 updated_at".to_string())?;
+
+    let mut id_set: HashSet<String> = HashSet::new();
+    let mut issues = Vec::new();
+    let mut items = Vec::new();
+
+    for item in raw.items {
+        if !ALLOWED_PLATFORMS.contains(&item.platform.as_str()) {
+            return Err(format!(
+                "evidence.index.json item platform 非法: {}",
+                item.platform
+            ));
+        }
+        if !ALLOWED_TYPES.contains(&item.evidence_type.as_str()) {
+            return Err(format!(
+                "evidence.index.json item type 非法: {}",
+                item.evidence_type
+            ));
+        }
+        if !id_set.insert(item.id.clone()) {
+            return Err(format!("evidence.index.json item id 重复: {}", item.id));
+        }
+
+        let normalized_path = normalize_relative_path(&item.path)?;
+        if !normalized_path.starts_with(&format!("{}/", item.platform)) {
+            issues.push(issue_warning(
+                "platform_path_mismatch",
+                format!(
+                    "item '{}' 的 path 未以平台目录开头: platform={}, path={}",
+                    item.id, item.platform, normalized_path
+                ),
+            ));
+        }
+        let full_path = evidence_root.join(&normalized_path);
+        items.push(ValidatedEvidenceItem {
+            item_id: item.id,
+            platform: item.platform,
+            evidence_type: item.evidence_type,
+            order: item.order,
+            path: normalized_path,
+            title: item.title,
+            description: item.description,
+            scenario: sanitize_optional_text(item.scenario),
+            subsystem: sanitize_optional_text(item.subsystem),
+            created_at: sanitize_optional_text(item.created_at),
+            full_path,
+        });
+    }
+
+    items.sort_by(|a, b| {
+        (a.platform.as_str(), a.order, a.item_id.as_str()).cmp(&(
+            b.platform.as_str(),
+            b.order,
+            b.item_id.as_str(),
+        ))
+    });
+
+    Ok(ValidatedEvidenceIndex {
+        updated_at,
+        items,
+        issues,
+    })
+}
+
+fn normalize_relative_path(path: &str) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("evidence.index.json item path 不能为空".to_string());
+    }
+    let p = Path::new(trimmed);
+    if p.is_absolute() {
+        return Err(format!(
+            "evidence.index.json item path 不能是绝对路径: {}",
+            trimmed
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in p.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(seg) => normalized.push(seg),
+            Component::ParentDir => {
+                return Err(format!(
+                    "evidence.index.json item path 禁止包含 '..': {}",
+                    trimmed
+                ));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "evidence.index.json item path 非法: {}",
+                    trimmed
+                ));
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        return Err(format!("evidence.index.json item path 非法: {}", trimmed));
+    }
+    Ok(pathbuf_to_slash_string(&normalized))
+}
+
+fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInfo> {
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut result: Vec<EvolutionEvidenceSubsystemInfo> = Vec::new();
+
+    for entry in WalkDir::new(workspace_root)
+        .max_depth(3)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if entry.file_type().is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name == ".git" || name == "target" || name == "build" || name == ".tidyflow" {
+                    continue;
+                }
+            }
+        }
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let file_name = path.file_name().and_then(|x| x.to_str()).unwrap_or("");
+        let parent = path.parent().unwrap_or(workspace_root);
+        let rel_path = relative_path_string(workspace_root, parent);
+        let kind = match file_name {
+            "Cargo.toml" => Some("rust_crate"),
+            "Package.swift" => Some("swift_package"),
+            "package.json" => Some("node_package"),
+            "pyproject.toml" | "requirements.txt" => Some("python_module"),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            if seen.insert((kind.to_string(), rel_path.clone())) {
+                result.push(EvolutionEvidenceSubsystemInfo {
+                    id: subsystem_id(kind, &rel_path),
+                    kind: kind.to_string(),
+                    path: rel_path,
+                });
+            }
+        }
+    }
+
+    for entry in WalkDir::new(workspace_root)
+        .max_depth(3)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let dir_name = entry.path().file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !dir_name.ends_with(".xcodeproj") {
+            continue;
+        }
+        let rel_path = relative_path_string(workspace_root, entry.path());
+        let kind = "xcode_project";
+        if seen.insert((kind.to_string(), rel_path.clone())) {
+            result.push(EvolutionEvidenceSubsystemInfo {
+                id: subsystem_id(kind, &rel_path),
+                kind: kind.to_string(),
+                path: rel_path,
+            });
+        }
+    }
+
+    result.sort_by(|a, b| (a.path.as_str(), a.kind.as_str(), a.id.as_str()).cmp(&(
+        b.path.as_str(),
+        b.kind.as_str(),
+        b.id.as_str(),
+    )));
+    result
+}
+
+fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> {
+    let mut detected = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(evidence_root) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|x| x.to_str()) {
+                let normalized = name.trim().to_lowercase();
+                if ALLOWED_PLATFORMS.contains(&normalized.as_str()) {
+                    detected.push(normalized);
+                }
+            }
+        }
+    }
+
+    for entry in WalkDir::new(workspace_root)
+        .max_depth(4)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let dir_name = entry.path().file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !dir_name.ends_with(".xcodeproj") {
+            continue;
+        }
+        let pbxproj = entry.path().join("project.pbxproj");
+        let Ok(content) = fs::read_to_string(&pbxproj) else {
+            continue;
+        };
+        let lowered = content.to_lowercase();
+        if lowered.contains("iphoneos")
+            || lowered.contains("iphonesimulator")
+            || lowered.contains("ios_deployment_target")
+        {
+            detected.push("ios".to_string());
+        }
+        if lowered.contains("macosx") || lowered.contains("macosx_deployment_target") {
+            detected.push("macos".to_string());
+        }
+        if lowered.contains("appletvos")
+            || lowered.contains("appletvsimulator")
+            || lowered.contains("tvos_deployment_target")
+        {
+            detected.push("tvos".to_string());
+        }
+        if lowered.contains("watchos")
+            || lowered.contains("watchsimulator")
+            || lowered.contains("watchos_deployment_target")
+        {
+            detected.push("watchos".to_string());
+        }
+        if lowered.contains("xros") || lowered.contains("visionos") || lowered.contains("xros_deployment_target") {
+            detected.push("visionos".to_string());
+        }
+    }
+
+    for entry in WalkDir::new(workspace_root)
+        .max_depth(4)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let file_name = entry.path().file_name().and_then(|x| x.to_str()).unwrap_or("");
+        if file_name != "Package.swift" {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let lowered = content.to_lowercase();
+        if lowered.contains(".ios(") {
+            detected.push("ios".to_string());
+        }
+        if lowered.contains(".macos(") {
+            detected.push("macos".to_string());
+        }
+        if lowered.contains(".tvos(") {
+            detected.push("tvos".to_string());
+        }
+        if lowered.contains(".watchos(") {
+            detected.push("watchos".to_string());
+        }
+        if lowered.contains(".visionos(") {
+            detected.push("visionos".to_string());
+        }
+    }
+
+    dedup_sort_platforms(&mut detected);
+    detected
+}
+
+fn sort_evidence_items(items: &mut [EvolutionEvidenceItemInfo]) {
+    items.sort_by(|a, b| (a.platform.as_str(), a.order, a.item_id.as_str()).cmp(&(
+        b.platform.as_str(),
+        b.order,
+        b.item_id.as_str(),
+    )));
+}
+
+fn dedup_sort_platforms(platforms: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    platforms.retain(|item| seen.insert(item.clone()));
+    platforms.sort_by_key(|platform| platform_sort_order(platform));
+}
+
+fn platform_sort_order(platform: &str) -> (u8, String) {
+    match platform {
+        "ios" => (0, platform.to_string()),
+        "macos" => (1, platform.to_string()),
+        "tvos" => (2, platform.to_string()),
+        "watchos" => (3, platform.to_string()),
+        "visionos" => (4, platform.to_string()),
+        "custom" => (5, platform.to_string()),
+        other => (9, other.to_string()),
+    }
+}
+
+fn pathbuf_to_slash_string(path: &Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(seg) => seg.to_str().map(ToString::to_string),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn relative_path_string(base: &Path, target: &Path) -> String {
+    match target.strip_prefix(base) {
+        Ok(rel) => {
+            let value = pathbuf_to_slash_string(rel);
+            if value.is_empty() { ".".to_string() } else { value }
+        }
+        Err(_) => ".".to_string(),
+    }
+}
+
+fn subsystem_id(kind: &str, path: &str) -> String {
+    let mut value = format!("{}-{}", kind, path)
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while value.contains("--") {
+        value = value.replace("--", "-");
+    }
+    value.trim_matches('-').to_string()
+}
+
+fn infer_mime_type(path: &str) -> String {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|x| x.to_str())
+        .map(|x| x.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "heic" => "image/heic",
+        "log" | "txt" | "md" | "json" => "text/plain",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339()
+}
+
+fn issue_warning(code: impl Into<String>, message: impl Into<String>) -> EvolutionEvidenceIssueInfo {
+    EvolutionEvidenceIssueInfo {
+        code: code.into(),
+        level: "warning".to_string(),
+        message: message.into(),
+    }
+}
+
+fn sanitize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn normalize_relative_path_rejects_parent_segment() {
+        let result = normalize_relative_path("../ios/a.png");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_and_validate_index_missing_required_field_fails() {
+        let dir = tempdir().expect("tempdir");
+        let evidence_root = dir.path().join(".tidyflow/evidence");
+        fs::create_dir_all(&evidence_root).expect("create evidence dir");
+        let index_file = evidence_root.join("evidence.index.json");
+
+        let broken = r#"{
+            "$schema_version": "1.0",
+            "updated_at": "2026-02-25T08:00:00Z",
+            "items": [
+                { "id": "ev-1", "platform": "ios", "type": "screenshot", "path": "ios/a.png", "title": "t", "description": "d" }
+            ]
+        }"#;
+        fs::write(&index_file, broken).expect("write index");
+
+        let parsed = load_and_validate_index(&index_file, &evidence_root);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn load_and_validate_index_sorts_items_stably() {
+        let dir = tempdir().expect("tempdir");
+        let evidence_root = dir.path().join(".tidyflow/evidence");
+        fs::create_dir_all(evidence_root.join("ios")).expect("create ios dir");
+        fs::create_dir_all(evidence_root.join("macos")).expect("create macos dir");
+        fs::write(evidence_root.join("ios/b.png"), b"1").expect("write file");
+        fs::write(evidence_root.join("ios/a.png"), b"1").expect("write file");
+        fs::write(evidence_root.join("macos/a.log"), b"1").expect("write file");
+        let index_file = evidence_root.join("evidence.index.json");
+        let json = r#"{
+            "$schema_version": "1.0",
+            "updated_at": "2026-02-25T08:00:00Z",
+            "items": [
+                { "id": "ev-2", "platform": "ios", "type": "screenshot", "order": 20, "path": "ios/b.png", "title": "b", "description": "b" },
+                { "id": "ev-1", "platform": "ios", "type": "screenshot", "order": 20, "path": "ios/a.png", "title": "a", "description": "a" },
+                { "id": "ev-3", "platform": "macos", "type": "log", "order": 5, "path": "macos/a.log", "title": "m", "description": "m" }
+            ]
+        }"#;
+        fs::write(&index_file, json).expect("write index");
+
+        let parsed = load_and_validate_index(&index_file, &evidence_root).expect("parse index");
+        let ids: Vec<String> = parsed.items.iter().map(|x| x.item_id.clone()).collect();
+        assert_eq!(ids, vec!["ev-1", "ev-2", "ev-3"]);
+    }
+
+    #[test]
+    fn detect_platforms_from_xcodeproj_and_package_swift() {
+        let dir = tempdir().expect("tempdir");
+        let proj_dir = dir.path().join("app/TidyFlow.xcodeproj");
+        fs::create_dir_all(&proj_dir).expect("create xcodeproj");
+        fs::write(
+            proj_dir.join("project.pbxproj"),
+            r#"
+            SDKROOT = iphoneos;
+            SDKROOT = macosx;
+            SDKROOT = appletvos;
+            "#,
+        )
+        .expect("write pbxproj");
+        fs::write(
+            dir.path().join("Package.swift"),
+            r#"
+            platforms: [.iOS(.v17), .macOS(.v14), .tvOS(.v17)]
+            "#,
+        )
+        .expect("write package");
+
+        let platforms = detect_platforms(dir.path(), &dir.path().join(".tidyflow/evidence"));
+        assert_eq!(platforms, vec!["ios", "macos", "tvos"]);
+    }
+
+    #[test]
+    fn read_evidence_item_chunk_respects_offset_and_limit() {
+        let dir = tempdir().expect("tempdir");
+        let evidence_root = dir.path().join(".tidyflow/evidence/ios");
+        fs::create_dir_all(&evidence_root).expect("create evidence dir");
+        let file_path = evidence_root.join("run.log");
+        let mut f = fs::File::create(&file_path).expect("create file");
+        f.write_all(b"abcdefghijklmn").expect("write file");
+
+        let index_file = dir.path().join(".tidyflow/evidence/evidence.index.json");
+        fs::write(
+            &index_file,
+            r#"{
+                "$schema_version":"1.0",
+                "updated_at":"2026-02-25T08:00:00Z",
+                "items":[
+                    {"id":"ev-1","platform":"ios","type":"log","order":1,"path":"ios/run.log","title":"t","description":"d"}
+                ]
+            }"#,
+        )
+        .expect("write index");
+
+        let chunk = read_evidence_item_chunk_sync(dir.path(), "ev-1", 2, Some(4)).expect("read chunk");
+        assert_eq!(chunk.content, b"cdef");
+        assert_eq!(chunk.offset, 2);
+        assert_eq!(chunk.next_offset, 6);
+        assert!(!chunk.eof);
+    }
+}

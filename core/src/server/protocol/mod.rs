@@ -644,6 +644,26 @@ pub enum ClientMessage {
         #[serde(default)]
         resolutions: Vec<EvolutionBlockerResolutionInput>,
     },
+    #[serde(rename = "evo_get_evidence_snapshot")]
+    EvoGetEvidenceSnapshot {
+        project: String,
+        workspace: String,
+    },
+    #[serde(rename = "evo_get_evidence_rebuild_prompt")]
+    EvoGetEvidenceRebuildPrompt {
+        project: String,
+        workspace: String,
+    },
+    #[serde(rename = "evo_read_evidence_item")]
+    EvoReadEvidenceItem {
+        project: String,
+        workspace: String,
+        item_id: String,
+        #[serde(default)]
+        offset: u64,
+        #[serde(default)]
+        limit: Option<u32>,
+    },
 
     // v1.40: 查询任务历史（iOS 重连恢复）
     ListTasks,
@@ -1408,6 +1428,43 @@ pub enum ServerMessage {
         unresolved_count: u32,
         unresolved_items: Vec<EvolutionBlockerItemInfo>,
     },
+    #[serde(rename = "evo_evidence_snapshot")]
+    EvoEvidenceSnapshot {
+        project: String,
+        workspace: String,
+        evidence_root: String,
+        index_file: String,
+        index_exists: bool,
+        detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
+        detected_platforms: Vec<String>,
+        items: Vec<EvolutionEvidenceItemInfo>,
+        issues: Vec<EvolutionEvidenceIssueInfo>,
+        updated_at: String,
+    },
+    #[serde(rename = "evo_evidence_rebuild_prompt")]
+    EvoEvidenceRebuildPrompt {
+        project: String,
+        workspace: String,
+        prompt: String,
+        evidence_root: String,
+        index_file: String,
+        detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
+        detected_platforms: Vec<String>,
+        generated_at: String,
+    },
+    #[serde(rename = "evo_evidence_item_chunk")]
+    EvoEvidenceItemChunk {
+        project: String,
+        workspace: String,
+        item_id: String,
+        offset: u64,
+        next_offset: u64,
+        eof: bool,
+        total_size_bytes: u64,
+        mime_type: String,
+        #[serde(with = "serde_bytes")]
+        content: Vec<u8>,
+    },
     #[serde(rename = "evo_error")]
     EvoError {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1666,6 +1723,41 @@ pub struct EvolutionBlockerResolutionInput {
     pub selected_option_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionEvidenceSubsystemInfo {
+    pub id: String,
+    pub kind: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionEvidenceIssueInfo {
+    pub code: String,
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionEvidenceItemInfo {
+    pub item_id: String,
+    pub platform: String,
+    #[serde(rename = "type")]
+    pub evidence_type: String,
+    pub order: u32,
+    pub path: String,
+    pub title: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subsystem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    pub size_bytes: u64,
+    pub exists: bool,
+    pub mime_type: String,
 }
 
 // ============================================================================
