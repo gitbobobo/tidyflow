@@ -174,6 +174,9 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2)
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2)
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
+    func handleEvolutionEvidenceSnapshot(_ snapshot: EvolutionEvidenceSnapshotV2)
+    func handleEvolutionEvidenceRebuildPrompt(_ prompt: EvolutionEvidenceRebuildPromptV2)
+    func handleEvolutionEvidenceItemChunk(_ chunk: EvolutionEvidenceItemChunkV2)
     func handleEvolutionError(_ message: String)
 }
 
@@ -184,6 +187,9 @@ extension EvolutionMessageHandler {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {}
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {}
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
+    func handleEvolutionEvidenceSnapshot(_ snapshot: EvolutionEvidenceSnapshotV2) {}
+    func handleEvolutionEvidenceRebuildPrompt(_ prompt: EvolutionEvidenceRebuildPromptV2) {}
+    func handleEvolutionEvidenceItemChunk(_ chunk: EvolutionEvidenceItemChunkV2) {}
     func handleEvolutionError(_ message: String) {}
 }
 

@@ -236,6 +236,33 @@ extension WSClient {
                 }
             }
             return true
+        case "evo_evidence_snapshot":
+            if let ev = EvolutionEvidenceSnapshotV2.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionEvidenceSnapshot(ev)
+                } else {
+                    onEvoEvidenceSnapshot?(ev)
+                }
+            }
+            return true
+        case "evo_evidence_rebuild_prompt":
+            if let ev = EvolutionEvidenceRebuildPromptV2.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionEvidenceRebuildPrompt(ev)
+                } else {
+                    onEvoEvidenceRebuildPrompt?(ev)
+                }
+            }
+            return true
+        case "evo_evidence_item_chunk":
+            if let ev = EvolutionEvidenceItemChunkV2.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionEvidenceItemChunk(ev)
+                } else {
+                    onEvoEvidenceItemChunk?(ev)
+                }
+            }
+            return true
         case "evo_error":
             let message = json["message"] as? String ?? "evolution error"
             if let handler = evolutionMessageHandler {

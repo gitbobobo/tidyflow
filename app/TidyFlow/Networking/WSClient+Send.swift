@@ -1170,4 +1170,40 @@ extension WSClient {
             "workspace": workspace
         ])
     }
+
+    func requestEvoEvidenceSnapshot(project: String, workspace: String) {
+        send([
+            "type": "evo_get_evidence_snapshot",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    func requestEvoEvidenceRebuildPrompt(project: String, workspace: String) {
+        send([
+            "type": "evo_get_evidence_rebuild_prompt",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
+    func requestEvoReadEvidenceItem(
+        project: String,
+        workspace: String,
+        itemID: String,
+        offset: UInt64 = 0,
+        limit: UInt32? = 262_144
+    ) {
+        var msg: [String: Any] = [
+            "type": "evo_read_evidence_item",
+            "project": project,
+            "workspace": workspace,
+            "item_id": itemID,
+            "offset": offset
+        ]
+        if let limit {
+            msg["limit"] = limit
+        }
+        send(msg)
+    }
 }
