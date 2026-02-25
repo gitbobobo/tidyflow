@@ -73,6 +73,8 @@ struct AITabView: View {
             if let key = previousSnapshotKey {
                 saveSnapshot(forKey: key)
             }
+            deferredSessionListLoadWorkItem?.cancel()
+            deferredSessionListLoadWorkItem = nil
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             resetAIContext()
@@ -223,6 +225,10 @@ struct AITabView: View {
     )? = nil
     /// 跨工具点击会话时，避免工具切换后的自动重载重复请求同一 session。
     @State private var skipNextAutoReload: (tool: AIChatTool, sessionId: String)? = nil
+    /// 延迟拉取非当前工具会话列表的任务（削峰）
+    @State private var deferredSessionListLoadWorkItem: DispatchWorkItem? = nil
+    private let aiSessionListLimit = 50
+    private let deferredSessionListDelay: TimeInterval = 0.35
 
     private var canSwitchAITool: Bool {
         pendingSendRequest == nil
@@ -565,6 +571,8 @@ struct AITabView: View {
 
     private func loadSessions() {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else {
+            deferredSessionListLoadWorkItem?.cancel()
+            deferredSessionListLoadWorkItem = nil
             for tool in AIChatTool.allCases {
                 appState.setAISessions([], for: tool)
             }
@@ -572,16 +580,38 @@ struct AITabView: View {
             return
         }
 
-        // 会话列表按工具分别拉取，再在客户端做跨工具融合排序。
-        for tool in AIChatTool.allCases {
-            appState.wsClient.requestAISessionList(
-                projectName: appState.selectedProjectName,
-                workspaceName: ws,
-                aiTool: tool
-            )
+        // 当前工具优先，其余工具延迟拉取，降低首屏大包冲击。
+        let aiTool = appState.aiChatTool
+        let sessionListLimit = aiSessionListLimit
+        let delayedSessionListDelay = deferredSessionListDelay
+        appState.wsClient.requestAISessionList(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: aiTool,
+            limit: sessionListLimit
+        )
+        deferredSessionListLoadWorkItem?.cancel()
+        let delayedTools = AIChatTool.allCases.filter { $0 != aiTool }
+        if !delayedTools.isEmpty {
+            let appStateRef = appState
+            let expectedProject = appState.selectedProjectName
+            let expectedWorkspace = ws
+            let workItem = DispatchWorkItem {
+                guard appStateRef.selectedProjectName == expectedProject,
+                      appStateRef.selectedWorkspaceKey == expectedWorkspace else { return }
+                for tool in delayedTools {
+                    appStateRef.wsClient.requestAISessionList(
+                        projectName: expectedProject,
+                        workspaceName: expectedWorkspace,
+                        aiTool: tool,
+                        limit: sessionListLimit
+                    )
+                }
+            }
+            deferredSessionListLoadWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delayedSessionListDelay, execute: workItem)
         }
 
-        let aiTool = appState.aiChatTool
         appState.isAILoadingModels = true
         appState.isAILoadingAgents = true
         appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)

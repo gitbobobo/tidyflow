@@ -19,6 +19,7 @@ pub(super) async fn handle_ai_session_list(
         project_name,
         workspace_name,
         ai_tool,
+        limit,
     } = msg
     else {
         return Ok(false);
@@ -40,7 +41,8 @@ pub(super) async fn handle_ai_session_list(
         project_name, workspace_name, ai_tool, directory
     );
 
-    let sessions = agent.list_sessions(&directory).await?;
+    let mut sessions = agent.list_sessions(&directory).await?;
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     if ai_tool == "opencode" {
         if let Some(invalid) = sessions.iter().find(|s| !s.id.starts_with("ses")) {
             warn!(
@@ -49,12 +51,20 @@ pub(super) async fn handle_ai_session_list(
             );
         }
     }
+    let total_sessions = sessions.len();
+    if let Some(limit) = *limit {
+        if limit > 0 {
+            sessions.truncate(limit as usize);
+        }
+    }
     info!(
-        "AISessionList: project={}, workspace={}, ai_tool={}, sessions_count={}",
+        "AISessionList: project={}, workspace={}, ai_tool={}, sessions_count={}, returned_count={}, limit={:?}",
         project_name,
         workspace_name,
         ai_tool,
-        sessions.len()
+        total_sessions,
+        sessions.len(),
+        limit
     );
 
     let sessions: Vec<_> = sessions

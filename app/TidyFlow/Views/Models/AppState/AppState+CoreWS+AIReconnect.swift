@@ -118,19 +118,46 @@ extension AppState {
 
     private static let maxReconnectAttempts = 5
     private static let reconnectDelays: [TimeInterval] = [0.5, 1.0, 2.0, 4.0, 8.0]
+    private static let aiSessionListLimit = 50
+    private static let aiDeferredSessionReloadDelay: TimeInterval = 0.35
 
     func reloadAISessionDataAfterReconnect() {
+        deferredAISessionReloadWorkItem?.cancel()
+        deferredAISessionReloadWorkItem = nil
         guard let workspace = selectedWorkspaceKey, !workspace.isEmpty else {
             TFLog.app.debug("AI reconnect reload skipped: workspace not selected")
             return
         }
 
-        // 重连后补拉各工具会话列表，避免列表/详情状态滞后。
-        for tool in AIChatTool.allCases {
-            wsClient.requestAISessionList(
-                projectName: selectedProjectName,
-                workspaceName: workspace,
-                aiTool: tool
+        // 当前工具优先，减少首轮大包对连接稳定性的冲击。
+        let currentTool = aiChatTool
+        wsClient.requestAISessionList(
+            projectName: selectedProjectName,
+            workspaceName: workspace,
+            aiTool: currentTool,
+            limit: Self.aiSessionListLimit
+        )
+        let delayedTools = AIChatTool.allCases.filter { $0 != currentTool }
+        if !delayedTools.isEmpty {
+            let expectedProject = selectedProjectName
+            let expectedWorkspace = workspace
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.selectedProjectName == expectedProject,
+                      self.selectedWorkspaceKey == expectedWorkspace else { return }
+                for tool in delayedTools {
+                    self.wsClient.requestAISessionList(
+                        projectName: expectedProject,
+                        workspaceName: expectedWorkspace,
+                        aiTool: tool,
+                        limit: Self.aiSessionListLimit
+                    )
+                }
+            }
+            deferredAISessionReloadWorkItem = workItem
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + Self.aiDeferredSessionReloadDelay,
+                execute: workItem
             )
         }
 

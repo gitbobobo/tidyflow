@@ -972,13 +972,22 @@ extension WSClient {
     }
 
     /// 获取 AI 会话列表
-    func requestAISessionList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
-        send([
+    func requestAISessionList(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        limit: Int? = 50
+    ) {
+        var msg: [String: Any] = [
             "type": "ai_session_list",
             "project_name": projectName,
             "workspace_name": workspaceName,
             "ai_tool": aiTool.rawValue
-        ])
+        ]
+        if let limit, limit > 0 {
+            msg["limit"] = limit
+        }
+        send(msg)
     }
 
     /// 获取 AI 会话历史消息

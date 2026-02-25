@@ -520,6 +520,8 @@ pub enum ClientMessage {
         project_name: String,
         workspace_name: String,
         ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     #[serde(rename = "ai_session_messages")]
     AISessionMessages {

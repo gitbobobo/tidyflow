@@ -258,6 +258,8 @@ extension AppState {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             wakeObserver = nil
         }
+        deferredAISessionReloadWorkItem?.cancel()
+        deferredAISessionReloadWorkItem = nil
         coreProcessManager.stop()
     }
 

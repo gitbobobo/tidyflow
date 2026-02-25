@@ -334,6 +334,8 @@ class AppState: ObservableObject {
     var wakeObserver: NSObjectProtocol?
     // 自动重连状态
     var reconnectAttempt = 0
+    // 重连后延迟拉取非当前 AI 工具会话列表的任务（用于削峰）
+    var deferredAISessionReloadWorkItem: DispatchWorkItem?
 
     // WebSocket Client
     let wsClient = WSClient()
