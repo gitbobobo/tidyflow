@@ -53,3 +53,19 @@ jobs:
           CYCLE_ID="ci-dry-run-${GITHUB_RUN_ID}"
           mkdir -p ".tidyflow/evolution/${CYCLE_ID}"
           ./scripts/tidyflow quality-gate --cycle "${CYCLE_ID}" --step all --dry-run
+          RUN_ID="$(ls -1 ".tidyflow/evolution/${CYCLE_ID}/runs" | sort | tail -n 1)"
+          METRICS=".tidyflow/evolution/${CYCLE_ID}/runs/${RUN_ID}/evidence/v-6-metrics-${RUN_ID}.json"
+          python3 - "$METRICS" <<'PY'
+import json
+import sys
+from pathlib import Path
+metrics = Path(sys.argv[1])
+data = json.loads(metrics.read_text(encoding="utf-8"))
+missing = data.get("metrics", {}).get("missing_types", [])
+if missing:
+    raise SystemExit(f"missing evidence types: {missing}")
+checks = {c.get("check_id"): c.get("result") for c in data.get("checks", [])}
+for check_id in ["v-1", "v-2", "v-3", "v-4", "v-5", "v-6"]:
+    if checks.get(check_id) != "pass":
+        raise SystemExit(f"check failed or missing: {check_id}")
+PY
