@@ -21,9 +21,11 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 必须写入结构化文件；写入失败视为任务失败。
 - 本阶段只做 direction，不推进实现。
-- 唯一高优先级方向判定：
+- 可观测测试基础设施优先级判定（防重复建设）：
   - 必须先判断"可观测测试基础设施"是否已建立且足够完善（覆盖自动化执行、结果留痕、失败可定位）。
-  - 若未建立或不完善，必须将"建设/补强可观测测试基础设施"作为本轮首要方向（通常映射 `architecture`，也可在证据充分时选择其他类型但必须说明）。
+  - "可观测测试基础设施"是每轮任务的起点基线，不是每轮都要从零建设的对象。
+  - 仅当存在阻断本轮闭环的关键缺口时，才将"建设/补强可观测测试基础设施"设为本轮首要方向（通常映射 `architecture`，也可在证据充分时选择其他类型但必须说明）。
+  - 若基线已可用但仍有局部缺口，优先采用增量补齐（补单点链路/补关键场景）而非整体系重做。
   - 若项目含前端/可视界面（Web、桌面 UI、移动 UI 均算），证据策略必须包含截图留存，让 AI 可基于界面证据分析问题。
 
 【目标文件】
@@ -37,6 +39,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 【通用探索策略】
 - 仅基于当前 cycle 的阶段产物文档与证据进行分析与决策。
 - 优先读取 `cycle.json`、`stage.*.json`、`*.result.json`、`evidence.index.json`（若存在）、`handoff.md`（若存在）。
+- 额外读取同一项目最近若干 cycle（建议 2~5 个）的 `direction.lifecycle_scan.json` / `stage.verify.json` / `stage.judge.json`（若存在），用于识别基线是否已建立、是否出现重复方向且无增量产出。
 - 自动评估"可观测测试基础设施"成熟度：是否有稳定测试入口、日志/指标/报告产物、失败定位路径、证据归档机制。
 - 自动识别是否存在前端或可视界面，并检查是否已有截图类证据链路（例如 e2e 截图、回归截图、视觉快照）。
 - 若某类阶段产物不存在，记录"未发现"并继续，不得中断任务。
@@ -65,6 +68,8 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
   - `partial`：部分满足，存在可接受缺口（需在 reason 中说明）
   - `insufficient`：存在系统性缺口，无法对本轮变更形成可靠闭环
 - 当结论为 `insufficient` 或 `partial` 且缺口严重时，必须将"建设/补强可观测测试基础设施"作为本轮首要方向
+- 当结论为 `partial` 且缺口不阻断本轮闭环时，不应重复发起"重建基座"；应将缺口转化为验收条款中的增量补强项。
+- 若历史 cycle 已连续出现同类"基础设施建设"方向且证据显示基线已存在，本轮必须改为"补齐未闭环点"或"推进业务目标+最小补强"，并在 reason 说明避免重复建设的依据。
 - 充分性结论与各维度评估必须写入 `direction.lifecycle_scan.json` 中 domain 名为 `observability` 的 `findings` 字段
 
 【direction.lifecycle_scan.json 结构要求】
@@ -103,6 +108,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 验收标准必须"可验证、可观察、可判定"
 - 最小证据策略优先：`test_log|build_log|metrics|screenshot|diff_summary`
 - 决策评分时必须显式考虑"可观测测试基础设施缺口"；当该缺口存在时，其优先级高于常规功能增量。
+- 决策评分必须同时考虑"缺口严重度"与"是否属于重复建设"：若仅为局部可补缺口，禁止以"重建测试基座"覆盖本轮主要目标。
 - 若存在前端/可视界面（`ui_capability` 不为 `none`），`minimum_evidence_policy` 必须显式要求 `screenshot`，并描述关键页面/状态的截图采集要求。
 - 最终选择必须引用 lifecycle_scan 中的关键证据与机会
 - 若证据不足，必须在 reason 中写明不确定性与保守决策依据
