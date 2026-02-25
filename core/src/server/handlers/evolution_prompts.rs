@@ -55,33 +55,9 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 
 【项目类型检测】
 在正式决策前，必须先识别项目类型，以便后续测试基础设施判断与证据策略能够匹配实际技术栈：
-- 扫描工作空间根目录及子目录，识别以下信号：
-  - 前端/Web 项目：存在 `package.json`、`index.html`、`src/` + `*.tsx/jsx`、`next.config.*`、`vite.config.*`、`webpack.config.*` 等
-  - 移动/桌面 UI 项目：存在 `*.xcodeproj`、`*.gradle`、`AndroidManifest.xml`、SwiftUI 文件（`*.swift` 含 `View`）、`*.xaml` 等
-  - 纯后端/CLI/库：无上述 UI 信号，以 `Cargo.toml`、`go.mod`、`pyproject.toml`、`pom.xml`、Makefile 为主
-  - 混合型：同时存在前端与后端信号
 - 识别结果记录为 `ui_capability`：`none|web|desktop|mobile|mixed`
 - 识别结果必须写入 `direction.lifecycle_scan.json` 的顶层 `project_type` 字段（字符串，如 `rust_backend`、`next_js_web`、`swift_macos_app`、`mixed_rust_web`）
 - 不得依赖单一文件名做唯一判据；遇到多信号时综合判断并说明置信度
-
-【测试基础设施充分性判断】
-基于项目类型，自主评估测试设施完整性，不绑定具体框架，必须逐项判断：
-- Unit：是否覆盖核心逻辑与关键边界，且可稳定快速反馈。
-- Integration：是否覆盖关键协作链路与真实依赖交互（不止 mock happy path）。
-- E2E：是否覆盖关键用户旅程/业务闭环，并具备可复现执行入口。
-- Evidence：E2E 后是否留存可审计证据（`execution_log` 和/或 `screenshot`），失败是否可定位到步骤/场景/断言或错误上下文。
-- 测试入口可执行性：是否存在稳定可触发命令（本地）。
-- 充分性结论枚举：
-  - `sufficient`：Unit+Integration+E2E 可执行且证据链完整
-  - `partial`：部分具备，但缺口不阻断本轮闭环
-  - `insufficient`：系统性缺口，无法支撑可靠验收闭环
-- 决策规则：
-  - `insufficient`：主方向必须优先补齐测试设施关键缺口（通常映射 `architecture`，也可映射其他类型但要有证据理由）。
-  - `partial`：允许"产品增量 + 最小测试补强"并行，禁止整套重建测试体系。
-  - `sufficient`：可优先投入产品/架构/性能优化，但不得破坏现有测试基线。
-- 若 `ui_capability != none`，涉及用户流程的验收项必须包含 E2E 证据要求；最小证据为 `execution_log` 或 `screenshot`（建议两者都保留）。
-- 若历史 cycle 连续出现同类基础设施建设且基线已存在，本轮必须改为补齐未闭环点或推进业务目标+最小补强，并在 reason 说明依据。
-- 充分性结论与评估细节必须写入 `direction.lifecycle_scan.json` 中 domain=`observability` 的 `findings` 字段。
 
 【direction.lifecycle_scan.json 结构要求】
 {
@@ -120,8 +96,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 若主方向在本轮无法形成可验证结果，必须降级为更小范围方案。
 - 验收标准必须"可验证、可观察、可判定"
 - 最小证据策略优先：`test_log|build_log|metrics|screenshot|diff_summary`
-- 决策评分时必须显式考虑"可观测测试基础设施缺口"；当该缺口存在时，其优先级高于常规功能增量。
-- 决策评分必须同时考虑"缺口严重度"与"是否属于重复建设"：若仅为局部可补缺口，禁止以"重建测试基座"覆盖本轮主要目标。
 - 若存在前端/可视界面（`ui_capability` 不为 `none`），`minimum_evidence_policy` 必须显式要求 `screenshot`，并描述关键页面/状态的截图采集要求。
 - 最终选择必须引用 lifecycle_scan 中的关键证据与机会
 - 若证据不足，必须在 reason 中写明不确定性与保守决策依据
@@ -160,12 +134,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
 - `error` 至少包含 `code`、`message`、`context`
 - 不更新 `cycle.json` 的方向字段
-
-【幂等与原子性】
-- 输入不变时重复执行应得到一致结果
-- 原子写入（临时文件 + rename）
-- 所有 JSON 必须 UTF-8 且可机读
-
 "####;
 
 pub const STAGE_PLAN_PROMPT: &str = r####"
