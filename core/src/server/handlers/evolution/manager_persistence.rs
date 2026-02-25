@@ -47,7 +47,7 @@ impl EvolutionManager {
                 "final_reason": "evolution auto scheduler"
             },
             "llm_defined_acceptance": {
-                "criteria": [],
+                "criteria": entry.llm_defined_acceptance_criteria.clone(),
                 "minimum_evidence_policy": {
                     "strategy": "llm_decided",
                     "description": "auto"
@@ -57,7 +57,8 @@ impl EvolutionManager {
             "chat_map_file": "chat.map.json",
             "evidence_index_file": "evidence.index.json",
             "handoff_file": "handoff.md",
-            "created_at": Utc::now().to_rfc3339(),
+            "terminal_reason_code": entry.terminal_reason_code.clone(),
+            "created_at": entry.created_at.clone(),
             "updated_at": Utc::now().to_rfc3339(),
         });
 
@@ -71,6 +72,7 @@ impl EvolutionManager {
         status: &str,
         session_id: Option<&str>,
         error_message: Option<&str>,
+        judge_result: Option<bool>,
     ) -> Result<(), String> {
         let state = self.state.lock().await;
         let Some(entry) = state.workspaces.get(key) else {
@@ -96,7 +98,11 @@ impl EvolutionManager {
                 serde_json::json!([])
             },
             "decision": {
-                "result": if stage == "judge" && status == "done" { "pass" } else { "n/a" },
+                "result": if stage == "judge" && status == "done" {
+                    if judge_result.unwrap_or(true) { "pass" } else { "fail" }
+                } else {
+                    "n/a"
+                },
                 "reason": ""
             },
             "next_action": {
