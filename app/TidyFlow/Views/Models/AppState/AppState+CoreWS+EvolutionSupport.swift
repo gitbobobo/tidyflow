@@ -33,8 +33,7 @@ extension AppState {
     func startEvolution(
         project: String,
         workspace: String,
-        maxVerifyIterations: Int,
-        autoLoopEnabled: Bool,
+        loopRoundLimit: Int,
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
@@ -44,8 +43,7 @@ extension AppState {
             project: project,
             workspace: normalizedWorkspace,
             priority: 0,
-            maxVerifyIterations: maxVerifyIterations,
-            autoLoopEnabled: autoLoopEnabled,
+            loopRoundLimit: loopRoundLimit,
             stageProfiles: profiles
         )
     }

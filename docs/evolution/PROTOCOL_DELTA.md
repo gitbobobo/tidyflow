@@ -19,11 +19,13 @@
 
 - `project`: string
 - `workspace`: string
-- `ai_tool`: string
-- `config`: object
-  - `parallel_group`: string|null
-  - `priority`: integer|null
-  - `max_verify_iterations`: integer，固定传 `3`
+- `priority`: integer（可选）
+- `loop_round_limit`: integer（可选，默认 `1`，最小 `1`）
+- `stage_profiles`: array（可选）
+
+说明：
+
+- `verify_iteration_limit` 固定为 `3`，不对外暴露配置。
 
 ### 2.2 `evo_stop_workspace`
 

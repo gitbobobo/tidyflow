@@ -10,7 +10,7 @@
 - 多工作空间并行：不同 `project/workspace` 可同时运行。
 - 单工作空间串行：同一 `project/workspace` 内严格单线程推进阶段。
 - 验证回路上限：单次 cycle 最多 3 次 `implement -> verify -> judge`。
-- 全流程循环不限次数：由用户显式中断。
+- 全流程循环按 `loop_round_limit` 执行：默认 1 轮。
 - 验收门槛与最小证据集：由 LLM 自主定义。
 - 调度真相源：结构化 JSON 文件；文档用于人类阅读与语义交接。
 
@@ -64,9 +64,9 @@
 
 ### 4.3 回路规则
 
-- `judge = pass`：进入 `report`。若开启自动续轮，`report` 结束后先执行一键提交，成功后再创建下一轮 cycle；失败则当前 cycle 进入 `failed_system`。
+- `judge = pass`：进入 `report`。若 `global_loop_round < loop_round_limit`，`report` 结束后先执行一键提交，成功后再创建下一轮 cycle；失败则当前 cycle 进入 `failed_system`。
 - `judge = fail` 且 `verify_iteration < 3`：回到 `implement`。
-- `judge = fail` 且 `verify_iteration == 3`：标记 `failed_exhausted`，开始下一全流程循环或等待策略决策。
+- `judge = fail` 且 `verify_iteration == 3`：标记 `failed_exhausted`，结束全流程循环（不进入下一轮）。
 
 ## 5. 状态机
 

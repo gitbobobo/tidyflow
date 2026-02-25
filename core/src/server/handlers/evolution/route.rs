@@ -7,7 +7,7 @@ use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
 use super::profile::{direction_model_label, normalize_profiles_lenient};
-use super::{maybe_manager, StartWorkspaceReq, DEFAULT_VERIFY_LIMIT};
+use super::{maybe_manager, StartWorkspaceReq, DEFAULT_LOOP_ROUND_LIMIT};
 
 pub(super) async fn handle_message(
     client_msg: &ClientMessage,
@@ -23,16 +23,14 @@ pub(super) async fn handle_message(
             project,
             workspace,
             priority,
-            max_verify_iterations,
-            auto_loop_enabled,
+            loop_round_limit,
             stage_profiles,
         } => {
             let req = StartWorkspaceReq {
                 project: project.clone(),
                 workspace: workspace.clone(),
                 priority: *priority,
-                max_verify_iterations: max_verify_iterations.unwrap_or(DEFAULT_VERIFY_LIMIT),
-                auto_loop_enabled: *auto_loop_enabled,
+                loop_round_limit: loop_round_limit.unwrap_or(DEFAULT_LOOP_ROUND_LIMIT),
                 stage_profiles: stage_profiles.clone(),
             };
             manager.start_workspace(req, ctx).await?;

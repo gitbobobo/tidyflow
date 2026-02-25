@@ -523,8 +523,7 @@ struct MobileEvolutionView: View {
     let project: String
     let workspace: String
 
-    @State private var maxVerifyIterationsText: String = "3"
-    @State private var autoLoopEnabled: Bool = true
+    @State private var loopRoundLimitText: String = "1"
     @State private var profiles: [EvolutionProfileDraft] = []
     @State private var isApplyingRemoteProfiles: Bool = false
     @State private var lastSyncedProfileSignature: String = ""
@@ -569,7 +568,7 @@ struct MobileEvolutionView: View {
                         Text(item.currentStage)
                     }
                     LabeledContent("轮次") {
-                        Text("\(item.globalLoopRound)")
+                        Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
                     }
                     LabeledContent("校验轮次") {
                         Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
@@ -583,15 +582,14 @@ struct MobileEvolutionView: View {
                         .foregroundColor(.secondary)
                 }
 
-                LabeledContent("最大 verify 次数") {
-                    TextField("3", text: $maxVerifyIterationsText)
+                LabeledContent("循环轮次") {
+                    TextField("1", text: $loopRoundLimitText)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 80)
                 }
 
-                Toggle("循环续轮", isOn: $autoLoopEnabled)
-                Text(autoLoopEnabled ? "运行模式: 自动循环续轮" : "运行模式: 仅运行 1 轮后结束")
+                Text("验证循环固定 3 次")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -1031,20 +1029,22 @@ struct MobileEvolutionView: View {
     }
 
     private func startEvolution() {
-        let verify = max(1, Int(maxVerifyIterationsText) ?? 3)
+        let loopRoundLimit = max(1, Int(loopRoundLimitText) ?? 1)
         let values = buildStageProfilesForSubmit()
         appState.startEvolution(
             project: project,
             workspace: workspace,
-            maxVerifyIterations: verify,
-            autoLoopEnabled: autoLoopEnabled,
+            loopRoundLimit: loopRoundLimit,
             profiles: values
         )
     }
 
     private func syncStartOptionsFromItem() {
-        guard let item else { return }
-        autoLoopEnabled = item.autoLoopEnabled
+        guard let item else {
+            loopRoundLimitText = "1"
+            return
+        }
+        loopRoundLimitText = "\(max(1, item.loopRoundLimit))"
     }
 
     private var activeBlockingRequest: EvolutionBlockingRequiredV2? {

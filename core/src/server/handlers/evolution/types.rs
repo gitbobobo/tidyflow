@@ -21,7 +21,7 @@ pub(super) struct WorkspaceRunState {
     pub(super) cycle_id: String,
     pub(super) current_stage: String,
     pub(super) global_loop_round: u32,
-    pub(super) auto_loop_enabled: bool,
+    pub(super) loop_round_limit: u32,
     pub(super) verify_iteration: u32,
     pub(super) verify_iteration_limit: u32,
     pub(super) created_at: String,
@@ -47,8 +47,7 @@ pub(super) struct StartWorkspaceReq {
     pub(super) project: String,
     pub(super) workspace: String,
     pub(super) priority: i32,
-    pub(super) max_verify_iterations: u32,
-    pub(super) auto_loop_enabled: bool,
+    pub(super) loop_round_limit: u32,
     pub(super) stage_profiles: Vec<EvolutionStageProfileInfo>,
 }
 

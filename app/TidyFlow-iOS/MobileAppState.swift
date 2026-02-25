@@ -902,8 +902,7 @@ final class MobileAppState: ObservableObject {
     func startEvolution(
         project: String,
         workspace: String,
-        maxVerifyIterations: Int,
-        autoLoopEnabled: Bool,
+        loopRoundLimit: Int,
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
@@ -913,8 +912,7 @@ final class MobileAppState: ObservableObject {
             project: project,
             workspace: normalizedWorkspace,
             priority: 0,
-            maxVerifyIterations: max(1, maxVerifyIterations),
-            autoLoopEnabled: autoLoopEnabled,
+            loopRoundLimit: max(1, loopRoundLimit),
             stageProfiles: profiles
         )
     }
@@ -2761,12 +2759,14 @@ final class MobileAppState: ObservableObject {
             }
             if pendingAction == "start" {
                 let profiles = self.evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
-                let verify = max(1, self.evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.verifyIterationLimit ?? 3)
+                let loopRoundLimit = max(
+                    1,
+                    self.evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.loopRoundLimit ?? 1
+                )
                 self.startEvolution(
                     project: ev.project,
                     workspace: normalizedWorkspace,
-                    maxVerifyIterations: verify,
-                    autoLoopEnabled: self.evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.autoLoopEnabled ?? true,
+                    loopRoundLimit: loopRoundLimit,
                     profiles: profiles
                 )
                 return

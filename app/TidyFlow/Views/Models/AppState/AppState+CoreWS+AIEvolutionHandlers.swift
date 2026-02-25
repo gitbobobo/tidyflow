@@ -534,12 +534,14 @@ extension AppState {
         }
         if pendingAction == "start" {
             let profiles = evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
-            let verify = max(1, evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.verifyIterationLimit ?? 3)
+            let loopRoundLimit = max(
+                1,
+                evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.loopRoundLimit ?? 1
+            )
             startEvolution(
                 project: ev.project,
                 workspace: normalizedWorkspace,
-                maxVerifyIterations: verify,
-                autoLoopEnabled: evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.autoLoopEnabled ?? true,
+                loopRoundLimit: loopRoundLimit,
                 profiles: profiles
             )
             return

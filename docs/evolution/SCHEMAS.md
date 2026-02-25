@@ -25,6 +25,7 @@
 - `verify_iteration`: integer，`0..3`
 - `verify_iteration_limit`: integer，固定 `3`
 - `global_loop_round`: integer，`>= 1`
+- `loop_round_limit`: integer，`>= 1`，默认 `1`
 - `interrupt`: object
   - `requested`: boolean
   - `requested_by`: string|null
@@ -58,6 +59,7 @@
   "verify_iteration": 2,
   "verify_iteration_limit": 3,
   "global_loop_round": 12,
+  "loop_round_limit": 12,
   "interrupt": {
     "requested": false,
     "requested_by": null,

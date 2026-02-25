@@ -10,7 +10,10 @@ use crate::server::protocol::{EvolutionWorkspaceItem, ServerMessage};
 
 use super::stage::{active_agents, build_agents};
 use super::utils::workspace_key;
-use super::{EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState, STAGES};
+use super::{
+    EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState, DEFAULT_VERIFY_LIMIT,
+    STAGES,
+};
 
 impl EvolutionManager {
     pub(super) async fn start_workspace(
@@ -91,9 +94,9 @@ impl EvolutionManager {
                     cycle_id: cycle_id.clone(),
                     current_stage: "direction".to_string(),
                     global_loop_round: round,
-                    auto_loop_enabled: req.auto_loop_enabled,
+                    loop_round_limit: req.loop_round_limit.max(1),
                     verify_iteration: 0,
-                    verify_iteration_limit: req.max_verify_iterations.max(1),
+                    verify_iteration_limit: DEFAULT_VERIFY_LIMIT,
                     created_at: now_rfc3339,
                     stop_requested: false,
                     llm_defined_acceptance_criteria: Vec::new(),
@@ -322,7 +325,7 @@ impl EvolutionManager {
                 status: w.status.clone(),
                 current_stage: w.current_stage.clone(),
                 global_loop_round: w.global_loop_round,
-                auto_loop_enabled: w.auto_loop_enabled,
+                loop_round_limit: w.loop_round_limit,
                 verify_iteration: w.verify_iteration,
                 verify_iteration_limit: w.verify_iteration_limit,
                 agents,

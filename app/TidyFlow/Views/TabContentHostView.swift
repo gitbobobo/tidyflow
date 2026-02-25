@@ -627,8 +627,7 @@ struct EvolutionEditableProfile: Identifiable, Equatable {
 
 struct EvolutionTabView: View {
     @EnvironmentObject var appState: AppState
-    @State private var maxVerifyIterationsText: String = "3"
-    @State private var autoLoopEnabled: Bool = true
+    @State private var loopRoundLimitText: String = "1"
     @State private var isSessionViewerPresented: Bool = false
     @State private var viewerStage: String?
     @State private var isBlockerSheetPresented: Bool = false
@@ -899,7 +898,7 @@ struct EvolutionTabView: View {
                             Text(item.currentStage)
                         }
                         LabeledContent("轮次") {
-                            Text("\(item.globalLoopRound)")
+                            Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
                         }
                         LabeledContent("校验轮次") {
                             Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
@@ -915,11 +914,12 @@ struct EvolutionTabView: View {
                     }
 
                     HStack(spacing: 12) {
-                        TextField("最大 verify 次数", text: $maxVerifyIterationsText)
+                        TextField("循环轮次", text: $loopRoundLimitText)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 140)
-                        Toggle("循环续轮", isOn: $autoLoopEnabled)
-                            .toggleStyle(.switch)
+                        Text("验证循环固定 3 次")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
 
                     ControlGroup {
@@ -934,10 +934,6 @@ struct EvolutionTabView: View {
                             appState.resumeEvolution(project: project, workspace: workspace)
                         }
                     }
-
-                    Text(autoLoopEnabled ? "运行模式: 自动循环续轮" : "运行模式: 仅运行 1 轮后结束")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 } else {
                     Text("请先选择工作空间")
                         .foregroundColor(.secondary)
@@ -1246,7 +1242,7 @@ struct EvolutionTabView: View {
 
     private func startCurrentWorkspace() {
         guard let workspace else { return }
-        let verify = max(1, Int(maxVerifyIterationsText) ?? 3)
+        let loopRoundLimit = max(1, Int(loopRoundLimitText) ?? 1)
         let defaultProfiles = appState.evolutionDefaultProfiles
         let profiles: [EvolutionStageProfileInfoV2] = defaultProfiles.map { item in
             let model: EvolutionModelSelectionV2? = {
@@ -1263,15 +1259,17 @@ struct EvolutionTabView: View {
         appState.startEvolution(
             project: project,
             workspace: workspace,
-            maxVerifyIterations: verify,
-            autoLoopEnabled: autoLoopEnabled,
+            loopRoundLimit: loopRoundLimit,
             profiles: profiles
         )
     }
 
     private func syncStartOptionsFromCurrentItem() {
-        guard let item = currentItem else { return }
-        autoLoopEnabled = item.autoLoopEnabled
+        guard let item = currentItem else {
+            loopRoundLimitText = "1"
+            return
+        }
+        loopRoundLimitText = "\(max(1, item.loopRoundLimit))"
     }
 }
 

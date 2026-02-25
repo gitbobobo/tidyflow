@@ -34,7 +34,7 @@ impl EvolutionManager {
             "verify_iteration": entry.verify_iteration,
             "verify_iteration_limit": entry.verify_iteration_limit,
             "global_loop_round": entry.global_loop_round,
-            "auto_loop_enabled": entry.auto_loop_enabled,
+            "loop_round_limit": entry.loop_round_limit,
             "interrupt": {
                 "requested": entry.stop_requested,
                 "requested_by": if entry.stop_requested { "user" } else { "" },

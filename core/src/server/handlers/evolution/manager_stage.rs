@@ -723,7 +723,9 @@ impl EvolutionManager {
                             "failed_exhausted".to_string()
                         };
                     }
-                    if entry.auto_loop_enabled {
+                    let should_start_next_round = entry.status == "completed"
+                        && entry.global_loop_round < entry.loop_round_limit;
+                    if should_start_next_round {
                         auto_commit_workspace_root = Some(entry.workspace_root.clone());
                         auto_loop_gate = Some((
                             entry.project.clone(),

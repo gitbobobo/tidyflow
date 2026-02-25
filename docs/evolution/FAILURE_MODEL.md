@@ -61,7 +61,7 @@
   - 必填上下文：`cycle_id`, `trace_id`.
 
 - `evo_auto_commit_failed`
-  - 含义：自动续轮前的一键提交失败，续轮被阻断。
+  - 含义：进入下一轮前的一键提交失败，续轮被阻断。
   - 必填上下文：`cycle_id`, `message`.
 
 ## 3. 状态转移约束
@@ -100,7 +100,8 @@
 - `judge=pass`：进入 `report`，结束 cycle。
 - `judge=fail` 且 `verify_iteration < 3`：回到 `implement` 并加 1。
 - `judge=fail` 且 `verify_iteration == 3`：转 `failed_exhausted`。
-- `report` 后若启用自动续轮：必须先执行一键提交；提交成功（含无变更）才进入下一轮，失败返回 `evo_auto_commit_failed` 并转 `failed_system`。
+- `report` 后若 `global_loop_round < loop_round_limit` 且本轮 `judge=pass`：必须先执行一键提交；提交成功（含无变更）才进入下一轮，失败返回 `evo_auto_commit_failed` 并转 `failed_system`。
+- 任一轮 `judge=fail` 不进入下一全流程轮次（可提前停止）。
 
 ## 5. 恢复策略矩阵
 
