@@ -57,7 +57,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 在正式决策前，必须先识别项目类型，以便后续测试基础设施判断与证据策略能够匹配实际技术栈：
 - 识别结果记录为 `ui_capability`：`none|web|desktop|mobile|mixed`
 - 识别结果必须写入 `direction.lifecycle_scan.json` 的顶层 `project_type` 字段（字符串，如 `rust_backend`、`next_js_web`、`swift_macos_app`、`mixed_rust_web`）
-- 不得依赖单一文件名做唯一判据；遇到多信号时综合判断并说明置信度
 
 【direction.lifecycle_scan.json 结构要求】
 {
@@ -95,6 +94,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 每轮只允许 1 个主方向（写入 `selected_type`）+ 最多 2 个次方向（写入 lifecycle opportunities，不写入 `selected_type`）。
 - 若主方向在本轮无法形成可验证结果，必须降级为更小范围方案。
 - 验收标准必须"可验证、可观察、可判定"
+- 混合架构项目，以可独立运行为标准，确保各子系统都已搭建测试基础设施。
 - 最小证据策略优先：`test_log|build_log|metrics|screenshot|diff_summary`
 - 若存在前端/可视界面（`ui_capability` 不为 `none`），`minimum_evidence_policy` 必须显式要求 `screenshot`，并描述关键页面/状态的截图采集要求。
 - 最终选择必须引用 lifecycle_scan 中的关键证据与机会
@@ -255,12 +255,6 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 - 每条 acceptance criteria 必须至少映射到 1 个 check 与证据类型。
 - 高风险项必须给出 rollback。
 - 计划必须与 `direction.selected_type` 一致，不得偏航。
-
-【幂等与原子性】
-- 输入不变时重复执行应得到一致规划。
-- 原子写入（临时文件 + rename）。
-- 所有 JSON 必须 UTF-8 且可机读。
-
 "####;
 
 pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
@@ -390,12 +384,6 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - `changed_files` 与实际改动文件一致，不得遗漏关键文件。
 - 每条高风险改动必须记录回滚思路或缓解措施。
 - 输出必须让 VerifyAgent 能直接据此执行验证。
-
-【幂等与原子性】
-- 输入不变且代码状态不变时，重复执行应产生一致的结构化结果。
-- 所有结构化文件使用原子写入（临时文件 + rename）。
-- 所有 JSON 必须 UTF-8 且可机读。
-
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
@@ -550,12 +538,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - 高严重度问题必须进入 `defects_or_risks`，并给出可执行建议。
 - 输出必须让 JudgeAgent 可直接做通过/失败裁决。
 - `verify.result.json.verify_iteration` 必须从 `cycle.json.verify_iteration` 读取并回填，禁止写死常量。
-
-【幂等与原子性】
-- 输入不变且代码状态不变时，重复执行应产生一致的结构化结果。
-- 所有结构化文件使用原子写入（临时文件 + rename）。
-- 所有 JSON 必须 UTF-8 且可机读。
-
 "####;
 
 pub const STAGE_JUDGE_PROMPT: &str = r####"
@@ -678,12 +660,6 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - `overall_result` 与 `next_action` 必须严格符合回路规则。
 - fail 结论必须输出"最小修复集"导向的下一轮重点，避免泛化建议。
 - `judge.result.json.verify_iteration` 与 `verify_iteration_limit` 必须分别从 `cycle.json.verify_iteration`、`cycle.json.verify_iteration_limit` 读取并回填，禁止写死常量。
-
-【幂等与原子性】
-- 输入不变且代码状态不变时，重复执行应产生一致的结构化结果。
-- 所有结构化文件使用原子写入（临时文件 + rename）。
-- 所有 JSON 必须 UTF-8 且可机读。
-
 "####;
 
 pub const STAGE_REPORT_PROMPT: &str = r####"
@@ -840,10 +816,4 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - `acceptance_summary` 必须覆盖全部验收标准，不得遗漏。
 - `final_result.judge_result` 必须与 `judge.result.json.overall_result.result` 一致；若不一致必须标记失败并说明。
 - 报告必须让新的 cycle 能直接接续，不依赖额外口头解释。
-
-【幂等与原子性】
-- 输入不变且代码状态不变时，重复执行应产生一致的结构化结果。
-- 所有结构化文件使用原子写入（临时文件 + rename）。
-- 所有 JSON 必须 UTF-8 且可机读。
-
 "####;
