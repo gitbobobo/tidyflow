@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 工作空间详情页：终端、后台任务、代码变更汇总与工具栏操作。
 struct WorkspaceDetailView: View {
@@ -140,6 +141,7 @@ struct WorkspaceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                evidenceButton
                 evolutionButton
                 aiChatButton
                 moreActionsMenu
@@ -150,6 +152,14 @@ struct WorkspaceDetailView: View {
         }
         .onAppear {
             appState.refreshWorkspaceDetail(project: project, workspace: workspace)
+        }
+    }
+
+    private var evidenceButton: some View {
+        Button {
+            appState.navigationPath.append(MobileRoute.evidence(project: project, workspace: workspace))
+        } label: {
+            Image(systemName: "photo.stack")
         }
     }
 
@@ -502,6 +512,314 @@ private struct ExplorerFilePreviewSheet: View {
                     Button("关闭") {
                         appState.explorerPreviewPresented = false
                     }
+                }
+            }
+        }
+    }
+}
+
+struct MobileEvidenceView: View {
+    @EnvironmentObject var appState: MobileAppState
+
+    let project: String
+    let workspace: String
+
+    @State private var selectedItemID: String?
+    @State private var itemLoading: Bool = false
+    @State private var itemError: String?
+    @State private var itemTextContent: String?
+    @State private var itemImage: UIImage?
+    @State private var itemByteCount: Int = 0
+    @State private var headerHint: String?
+
+    private var snapshot: EvolutionEvidenceSnapshotV2? {
+        appState.evidenceSnapshot(project: project, workspace: workspace)
+    }
+
+    private var snapshotLoading: Bool {
+        appState.isEvidenceLoading(project: project, workspace: workspace)
+    }
+
+    private var snapshotError: String? {
+        appState.evidenceError(project: project, workspace: workspace)
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Button("重建全链路证据") {
+                    rebuildEvidence()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!appState.isConnected)
+                if let headerHint, !headerHint.isEmpty {
+                    Text(headerHint)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if snapshotLoading && snapshot == nil {
+                Section {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("读取证据中...")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } else if let snapshotError, snapshot == nil {
+                Section {
+                    Text(snapshotError)
+                        .foregroundColor(.red)
+                    Button("重试") {
+                        refreshEvidence()
+                    }
+                }
+            } else if let snapshot {
+                Section("状态") {
+                    LabeledContent("证据目录") {
+                        Text(snapshot.evidenceRoot)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("索引文件") {
+                        Text(snapshot.indexFile)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("索引状态") {
+                        Text(snapshot.indexExists ? "存在" : "缺失")
+                            .foregroundColor(snapshot.indexExists ? .green : .orange)
+                    }
+                    LabeledContent("子系统") {
+                        Text(snapshot.detectedSubsystems.isEmpty ? "未识别" : snapshot.detectedSubsystems.map(\.id).joined(separator: ", "))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("平台") {
+                        Text(snapshot.detectedPlatforms.isEmpty ? "未识别" : snapshot.detectedPlatforms.joined(separator: ", "))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+
+                if !snapshot.issues.isEmpty {
+                    Section("告警") {
+                        ForEach(snapshot.issues.indices, id: \.self) { idx in
+                            let issue = snapshot.issues[idx]
+                            Text("[\(issue.level)] \(issue.message)")
+                                .font(.caption)
+                                .foregroundColor(issue.level.lowercased() == "warning" ? .orange : .secondary)
+                        }
+                    }
+                }
+
+                ForEach(displayPlatforms(in: snapshot), id: \.self) { platform in
+                    Section(platform.uppercased()) {
+                        let rows = snapshot.items.filter { $0.platform == platform }
+                        if rows.isEmpty {
+                            Text("暂无条目")
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(rows, id: \.itemID) { item in
+                                Button {
+                                    selectedItemID = item.itemID
+                                    loadItem(item)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text("#\(item.order) \(item.title)")
+                                                .font(.body)
+                                            Spacer()
+                                            Image(systemName: item.exists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                                .foregroundColor(item.exists ? .green : .orange)
+                                        }
+                                        Text(item.description)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text(item.path)
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                                .buttonStyle(.plain)
+                                .listRowBackground(
+                                    selectedItemID == item.itemID ? Color.accentColor.opacity(0.14) : Color.clear
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Section("条目详情") {
+                    detailView(snapshot: snapshot)
+                }
+            } else {
+                Section {
+                    Text("暂无证据数据")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationTitle("证据")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    refreshEvidence()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+        }
+        .onAppear {
+            refreshEvidence()
+            syncSelectionIfNeeded()
+        }
+        .onReceive(appState.$evolutionEvidenceSnapshotsByWorkspace) { _ in
+            syncSelectionIfNeeded()
+        }
+        .onChange(of: appState.isConnected) { _, connected in
+            guard connected else { return }
+            refreshEvidence()
+        }
+    }
+
+    @ViewBuilder
+    private func detailView(snapshot: EvolutionEvidenceSnapshotV2) -> some View {
+        let selected = snapshot.items.first { $0.itemID == selectedItemID } ?? snapshot.items.first
+        if let selected {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(selected.title)
+                    .font(.headline)
+                Text(selected.path)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                if itemLoading {
+                    ProgressView("加载内容中...")
+                        .padding(.vertical, 6)
+                } else if let itemError {
+                    Text(itemError)
+                        .foregroundColor(.red)
+                } else if let itemImage {
+                    Image(uiImage: itemImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let itemTextContent {
+                    ScrollView {
+                        Text(itemTextContent)
+                            .font(.system(.footnote, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minHeight: 180)
+                } else {
+                    Text("无法预览该条目（\(itemByteCount) bytes）")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .onAppear {
+                if selectedItemID != selected.itemID {
+                    selectedItemID = selected.itemID
+                    loadItem(selected)
+                } else if itemTextContent == nil && itemImage == nil && itemError == nil && !itemLoading {
+                    loadItem(selected)
+                }
+            }
+        } else {
+            Text("暂无条目")
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func displayPlatforms(in snapshot: EvolutionEvidenceSnapshotV2) -> [String] {
+        var ordered: [String] = []
+        for platform in snapshot.detectedPlatforms where !ordered.contains(platform) {
+            ordered.append(platform)
+        }
+        for item in snapshot.items where !ordered.contains(item.platform) {
+            ordered.append(item.platform)
+        }
+        return ordered
+    }
+
+    private func syncSelectionIfNeeded() {
+        guard let snapshot else { return }
+        if let selectedItemID,
+           snapshot.items.contains(where: { $0.itemID == selectedItemID }) {
+            return
+        }
+        selectedItemID = snapshot.items.first?.itemID
+        clearPreview()
+        if let first = snapshot.items.first {
+            loadItem(first)
+        }
+    }
+
+    private func clearPreview() {
+        itemLoading = false
+        itemError = nil
+        itemTextContent = nil
+        itemImage = nil
+        itemByteCount = 0
+    }
+
+    private func refreshEvidence() {
+        appState.requestEvolutionEvidenceSnapshot(project: project, workspace: workspace)
+    }
+
+    private func rebuildEvidence() {
+        appState.requestEvolutionEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
+            DispatchQueue.main.async {
+                if let prompt {
+                    UIPasteboard.general.string = prompt.prompt
+                    appState.setAIChatOneShotHint(
+                        project: prompt.project,
+                        workspace: prompt.workspace,
+                        message: "提示词已复制，请在聊天输入框粘贴后发送。"
+                    )
+                    headerHint = "已复制提示词，正在跳转聊天页..."
+                    appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
+                } else {
+                    let error = errorMessage ?? "未知错误"
+                    headerHint = "生成失败：\(error)"
+                }
+            }
+        }
+    }
+
+    private func loadItem(_ item: EvolutionEvidenceItemInfoV2) {
+        itemLoading = true
+        itemError = nil
+        itemTextContent = nil
+        itemImage = nil
+        itemByteCount = 0
+
+        appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
+            DispatchQueue.main.async {
+                itemLoading = false
+                if let payload {
+                    itemByteCount = payload.content.count
+                    let data = Data(payload.content)
+                    if payload.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
+                        if let image = UIImage(data: data) {
+                            itemImage = image
+                            return
+                        }
+                        itemError = "图片解码失败"
+                        return
+                    }
+                    itemTextContent = String(data: data, encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)
+                } else {
+                    let error = errorMessage ?? "未知错误"
+                    itemError = error
                 }
             }
         }

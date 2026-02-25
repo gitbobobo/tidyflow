@@ -84,6 +84,18 @@ private struct MobileTerminalPresentation {
     let sourceCommand: String?
 }
 
+private struct MobileEvolutionEvidenceReadRequestState {
+    let project: String
+    let workspace: String
+    let itemID: String
+    let limit: UInt32?
+    var expectedOffset: UInt64
+    var totalSizeBytes: UInt64?
+    var mimeType: String
+    var content: [UInt8]
+    let completion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+}
+
 @MainActor
 protocol MobileTerminalOutputSink: AnyObject {
     func writeOutput(_ bytes: [UInt8])
@@ -167,6 +179,10 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionReplayError: String?
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
+    @Published var evolutionEvidenceSnapshotsByWorkspace: [String: EvolutionEvidenceSnapshotV2] = [:]
+    @Published var evolutionEvidenceLoadingByWorkspace: [String: Bool] = [:]
+    @Published var evolutionEvidenceErrorByWorkspace: [String: String] = [:]
+    @Published var aiChatOneShotHintByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
@@ -181,6 +197,8 @@ final class MobileAppState: ObservableObject {
     /// Evolution：profile 请求兜底定时器。
     private var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
     private var evolutionPendingActionByWorkspace: [String: String] = [:]
+    private var evolutionEvidencePromptCompletionByWorkspace: [String: (_ prompt: EvolutionEvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
+    private var evolutionEvidenceReadRequestByWorkspace: [String: MobileEvolutionEvidenceReadRequestState] = [:]
 
     let aiChatStore = AIChatStore()
     let subAgentViewerStore = AIChatStore()
@@ -969,6 +987,86 @@ final class MobileAppState: ObservableObject {
             $0.project == project &&
                 normalizeEvolutionWorkspaceName($0.workspace) == normalizedWorkspace
         }
+    }
+
+    func requestEvolutionEvidenceSnapshot(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionEvidenceLoadingByWorkspace[key] = true
+        evolutionEvidenceErrorByWorkspace[key] = nil
+        wsClient.requestEvoEvidenceSnapshot(project: project, workspace: normalizedWorkspace)
+    }
+
+    func requestEvolutionEvidenceRebuildPrompt(
+        project: String,
+        workspace: String,
+        completion: @escaping (_ prompt: EvolutionEvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionEvidencePromptCompletionByWorkspace[key] = completion
+        wsClient.requestEvoEvidenceRebuildPrompt(project: project, workspace: normalizedWorkspace)
+    }
+
+    func readEvolutionEvidenceItem(
+        project: String,
+        workspace: String,
+        itemID: String,
+        limit: UInt32? = 262_144,
+        completion: @escaping (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionEvidenceReadRequestByWorkspace[key] = MobileEvolutionEvidenceReadRequestState(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            limit: limit,
+            expectedOffset: 0,
+            totalSizeBytes: nil,
+            mimeType: "application/octet-stream",
+            content: [],
+            completion: completion
+        )
+        wsClient.requestEvoReadEvidenceItem(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            offset: 0,
+            limit: limit
+        )
+    }
+
+    func evidenceSnapshot(project: String, workspace: String) -> EvolutionEvidenceSnapshotV2? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        return evolutionEvidenceSnapshotsByWorkspace[key]
+    }
+
+    func isEvidenceLoading(project: String, workspace: String) -> Bool {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        return evolutionEvidenceLoadingByWorkspace[key] ?? false
+    }
+
+    func evidenceError(project: String, workspace: String) -> String? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        return evolutionEvidenceErrorByWorkspace[key]
+    }
+
+    func setAIChatOneShotHint(project: String, workspace: String, message: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        aiChatOneShotHintByWorkspace[key] = message
+    }
+
+    func consumeAIChatOneShotHint(project: String, workspace: String) -> String? {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        let hint = aiChatOneShotHintByWorkspace[key]
+        aiChatOneShotHintByWorkspace.removeValue(forKey: key)
+        return hint
     }
 
     func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
@@ -2717,8 +2815,23 @@ final class MobileAppState: ObservableObject {
         }
 
         wsClient.onEvoError = { [weak self] message in
-            self?.evolutionReplayLoading = false
-            self?.evolutionReplayError = message
+            guard let self else { return }
+            self.evolutionReplayLoading = false
+            self.evolutionReplayError = message
+            for key in self.evolutionEvidenceLoadingByWorkspace.keys {
+                self.evolutionEvidenceLoadingByWorkspace[key] = false
+                self.evolutionEvidenceErrorByWorkspace[key] = message
+            }
+            let promptCallbacks = self.evolutionEvidencePromptCompletionByWorkspace
+            self.evolutionEvidencePromptCompletionByWorkspace.removeAll()
+            for (_, completion) in promptCallbacks {
+                completion(nil, message)
+            }
+            let readRequests = self.evolutionEvidenceReadRequestByWorkspace
+            self.evolutionEvidenceReadRequestByWorkspace.removeAll()
+            for (_, request) in readRequests {
+                request.completion(nil, message)
+            }
         }
 
         wsClient.onEvoBlockingRequired = { [weak self] ev in
@@ -2774,6 +2887,58 @@ final class MobileAppState: ObservableObject {
             if pendingAction == "resume" {
                 self.resumeEvolution(project: ev.project, workspace: normalizedWorkspace)
             }
+        }
+
+        wsClient.onEvoEvidenceSnapshot = { [weak self] ev in
+            guard let self else { return }
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
+            self.evolutionEvidenceSnapshotsByWorkspace[key] = ev
+            self.evolutionEvidenceLoadingByWorkspace[key] = false
+            self.evolutionEvidenceErrorByWorkspace[key] = nil
+        }
+
+        wsClient.onEvoEvidenceRebuildPrompt = { [weak self] ev in
+            guard let self else { return }
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
+            if let completion = self.evolutionEvidencePromptCompletionByWorkspace.removeValue(forKey: key) {
+                completion(ev, nil)
+            }
+        }
+
+        wsClient.onEvoEvidenceItemChunk = { [weak self] ev in
+            guard let self else { return }
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
+            let key = self.globalWorkspaceKey(project: ev.project, workspace: normalizedWorkspace)
+            guard var request = self.evolutionEvidenceReadRequestByWorkspace[key] else { return }
+            guard request.itemID == ev.itemID else { return }
+
+            guard ev.offset == request.expectedOffset else {
+                self.evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
+                request.completion(nil, "证据分块偏移不连续，读取已中断")
+                return
+            }
+
+            request.totalSizeBytes = ev.totalSizeBytes
+            request.mimeType = ev.mimeType
+            request.content.append(contentsOf: ev.content)
+            request.expectedOffset = ev.nextOffset
+
+            if ev.eof {
+                self.evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
+                request.completion((mimeType: request.mimeType, content: request.content), nil)
+                return
+            }
+
+            self.evolutionEvidenceReadRequestByWorkspace[key] = request
+            self.wsClient.requestEvoReadEvidenceItem(
+                project: request.project,
+                workspace: request.workspace,
+                itemID: request.itemID,
+                offset: request.expectedOffset,
+                limit: request.limit
+            )
         }
 
         // AI Chat: 文件索引（@ 自动补全）

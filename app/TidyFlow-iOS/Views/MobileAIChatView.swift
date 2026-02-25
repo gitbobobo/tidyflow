@@ -20,6 +20,7 @@ struct MobileAIChatView: View {
     @State private var codexPlanProposalPartIDInCurrentTurn: String?
     @State private var presentedSubAgentSession: MobileSubAgentSessionRoute?
     @State private var mainMessageListScrollSessionToken: Int = 0
+    @State private var aiChatHintMessage: String?
 
     private var aiToolBinding: Binding<AIChatTool> {
         Binding(
@@ -47,6 +48,28 @@ struct MobileAIChatView: View {
     var body: some View {
         messageArea
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let aiChatHintMessage, !aiChatHintMessage.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.on.clipboard")
+                            .foregroundColor(.accentColor)
+                        Text(aiChatHintMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button {
+                            self.aiChatHintMessage = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(systemBackgroundColor)
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 inputArea
             }
@@ -200,6 +223,7 @@ struct MobileAIChatView: View {
         }
         .onAppear {
             appState.openAIChat(project: project, workspace: workspace)
+            consumeOneShotHintIfNeeded()
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
         }
@@ -276,6 +300,13 @@ struct MobileAIChatView: View {
             }
         }
         .background(systemGroupedBackgroundColor)
+    }
+
+    private func consumeOneShotHintIfNeeded() {
+        guard let message = appState.consumeAIChatOneShotHint(project: project, workspace: workspace) else {
+            return
+        }
+        aiChatHintMessage = message
     }
 
     private var inputArea: some View {
