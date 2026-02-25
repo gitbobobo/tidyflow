@@ -482,6 +482,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
   2. 若缺失截图证据，且 `llm_defined_acceptance.minimum_evidence_policy` 显式要求 `screenshot`，则对应验收标准必须判定为 `insufficient_evidence`，不得判定为 `pass`。
   3. 若缺失截图证据，且未进行截图采集尝试，必须在 `defects_or_risks` 中新增一条 `severity = "high"` 的缺陷，标题为"前端项目缺少截图证据"，并在建议中列出具体截图采集方式（如 e2e 截图、手动截图）。
   4. 截图证据类型必须使用 `"screenshot"`，与 `evidence.index.json` type 枚举保持一致；禁止使用 `"image"`、`"png"` 等非标准类型名。
+  5. 对证据文件执行抽样检查。
 - 若 `ui_capability = "none"`，截图证据为可选项，不强制要求。
 
 【verify.result.json 结构要求】
