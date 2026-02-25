@@ -91,7 +91,8 @@ impl WorkspaceBlockerItem {
 
 impl EvolutionManager {
     fn blocker_file_path(workspace_root: &str) -> Result<PathBuf, String> {
-        super::utils::evolution_workspace_dir(workspace_root).map(|dir| dir.join("workspace.blockers.json"))
+        super::utils::evolution_workspace_dir(workspace_root)
+            .map(|dir| dir.join("workspace.blockers.json"))
     }
 
     fn load_blocker_file(
@@ -210,12 +211,9 @@ impl EvolutionManager {
         resolutions: Vec<EvolutionBlockerResolutionInput>,
         ctx: &HandlerContext,
     ) -> Result<(), String> {
-        let workspace_root = crate::server::handlers::ai::resolve_directory(
-            &ctx.app_state,
-            project,
-            workspace,
-        )
-        .await?;
+        let workspace_root =
+            crate::server::handlers::ai::resolve_directory(&ctx.app_state, project, workspace)
+                .await?;
         let mut blocker_file = Self::load_blocker_file(&workspace_root, project, workspace)?;
         let mut changed = false;
         for resolution in resolutions {
