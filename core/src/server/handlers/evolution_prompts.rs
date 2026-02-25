@@ -97,6 +97,9 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 混合架构项目，以可独立运行为标准，确保各子系统都已搭建测试基础设施。
 - 最小证据策略优先：`test_log|build_log|metrics|screenshot|diff_summary`
 - 若存在前端/可视界面（`ui_capability` 不为 `none`），`minimum_evidence_policy` 必须显式要求 `screenshot`，并描述关键页面/状态的截图采集要求。
+- 必须在 direction 阶段明确截图策略：
+  - 若项目具备可执行截图通道（自动化或人工流程可落地），可要求 `screenshot`。
+  - 若项目当前不具备截图通道，必须在 `final_reason` 与 `llm_defined_acceptance.criteria` 中显式写明该现实约束与后续补齐路径；禁止通过占位图、合成图、纯脚本生成图伪造可视证据。
 - 最终选择必须引用 lifecycle_scan 中的关键证据与机会
 - 若证据不足，必须在 reason 中写明不确定性与保守决策依据
 
@@ -267,6 +270,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - 仅当确实需要人类介入时，必须写入 `WORKSPACE_BLOCKER_FILE_PATH` 生成结构化阻塞项（含 cycle_id、stage、问题描述、可选项与建议），并将当前阶段标记为 `blocked` 后中断循环。
 - 允许修改代码与配置，但禁止破坏性操作（如删除仓库历史、重置工作区）。
 - 本阶段只做 implement，不进行最终裁决。
+- 中间产物（临时脚本、草稿、抽样文件、临时 JSON）只允许写入 `CYCLE_DIR`（即 `.tidyflow/evolution/<cycle_id>/`）内部；禁止把中间产物写入仓库业务目录（如 `scripts/`、`app/`、`core/`）。
 
 【目标文件】
 在当前 cycle 目录下写入/更新：
@@ -348,6 +352,10 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 【evidence.index.json 更新要求】
 - 若 `implement.result.json.evidence_generated` 非空，必须创建或更新 `evidence.index.json`。
 - 合并写入时保留已有条目，不覆盖无关项。
+- 证据路径必须按类型分目录：
+  - 日志类证据统一写入 `evidence/logs/*.log`
+  - 截图类证据统一写入 `evidence/screenshots/*.png`
+  - `evidence/` 下禁止新增 `.md/.json/.txt` 等其他类型文件作为证据文件
 - 新增条目字段要求：
   - `evidence_id`：唯一 ID
   - `type`：`test_log|build_log|screenshot|metrics|diff_summary|custom`
@@ -430,6 +438,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 4. 每条验收标准都必须给出判定：`pass|fail|insufficient_evidence`。
 5. 证据必须可复核，禁止伪造、禁止仅口头结论。
 6. 若发现实现与计划明显偏离，必须在结果中单列风险与影响。
+7. 禁止将合成图、占位图、纯色图、重复图作为真实截图证据；发现时必须判定 `insufficient_evidence`。
 
 【前端/可视项目截图证据规则（必须执行）】
 - 执行验证前，必须读取 `direction.lifecycle_scan.json` 中的 `ui_capability` 字段。
@@ -438,7 +447,8 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
   2. 若缺失截图证据，且 `llm_defined_acceptance.minimum_evidence_policy` 显式要求 `screenshot`，则对应验收标准必须判定为 `insufficient_evidence`，不得判定为 `pass`。
   3. 若缺失截图证据，且未进行截图采集尝试，必须在 `defects_or_risks` 中新增一条 `severity = "high"` 的缺陷，标题为"前端项目缺少截图证据"，并在建议中列出具体截图采集方式（如 e2e 截图、手动截图）。
   4. 截图证据类型必须使用 `"screenshot"`，与 `evidence.index.json` type 枚举保持一致；禁止使用 `"image"`、`"png"` 等非标准类型名。
-  5. 对证据文件执行抽样检查。
+  5. 对证据文件执行抽样检查时，必须实际读取图片内容（像素矩阵），至少输出：分辨率、颜色分布/亮度变化、跨样本差异；仅检查文件名、扩展名、元数据或 hash 视为无效检查。
+  6. 若截图内容被判定为占位/合成/高度重复（例如纯色、极低信息量、跨状态几乎一致），对应验收标准必须判定为 `insufficient_evidence`，并在 `defects_or_risks` 中登记 `high` 缺陷。
 - 若 `ui_capability = "none"`，截图证据为可选项，不强制要求。
 
 【verify.result.json 结构要求】
@@ -501,6 +511,10 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 【evidence.index.json 更新要求】
 - 若 `verify.result.json.evidence_generated` 非空，必须创建或更新 `evidence.index.json`。
 - 合并写入时保留已有条目，不覆盖无关项。
+- 证据路径必须按类型分目录：
+  - 日志类证据统一写入 `evidence/logs/*.log`
+  - 截图类证据统一写入 `evidence/screenshots/*.png`
+  - `evidence/` 下禁止新增 `.md/.json/.txt` 等其他类型文件作为证据文件
 - 新增条目字段要求：
   - `evidence_id`：唯一 ID
   - `type`：`test_log|build_log|screenshot|metrics|diff_summary|custom`
@@ -597,6 +611,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
      - 相关验收标准裁决为 `insufficient_evidence`，不得裁决为 `pass`。
      - 在 `focus_for_next_iteration` 中必须包含"补充前端截图证据"，并说明需覆盖的关键页面/状态。
   3. 证据一致性校验（规则第2条）必须特别核查截图条目的 `linked_criteria_ids` 是否与验收标准对应；若截图与任何验收标准均无关联，视为弱证据并在 `evidence_consistency_check.issues` 中记录。
+  4. 对截图证据必须做内容真实性复核：若截图表现为占位图/合成图/重复图（而非真实界面状态），不得作为通过依据，相关标准应裁决为 `insufficient_evidence`。
 - `evidence.index.json` 中截图证据的 `type` 字段必须为 `"screenshot"`，裁决时不接受其他类型名替代。
 
 【judge.result.json 结构要求】
@@ -710,6 +725,7 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 4. 对证据做结构化盘点：数量、类型分布、关键证据、缺口证据。
 5. 汇总本轮变更影响面与残余风险，标注优先级。
 6. 报告必须可被后续代理直接消费，避免只写叙述性文字。
+7. 若存在截图证据但被标记为占位/合成/重复，报告中不得将其记为有效通过证据，必须列入证据缺口或残余风险。
 
 【report.result.json 结构要求】
 {
