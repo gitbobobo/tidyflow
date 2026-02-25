@@ -65,12 +65,21 @@ impl EvolutionManager {
         let global_loop_round = {
             let mut state = self.state.lock().await;
             state.activation_state = "activated".to_string();
+            if let Some(existing) = state.workspaces.get(&key) {
+                let is_terminal = existing.status == "completed"
+                    || existing.status == "failed_exhausted"
+                    || existing.status == "failed_system";
+                if !is_terminal {
+                    return Err(format!("evo_workspace_locked: {}", key));
+                }
+            }
             let prev_round = state
                 .workspaces
                 .get(&key)
                 .map(|v| v.global_loop_round)
                 .unwrap_or(0);
             let round = prev_round + 1;
+            let now_rfc3339 = Utc::now().to_rfc3339();
             state.workspaces.insert(
                 key.clone(),
                 WorkspaceRunState {
@@ -85,7 +94,11 @@ impl EvolutionManager {
                     auto_loop_enabled: req.auto_loop_enabled,
                     verify_iteration: 0,
                     verify_iteration_limit: req.max_verify_iterations.max(1),
+                    created_at: now_rfc3339,
                     stop_requested: false,
+                    llm_defined_acceptance_criteria: Vec::new(),
+                    last_judge_result: None,
+                    terminal_reason_code: None,
                     stage_profiles,
                     stage_statuses,
                     stage_sessions: HashMap::new(),
