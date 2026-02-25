@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 
 CYCLE_ID=""
 RUN_ID=""
-CHECK_ID="v-5"
+CHECK_ID="v-4"
 SOURCE_DIR=""
 
 LOG_DIR="$HOME/.tidyflow/logs"
@@ -21,7 +21,7 @@ DEV_LOG_FILE="$LOG_DIR/$LOG_DAY-dev.log"
 usage() {
     cat <<'USAGE'
 用法:
-  ./scripts/evo-screenshot.sh --cycle <cycle_id> [--run-id <run_id>] [--check-id v-5] [--source-dir <dir>]
+  ./scripts/evo-screenshot.sh --cycle <cycle_id> [--run-id <run_id>] [--check-id v-4] [--source-dir <dir>]
 
 说明:
   - source-dir 需包含 6 张真实截图：

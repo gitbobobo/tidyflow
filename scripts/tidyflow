@@ -49,8 +49,8 @@ print_usage() {
       - 协议 action 规则同步检查
       - 版本一致性检查
 
-  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration|verify] [--dry-run]
-      运行 Evolution 质量门禁链路（unit -> integration -> e2e -> manual，build 独立门禁）
+  quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|integration|build_macos|build_ios|build|verify] [--dry-run]
+      运行 Evolution 质量门禁链路（integration -> build(macOS) -> build(iOS) -> verify）
 
   build dmg [--skip-core] [--sign] [--identity "..."]
       构建 DMG（透传到 ./scripts/build_dmg.sh）

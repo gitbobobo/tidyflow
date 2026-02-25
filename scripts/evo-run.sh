@@ -22,12 +22,14 @@ DRY_RUN=0
 usage() {
     cat <<'EOF'
 用法:
-  ./scripts/evo-run.sh --cycle <cycle_id> [--run-id <run_id>] [--step all|build|integration|verify] [--dry-run]
+  ./scripts/evo-run.sh --cycle <cycle_id> [--run-id <run_id>] [--step all|integration|build_macos|build_ios|build|verify] [--dry-run]
 
 说明:
-  - all: integration + verify
+  - all: integration -> build_macos -> build_ios -> verify
   - integration: 执行 core unit + integration 测试
-  - build: 串行执行 macOS/iOS xcodebuild
+  - build_macos: 执行 macOS xcodebuild
+  - build_ios: 执行 iOS Simulator xcodebuild
+  - build: 串行执行 build_macos + build_ios
   - verify: 执行证据索引存在性与字段最小检查
 EOF
 }
@@ -96,25 +98,50 @@ echo "[evo] quality_gate_invoked cycle_id=$CYCLE_ID run_id=$RUN_ID step=$STEP dr
 write_event_log "quality_gate_invoked" "dry_run=$DRY_RUN"
 
 run_cmd() {
-    local label="$1"
+    local stage_name="$1"
+    local check_id="$2"
+    local evidence_file="$3"
     shift
+    shift
+    shift
+    mkdir -p "$(dirname "$evidence_file")"
     if [ $DRY_RUN -eq 1 ]; then
-        echo "[evo][dry-run] $label :: $*"
+        echo "[evo][dry-run] stage=$stage_name check_id=$check_id :: $*" | tee "$evidence_file"
+        echo "[evo] quality_gate_stage stage=$stage_name result=ok(dry-run)"
+        write_event_log "quality_gate_stage" "stage=$stage_name check_id=$check_id result=ok(dry-run) evidence_path=${evidence_file#$CYCLE_DIR/}"
         return 0
     fi
-    echo "[evo][run] $label :: $*"
-    "$@"
+    echo "[evo][run] stage=$stage_name check_id=$check_id :: $*" | tee "$evidence_file"
+    set +e
+    "$@" >>"$evidence_file" 2>&1
+    local exit_code=$?
+    set -e
+    if [ $exit_code -ne 0 ]; then
+        echo "[evo] quality_gate_stage stage=$stage_name result=fail exit_code=$exit_code evidence_path=${evidence_file#$CYCLE_DIR/}" | tee -a "$evidence_file"
+        write_event_log "quality_gate_stage" "stage=$stage_name check_id=$check_id result=fail exit_code=$exit_code evidence_path=${evidence_file#$CYCLE_DIR/}"
+        return $exit_code
+    fi
+    echo "[evo] quality_gate_stage stage=$stage_name result=ok evidence_path=${evidence_file#$CYCLE_DIR/}" | tee -a "$evidence_file"
+    write_event_log "quality_gate_stage" "stage=$stage_name check_id=$check_id result=ok evidence_path=${evidence_file#$CYCLE_DIR/}"
 }
 
 run_integration() {
-    run_cmd "unit(v-1)" cargo test --manifest-path core/Cargo.toml
-    run_cmd "integration(v-2)" cargo test --manifest-path core/Cargo.toml --test protocol_v1 --test manager_test
+    run_cmd "integration" "v-1" "$EVIDENCE_LOG_DIR/quality-gate-${RUN_ID}-integration-unit.log" cargo test --manifest-path core/Cargo.toml
+    run_cmd "integration" "v-1" "$EVIDENCE_LOG_DIR/quality-gate-${RUN_ID}-integration-tests.log" cargo test --manifest-path core/Cargo.toml --test protocol_v1 --test manager_test
+}
+
+run_build_macos() {
+    run_cmd "build_macos" "v-2" "$EVIDENCE_LOG_DIR/quality-gate-${RUN_ID}-build-macos.log" xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination platform=macOS -derivedDataPath build SKIP_CORE_BUILD=1 build
+}
+
+run_build_ios() {
+    run_cmd "build_ios" "v-3" "$EVIDENCE_LOG_DIR/quality-gate-${RUN_ID}-build-ios.log" xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination "platform=iOS Simulator,name=iPhone 16,OS=18.6" -derivedDataPath build SKIP_CORE_BUILD=1 build
 }
 
 run_build() {
-    # 严格串行：先 macOS，再 iOS。
-    run_cmd "build(v-3,macOS)" xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination platform=macOS -derivedDataPath build SKIP_CORE_BUILD=1 build
-    run_cmd "build(v-4,iOS)" xcodebuild -project app/TidyFlow.xcodeproj -scheme TidyFlow -configuration Debug -destination "platform=iOS Simulator,name=iPhone 16,OS=18.6" -derivedDataPath build SKIP_CORE_BUILD=1 build
+    # 严格串行：先 macOS，再 iOS，禁止并行 xcodebuild。
+    run_build_macos
+    run_build_ios
 }
 
 run_verify() {
@@ -151,10 +178,17 @@ run_verify() {
 case "$STEP" in
     all)
         run_integration
+        run_build
         run_verify
         ;;
     integration)
         run_integration
+        ;;
+    build_macos)
+        run_build_macos
+        ;;
+    build_ios)
+        run_build_ios
         ;;
     build)
         run_build

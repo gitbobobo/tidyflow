@@ -23,12 +23,12 @@ screenshot-<cycle_id>-<check_id>-<platform>-<state>-<utc_ts>.png
 示例：
 
 ```text
-.tidyflow/evolution/<cycle_id>/evidence/screenshot-2026-02-25T06-00-02-292Z-v-5-ios-loading-20260225T061122Z.png
+.tidyflow/evolution/<cycle_id>/evidence/screenshots/screenshot-2026-02-25T06-00-02-292Z-v-4-ios-loading-20260225T061122Z.png
 ```
 
 命名必须可反查：`cycle_id/check_id/platform/state`。
 
-## 3. 采集步骤（v-5）
+## 3. 采集步骤（v-4）
 
 1. 在 macOS 与 iOS 分别打开 AI 聊天核心页。
 2. 每端按 `empty/loading/ready` 依次采集截图。
@@ -40,7 +40,7 @@ screenshot-<cycle_id>-<check_id>-<platform>-<state>-<utc_ts>.png
 
 截图条目至少包含：
 - `type=screenshot`
-- `check_id=v-5`
+- `check_id=v-4`
 - `run_id`
 - `summary`（包含平台与状态）
 - `status` 与 `missing_reason`（若缺失）
@@ -52,7 +52,7 @@ screenshot-<cycle_id>-<check_id>-<platform>-<state>-<utc_ts>.png
 - 在证据索引中记录 `status=missing` 与 `missing_reason`；
 - 不阻断其它证据写入。
 
-截图质量校验（v-5 最小门槛）：
+截图质量校验（v-4 最小门槛）：
 - 分辨率不得低于 `720x1280`（或同等像素量）；
 - 双端三态 6 张图的 `sha256` 不得全部相同；
 - `summary` 或附加校验文件必须能反查 `platform/state`。
@@ -60,6 +60,6 @@ screenshot-<cycle_id>-<check_id>-<platform>-<state>-<utc_ts>.png
 ## 6. 跨端一致性要求
 
 发布前需同时确认：
-- macOS 构建证据（v-3）存在；
-- iOS 构建证据（v-4）存在；
-- `v-5` 的双端三态截图均可追溯到同一 `run_id`。
+- macOS 构建证据（v-2）存在；
+- iOS 构建证据（v-3）存在；
+- `v-4` 的双端三态截图均可追溯到同一 `run_id`。
