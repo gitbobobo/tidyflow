@@ -41,10 +41,6 @@ struct MessageListView: View {
     @State private var lastDisplayMessageCount: Int = 0
     @State private var visibleMessageIDs: Set<String> = []
     @State private var jumpToBottomRequestID: Int = 0
-    #if os(macOS)
-    /// macOS 滚轮事件监听器句柄
-    @State private var scrollWheelMonitor: Any?
-    #endif
 
     private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
@@ -156,17 +152,15 @@ struct MessageListView: View {
             ScrollView {
                 messageStack()
             }
+            .defaultScrollAnchor(.bottom)
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+            #endif
             .onAppear {
                 initializeScrollPolicyStateIfNeeded()
+                // defaultScrollAnchor(.bottom) 处理初始定位，
+                // 但仍需手动滚动以确保在已有消息时精确定位底部。
                 scrollToBottom(proxy: proxy, animated: false)
-                #if os(macOS)
-                installScrollWheelMonitor()
-                #endif
-            }
-            .onDisappear {
-                #if os(macOS)
-                removeScrollWheelMonitor()
-                #endif
             }
             .onChange(of: sessionToken) { _, _ in
                 handleSessionTokenChangeIfNeeded()
@@ -188,15 +182,6 @@ struct MessageListView: View {
             GeometryReader { geo in
                 Color.clear.preference(key: MessageListViewportHeightKey.self, value: geo.size.height)
             }
-        )
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 2)
-                .onChanged { _ in
-                    handleUserScrollGesture()
-                }
-                .onEnded { _ in
-                    handleUserScrollGesture()
-                }
         )
         .onPreferenceChange(MessageListViewportHeightKey.self) { newHeight in
             guard abs(newHeight - viewportHeight) > 0.5 else { return }
@@ -295,11 +280,6 @@ struct MessageListView: View {
         jumpToBottomRequestID += 1
     }
 
-    private func handleUserScrollGesture() {
-        _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: isNearBottom))
-        isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
-    }
-
     private func tailChangeEvent() -> ChatScrollEvent {
         let currentCount = displayMessages.count
         let currentTailID = displayMessages.last?.id
@@ -348,7 +328,7 @@ struct MessageListView: View {
             proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
         if animated {
-            withAnimation {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                 action()
             }
         } else {
@@ -357,29 +337,6 @@ struct MessageListView: View {
         // 自动滚动后刷新近底部确认时间戳
         _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
     }
-
-    // MARK: - macOS 滚轮事件监听
-
-    #if os(macOS)
-    /// 安装全局滚轮事件监听，检测 macOS 鼠标滚轮滚动（DragGesture 无法捕获）。
-    private func installScrollWheelMonitor() {
-        guard scrollWheelMonitor == nil else { return }
-        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [self] event in
-            // 仅处理有意义的纵向滚动
-            guard abs(event.scrollingDeltaY) > 1.0 else { return event }
-            handleUserScrollGesture()
-            return event
-        }
-    }
-
-    /// 移除滚轮事件监听
-    private func removeScrollWheelMonitor() {
-        if let monitor = scrollWheelMonitor {
-            NSEvent.removeMonitor(monitor)
-            scrollWheelMonitor = nil
-        }
-    }
-    #endif
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
         let items: [String] = message.parts.compactMap { part in

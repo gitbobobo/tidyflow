@@ -10,9 +10,6 @@ enum ChatScrollEvent: Equatable {
     case messageAppended
     case messageIncremented
     case userScrolled(nearBottom: Bool)
-    /// 用户开始交互（手势、滚轮等），立即暂停自动滚动，
-    /// 后续由 nearBottom 状态决定是否恢复。
-    case userInteractionBegan
     case jumpToBottomClicked
     case sessionSwitched
 }
@@ -137,8 +134,6 @@ final class ChatScrollPolicy {
             action = handleMessageIncremented(now: now)
         case .userScrolled(let updatedNearBottom):
             action = handleUserScrolled(updatedNearBottom: updatedNearBottom, now: now)
-        case .userInteractionBegan:
-            action = handleUserInteractionBegan()
         case .jumpToBottomClicked:
             action = handleJumpToBottomClicked(now: now)
         case .sessionSwitched:
@@ -200,18 +195,6 @@ final class ChatScrollPolicy {
             return .none
         }
 
-        return .none
-    }
-
-    /// 用户开始滚动交互（手势/滚轮等），立即暂停自动跟随。
-    /// 后续由 nearBottom 状态恢复决定是否重新开启。
-    private func handleUserInteractionBegan() -> ChatScrollDecision.Action {
-        guard autoFollow else { return .none }
-        // 仅当不在底部附近时才暂停（避免误触）
-        if !nearBottom {
-            autoFollow = false
-            lastNearBottomConfirmedAt = nil
-        }
         return .none
     }
 
