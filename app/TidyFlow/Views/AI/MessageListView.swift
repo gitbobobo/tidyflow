@@ -189,9 +189,10 @@ struct MessageListView: View {
         }
         .onPreferenceChange(MessageListBottomAnchorMaxYKey.self) { bottomMaxY in
             guard viewportHeight > 0 else { return }
-            let threshold = scrollPolicy.configuration.nearBottomThreshold
-            let nearBottom = bottomMaxY <= (viewportHeight + threshold)
-            updateNearBottomState(nearBottom: nearBottom)
+            let config = scrollPolicy.configuration
+            let nearBottom = bottomMaxY <= (viewportHeight + config.nearBottomThreshold)
+            let withinAutoFollowZone = bottomMaxY <= (viewportHeight + config.autoFollowBreakThreshold)
+            updateNearBottomState(nearBottom: nearBottom, withinAutoFollowZone: withinAutoFollowZone)
         }
         .overlay(alignment: .bottomTrailing) {
             if showJumpToBottomButton {
@@ -248,16 +249,28 @@ struct MessageListView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func updateNearBottomState(nearBottom: Bool) {
-        if nearBottom != isNearBottom {
-            isNearBottom = nearBottom
-            // 近底部状态变化时同步通知 policy（处理用户手动滚回底部的场景）
-            _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: nearBottom))
-            isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
-        } else if nearBottom {
-            // 即使状态未变，也刷新 policy 的近底部确认时间戳
+    /// 使用双阈值策略更新滚动状态：
+    /// - `nearBottom` (36pt)：紧凑阈值，控制"回到底部"按钮的显隐
+    /// - `withinAutoFollowZone` (200pt)：宽松阈值，保护 autoFollow 不被流式内容增长的竞态误断
+    ///
+    /// 三个区间的行为：
+    /// 1. 距底部 ≤ 36pt：确认在底部，恢复 autoFollow
+    /// 2. 距底部 36~200pt："缓冲区"，不通知 policy，保持 autoFollow 不变
+    /// 3. 距底部 > 200pt：用户明确离开底部，中断 autoFollow
+    private func updateNearBottomState(nearBottom: Bool, withinAutoFollowZone: Bool) {
+        isNearBottom = nearBottom
+
+        if nearBottom {
+            // 区间 1：在底部附近，确认并可能恢复 autoFollow
             _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: true))
+            isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
+        } else if !withinAutoFollowZone {
+            // 区间 3：远离底部，中断 autoFollow
+            _ = scrollPolicy.reduce(event: .userScrolled(nearBottom: false))
+            isAutoFollowActive = scrollPolicy.isAutoScrollEnabled
         }
+        // 区间 2（缓冲区）：不通知 policy，保持当前 autoFollow 状态。
+        // 这避免了流式输出时 proxy.scrollTo() 异步延迟导致 autoFollow 被误断。
     }
 
     private func initializeScrollPolicyStateIfNeeded() {

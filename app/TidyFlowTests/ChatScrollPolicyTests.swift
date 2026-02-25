@@ -176,6 +176,7 @@ final class ChatScrollPolicyTests: XCTestCase {
         XCTAssertEqual(config.bottomTolerance, 36, "默认 bottomTolerance 应为 36")
         XCTAssertEqual(config.nearBottomThreshold, 36, "默认 nearBottomThreshold 应为 36")
         XCTAssertEqual(config.autoResumeThreshold, 36, "默认 autoResumeThreshold 应为 36")
+        XCTAssertEqual(config.autoFollowBreakThreshold, 200, "默认 autoFollowBreakThreshold 应为 200")
         XCTAssertEqual(config.renderBufferCount, 12, "默认 renderBufferCount 应为 12")
     }
 

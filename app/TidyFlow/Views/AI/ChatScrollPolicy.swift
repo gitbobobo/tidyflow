@@ -27,6 +27,9 @@ struct ChatScrollConfiguration: Equatable {
     let bottomTolerance: CGFloat
     let nearBottomThreshold: CGFloat
     let autoResumeThreshold: CGFloat
+    /// 中断 autoFollow 的宽松阈值：仅当滚动距离超过此值时才视为用户主动离开底部。
+    /// 比 nearBottomThreshold 宽松得多，防止流式输出时内容增长速度超过异步滚动导致 autoFollow 被误断。
+    let autoFollowBreakThreshold: CGFloat
     let renderBufferCount: Int
     let incrementThrottleInterval: TimeInterval
     /// 近底部确认超时时间：仅当最近一次确认在底部的时间在此范围内时才允许自动滚动。
@@ -38,14 +41,16 @@ struct ChatScrollConfiguration: Equatable {
         bottomTolerance: CGFloat = 36,
         nearBottomThreshold: CGFloat? = nil,
         autoResumeThreshold: CGFloat? = nil,
+        autoFollowBreakThreshold: CGFloat = 200,
         renderBufferCount: Int = 12,
-        incrementThrottleInterval: TimeInterval = 0.12,
+        incrementThrottleInterval: TimeInterval = 0.08,
         nearBottomConfirmationTimeout: TimeInterval = 0.5,
         animation: ChatScrollAnimation = .default
     ) {
         self.bottomTolerance = bottomTolerance
         self.nearBottomThreshold = nearBottomThreshold ?? bottomTolerance
         self.autoResumeThreshold = autoResumeThreshold ?? (nearBottomThreshold ?? bottomTolerance)
+        self.autoFollowBreakThreshold = autoFollowBreakThreshold
         self.renderBufferCount = renderBufferCount
         self.incrementThrottleInterval = incrementThrottleInterval
         self.nearBottomConfirmationTimeout = nearBottomConfirmationTimeout
