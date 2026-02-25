@@ -44,6 +44,123 @@ fn parse_judge_result_from_json(value: &serde_json::Value) -> Option<bool> {
 }
 
 impl EvolutionManager {
+    fn extract_acceptance_mapping_criteria(
+        value: &serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let mapping = value
+            .pointer("/verification_plan/acceptance_mapping")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
+            })?;
+
+        let mut out = Vec::new();
+        for item in mapping {
+            let Some(obj) = item.as_object() else {
+                return Err("acceptance_mapping 条目必须是对象".to_string());
+            };
+            let criteria_id = obj
+                .get("criteria_id")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| "acceptance_mapping 条目缺少 criteria_id".to_string())?;
+            let check_ids = obj
+                .get("check_ids")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| format!("{} 缺少 check_ids", criteria_id))?;
+            if check_ids.is_empty() {
+                return Err(format!("{} 的 check_ids 不能为空", criteria_id));
+            }
+            out.push(serde_json::json!({
+                "criteria_id": criteria_id,
+                "description": obj.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                "check_ids": check_ids,
+            }));
+        }
+        Ok(out)
+    }
+
+    async fn sync_acceptance_criteria_from_plan(
+        &self,
+        key: &str,
+        cycle_id: &str,
+    ) -> Result<(), String> {
+        let workspace_root = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return Err("workspace state missing".to_string());
+            };
+            entry.workspace_root.clone()
+        };
+        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+        let plan_path = cycle_dir.join("plan.execution.json");
+        let content = std::fs::read_to_string(&plan_path)
+            .map_err(|e| format!("读取 plan.execution.json 失败: {}", e))?;
+        let parsed: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("解析 plan.execution.json 失败: {}", e))?;
+        let criteria = Self::extract_acceptance_mapping_criteria(&parsed)?;
+        if criteria.is_empty() {
+            return Err("acceptance_mapping 为空".to_string());
+        }
+        let mut state = self.state.lock().await;
+        let Some(entry) = state.workspaces.get_mut(key) else {
+            return Err("workspace state missing".to_string());
+        };
+        entry.llm_defined_acceptance_criteria = criteria;
+        Ok(())
+    }
+
+    async fn ensure_acceptance_consistency(&self, key: &str, cycle_id: &str) -> Result<(), String> {
+        let workspace_root = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return Err("workspace state missing".to_string());
+            };
+            if entry.llm_defined_acceptance_criteria.is_empty() {
+                return Err("cycle llm_defined_acceptance.criteria 为空".to_string());
+            }
+            entry.workspace_root.clone()
+        };
+        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+        let plan_path = cycle_dir.join("plan.execution.json");
+        let content = std::fs::read_to_string(&plan_path)
+            .map_err(|e| format!("读取 plan.execution.json 失败: {}", e))?;
+        let parsed: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("解析 plan.execution.json 失败: {}", e))?;
+        let criteria_from_plan = Self::extract_acceptance_mapping_criteria(&parsed)?;
+        let expected_ids: std::collections::HashSet<String> = criteria_from_plan
+            .iter()
+            .filter_map(|v| {
+                v.get("criteria_id")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        let actual_ids: std::collections::HashSet<String> = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return Err("workspace state missing".to_string());
+            };
+            entry
+                .llm_defined_acceptance_criteria
+                .iter()
+                .filter_map(|v| {
+                    v.get("criteria_id")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect()
+        };
+        if expected_ids != actual_ids {
+            return Err(format!(
+                "criteria_id 集不一致: plan={:?}, cycle={:?}",
+                expected_ids, actual_ids
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) async fn interrupt_for_blockers(
         &self,
         key: &str,
@@ -58,6 +175,7 @@ impl EvolutionManager {
             };
             entry.status = "interrupted".to_string();
             entry.stop_requested = false;
+            entry.terminal_reason_code = Some(reason.to_string());
             Some((entry.project.clone(), entry.workspace.clone()))
         };
         let Some((project, workspace)) = maybe else {
@@ -138,6 +256,7 @@ impl EvolutionManager {
             "blocked",
             None,
             Some("human blocker created from AI question"),
+            None,
         )
         .await
         .ok();
@@ -199,7 +318,7 @@ impl EvolutionManager {
         self.set_stage_status(key, stage, "running").await;
         self.reset_stage_tool_call_tracking(key, stage).await;
         self.persist_cycle_file(key).await.ok();
-        self.persist_stage_file(key, stage, "running", None, None)
+        self.persist_stage_file(key, stage, "running", None, None, None)
             .await
             .ok();
         self.broadcast_cycle_update(key, ctx, "orchestrator").await;
@@ -233,14 +352,12 @@ impl EvolutionManager {
             match next {
                 Ok(Some(Ok(event))) => match event {
                     crate::ai::AiEvent::Done => {
-                        let adapter_hint = match agent
-                            .session_selection_hint(&directory, &session.id)
-                            .await
-                        {
-                            Ok(Some(adapter_hint)) => adapter_hint,
-                            Ok(None) => crate::ai::AiSessionSelectionHint::default(),
-                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                        };
+                        let adapter_hint =
+                            match agent.session_selection_hint(&directory, &session.id).await {
+                                Ok(Some(adapter_hint)) => adapter_hint,
+                                Ok(None) => crate::ai::AiSessionSelectionHint::default(),
+                                Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                            };
                         let inferred_hint = match agent
                             .list_messages(&directory, &session.id, Some(200))
                             .await
@@ -381,13 +498,7 @@ impl EvolutionManager {
                     }
                     crate::ai::AiEvent::QuestionAsked { request } => {
                         self.block_current_stage_by_question(
-                            key,
-                            project,
-                            workspace,
-                            cycle_id,
-                            stage,
-                            &request,
-                            ctx,
+                            key, project, workspace, cycle_id, stage, &request, ctx,
                         )
                         .await?;
                         return Err("evo_human_blocking_required:ai_question".to_string());
@@ -459,18 +570,19 @@ impl EvolutionManager {
                 )
             })
         };
-        let has_stage_blocker = if let Some((workspace_root, project_name, workspace_name)) = blocker_check_ctx {
-            self.has_stage_blocker(
-                &workspace_root,
-                &project_name,
-                &workspace_name,
-                cycle_id,
-                stage,
-            )
-            .await
-        } else {
-            false
-        };
+        let has_stage_blocker =
+            if let Some((workspace_root, project_name, workspace_name)) = blocker_check_ctx {
+                self.has_stage_blocker(
+                    &workspace_root,
+                    &project_name,
+                    &workspace_name,
+                    cycle_id,
+                    stage,
+                )
+                .await
+            } else {
+                false
+            };
         if has_stage_blocker {
             self.set_stage_status(key, stage, "blocked").await;
             self.persist_stage_file(
@@ -479,6 +591,7 @@ impl EvolutionManager {
                 "blocked",
                 Some(&session.id),
                 Some("stage blocked by unresolved human blocker"),
+                None,
             )
             .await
             .ok();
@@ -488,9 +601,20 @@ impl EvolutionManager {
         }
 
         self.set_stage_status(key, stage, "done").await;
-        self.persist_stage_file(key, stage, "done", Some(&session.id), None)
-            .await
-            .ok();
+        self.persist_stage_file(
+            key,
+            stage,
+            "done",
+            Some(&session.id),
+            None,
+            if stage == "judge" {
+                Some(judge_pass)
+            } else {
+                None
+            },
+        )
+        .await
+        .ok();
         self.persist_cycle_file(key).await.ok();
         self.broadcast_cycle_update(key, ctx, "agent").await;
 
@@ -504,6 +628,34 @@ impl EvolutionManager {
         judge_pass: bool,
         ctx: &HandlerContext,
     ) -> bool {
+        let cycle_for_validation = {
+            let state = self.state.lock().await;
+            state.workspaces.get(key).map(|e| e.cycle_id.clone())
+        };
+        if stage == "plan" {
+            let Some(cycle_id) = cycle_for_validation.clone() else {
+                return false;
+            };
+            if let Err(err) = self
+                .sync_acceptance_criteria_from_plan(key, &cycle_id)
+                .await
+            {
+                self.mark_failed_with_code(key, "evo_acceptance_source_missing", &err, ctx)
+                    .await;
+                return false;
+            }
+        }
+        if stage == "judge" {
+            let Some(cycle_id) = cycle_for_validation else {
+                return false;
+            };
+            if let Err(err) = self.ensure_acceptance_consistency(key, &cycle_id).await {
+                self.mark_failed_with_code(key, "evo_acceptance_mapping_inconsistent", &err, ctx)
+                    .await;
+                return false;
+            }
+        }
+
         let mut emit_judge: Option<(String, String, String, String)> = None;
         let mut stage_changed: Option<(String, String, String, String)> = None;
         let mut auto_next_cycle = false;
@@ -526,7 +678,9 @@ impl EvolutionManager {
                 "implement" => next_stage = "verify".to_string(),
                 "verify" => next_stage = "judge".to_string(),
                 "judge" => {
+                    entry.last_judge_result = Some(judge_pass);
                     if judge_pass {
+                        entry.terminal_reason_code = None;
                         emit_judge = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
@@ -535,6 +689,7 @@ impl EvolutionManager {
                         ));
                         next_stage = "report".to_string();
                     } else if entry.verify_iteration + 1 < entry.verify_iteration_limit {
+                        entry.terminal_reason_code = None;
                         entry.verify_iteration += 1;
                         emit_judge = Some((
                             entry.project.clone(),
@@ -545,6 +700,8 @@ impl EvolutionManager {
                         next_stage = "implement".to_string();
                     } else {
                         entry.status = "failed_exhausted".to_string();
+                        entry.terminal_reason_code =
+                            Some("evo_verify_iteration_exhausted".to_string());
                         emit_judge = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
@@ -555,7 +712,17 @@ impl EvolutionManager {
                     }
                 }
                 "report" => {
-                    entry.status = "completed".to_string();
+                    if entry.status != "failed_system" {
+                        entry.status = if entry.last_judge_result.unwrap_or(false) {
+                            entry.terminal_reason_code = None;
+                            "completed".to_string()
+                        } else {
+                            if entry.terminal_reason_code.is_none() {
+                                entry.terminal_reason_code = Some("evo_judge_failed".to_string());
+                            }
+                            "failed_exhausted".to_string()
+                        };
+                    }
                     if entry.auto_loop_enabled {
                         auto_commit_workspace_root = Some(entry.workspace_root.clone());
                         auto_loop_gate = Some((
@@ -594,13 +761,8 @@ impl EvolutionManager {
                 .await
             {
                 Ok(true) => {
-                    self.interrupt_for_blockers(
-                        key,
-                        &cycle_id,
-                        "workspace_blockers_pending",
-                        ctx,
-                    )
-                    .await;
+                    self.interrupt_for_blockers(key, &cycle_id, "workspace_blockers_pending", ctx)
+                        .await;
                     return false;
                 }
                 Ok(false) => {}
@@ -640,8 +802,12 @@ impl EvolutionManager {
                 entry.global_loop_round += 1;
                 entry.verify_iteration = 0;
                 entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
+                entry.created_at = Utc::now().to_rfc3339();
                 entry.current_stage = "direction".to_string();
                 entry.status = "queued".to_string();
+                entry.last_judge_result = None;
+                entry.terminal_reason_code = None;
+                entry.llm_defined_acceptance_criteria.clear();
                 entry.stage_sessions.clear();
                 entry.stage_statuses.clear();
                 for s in STAGES {
@@ -726,6 +892,7 @@ impl EvolutionManager {
             };
             entry.status = "interrupted".to_string();
             entry.stop_requested = true;
+            entry.terminal_reason_code = Some("evo_stop_requested".to_string());
             Some((
                 entry.project.clone(),
                 entry.workspace.clone(),
@@ -773,6 +940,7 @@ impl EvolutionManager {
                 return;
             };
             entry.status = "failed_system".to_string();
+            entry.terminal_reason_code = Some(code.to_string());
             Some((
                 entry.project.clone(),
                 entry.workspace.clone(),
@@ -807,7 +975,7 @@ impl EvolutionManager {
 #[cfg(test)]
 mod tests {
     use super::super::{stage::next_stage, STAGES};
-    use super::parse_judge_result_from_json;
+    use super::{parse_judge_result_from_json, EvolutionManager};
 
     #[test]
     fn parse_judge_result_json_schema() {
@@ -855,5 +1023,45 @@ mod tests {
         assert_eq!(next_stage("bootstrap"), None, "bootstrap 应返回 None");
         assert_eq!(next_stage("unknown"), None, "unknown 应返回 None");
         assert_eq!(next_stage(""), None, "空字符串应返回 None");
+    }
+
+    #[test]
+    fn extract_acceptance_mapping_criteria_should_work() {
+        let input = serde_json::json!({
+            "verification_plan": {
+                "acceptance_mapping": [
+                    {
+                        "criteria_id": "ac-1",
+                        "description": "desc",
+                        "check_ids": ["v-1", "v-5"]
+                    }
+                ]
+            }
+        });
+        let result = EvolutionManager::extract_acceptance_mapping_criteria(&input)
+            .expect("extract criteria should succeed");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["criteria_id"], "ac-1");
+    }
+
+    #[test]
+    fn extract_acceptance_mapping_criteria_should_reject_empty_check_ids() {
+        let input = serde_json::json!({
+            "verification_plan": {
+                "acceptance_mapping": [
+                    {
+                        "criteria_id": "ac-1",
+                        "check_ids": []
+                    }
+                ]
+            }
+        });
+        let err = EvolutionManager::extract_acceptance_mapping_criteria(&input)
+            .expect_err("empty check_ids should fail");
+        assert!(
+            err.contains("check_ids"),
+            "error should mention check_ids, got: {}",
+            err
+        );
     }
 }
