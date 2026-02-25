@@ -7,6 +7,27 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+build_quality_gate_args() {
+    local has_run_id=0
+    local args=("$@")
+    local arg
+    for arg in "${args[@]}"; do
+        if [ "$arg" = "--run-id" ]; then
+            has_run_id=1
+            break
+        fi
+    done
+
+    if [ $has_run_id -eq 0 ]; then
+        local generated_run_id
+        generated_run_id="$(date -u +%Y%m%d-%H%M%S)"
+        echo "[tidyflow] quality-gate 自动生成 run_id=$generated_run_id" >&2
+        args+=("--run-id" "$generated_run_id")
+    fi
+
+    printf "%s\n" "${args[@]}"
+}
+
 print_usage() {
     cat <<'EOF'
 用法:
@@ -66,7 +87,11 @@ case "$cmd" in
         ./scripts/tools/check_version_consistency.sh
         ;;
     quality-gate)
-        exec ./scripts/evo-run.sh "$@"
+        quality_gate_args=()
+        while IFS= read -r line; do
+            quality_gate_args+=("$line")
+        done < <(build_quality_gate_args "$@")
+        exec ./scripts/evo-run.sh "${quality_gate_args[@]}"
         ;;
     build)
         sub="${1:-}"
