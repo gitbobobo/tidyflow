@@ -433,7 +433,8 @@ extension AppState {
     }
 
     func terminalViewDidResize(tabId: UUID, cols: Int, rows: Int) {
-        guard cols > 0, rows > 0 else { return }
+        // 与 Core PTY clamp 保持一致：忽略初始化阶段的无效小尺寸，减少无意义往返与日志噪声。
+        guard cols >= 20, rows >= 5 else { return }
         guard let termId = terminalSessionByTabId[tabId], !termId.isEmpty else { return }
         wsClient.requestTermResize(termId: termId, cols: cols, rows: rows)
     }

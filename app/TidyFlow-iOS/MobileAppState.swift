@@ -2186,7 +2186,8 @@ final class MobileAppState: ObservableObject {
 
     /// SwiftTerm 视图尺寸变化（首次拿到有效尺寸也会走这里）
     func terminalViewDidResize(cols: Int, rows: Int) {
-        guard cols > 0, rows > 0 else { return }
+        // 与 Core PTY clamp 保持一致：忽略初始化阶段的无效小尺寸，减少无意义往返与日志噪声。
+        guard cols >= 20, rows >= 5 else { return }
 
         let becameReady = !isTerminalViewReady
         isTerminalViewReady = true
