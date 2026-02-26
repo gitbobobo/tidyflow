@@ -621,7 +621,11 @@ extension AppState {
         let readRequests = evolutionEvidenceReadRequestByWorkspace
         evolutionEvidenceReadRequestByWorkspace.removeAll()
         for (_, request) in readRequests {
-            request.completion(nil, message)
+            if request.autoContinue {
+                request.fullCompletion(nil, message)
+            } else {
+                request.pageCompletion(nil, message)
+            }
         }
     }
 
@@ -649,18 +653,39 @@ extension AppState {
 
         guard chunk.offset == request.expectedOffset else {
             evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
-            request.completion(nil, "证据分块偏移不连续，读取已中断")
+            if request.autoContinue {
+                request.fullCompletion(nil, "证据分块偏移不连续，读取已中断")
+            } else {
+                request.pageCompletion(nil, "证据分块偏移不连续，读取已中断")
+            }
             return
         }
 
         request.totalSizeBytes = chunk.totalSizeBytes
         request.mimeType = chunk.mimeType
-        request.content.append(contentsOf: chunk.content)
         request.expectedOffset = chunk.nextOffset
+
+        if !request.autoContinue {
+            evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
+            request.pageCompletion(
+                .init(
+                    mimeType: chunk.mimeType,
+                    content: chunk.content,
+                    offset: chunk.offset,
+                    nextOffset: chunk.nextOffset,
+                    totalSizeBytes: chunk.totalSizeBytes,
+                    eof: chunk.eof
+                ),
+                nil
+            )
+            return
+        }
+
+        request.content.append(contentsOf: chunk.content)
 
         if chunk.eof {
             evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
-            request.completion((mimeType: request.mimeType, content: request.content), nil)
+            request.fullCompletion((mimeType: request.mimeType, content: request.content), nil)
             return
         }
 

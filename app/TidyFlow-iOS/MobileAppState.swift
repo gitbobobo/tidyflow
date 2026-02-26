@@ -84,16 +84,27 @@ private struct MobileTerminalPresentation {
     let sourceCommand: String?
 }
 
-private struct MobileEvolutionEvidenceReadRequestState {
+struct MobileEvolutionEvidenceReadRequestState {
+    struct PagePayload {
+        let mimeType: String
+        let content: [UInt8]
+        let offset: UInt64
+        let nextOffset: UInt64
+        let totalSizeBytes: UInt64
+        let eof: Bool
+    }
+
     let project: String
     let workspace: String
     let itemID: String
     let limit: UInt32?
+    let autoContinue: Bool
     var expectedOffset: UInt64
     var totalSizeBytes: UInt64?
     var mimeType: String
     var content: [UInt8]
-    let completion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+    let fullCompletion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+    let pageCompletion: (_ payload: PagePayload?, _ errorMessage: String?) -> Void
 }
 
 @MainActor
@@ -1022,17 +1033,51 @@ final class MobileAppState: ObservableObject {
             workspace: normalizedWorkspace,
             itemID: itemID,
             limit: limit,
+            autoContinue: true,
             expectedOffset: 0,
             totalSizeBytes: nil,
             mimeType: "application/octet-stream",
             content: [],
-            completion: completion
+            fullCompletion: completion,
+            pageCompletion: { _, _ in }
         )
         wsClient.requestEvoReadEvidenceItem(
             project: project,
             workspace: normalizedWorkspace,
             itemID: itemID,
             offset: 0,
+            limit: limit
+        )
+    }
+
+    func readEvolutionEvidenceItemPage(
+        project: String,
+        workspace: String,
+        itemID: String,
+        offset: UInt64 = 0,
+        limit: UInt32? = 131_072,
+        completion: @escaping (_ payload: MobileEvolutionEvidenceReadRequestState.PagePayload?, _ errorMessage: String?) -> Void
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        evolutionEvidenceReadRequestByWorkspace[key] = MobileEvolutionEvidenceReadRequestState(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            limit: limit,
+            autoContinue: false,
+            expectedOffset: offset,
+            totalSizeBytes: nil,
+            mimeType: "application/octet-stream",
+            content: [],
+            fullCompletion: { _, _ in },
+            pageCompletion: completion
+        )
+        wsClient.requestEvoReadEvidenceItem(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            offset: offset,
             limit: limit
         )
     }
@@ -2830,7 +2875,11 @@ final class MobileAppState: ObservableObject {
             let readRequests = self.evolutionEvidenceReadRequestByWorkspace
             self.evolutionEvidenceReadRequestByWorkspace.removeAll()
             for (_, request) in readRequests {
-                request.completion(nil, message)
+                if request.autoContinue {
+                    request.fullCompletion(nil, message)
+                } else {
+                    request.pageCompletion(nil, message)
+                }
             }
         }
 
@@ -2916,18 +2965,39 @@ final class MobileAppState: ObservableObject {
 
             guard ev.offset == request.expectedOffset else {
                 self.evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
-                request.completion(nil, "证据分块偏移不连续，读取已中断")
+                if request.autoContinue {
+                    request.fullCompletion(nil, "证据分块偏移不连续，读取已中断")
+                } else {
+                    request.pageCompletion(nil, "证据分块偏移不连续，读取已中断")
+                }
                 return
             }
 
             request.totalSizeBytes = ev.totalSizeBytes
             request.mimeType = ev.mimeType
-            request.content.append(contentsOf: ev.content)
             request.expectedOffset = ev.nextOffset
+
+            if !request.autoContinue {
+                self.evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
+                request.pageCompletion(
+                    .init(
+                        mimeType: ev.mimeType,
+                        content: ev.content,
+                        offset: ev.offset,
+                        nextOffset: ev.nextOffset,
+                        totalSizeBytes: ev.totalSizeBytes,
+                        eof: ev.eof
+                    ),
+                    nil
+                )
+                return
+            }
+
+            request.content.append(contentsOf: ev.content)
 
             if ev.eof {
                 self.evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
-                request.completion((mimeType: request.mimeType, content: request.content), nil)
+                request.fullCompletion((mimeType: request.mimeType, content: request.content), nil)
                 return
             }
 

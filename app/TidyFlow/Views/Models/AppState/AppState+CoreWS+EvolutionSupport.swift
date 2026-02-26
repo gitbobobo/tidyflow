@@ -48,17 +48,51 @@ extension AppState {
             workspace: normalizedWorkspace,
             itemID: itemID,
             limit: limit,
+            autoContinue: true,
             expectedOffset: 0,
             totalSizeBytes: nil,
             mimeType: "application/octet-stream",
             content: [],
-            completion: completion
+            fullCompletion: completion,
+            pageCompletion: { _, _ in }
         )
         wsClient.requestEvoReadEvidenceItem(
             project: project,
             workspace: normalizedWorkspace,
             itemID: itemID,
             offset: 0,
+            limit: limit
+        )
+    }
+
+    func readEvolutionEvidenceItemPage(
+        project: String,
+        workspace: String,
+        itemID: String,
+        offset: UInt64 = 0,
+        limit: UInt32? = 131_072,
+        completion: @escaping (_ payload: EvolutionEvidenceReadRequestState.PagePayload?, _ errorMessage: String?) -> Void
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionEvidenceReadRequestByWorkspace[key] = EvolutionEvidenceReadRequestState(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            limit: limit,
+            autoContinue: false,
+            expectedOffset: offset,
+            totalSizeBytes: nil,
+            mimeType: "application/octet-stream",
+            content: [],
+            fullCompletion: { _, _ in },
+            pageCompletion: completion
+        )
+        wsClient.requestEvoReadEvidenceItem(
+            project: project,
+            workspace: normalizedWorkspace,
+            itemID: itemID,
+            offset: offset,
             limit: limit
         )
     }

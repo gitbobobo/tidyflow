@@ -4,15 +4,26 @@ import Combine
 // MARK: - v1.24: 剪贴板模型
 
 struct EvolutionEvidenceReadRequestState {
+    struct PagePayload {
+        let mimeType: String
+        let content: [UInt8]
+        let offset: UInt64
+        let nextOffset: UInt64
+        let totalSizeBytes: UInt64
+        let eof: Bool
+    }
+
     let project: String
     let workspace: String
     let itemID: String
     let limit: UInt32?
+    let autoContinue: Bool
     var expectedOffset: UInt64
     var totalSizeBytes: UInt64?
     var mimeType: String
     var content: [UInt8]
-    let completion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+    let fullCompletion: (_ payload: (mimeType: String, content: [UInt8])?, _ errorMessage: String?) -> Void
+    let pageCompletion: (_ payload: PagePayload?, _ errorMessage: String?) -> Void
 }
 
 class AppState: ObservableObject {
