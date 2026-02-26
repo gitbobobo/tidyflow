@@ -1,6 +1,7 @@
 use axum::extract::ws::WebSocket;
 use tracing::debug;
 
+use crate::application::file::invalidate_file_index_cache;
 use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::git::status::invalidate_git_status_cache;
 use crate::server::protocol::ServerMessage;
@@ -30,6 +31,7 @@ pub(in crate::server::ws) async fn handle_watch_event(
                 crate::server::context::resolve_workspace(app_state, &project, &workspace).await;
             if let Ok(ctx) = ws_ctx {
                 invalidate_git_status_cache(&ctx.root_path);
+                invalidate_file_index_cache(&ctx.root_path);
             }
 
             let msg = ServerMessage::FileChanged {
@@ -50,6 +52,7 @@ pub(in crate::server::ws) async fn handle_watch_event(
                 crate::server::context::resolve_workspace(app_state, &project, &workspace).await;
             if let Ok(ctx) = ws_ctx {
                 invalidate_git_status_cache(&ctx.root_path);
+                invalidate_file_index_cache(&ctx.root_path);
             }
 
             let msg = ServerMessage::GitStatusChanged { project, workspace };

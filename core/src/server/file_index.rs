@@ -123,8 +123,13 @@ pub fn index_files(workspace_root: &Path) -> Result<FileIndexResult, std::io::Er
         }
     }
 
-    // Sort for consistent ordering（使用 sort_unstable_by 避免额外分配）
-    items.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    // 预先构建搜索 key，避免排序比较器中重复分配 lowercase 字符串。
+    let mut keyed_items: Vec<(String, String)> = items
+        .into_iter()
+        .map(|item| (item.to_lowercase(), item))
+        .collect();
+    keyed_items.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let items: Vec<String> = keyed_items.into_iter().map(|(_, item)| item).collect();
 
     debug!(
         "Indexed {} files from {:?} (truncated: {})",
