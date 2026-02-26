@@ -277,6 +277,32 @@ fn build_rebuild_prompt_sync(
 3. 使用真实数据执行端到端流程并采集截图/日志。
 4. 产出并维护 evidence.index.json，确保证据可追溯、可复核、可排序展示。
 
+【任务焦点（避免误解）】
+- 本次任务的核心是“重建高可读的证据索引”，不是“把文件名或命令名搬运进索引”。
+- 先重建 evidence.index.json 的语义质量（title/description/scenario/subsystem/order），再决定是否需要补跑与补采集。
+- 对已存在证据，优先读取证据内容并提炼语义；不要仅依据文件名猜测。
+
+【标题与描述语义规则（最高优先级）】
+- title 必须回答“在什么场景下，这条证据证明了什么状态/结果”；禁止仅写工具名、文件名、设备 ID、run_id、序号。
+- description 必须包含 3 类信息：执行动作、关键观察、证据用途（它用于证明或排除什么）。
+- title/description 不得与 path 同义重复；即使隐藏 path，读者也能理解该证据的意义。
+- 日志类证据需基于关键日志行提炼语义，截图类证据需描述页面/流程状态与上下文步骤。
+- 无法判断语义时，立即提出缺失信息问题；禁止写“日志证据/截图证据/文件=xxx”这类占位描述。
+
+【title/description 示例（必须对齐）】
+- 反例（禁止）：
+  - title: `xcodebuild`
+  - description: `日志证据，run=run-20260226T083719Z，文件=xcodebuild.log`
+- 正例（期望）：
+  - title: `iOS 调试构建失败（Swift 编译错误）`
+  - description: `在 iPhone 16 模拟器执行 Debug 构建时，日志出现类型解析错误并中断编译，该条用于定位 verify 阶段失败原因。`
+- 反例（禁止）：
+  - title: `iphone 282719A2 5A8C 449C 83FF 9C2FE12F7649 1`
+  - description: `截图证据，run=run-20260226T083719Z，文件=iphone-...png`
+- 正例（期望）：
+  - title: `登录页初始态（验证码未发送）`
+  - description: `进入登录流程后页面显示手机号输入框和发送验证码按钮，尚未触发提交，作为 e2e 第一步基线截图。`
+
 【目录与设备类型规则（高优先级）】
 - evidence_root 下第一层目录必须是 device_type，所有 device_type 必须同级。
 - 禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录，所有 device_type 必须直接落在 evidence_root 同级目录。
@@ -317,7 +343,9 @@ fn build_rebuild_prompt_sync(
 - 任一步骤缺少必要信息时，立即停止并向用户提问，不允许自行补假设继续推进。
 - 输出中必须明确列出：已完成项、未完成项、阻塞项、下一步问题。
 
-现在开始执行：先扫描子系统与设备类型，再给出按 device_type 拆分的端到端测试计划和证据采集计划。"#,
+现在开始执行：
+1) 先扫描现有证据并重建高可读的 evidence.index.json（重点修复 title/description 语义）。
+2) 再输出按 device_type 拆分的端到端测试计划与证据补采集计划。"#,
         project = project,
         workspace = workspace,
         evidence_root = evidence_root.to_string_lossy(),
@@ -956,6 +984,13 @@ mod tests {
         assert!(prompt.contains("windows"));
         assert!(prompt.contains("server"));
         assert!(prompt.contains("path 的首段必须与该条目的 device_type 完全一致"));
+        assert!(prompt.contains("【标题与描述语义规则（最高优先级）】"));
+        assert!(prompt.contains(
+            "禁止仅写工具名、文件名、设备 ID、run_id、序号"
+        ));
+        assert!(prompt.contains("title: `xcodebuild`"));
+        assert!(prompt.contains("description: `日志证据，run=run-20260226T083719Z，文件=xcodebuild.log`"));
+        assert!(prompt.contains("先扫描现有证据并重建高可读的 evidence.index.json"));
     }
 
     #[test]
