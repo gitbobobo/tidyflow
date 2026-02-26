@@ -1,11 +1,14 @@
 use axum::extract::ws::WebSocket;
 use tracing::{debug, info, warn};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::server::context::ConnectionMeta;
 use crate::server::protocol::ServerMessage;
 use crate::server::ws::connection::shared_types::{RemoteTermRecvResult, TaskBroadcastRecvResult};
 
 use super::common::emit_message;
+
+static TASK_BROADCAST_LAG_LOG_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub(in crate::server::ws) async fn handle_task_broadcast_event(
     result: TaskBroadcastRecvResult,
@@ -25,7 +28,18 @@ pub(in crate::server::ws) async fn handle_task_broadcast_event(
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
             crate::server::perf::record_task_broadcast_lag(n);
-            warn!("Task broadcast lagged by {} messages", n);
+            let sample_count = TASK_BROADCAST_LAG_LOG_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if n >= 512 || sample_count % 20 == 1 {
+                warn!(
+                    "Task broadcast lagged by {} messages (sample_count={})",
+                    n, sample_count
+                );
+            } else {
+                debug!(
+                    "Task broadcast lagged by {} messages (sampled, sample_count={})",
+                    n, sample_count
+                );
+            }
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
             debug!("Task broadcast channel closed");
