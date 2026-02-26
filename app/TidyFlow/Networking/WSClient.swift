@@ -330,9 +330,7 @@ class WSClient: NSObject, ObservableObject {
     /// 需要合并的高频消息类型集合
     private static let coalescibleTypes: Set<String> = [
         "file_changed",
-        "git_status_changed",
-        "file_index_result",
-        "file_list_result"
+        "git_status_changed"
     ]
 
     /// 判断消息是否需要合并处理
@@ -340,13 +338,14 @@ class WSClient: NSObject, ObservableObject {
         WSClient.coalescibleTypes.contains(type)
     }
 
-    /// 生成合并队列的 key：类型 + 项目 + 工作空间，确保同一上下文的消息被合并
+    /// 生成合并队列 key：类型 + 项目 + 工作空间 + 路径（若有），避免不同路径结果互相覆盖
     func coalesceKey(for envelope: CoalescedEnvelope) -> String {
         let type = envelope.action
         let json = envelope.json
         let project = json["project"] as? String ?? ""
         let workspace = json["workspace"] as? String ?? ""
-        return "\(type):\(project):\(workspace)"
+        let path = json["path"] as? String ?? ""
+        return "\(type):\(project):\(workspace):\(path)"
     }
 
     /// 将高频消息放入合并队列，在窗口到期后统一处理

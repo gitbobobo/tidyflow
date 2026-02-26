@@ -196,4 +196,39 @@ final class ChatScrollPolicyTests: XCTestCase {
         XCTAssertTrue(decision.states.contains(.autoFollow(true)))
         XCTAssertTrue(decision.states.contains(.nearBottom(true)))
     }
+
+    // MARK: - WS coalesce 规则测试
+
+    func testWSCoalescibleTypes_shouldExcludeFileListAndIndexResults() {
+        let client = WSClient()
+
+        XCTAssertTrue(client.isCoalescible("file_changed"))
+        XCTAssertTrue(client.isCoalescible("git_status_changed"))
+        XCTAssertFalse(client.isCoalescible("file_list_result"))
+        XCTAssertFalse(client.isCoalescible("file_index_result"))
+    }
+
+    func testWSCoalesceKey_shouldIncludePathToAvoidCrossPathOverwrite() {
+        let client = WSClient()
+        let a = WSClient.CoalescedEnvelope(
+            domain: "file",
+            action: "file_list_result",
+            json: [
+                "project": "demo",
+                "workspace": "main",
+                "path": "/a"
+            ]
+        )
+        let b = WSClient.CoalescedEnvelope(
+            domain: "file",
+            action: "file_list_result",
+            json: [
+                "project": "demo",
+                "workspace": "main",
+                "path": "/b"
+            ]
+        )
+
+        XCTAssertNotEqual(client.coalesceKey(for: a), client.coalesceKey(for: b))
+    }
 }
