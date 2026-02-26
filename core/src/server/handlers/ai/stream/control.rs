@@ -102,10 +102,12 @@ pub(crate) async fn handle_ai_chat_abort(
 
     // 若没有可用流任务接收 abort 信号，主动下发 done 收敛前端状态。
     if should_emit_done_now {
-        let _ = emit_server_message(
+        let target_conn_ids = ai_session_subscriber_conn_ids(ai_state, &key, origin_conn_id).await;
+        let _ = emit_server_message_with_targets(
             output_tx,
             task_broadcast_tx,
             origin_conn_id,
+            target_conn_ids,
             ServerMessage::AIChatDone {
                 project_name,
                 workspace_name,
@@ -177,10 +179,14 @@ pub(crate) async fn handle_ai_question_reply(
             )
         })?;
 
-    let _ = emit_server_message(
+    let session_key = stream_key(&ai_tool, &directory, &session_id);
+    let target_conn_ids =
+        ai_session_subscriber_conn_ids(ai_state, &session_key, origin_conn_id).await;
+    let _ = emit_server_message_with_targets(
         output_tx,
         task_broadcast_tx,
         origin_conn_id,
+        target_conn_ids,
         ServerMessage::AIQuestionCleared {
             project_name,
             workspace_name,
@@ -245,10 +251,14 @@ pub(crate) async fn handle_ai_question_reject(
             )
         })?;
 
-    let _ = emit_server_message(
+    let session_key = stream_key(&ai_tool, &directory, &session_id);
+    let target_conn_ids =
+        ai_session_subscriber_conn_ids(ai_state, &session_key, origin_conn_id).await;
+    let _ = emit_server_message_with_targets(
         output_tx,
         task_broadcast_tx,
         origin_conn_id,
+        target_conn_ids,
         ServerMessage::AIQuestionCleared {
             project_name,
             workspace_name,

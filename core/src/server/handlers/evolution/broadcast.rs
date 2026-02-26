@@ -86,9 +86,14 @@ impl EvolutionManager {
     }
 
     pub(super) async fn broadcast(&self, ctx: &HandlerContext, message: ServerMessage) {
-        let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
-            origin_conn_id: "evolution_orchestrator".to_string(),
-            message,
-        });
+        let _ = crate::server::context::send_task_broadcast_event(
+            &ctx.task_broadcast_tx,
+            TaskBroadcastEvent {
+                origin_conn_id: "evolution_orchestrator".to_string(),
+                message,
+                target_conn_ids: None,
+                skip_when_single_receiver: false,
+            },
+        );
     }
 }

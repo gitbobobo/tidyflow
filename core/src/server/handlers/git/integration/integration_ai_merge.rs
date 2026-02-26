@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::server::context::{
     push_task_history, resolve_workspace_branch, update_task_history, HandlerContext,
-    RunningAITaskEntry, SharedAppState, TaskBroadcastEvent, TaskHistoryEntry,
+    RunningAITaskEntry, SharedAppState, TaskHistoryEntry,
 };
 use crate::server::git;
 use crate::server::handlers::git::branch_commit;
@@ -46,10 +46,11 @@ pub async fn handle_git_ai_merge(
             conflicts: vec![],
         };
         send_message(socket, &msg).await?;
-        let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
-            origin_conn_id: ctx.conn_meta.conn_id.clone(),
-            message: msg,
-        });
+        let _ = crate::server::context::send_task_broadcast_message(
+            &ctx.task_broadcast_tx,
+            &ctx.conn_meta.conn_id,
+            msg,
+        );
         return Ok(true);
     }
 
@@ -157,10 +158,11 @@ pub async fn handle_git_ai_merge(
             error!("Failed to send AI merge result to WS: {}", e);
         }
         // 广播给其他连接
-        let _ = task_broadcast_tx.send(TaskBroadcastEvent {
-            origin_conn_id,
-            message: msg.clone(),
-        });
+        let _ = crate::server::context::send_task_broadcast_message(
+            &task_broadcast_tx,
+            &origin_conn_id,
+            msg.clone(),
+        );
         // 更新任务历史
         if let ServerMessage::GitAIMergeResult {
             success,

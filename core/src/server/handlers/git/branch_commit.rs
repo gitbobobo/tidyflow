@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 
 use crate::server::context::{
     push_task_history, resolve_workspace, update_task_history, HandlerContext, RunningAITaskEntry,
-    SharedAppState, TaskBroadcastEvent, TaskHistoryEntry,
+    SharedAppState, TaskHistoryEntry,
 };
 use crate::server::git;
 use crate::server::protocol::{AIGitCommit, ClientMessage, GitBranchInfo, ServerMessage};
@@ -410,10 +410,11 @@ pub async fn handle_git_ai_commit(
             error!("Failed to send AI commit result to WS: {}", e);
         }
         // 广播给其他连接
-        let _ = task_broadcast_tx.send(TaskBroadcastEvent {
-            origin_conn_id,
-            message: msg.clone(),
-        });
+        let _ = crate::server::context::send_task_broadcast_message(
+            &task_broadcast_tx,
+            &origin_conn_id,
+            msg.clone(),
+        );
         // 更新任务历史
         if let ServerMessage::GitAICommitResult {
             success,
@@ -932,10 +933,11 @@ pub async fn handle_cancel_ai_task(
         send_message(socket, &msg).await?;
 
         // 广播给其他连接
-        let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
-            origin_conn_id: ctx.conn_meta.conn_id.clone(),
-            message: msg,
-        });
+        let _ = crate::server::context::send_task_broadcast_message(
+            &ctx.task_broadcast_tx,
+            &ctx.conn_meta.conn_id,
+            msg,
+        );
 
         // 更新任务历史
         drop(registry);

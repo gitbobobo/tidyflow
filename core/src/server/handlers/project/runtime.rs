@@ -3,7 +3,7 @@ use tracing::info;
 
 use crate::application::project_command::{cancel_project_command, run_project_command};
 use crate::application::project_workspace::select_workspace_and_spawn_terminal;
-use crate::server::context::{HandlerContext, TaskBroadcastEvent};
+use crate::server::context::HandlerContext;
 use crate::server::protocol::ClientMessage;
 use crate::server::ws::send_message;
 
@@ -40,10 +40,11 @@ pub async fn handle_runtime_message(
             let reply = run_project_command(ctx, project, workspace, command_id).await;
             send_message(socket, &reply.response).await?;
             if let Some(message) = reply.broadcast {
-                let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
-                    origin_conn_id: ctx.conn_meta.conn_id.clone(),
+                let _ = crate::server::context::send_task_broadcast_message(
+                    &ctx.task_broadcast_tx,
+                    &ctx.conn_meta.conn_id,
                     message,
-                });
+                );
             }
             Ok(true)
         }
@@ -66,10 +67,11 @@ pub async fn handle_runtime_message(
                     .await;
             send_message(socket, &reply.response).await?;
             if let Some(message) = reply.broadcast {
-                let _ = ctx.task_broadcast_tx.send(TaskBroadcastEvent {
-                    origin_conn_id: ctx.conn_meta.conn_id.clone(),
+                let _ = crate::server::context::send_task_broadcast_message(
+                    &ctx.task_broadcast_tx,
+                    &ctx.conn_meta.conn_id,
                     message,
-                });
+                );
             }
             Ok(true)
         }

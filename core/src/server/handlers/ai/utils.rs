@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -98,6 +98,13 @@ fn should_broadcast_stream_message(msg: &ServerMessage, broadcast_depth: usize) 
 pub(crate) struct StreamEmitState {
     pub(crate) direct_channel_closed: bool,
     direct_send_failed_logged: bool,
+    broadcast_target_conn_ids: Option<Arc<HashSet<String>>>,
+}
+
+impl StreamEmitState {
+    pub(crate) fn set_broadcast_targets(&mut self, targets: HashSet<String>) {
+        self.broadcast_target_conn_ids = Some(Arc::new(targets));
+    }
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -161,6 +168,24 @@ pub(crate) fn stream_key(tool: &str, directory: &str, session_id: &str) -> Strin
     format!("{}::{}::{}", tool, directory, session_id)
 }
 
+pub(crate) async fn ai_session_subscriber_conn_ids(
+    ai_state: &SharedAIState,
+    session_key: &str,
+    origin_conn_id: &str,
+) -> HashSet<String> {
+    let ai = ai_state.lock().await;
+    ai.session_subscriptions
+        .iter()
+        .filter_map(|(conn_id, keys)| {
+            if conn_id == origin_conn_id || !keys.contains(session_key) {
+                None
+            } else {
+                Some(conn_id.clone())
+            }
+        })
+        .collect()
+}
+
 pub(crate) async fn emit_server_message(
     output_tx: &mpsc::Sender<ServerMessage>,
     task_broadcast_tx: &TaskBroadcastTx,
@@ -168,8 +193,14 @@ pub(crate) async fn emit_server_message(
     msg: ServerMessage,
 ) -> bool {
     let mut state = StreamEmitState::default();
-    emit_server_message_with_state(output_tx, task_broadcast_tx, origin_conn_id, msg, &mut state)
-        .await
+    emit_server_message_with_state(
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+        msg,
+        &mut state,
+    )
+    .await
 }
 
 pub(crate) async fn emit_server_message_with_state(
@@ -198,23 +229,44 @@ pub(crate) async fn emit_server_message_with_state(
     }
 
     if should_broadcast {
-        let sent = task_broadcast_tx.send(TaskBroadcastEvent {
-            origin_conn_id: origin_conn_id.to_string(),
-            message: msg,
-        });
-        if sent.is_ok() {
+        let sent = crate::server::context::send_task_broadcast_event(
+            task_broadcast_tx,
+            TaskBroadcastEvent {
+                origin_conn_id: origin_conn_id.to_string(),
+                message: msg,
+                target_conn_ids: emit_state.broadcast_target_conn_ids.clone(),
+                skip_when_single_receiver: true,
+            },
+        );
+        if sent {
             delivered = true;
         } else {
-            trace!(
-                "AI stream: failed to broadcast server message: {:?}",
-                sent.err()
-            );
+            trace!("AI stream: skip or failed to broadcast server message");
         }
     } else {
         trace!("AI stream: skip broadcast for high-frequency delta update");
     }
 
     delivered
+}
+
+pub(crate) async fn emit_server_message_with_targets(
+    output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
+    target_conn_ids: HashSet<String>,
+    msg: ServerMessage,
+) -> bool {
+    let mut state = StreamEmitState::default();
+    state.set_broadcast_targets(target_conn_ids);
+    emit_server_message_with_state(
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+        msg,
+        &mut state,
+    )
+    .await
 }
 
 pub(crate) async fn cleanup_stream_state(
@@ -729,11 +781,16 @@ pub(crate) async fn ensure_status_push_initialized(ai_state: &SharedAIState, tx:
             },
         };
 
-        let _ = tx.send(TaskBroadcastEvent {
-            // 状态更新希望所有连接都收到（包括触发变更的连接）。
-            origin_conn_id: "".to_string(),
-            message: msg,
-        });
+        let _ = crate::server::context::send_task_broadcast_event(
+            &tx,
+            TaskBroadcastEvent {
+                // 状态更新希望所有连接都收到（包括触发变更的连接）。
+                origin_conn_id: "".to_string(),
+                message: msg,
+                target_conn_ids: None,
+                skip_when_single_receiver: false,
+            },
+        );
     }));
 }
 

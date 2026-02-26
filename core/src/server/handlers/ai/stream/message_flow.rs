@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::ai::session_status::{AiSessionStateStore, AiSessionStatus, AiSessionStatusMeta};
 use crate::ai::{AiAgent, AiEvent};
-use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
+use crate::server::context::{SharedAppState, TaskBroadcastTx};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -126,10 +126,8 @@ pub(crate) async fn handle_ai_chat_start(
         selection_hint,
     };
     send_message(socket, &msg).await?;
-    let _ = task_broadcast_tx.send(TaskBroadcastEvent {
-        origin_conn_id: origin_conn_id.to_string(),
-        message: msg,
-    });
+    let _ =
+        crate::server::context::send_task_broadcast_message(task_broadcast_tx, origin_conn_id, msg);
 
     Ok(true)
 }
@@ -274,6 +272,9 @@ pub(crate) async fn handle_ai_chat_send(
         let task_broadcast_tx = &task_broadcast_tx;
         let origin_conn_id = origin_conn_id.as_str();
         let mut emit_state = StreamEmitState::default();
+        let target_conn_ids =
+            ai_session_subscriber_conn_ids(&ai_state_cloned, &abort_key, origin_conn_id).await;
+        emit_state.set_broadcast_targets(target_conn_ids);
         let mut stream = match agent
             .send_message(
                 &directory,
@@ -727,6 +728,9 @@ pub(crate) async fn handle_ai_chat_command(
         let task_broadcast_tx = &task_broadcast_tx;
         let origin_conn_id = origin_conn_id.as_str();
         let mut emit_state = StreamEmitState::default();
+        let target_conn_ids =
+            ai_session_subscriber_conn_ids(&ai_state_cloned, &abort_key, origin_conn_id).await;
+        emit_state.set_broadcast_targets(target_conn_ids);
         let mut stream = match agent
             .send_command(
                 &directory,

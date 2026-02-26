@@ -4,7 +4,7 @@
 //! 消除各 handler 中重复的 `get_workspace_root` 和样板错误处理代码。
 
 use chrono::Utc;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
@@ -113,10 +113,70 @@ pub struct TaskBroadcastEvent {
     pub origin_conn_id: String,
     /// 要广播的消息
     pub message: ServerMessage,
+    /// 可选目标连接集合：`None` 表示广播给全部连接（除 origin_conn_id）
+    pub target_conn_ids: Option<Arc<HashSet<String>>>,
+    /// 仅在“连接发起的广播”场景启用单接收者优化
+    pub skip_when_single_receiver: bool,
 }
 
 /// 任务广播发送端
 pub type TaskBroadcastTx = broadcast::Sender<TaskBroadcastEvent>;
+
+/// 发送任务广播消息（广播给所有连接，跳过发起者）
+pub fn send_task_broadcast_message(
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: impl Into<String>,
+    message: ServerMessage,
+) -> bool {
+    send_task_broadcast_event(
+        task_broadcast_tx,
+        TaskBroadcastEvent {
+            origin_conn_id: origin_conn_id.into(),
+            message,
+            target_conn_ids: None,
+            skip_when_single_receiver: true,
+        },
+    )
+}
+
+/// 发送任务广播消息（仅广播给目标连接集合，且跳过发起者）
+pub fn send_task_broadcast_message_to(
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: impl Into<String>,
+    message: ServerMessage,
+    target_conn_ids: HashSet<String>,
+) -> bool {
+    send_task_broadcast_event(
+        task_broadcast_tx,
+        TaskBroadcastEvent {
+            origin_conn_id: origin_conn_id.into(),
+            message,
+            target_conn_ids: Some(Arc::new(target_conn_ids)),
+            skip_when_single_receiver: true,
+        },
+    )
+}
+
+/// 统一任务广播发送入口，包含性能保护与采样计数。
+pub fn send_task_broadcast_event(
+    task_broadcast_tx: &TaskBroadcastTx,
+    event: TaskBroadcastEvent,
+) -> bool {
+    // 仅有 1 个订阅者时广播没有意义（发送方连接会被 origin 过滤），直接跳过。
+    if event.skip_when_single_receiver && task_broadcast_tx.receiver_count() <= 1 {
+        crate::server::perf::record_task_broadcast_skipped_single_receiver();
+        return false;
+    }
+
+    if let Some(targets) = event.target_conn_ids.as_ref() {
+        if targets.is_empty() {
+            crate::server::perf::record_task_broadcast_skipped_empty_target();
+            return false;
+        }
+    }
+
+    task_broadcast_tx.send(event).is_ok()
+}
 
 /// WebSocket 连接元数据 — 在握手时构建
 #[derive(Debug, Clone)]
@@ -295,4 +355,69 @@ pub async fn resolve_workspace_branch(
     };
 
     Ok((ctx, source_branch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_broadcast_skips_when_only_single_receiver() {
+        let (tx, mut rx) = broadcast::channel::<TaskBroadcastEvent>(8);
+        let sent = send_task_broadcast_message(&tx, "origin", ServerMessage::Pong);
+        assert!(!sent);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn task_broadcast_skips_when_target_set_is_empty() {
+        let (tx, mut rx1) = broadcast::channel::<TaskBroadcastEvent>(8);
+        let mut rx2 = tx.subscribe();
+        let sent = send_task_broadcast_message_to(
+            &tx,
+            "origin",
+            ServerMessage::Pong,
+            HashSet::<String>::new(),
+        );
+        assert!(!sent);
+        assert!(matches!(
+            rx1.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            rx2.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn task_broadcast_attaches_target_set() {
+        let (tx, mut rx1) = broadcast::channel::<TaskBroadcastEvent>(8);
+        let mut rx2 = tx.subscribe();
+        let mut targets = HashSet::new();
+        targets.insert("conn-2".to_string());
+
+        let sent = send_task_broadcast_message_to(&tx, "origin", ServerMessage::Pong, targets);
+        assert!(sent);
+
+        let event1 = rx1.try_recv().expect("first receiver should receive event");
+        let event2 = rx2
+            .try_recv()
+            .expect("second receiver should receive event");
+        assert_eq!(event1.origin_conn_id, "origin");
+        assert_eq!(event2.origin_conn_id, "origin");
+        assert!(event1
+            .target_conn_ids
+            .as_ref()
+            .expect("target set should exist")
+            .contains("conn-2"));
+        assert!(event2
+            .target_conn_ids
+            .as_ref()
+            .expect("target set should exist")
+            .contains("conn-2"));
+    }
 }

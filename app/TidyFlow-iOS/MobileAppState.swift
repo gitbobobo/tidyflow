@@ -1549,6 +1549,8 @@ final class MobileAppState: ObservableObject {
               session.workspaceName == aiActiveWorkspace else { return }
 
         let targetTool = session.aiTool
+        let previousTool = aiChatTool
+        let previousSessionId = aiCurrentSessionId
 
         if targetTool != aiChatTool {
             // 跨工具打开历史会话时，允许在“非流式/非待发/非停止中”条件下切换工具，
@@ -1574,13 +1576,32 @@ final class MobileAppState: ObservableObject {
             wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
         }
 
+        if let previousSessionId,
+           !previousSessionId.isEmpty,
+           (previousTool != targetTool || previousSessionId != session.id) {
+            wsClient.requestAISessionUnsubscribe(
+                project: session.projectName,
+                workspace: session.workspaceName,
+                aiTool: previousTool.rawValue,
+                sessionId: previousSessionId
+            )
+            aiChatStore.removeSubscription(previousSessionId)
+        }
+
         aiCurrentSessionId = session.id
         aiChatStore.setCurrentSessionId(session.id)
+        aiChatStore.addSubscription(session.id)
         aiChatMessages = []
         aiIsStreaming = false
         aiMessageIndexByMessageId = [:]
         aiPartIndexByPartId = [:]
 
+        wsClient.requestAISessionSubscribe(
+            project: session.projectName,
+            workspace: session.workspaceName,
+            aiTool: targetTool.rawValue,
+            sessionId: session.id
+        )
         wsClient.requestAISessionMessages(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
@@ -1599,6 +1620,13 @@ final class MobileAppState: ObservableObject {
     /// 删除会话
     func deleteAISession(_ session: AISessionInfo) {
         let targetTool = session.aiTool
+        wsClient.requestAISessionUnsubscribe(
+            project: session.projectName,
+            workspace: session.workspaceName,
+            aiTool: targetTool.rawValue,
+            sessionId: session.id
+        )
+        aiChatStore.removeSubscription(session.id)
         wsClient.requestAISessionDelete(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
@@ -1926,6 +1954,13 @@ final class MobileAppState: ObservableObject {
             aiPartIndexByPartId = [:]
             return
         }
+        wsClient.requestAISessionSubscribe(
+            project: aiActiveProject,
+            workspace: aiActiveWorkspace,
+            aiTool: aiChatTool.rawValue,
+            sessionId: sessionId
+        )
+        aiChatStore.addSubscription(sessionId)
         wsClient.requestAISessionMessages(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
@@ -1959,6 +1994,13 @@ final class MobileAppState: ObservableObject {
             guard let sessionId = (tool == aiChatTool ? aiCurrentSessionId : nil),
                   !sessionId.isEmpty,
                   sessions.contains(where: { $0.id == sessionId }) else { continue }
+            wsClient.requestAISessionSubscribe(
+                project: aiActiveProject,
+                workspace: aiActiveWorkspace,
+                aiTool: tool.rawValue,
+                sessionId: sessionId
+            )
+            aiChatStore.addSubscription(sessionId)
             wsClient.requestAISessionMessages(
                 projectName: aiActiveProject,
                 workspaceName: aiActiveWorkspace,
@@ -3106,6 +3148,13 @@ final class MobileAppState: ObservableObject {
 
             self.aiCurrentSessionId = ev.sessionId
             self.aiChatStore.setCurrentSessionId(ev.sessionId)
+            self.aiChatStore.addSubscription(ev.sessionId)
+            self.wsClient.requestAISessionSubscribe(
+                project: ev.projectName,
+                workspace: ev.workspaceName,
+                aiTool: ev.aiTool.rawValue,
+                sessionId: ev.sessionId
+            )
             let updatedAt = ev.updatedAt == 0 ? Int64(Date().timeIntervalSince1970 * 1000) : ev.updatedAt
             let session = AISessionInfo(
                 projectName: ev.projectName,

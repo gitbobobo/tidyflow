@@ -7,8 +7,18 @@ static WS_TASK_BROADCAST_LAG_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `ws_task_broadcast_queue_depth`
 static WS_TASK_BROADCAST_QUEUE_DEPTH: AtomicU64 = AtomicU64::new(0);
 static WS_TASK_BROADCAST_QUEUE_DEPTH_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
+/// `ws_task_broadcast_skipped_single_receiver_total`
+static WS_TASK_BROADCAST_SKIPPED_SINGLE_RECEIVER_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `ws_task_broadcast_skipped_empty_target_total`
+static WS_TASK_BROADCAST_SKIPPED_EMPTY_TARGET_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `ws_task_broadcast_filtered_target_total`
+static WS_TASK_BROADCAST_FILTERED_TARGET_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `terminal_unacked_timeout_total`
 static TERMINAL_UNACKED_TIMEOUT_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `project_command_output_throttled_total`
+static PROJECT_COMMAND_OUTPUT_THROTTLED_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `project_command_output_emitted_total`
+static PROJECT_COMMAND_OUTPUT_EMITTED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `ws_outbound_loop_tick_ms`（最近一次采样）
 static WS_OUTBOUND_LOOP_TICK_MS: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_LOOP_TICK_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -45,6 +55,33 @@ pub fn record_task_broadcast_queue_depth(depth: u64) {
     }
 }
 
+pub fn record_task_broadcast_skipped_single_receiver() {
+    let total = WS_TASK_BROADCAST_SKIPPED_SINGLE_RECEIVER_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if total % PERF_LOG_INTERVAL == 0 {
+        info!(
+            "perf ws_task_broadcast_skipped_single_receiver_total={}",
+            total
+        );
+    }
+}
+
+pub fn record_task_broadcast_skipped_empty_target() {
+    let total = WS_TASK_BROADCAST_SKIPPED_EMPTY_TARGET_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if total % PERF_LOG_INTERVAL == 0 {
+        info!(
+            "perf ws_task_broadcast_skipped_empty_target_total={}",
+            total
+        );
+    }
+}
+
+pub fn record_task_broadcast_filtered_target() {
+    let total = WS_TASK_BROADCAST_FILTERED_TARGET_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if total % PERF_LOG_INTERVAL == 0 {
+        info!("perf ws_task_broadcast_filtered_target_total={}", total);
+    }
+}
+
 pub fn record_terminal_unacked_timeout(term_id: &str, unacked_before_decay: u64) {
     let total = TERMINAL_UNACKED_TIMEOUT_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -53,6 +90,24 @@ pub fn record_terminal_unacked_timeout(term_id: &str, unacked_before_decay: u64)
             "perf terminal_unacked_timeout_total={} term_id={} unacked_before_decay={}",
             total, term_id, unacked_before_decay
         );
+    }
+}
+
+pub fn record_project_command_output_throttled(dropped: u64) {
+    if dropped == 0 {
+        return;
+    }
+    let total =
+        PROJECT_COMMAND_OUTPUT_THROTTLED_TOTAL.fetch_add(dropped, Ordering::Relaxed) + dropped;
+    if total % PERF_LOG_INTERVAL == 0 {
+        info!("perf project_command_output_throttled_total={}", total);
+    }
+}
+
+pub fn record_project_command_output_emitted() {
+    let total = PROJECT_COMMAND_OUTPUT_EMITTED_TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if total % PERF_LOG_INTERVAL == 0 {
+        info!("perf project_command_output_emitted_total={}", total);
     }
 }
 
