@@ -746,9 +746,9 @@ struct EvidenceTabView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         statusCard(snapshot)
-                        ForEach(displayPlatforms(in: snapshot), id: \.self) { platform in
-                            GroupBox(platform.uppercased()) {
-                                let rows = snapshot.items.filter { $0.platform == platform }
+                        ForEach(displayDeviceTypes(in: snapshot), id: \.self) { deviceType in
+                            GroupBox(deviceType) {
+                                let rows = snapshot.items.filter { $0.deviceType == deviceType }
                                 if rows.isEmpty {
                                     Text("暂无条目")
                                         .foregroundColor(.secondary)
@@ -796,8 +796,8 @@ struct EvidenceTabView: View {
                     Text(snapshot.detectedSubsystems.isEmpty ? "未识别" : snapshot.detectedSubsystems.map(\.id).joined(separator: ", "))
                         .lineLimit(2)
                 }
-                LabeledContent("平台") {
-                    Text(snapshot.detectedPlatforms.isEmpty ? "未识别" : snapshot.detectedPlatforms.joined(separator: ", "))
+                LabeledContent("设备类型") {
+                    Text(snapshot.detectedDeviceTypes.isEmpty ? "未识别" : snapshot.detectedDeviceTypes.joined(separator: ", "))
                         .lineLimit(2)
                 }
                 if !snapshot.issues.isEmpty {
@@ -944,13 +944,13 @@ struct EvidenceTabView: View {
         }
     }
 
-    private func displayPlatforms(in snapshot: EvolutionEvidenceSnapshotV2) -> [String] {
+    private func displayDeviceTypes(in snapshot: EvolutionEvidenceSnapshotV2) -> [String] {
         var ordered: [String] = []
-        for platform in snapshot.detectedPlatforms where !ordered.contains(platform) {
-            ordered.append(platform)
+        for deviceType in snapshot.detectedDeviceTypes where !ordered.contains(deviceType) {
+            ordered.append(deviceType)
         }
-        for item in snapshot.items where !ordered.contains(item.platform) {
-            ordered.append(item.platform)
+        for item in snapshot.items where !ordered.contains(item.deviceType) {
+            ordered.append(item.deviceType)
         }
         return ordered
     }

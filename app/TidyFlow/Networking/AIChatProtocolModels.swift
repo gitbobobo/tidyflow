@@ -1130,7 +1130,7 @@ struct EvolutionEvidenceIssueInfoV2 {
 
 struct EvolutionEvidenceItemInfoV2 {
     let itemID: String
-    let platform: String
+    let deviceType: String
     let evidenceType: String
     let order: Int
     let path: String
@@ -1145,7 +1145,7 @@ struct EvolutionEvidenceItemInfoV2 {
 
     static func from(json: [String: Any]) -> EvolutionEvidenceItemInfoV2? {
         guard let itemID = parseOptionalString(json["item_id"]),
-              let platform = parseOptionalString(json["platform"]),
+              let deviceType = parseOptionalString(json["device_type"]),
               let evidenceType = parseOptionalString(json["type"]),
               let path = parseOptionalString(json["path"]),
               let title = parseOptionalString(json["title"]),
@@ -1154,7 +1154,7 @@ struct EvolutionEvidenceItemInfoV2 {
         }
         return EvolutionEvidenceItemInfoV2(
             itemID: itemID,
-            platform: platform,
+            deviceType: deviceType,
             evidenceType: evidenceType,
             order: Int(parseInt64(json["order"])),
             path: path,
@@ -1177,7 +1177,7 @@ struct EvolutionEvidenceSnapshotV2 {
     let indexFile: String
     let indexExists: Bool
     let detectedSubsystems: [EvolutionEvidenceSubsystemInfoV2]
-    let detectedPlatforms: [String]
+    let detectedDeviceTypes: [String]
     let items: [EvolutionEvidenceItemInfoV2]
     let issues: [EvolutionEvidenceIssueInfoV2]
     let updatedAt: String
@@ -1192,7 +1192,7 @@ struct EvolutionEvidenceSnapshotV2 {
         }
         let detectedSubsystems = (json["detected_subsystems"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionEvidenceSubsystemInfoV2.from(json: $0) }
-        let detectedPlatforms = parseStringArray(json["detected_platforms"])
+        let detectedDeviceTypes = parseStringArray(json["detected_device_types"])
         let items = (json["items"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionEvidenceItemInfoV2.from(json: $0) }
         let issues = (json["issues"] as? [[String: Any]] ?? [])
@@ -1204,7 +1204,7 @@ struct EvolutionEvidenceSnapshotV2 {
             indexFile: indexFile,
             indexExists: parseBool(json["index_exists"]) ?? false,
             detectedSubsystems: detectedSubsystems,
-            detectedPlatforms: detectedPlatforms,
+            detectedDeviceTypes: detectedDeviceTypes,
             items: items,
             issues: issues,
             updatedAt: updatedAt
@@ -1219,7 +1219,7 @@ struct EvolutionEvidenceRebuildPromptV2 {
     let evidenceRoot: String
     let indexFile: String
     let detectedSubsystems: [EvolutionEvidenceSubsystemInfoV2]
-    let detectedPlatforms: [String]
+    let detectedDeviceTypes: [String]
     let generatedAt: String
 
     static func from(json: [String: Any]) -> EvolutionEvidenceRebuildPromptV2? {
@@ -1233,7 +1233,7 @@ struct EvolutionEvidenceRebuildPromptV2 {
         }
         let detectedSubsystems = (json["detected_subsystems"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionEvidenceSubsystemInfoV2.from(json: $0) }
-        let detectedPlatforms = parseStringArray(json["detected_platforms"])
+        let detectedDeviceTypes = parseStringArray(json["detected_device_types"])
         return EvolutionEvidenceRebuildPromptV2(
             project: project,
             workspace: workspace,
@@ -1241,7 +1241,7 @@ struct EvolutionEvidenceRebuildPromptV2 {
             evidenceRoot: evidenceRoot,
             indexFile: indexFile,
             detectedSubsystems: detectedSubsystems,
-            detectedPlatforms: detectedPlatforms,
+            detectedDeviceTypes: detectedDeviceTypes,
             generatedAt: generatedAt
         )
     }

@@ -166,7 +166,9 @@ pub(super) async fn handle_message(
             Ok(true)
         }
         ClientMessage::EvoGetEvidenceSnapshot { project, workspace } => {
-            let payload = manager.get_evidence_snapshot(project, workspace, ctx).await?;
+            let payload = manager
+                .get_evidence_snapshot(project, workspace, ctx)
+                .await?;
             send_message(
                 socket,
                 &ServerMessage::EvoEvidenceSnapshot {
@@ -176,7 +178,7 @@ pub(super) async fn handle_message(
                     index_file: payload.index_file,
                     index_exists: payload.index_exists,
                     detected_subsystems: payload.detected_subsystems,
-                    detected_platforms: payload.detected_platforms,
+                    detected_device_types: payload.detected_device_types,
                     items: payload.items,
                     issues: payload.issues,
                     updated_at: payload.updated_at,
@@ -198,7 +200,7 @@ pub(super) async fn handle_message(
                     evidence_root: payload.evidence_root,
                     index_file: payload.index_file,
                     detected_subsystems: payload.detected_subsystems,
-                    detected_platforms: payload.detected_platforms,
+                    detected_device_types: payload.detected_device_types,
                     generated_at: payload.generated_at,
                 },
             )
@@ -213,14 +215,7 @@ pub(super) async fn handle_message(
             limit,
         } => {
             let payload = manager
-                .read_evidence_item_chunk(
-                    project,
-                    workspace,
-                    item_id,
-                    *offset,
-                    *limit,
-                    ctx,
-                )
+                .read_evidence_item_chunk(project, workspace, item_id, *offset, *limit, ctx)
                 .await?;
             send_message(
                 socket,

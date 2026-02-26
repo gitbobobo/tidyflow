@@ -603,8 +603,8 @@ struct MobileEvidenceView: View {
                             .lineLimit(2)
                             .multilineTextAlignment(.trailing)
                     }
-                    LabeledContent("平台") {
-                        Text(snapshot.detectedPlatforms.isEmpty ? "未识别" : snapshot.detectedPlatforms.joined(separator: ", "))
+                    LabeledContent("设备类型") {
+                        Text(snapshot.detectedDeviceTypes.isEmpty ? "未识别" : snapshot.detectedDeviceTypes.joined(separator: ", "))
                             .lineLimit(2)
                             .multilineTextAlignment(.trailing)
                     }
@@ -621,9 +621,9 @@ struct MobileEvidenceView: View {
                     }
                 }
 
-                ForEach(displayPlatforms(in: snapshot), id: \.self) { platform in
-                    Section(platform.uppercased()) {
-                        let rows = snapshot.items.filter { $0.platform == platform }
+                ForEach(displayDeviceTypes(in: snapshot), id: \.self) { deviceType in
+                    Section(deviceType) {
+                        let rows = snapshot.items.filter { $0.deviceType == deviceType }
                         if rows.isEmpty {
                             Text("暂无条目")
                                 .foregroundColor(.secondary)
@@ -759,13 +759,13 @@ struct MobileEvidenceView: View {
         }
     }
 
-    private func displayPlatforms(in snapshot: EvolutionEvidenceSnapshotV2) -> [String] {
+    private func displayDeviceTypes(in snapshot: EvolutionEvidenceSnapshotV2) -> [String] {
         var ordered: [String] = []
-        for platform in snapshot.detectedPlatforms where !ordered.contains(platform) {
-            ordered.append(platform)
+        for deviceType in snapshot.detectedDeviceTypes where !ordered.contains(deviceType) {
+            ordered.append(deviceType)
         }
-        for item in snapshot.items where !ordered.contains(item.platform) {
-            ordered.append(item.platform)
+        for item in snapshot.items where !ordered.contains(item.deviceType) {
+            ordered.append(item.deviceType)
         }
         return ordered
     }

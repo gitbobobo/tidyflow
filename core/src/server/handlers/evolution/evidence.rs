@@ -19,8 +19,27 @@ const EVIDENCE_INDEX_RELATIVE: &str = ".tidyflow/evidence/evidence.index.json";
 const CHUNK_DEFAULT_LIMIT: usize = 256 * 1024;
 const CHUNK_MAX_LIMIT: usize = 512 * 1024;
 
-const ALLOWED_PLATFORMS: &[&str] = &["ios", "macos", "tvos", "watchos", "visionos", "custom"];
 const ALLOWED_TYPES: &[&str] = &["screenshot", "log"];
+const DEVICE_TYPE_BASELINE: &[&str] = &[
+    "iphone",
+    "ipad",
+    "apple-tv",
+    "apple-watch",
+    "vision-pro",
+    "mac",
+    "android-phone",
+    "android-pad",
+    "android-tv",
+    "android-wear",
+    "ohos-phone",
+    "ohos-pad",
+    "ohos-tv",
+    "web",
+    "web-mobile",
+    "linux",
+    "windows",
+    "server",
+];
 
 #[derive(Debug)]
 pub(super) struct EvidenceSnapshotPayload {
@@ -28,7 +47,7 @@ pub(super) struct EvidenceSnapshotPayload {
     pub(super) index_file: String,
     pub(super) index_exists: bool,
     pub(super) detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
-    pub(super) detected_platforms: Vec<String>,
+    pub(super) detected_device_types: Vec<String>,
     pub(super) items: Vec<EvolutionEvidenceItemInfo>,
     pub(super) issues: Vec<EvolutionEvidenceIssueInfo>,
     pub(super) updated_at: String,
@@ -40,7 +59,7 @@ pub(super) struct EvidenceRebuildPromptPayload {
     pub(super) evidence_root: String,
     pub(super) index_file: String,
     pub(super) detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
-    pub(super) detected_platforms: Vec<String>,
+    pub(super) detected_device_types: Vec<String>,
     pub(super) generated_at: String,
 }
 
@@ -66,7 +85,7 @@ struct EvidenceIndexRaw {
 #[derive(Debug, Deserialize)]
 struct EvidenceItemRaw {
     id: String,
-    platform: String,
+    device_type: String,
     #[serde(rename = "type")]
     evidence_type: String,
     order: u32,
@@ -81,7 +100,7 @@ struct EvidenceItemRaw {
 #[derive(Debug, Clone)]
 struct ValidatedEvidenceItem {
     item_id: String,
-    platform: String,
+    device_type: String,
     evidence_type: String,
     order: u32,
     path: String,
@@ -165,7 +184,7 @@ fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload,
     let index_file = workspace_root.join(EVIDENCE_INDEX_RELATIVE);
 
     let detected_subsystems = detect_subsystems(workspace_root);
-    let mut detected_platforms = detect_platforms(workspace_root, &evidence_root);
+    let mut detected_device_types = detect_device_types(workspace_root, &evidence_root);
     let mut issues: Vec<EvolutionEvidenceIssueInfo> = Vec::new();
     let mut items: Vec<EvolutionEvidenceItemInfo> = Vec::new();
     let updated_at: String;
@@ -186,10 +205,10 @@ fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload,
                             format!("证据文件不存在: {}", item.path),
                         ));
                     }
-                    detected_platforms.push(item.platform.clone());
+                    detected_device_types.push(item.device_type.clone());
                     items.push(EvolutionEvidenceItemInfo {
                         item_id: item.item_id,
-                        platform: item.platform,
+                        device_type: item.device_type,
                         evidence_type: item.evidence_type,
                         order: item.order,
                         path: item.path.clone(),
@@ -217,7 +236,7 @@ fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload,
         ));
     }
 
-    dedup_sort_platforms(&mut detected_platforms);
+    dedup_sort_device_types(&mut detected_device_types);
     sort_evidence_items(&mut items);
 
     Ok(EvidenceSnapshotPayload {
@@ -225,7 +244,7 @@ fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload,
         index_file: index_file.to_string_lossy().to_string(),
         index_exists,
         detected_subsystems,
-        detected_platforms,
+        detected_device_types,
         items,
         issues,
         updated_at,
@@ -240,8 +259,8 @@ fn build_rebuild_prompt_sync(
     let evidence_root = workspace_root.join(EVIDENCE_ROOT_RELATIVE);
     let index_file = workspace_root.join(EVIDENCE_INDEX_RELATIVE);
     let detected_subsystems = detect_subsystems(workspace_root);
-    let mut detected_platforms = detect_platforms(workspace_root, &evidence_root);
-    dedup_sort_platforms(&mut detected_platforms);
+    let mut detected_device_types = detect_device_types(workspace_root, &evidence_root);
+    dedup_sort_device_types(&mut detected_device_types);
 
     let prompt = format!(
         r#"请重建当前工作空间的全链路证据体系，并严格遵循以下规则。
@@ -253,14 +272,18 @@ fn build_rebuild_prompt_sync(
 - evidence_index_file: {index_file}
 
 【目标】
-1. 识别仓库中的子系统与运行平台。
-2. 为每个平台建立端到端测试基础设施与执行脚本。
+1. 识别仓库中的子系统与设备类型（device_type）。
+2. 按 device_type 建立端到端测试基础设施与执行脚本。
 3. 使用真实数据执行端到端流程并采集截图/日志。
 4. 产出并维护 evidence.index.json，确保证据可追溯、可复核、可排序展示。
 
-【平台覆盖要求】
-- 每个平台都要有独立的端到端测试入口与证据目录。
-- 如果平台识别不确定，先停下来询问用户，不允许猜测。
+【目录与设备类型规则（高优先级）】
+- evidence_root 下第一层目录必须是 device_type，所有 device_type 必须同级。
+- 禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录，所有 device_type 必须直接落在 evidence_root 同级目录。
+- 设备类型固定基线（默认全部覆盖，除非用户明确删减）：iphone、ipad、apple-tv、apple-watch、vision-pro、mac、android-phone、android-pad、android-tv、android-wear、ohos-phone、ohos-pad、ohos-tv、web、web-mobile、linux、windows、server。
+- 每个 device_type 都必须有独立的 e2e 入口与证据子目录（示例：`<device_type>/e2e/...`）。
+- 若某个 device_type 暂不支持真实执行，仍需保留该 device_type 的目录与计划项，并在输出里标记 `not_applicable` 与原因。
+- 若扫描到基线之外的新设备类型，必须新增同级目录与对应 e2e 计划；禁止把多个设备类型合并到同一目录。
 
 【evidence.index.json 契约（必须满足）】
 ```json
@@ -270,10 +293,10 @@ fn build_rebuild_prompt_sync(
   "items": [
     {{
       "id": "ev-001",
-      "platform": "ios|macos|tvos|watchos|visionos|custom",
+      "device_type": "iphone",
       "type": "screenshot|log",
       "order": 10,
-      "path": "ios/screenshots/login-01.png",
+      "path": "iphone/e2e/login/login-01.png",
       "title": "登录页",
       "description": "输入手机号前状态",
       "scenario": "可选",
@@ -283,9 +306,10 @@ fn build_rebuild_prompt_sync(
   ]
 }}
 ```
-- 必填字段：id/platform/type/order/path/title/description
-- path 必须是相对 evidence_root 的相对路径，禁止绝对路径和 `..`
-- order 用于平台内时序排序，数值越小越靠前
+- 必填字段：id/device_type/type/order/path/title/description
+- path 必须是相对 evidence_root 的相对路径，禁止绝对路径和 `..`，且首段必须是 device_type
+- path 的首段必须与该条目的 device_type 完全一致（示例：device_type=android-phone 时，path 必须以 `android-phone/` 开头）
+- order 用于同一 device_type 内时序排序，数值越小越靠前
 
 【执行约束（强制）】
 - 必须使用真实数据，禁止 mock，禁止占位，禁止伪造截图。
@@ -293,7 +317,7 @@ fn build_rebuild_prompt_sync(
 - 任一步骤缺少必要信息时，立即停止并向用户提问，不允许自行补假设继续推进。
 - 输出中必须明确列出：已完成项、未完成项、阻塞项、下一步问题。
 
-现在开始执行：先扫描子系统与平台，再给出分平台的端到端测试计划和证据采集计划。"#,
+现在开始执行：先扫描子系统与设备类型，再给出按 device_type 拆分的端到端测试计划和证据采集计划。"#,
         project = project,
         workspace = workspace,
         evidence_root = evidence_root.to_string_lossy(),
@@ -305,7 +329,7 @@ fn build_rebuild_prompt_sync(
         evidence_root: evidence_root.to_string_lossy().to_string(),
         index_file: index_file.to_string_lossy().to_string(),
         detected_subsystems,
-        detected_platforms,
+        detected_device_types,
         generated_at: now_rfc3339(),
     })
 }
@@ -348,7 +372,7 @@ fn read_evidence_item_chunk_sync(
         .unwrap_or(CHUNK_DEFAULT_LIMIT)
         .clamp(1, CHUNK_MAX_LIMIT);
     let remaining = usize::try_from(total_size_bytes.saturating_sub(offset))
-        .map_err(|_| "file too large to chunk on this platform".to_string())?;
+        .map_err(|_| "file too large to chunk on this runtime".to_string())?;
     let chunk_len = remaining.min(limit);
 
     file.seek(SeekFrom::Start(offset))
@@ -404,12 +428,7 @@ fn load_and_validate_index(
     let mut items = Vec::new();
 
     for item in raw.items {
-        if !ALLOWED_PLATFORMS.contains(&item.platform.as_str()) {
-            return Err(format!(
-                "evidence.index.json item platform 非法: {}",
-                item.platform
-            ));
-        }
+        let normalized_device_type = normalize_device_type(&item.device_type)?;
         if !ALLOWED_TYPES.contains(&item.evidence_type.as_str()) {
             return Err(format!(
                 "evidence.index.json item type 非法: {}",
@@ -421,19 +440,19 @@ fn load_and_validate_index(
         }
 
         let normalized_path = normalize_relative_path(&item.path)?;
-        if !normalized_path.starts_with(&format!("{}/", item.platform)) {
+        if !normalized_path.starts_with(&format!("{}/", normalized_device_type)) {
             issues.push(issue_warning(
-                "platform_path_mismatch",
+                "device_type_path_mismatch",
                 format!(
-                    "item '{}' 的 path 未以平台目录开头: platform={}, path={}",
-                    item.id, item.platform, normalized_path
+                    "item '{}' 的 path 未以 device_type 目录开头: device_type={}, path={}",
+                    item.id, normalized_device_type, normalized_path
                 ),
             ));
         }
         let full_path = evidence_root.join(&normalized_path);
         items.push(ValidatedEvidenceItem {
             item_id: item.id,
-            platform: item.platform,
+            device_type: normalized_device_type,
             evidence_type: item.evidence_type,
             order: item.order,
             path: normalized_path,
@@ -447,8 +466,8 @@ fn load_and_validate_index(
     }
 
     items.sort_by(|a, b| {
-        (a.platform.as_str(), a.order, a.item_id.as_str()).cmp(&(
-            b.platform.as_str(),
+        (a.device_type.as_str(), a.order, a.item_id.as_str()).cmp(&(
+            b.device_type.as_str(),
             b.order,
             b.item_id.as_str(),
         ))
@@ -459,6 +478,29 @@ fn load_and_validate_index(
         items,
         issues,
     })
+}
+
+fn normalize_device_type(device_type: &str) -> Result<String, String> {
+    let normalized = device_type.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("evidence.index.json item device_type 不能为空".to_string());
+    }
+    if normalized.starts_with('-') || normalized.ends_with('-') {
+        return Err(format!(
+            "evidence.index.json item device_type 非法: {}",
+            device_type
+        ));
+    }
+    if !normalized
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!(
+            "evidence.index.json item device_type 非法: {}",
+            device_type
+        ));
+    }
+    Ok(normalized)
 }
 
 fn normalize_relative_path(path: &str) -> Result<String, String> {
@@ -579,7 +621,7 @@ fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInf
     result
 }
 
-fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> {
+fn detect_device_types(workspace_root: &Path, evidence_root: &Path) -> Vec<String> {
     let mut detected = Vec::new();
 
     if let Ok(entries) = fs::read_dir(evidence_root) {
@@ -589,8 +631,7 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
                 continue;
             }
             if let Some(name) = path.file_name().and_then(|x| x.to_str()) {
-                let normalized = name.trim().to_lowercase();
-                if ALLOWED_PLATFORMS.contains(&normalized.as_str()) {
+                if let Ok(normalized) = normalize_device_type(name) {
                     detected.push(normalized);
                 }
             }
@@ -623,28 +664,29 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
             || lowered.contains("iphonesimulator")
             || lowered.contains("ios_deployment_target")
         {
-            detected.push("ios".to_string());
+            detected.push("iphone".to_string());
+            detected.push("ipad".to_string());
         }
         if lowered.contains("macosx") || lowered.contains("macosx_deployment_target") {
-            detected.push("macos".to_string());
+            detected.push("mac".to_string());
         }
         if lowered.contains("appletvos")
             || lowered.contains("appletvsimulator")
             || lowered.contains("tvos_deployment_target")
         {
-            detected.push("tvos".to_string());
+            detected.push("apple-tv".to_string());
         }
         if lowered.contains("watchos")
             || lowered.contains("watchsimulator")
             || lowered.contains("watchos_deployment_target")
         {
-            detected.push("watchos".to_string());
+            detected.push("apple-watch".to_string());
         }
         if lowered.contains("xros")
             || lowered.contains("visionos")
             || lowered.contains("xros_deployment_target")
         {
-            detected.push("visionos".to_string());
+            detected.push("vision-pro".to_string());
         }
     }
 
@@ -670,52 +712,48 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
         };
         let lowered = content.to_lowercase();
         if lowered.contains(".ios(") {
-            detected.push("ios".to_string());
+            detected.push("iphone".to_string());
+            detected.push("ipad".to_string());
         }
         if lowered.contains(".macos(") {
-            detected.push("macos".to_string());
+            detected.push("mac".to_string());
         }
         if lowered.contains(".tvos(") {
-            detected.push("tvos".to_string());
+            detected.push("apple-tv".to_string());
         }
         if lowered.contains(".watchos(") {
-            detected.push("watchos".to_string());
+            detected.push("apple-watch".to_string());
         }
         if lowered.contains(".visionos(") {
-            detected.push("visionos".to_string());
+            detected.push("vision-pro".to_string());
         }
     }
 
-    dedup_sort_platforms(&mut detected);
+    dedup_sort_device_types(&mut detected);
     detected
 }
 
 fn sort_evidence_items(items: &mut [EvolutionEvidenceItemInfo]) {
     items.sort_by(|a, b| {
-        (a.platform.as_str(), a.order, a.item_id.as_str()).cmp(&(
-            b.platform.as_str(),
+        (a.device_type.as_str(), a.order, a.item_id.as_str()).cmp(&(
+            b.device_type.as_str(),
             b.order,
             b.item_id.as_str(),
         ))
     });
 }
 
-fn dedup_sort_platforms(platforms: &mut Vec<String>) {
+fn dedup_sort_device_types(device_types: &mut Vec<String>) {
     let mut seen = HashSet::new();
-    platforms.retain(|item| seen.insert(item.clone()));
-    platforms.sort_by_key(|platform| platform_sort_order(platform));
+    device_types.retain(|item| seen.insert(item.clone()));
+    device_types.sort_by_key(|device_type| device_type_sort_order(device_type));
 }
 
-fn platform_sort_order(platform: &str) -> (u8, String) {
-    match platform {
-        "ios" => (0, platform.to_string()),
-        "macos" => (1, platform.to_string()),
-        "tvos" => (2, platform.to_string()),
-        "watchos" => (3, platform.to_string()),
-        "visionos" => (4, platform.to_string()),
-        "custom" => (5, platform.to_string()),
-        other => (9, other.to_string()),
+fn device_type_sort_order(device_type: &str) -> (u8, u8, String) {
+    if let Some(pos) = DEVICE_TYPE_BASELINE.iter().position(|v| *v == device_type) {
+        return (0, pos as u8, String::new());
     }
+    (1, u8::MAX, device_type.to_string())
 }
 
 fn pathbuf_to_slash_string(path: &Path) -> String {
@@ -812,7 +850,7 @@ mod tests {
 
     #[test]
     fn normalize_relative_path_rejects_parent_segment() {
-        let result = normalize_relative_path("../ios/a.png");
+        let result = normalize_relative_path("../iphone/a.png");
         assert!(result.is_err());
     }
 
@@ -827,7 +865,7 @@ mod tests {
             "$schema_version": "1.0",
             "updated_at": "2026-02-25T08:00:00Z",
             "items": [
-                { "id": "ev-1", "platform": "ios", "type": "screenshot", "path": "ios/a.png", "title": "t", "description": "d" }
+                { "id": "ev-1", "device_type": "iphone", "type": "screenshot", "path": "iphone/a.png", "title": "t", "description": "d" }
             ]
         }"#;
         fs::write(&index_file, broken).expect("write index");
@@ -840,19 +878,19 @@ mod tests {
     fn load_and_validate_index_sorts_items_stably() {
         let dir = tempdir().expect("tempdir");
         let evidence_root = dir.path().join(".tidyflow/evidence");
-        fs::create_dir_all(evidence_root.join("ios")).expect("create ios dir");
-        fs::create_dir_all(evidence_root.join("macos")).expect("create macos dir");
-        fs::write(evidence_root.join("ios/b.png"), b"1").expect("write file");
-        fs::write(evidence_root.join("ios/a.png"), b"1").expect("write file");
-        fs::write(evidence_root.join("macos/a.log"), b"1").expect("write file");
+        fs::create_dir_all(evidence_root.join("iphone")).expect("create iphone dir");
+        fs::create_dir_all(evidence_root.join("mac")).expect("create mac dir");
+        fs::write(evidence_root.join("iphone/b.png"), b"1").expect("write file");
+        fs::write(evidence_root.join("iphone/a.png"), b"1").expect("write file");
+        fs::write(evidence_root.join("mac/a.log"), b"1").expect("write file");
         let index_file = evidence_root.join("evidence.index.json");
         let json = r#"{
             "$schema_version": "1.0",
             "updated_at": "2026-02-25T08:00:00Z",
             "items": [
-                { "id": "ev-2", "platform": "ios", "type": "screenshot", "order": 20, "path": "ios/b.png", "title": "b", "description": "b" },
-                { "id": "ev-1", "platform": "ios", "type": "screenshot", "order": 20, "path": "ios/a.png", "title": "a", "description": "a" },
-                { "id": "ev-3", "platform": "macos", "type": "log", "order": 5, "path": "macos/a.log", "title": "m", "description": "m" }
+                { "id": "ev-2", "device_type": "iphone", "type": "screenshot", "order": 20, "path": "iphone/b.png", "title": "b", "description": "b" },
+                { "id": "ev-1", "device_type": "iphone", "type": "screenshot", "order": 20, "path": "iphone/a.png", "title": "a", "description": "a" },
+                { "id": "ev-3", "device_type": "mac", "type": "log", "order": 5, "path": "mac/a.log", "title": "m", "description": "m" }
             ]
         }"#;
         fs::write(&index_file, json).expect("write index");
@@ -863,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_platforms_from_xcodeproj_and_package_swift() {
+    fn detect_device_types_from_xcodeproj_and_package_swift() {
         let dir = tempdir().expect("tempdir");
         let proj_dir = dir.path().join("app/TidyFlow.xcodeproj");
         fs::create_dir_all(&proj_dir).expect("create xcodeproj");
@@ -884,14 +922,46 @@ mod tests {
         )
         .expect("write package");
 
-        let platforms = detect_platforms(dir.path(), &dir.path().join(".tidyflow/evidence"));
-        assert_eq!(platforms, vec!["ios", "macos", "tvos"]);
+        let device_types = detect_device_types(dir.path(), &dir.path().join(".tidyflow/evidence"));
+        assert_eq!(device_types, vec!["iphone", "ipad", "apple-tv", "mac"]);
+    }
+
+    #[test]
+    fn rebuild_prompt_emphasizes_device_type_and_flat_directories() {
+        let dir = tempdir().expect("tempdir");
+        let payload =
+            build_rebuild_prompt_sync(dir.path(), "demo-project", "default").expect("prompt");
+        let prompt = payload.prompt;
+
+        assert!(prompt.contains(
+            "禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录"
+        ));
+        assert!(prompt.contains("设备类型固定基线（默认全部覆盖，除非用户明确删减）"));
+        assert!(prompt.contains("iphone"));
+        assert!(prompt.contains("ipad"));
+        assert!(prompt.contains("apple-tv"));
+        assert!(prompt.contains("apple-watch"));
+        assert!(prompt.contains("vision-pro"));
+        assert!(prompt.contains("mac"));
+        assert!(prompt.contains("android-phone"));
+        assert!(prompt.contains("android-pad"));
+        assert!(prompt.contains("android-tv"));
+        assert!(prompt.contains("android-wear"));
+        assert!(prompt.contains("ohos-phone"));
+        assert!(prompt.contains("ohos-pad"));
+        assert!(prompt.contains("ohos-tv"));
+        assert!(prompt.contains("web"));
+        assert!(prompt.contains("web-mobile"));
+        assert!(prompt.contains("linux"));
+        assert!(prompt.contains("windows"));
+        assert!(prompt.contains("server"));
+        assert!(prompt.contains("path 的首段必须与该条目的 device_type 完全一致"));
     }
 
     #[test]
     fn read_evidence_item_chunk_respects_offset_and_limit() {
         let dir = tempdir().expect("tempdir");
-        let evidence_root = dir.path().join(".tidyflow/evidence/ios");
+        let evidence_root = dir.path().join(".tidyflow/evidence/iphone");
         fs::create_dir_all(&evidence_root).expect("create evidence dir");
         let file_path = evidence_root.join("run.log");
         let mut f = fs::File::create(&file_path).expect("create file");
@@ -904,7 +974,7 @@ mod tests {
                 "$schema_version":"1.0",
                 "updated_at":"2026-02-25T08:00:00Z",
                 "items":[
-                    {"id":"ev-1","platform":"ios","type":"log","order":1,"path":"ios/run.log","title":"t","description":"d"}
+                    {"id":"ev-1","device_type":"iphone","type":"log","order":1,"path":"iphone/run.log","title":"t","description":"d"}
                 ]
             }"#,
         )

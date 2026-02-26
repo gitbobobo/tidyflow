@@ -1436,7 +1436,7 @@ pub enum ServerMessage {
         index_file: String,
         index_exists: bool,
         detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
-        detected_platforms: Vec<String>,
+        detected_device_types: Vec<String>,
         items: Vec<EvolutionEvidenceItemInfo>,
         issues: Vec<EvolutionEvidenceIssueInfo>,
         updated_at: String,
@@ -1449,7 +1449,7 @@ pub enum ServerMessage {
         evidence_root: String,
         index_file: String,
         detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
-        detected_platforms: Vec<String>,
+        detected_device_types: Vec<String>,
         generated_at: String,
     },
     #[serde(rename = "evo_evidence_item_chunk")]
@@ -1742,7 +1742,7 @@ pub struct EvolutionEvidenceIssueInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionEvidenceItemInfo {
     pub item_id: String,
-    pub platform: String,
+    pub device_type: String,
     #[serde(rename = "type")]
     pub evidence_type: String,
     pub order: u32,
