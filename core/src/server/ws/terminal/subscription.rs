@@ -32,6 +32,7 @@ async fn wait_flow_control_window(
                     prev,
                     prev / 2
                 );
+                crate::server::perf::record_terminal_unacked_timeout(term_id, prev);
                 flow_control.unacked.store(prev / 2, Ordering::Relaxed);
             }
         }

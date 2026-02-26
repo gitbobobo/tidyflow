@@ -46,6 +46,14 @@ fn resolve_bind_addr() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
+fn resolve_task_broadcast_capacity() -> usize {
+    std::env::var("PERF_TASK_BROADCAST_CAPACITY")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .filter(|v| *v >= 64)
+        .unwrap_or(1024)
+}
+
 fn log_bootstrap_config(expected_ws_token: Option<&str>, bind_addr: &str) {
     if expected_ws_token.is_some() {
         info!("WebSocket token auth enabled");
@@ -67,7 +75,12 @@ pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
     let bind_addr = resolve_bind_addr();
     log_bootstrap_config(expected_ws_token.as_deref(), &bind_addr);
 
-    let (task_broadcast_tx, _) = tokio::sync::broadcast::channel(256);
+    let task_broadcast_capacity = resolve_task_broadcast_capacity();
+    info!(
+        "Task broadcast channel capacity: {}",
+        task_broadcast_capacity
+    );
+    let (task_broadcast_tx, _) = tokio::sync::broadcast::channel(task_broadcast_capacity);
     let running_commands: SharedRunningCommands = Arc::new(Mutex::new(HashMap::new()));
     let running_ai_tasks: SharedRunningAITasks = Arc::new(Mutex::new(HashMap::new()));
     let task_history: SharedTaskHistory = Arc::new(Mutex::new(Vec::new()));

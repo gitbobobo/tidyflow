@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
@@ -18,6 +20,63 @@ pub(crate) const PRELOAD_AI_TOOLS: [&str; 3] = ["opencode", "codex", "copilot"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
+const AI_STREAM_BROADCAST_SUMMARY_INTERVAL: Duration = Duration::from_millis(250);
+
+fn parse_env_bool(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
+fn perf_active_only_delta_broadcast_enabled() -> bool {
+    parse_env_bool("PERF_ACTIVE_ONLY_DELTA_BROADCAST", true)
+}
+
+fn session_summary_broadcast_gate() -> &'static Mutex<HashMap<String, Instant>> {
+    static GATE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn allow_summary_broadcast(session_id: &str) -> bool {
+    let now = Instant::now();
+    let mut gate = session_summary_broadcast_gate()
+        .lock()
+        .expect("summary broadcast gate poisoned");
+
+    if let Some(last) = gate.get(session_id) {
+        if now.duration_since(*last) < AI_STREAM_BROADCAST_SUMMARY_INTERVAL {
+            return false;
+        }
+    }
+    gate.insert(session_id.to_string(), now);
+
+    if gate.len() > 4096 {
+        gate.retain(|_, ts| now.duration_since(*ts) <= Duration::from_secs(600));
+    }
+    true
+}
+
+fn should_broadcast_stream_message(msg: &ServerMessage) -> bool {
+    if !perf_active_only_delta_broadcast_enabled() {
+        return true;
+    }
+
+    match msg {
+        // 高频 token 增量只保留给当前活跃连接，避免广播通道被淹没。
+        ServerMessage::AIChatPartDelta { .. } => false,
+        // 其余连接只接收节流后的阶段性摘要更新。
+        ServerMessage::AIChatPartUpdated { session_id, .. }
+        | ServerMessage::AIChatMessageUpdated { session_id, .. } => {
+            allow_summary_broadcast(session_id)
+        }
+        _ => true,
+    }
+}
 
 pub(crate) fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -87,23 +146,28 @@ pub(crate) async fn emit_server_message(
     msg: ServerMessage,
 ) -> bool {
     let mut delivered = false;
+    let should_broadcast = should_broadcast_stream_message(&msg);
     if let Err(e) = output_tx.send(msg.clone()).await {
         warn!("AI stream: failed to enqueue server message: {}", e);
     } else {
         delivered = true;
     }
 
-    let sent = task_broadcast_tx.send(TaskBroadcastEvent {
-        origin_conn_id: origin_conn_id.to_string(),
-        message: msg,
-    });
-    if sent.is_ok() {
-        delivered = true;
+    if should_broadcast {
+        let sent = task_broadcast_tx.send(TaskBroadcastEvent {
+            origin_conn_id: origin_conn_id.to_string(),
+            message: msg,
+        });
+        if sent.is_ok() {
+            delivered = true;
+        } else {
+            trace!(
+                "AI stream: failed to broadcast server message: {:?}",
+                sent.err()
+            );
+        }
     } else {
-        trace!(
-            "AI stream: failed to broadcast server message: {:?}",
-            sent.err()
-        );
+        trace!("AI stream: skip broadcast for high-frequency delta update");
     }
 
     delivered
@@ -651,7 +715,9 @@ pub(crate) async fn normalize_ai_image_parts(
 
 #[cfg(test)]
 mod tests {
-    use super::infer_selection_hint_from_messages;
+    use super::{infer_selection_hint_from_messages, should_broadcast_stream_message};
+    use crate::server::protocol::ServerMessage;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn infer_selection_hint_prefers_last_user_message_metadata() {
@@ -716,6 +782,67 @@ mod tests {
         assert_eq!(hint.agent.as_deref(), Some("build"));
         assert_eq!(hint.model_provider_id.as_deref(), Some("openai"));
         assert_eq!(hint.model_id.as_deref(), Some("gpt-4.1"));
+    }
+
+    #[test]
+    fn stream_delta_is_not_broadcast_when_perf_mode_enabled() {
+        let msg = ServerMessage::AIChatPartDelta {
+            project_name: "p".to_string(),
+            workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id: "session-delta".to_string(),
+            message_id: "m1".to_string(),
+            part_id: "part-1".to_string(),
+            part_type: "text".to_string(),
+            field: "text".to_string(),
+            delta: "hello".to_string(),
+        };
+
+        assert!(!should_broadcast_stream_message(&msg));
+    }
+
+    #[test]
+    fn stream_done_is_always_broadcast() {
+        let msg = ServerMessage::AIChatDone {
+            project_name: "p".to_string(),
+            workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id: "session-done".to_string(),
+            selection_hint: None,
+        };
+
+        assert!(should_broadcast_stream_message(&msg));
+    }
+
+    #[test]
+    fn stream_message_update_is_throttled_per_session() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_id = format!("session-throttle-{}", unique);
+
+        let msg = ServerMessage::AIChatMessageUpdated {
+            project_name: "p".to_string(),
+            workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id: session_id.clone(),
+            message_id: "m1".to_string(),
+            role: "assistant".to_string(),
+            selection_hint: None,
+        };
+        let same_session_msg = ServerMessage::AIChatMessageUpdated {
+            project_name: "p".to_string(),
+            workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id,
+            message_id: "m1".to_string(),
+            role: "assistant".to_string(),
+            selection_hint: None,
+        };
+
+        assert!(should_broadcast_stream_message(&msg));
+        assert!(!should_broadcast_stream_message(&same_session_msg));
     }
 }
 

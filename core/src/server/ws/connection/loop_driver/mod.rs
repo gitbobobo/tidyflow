@@ -55,6 +55,7 @@ pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
 
     loop {
         loop_count += 1;
+        let tick_started = std::time::Instant::now();
 
         if loop_count == 1 {
             debug!("First loop iteration, about to call tokio::select!");
@@ -66,8 +67,6 @@ pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
         }
 
         tokio::select! {
-            biased;
-
             msg_result = socket.recv() => {
                 if let LoopControl::Break = socket::handle_socket_recv_result(
                     msg_result,
@@ -100,6 +99,7 @@ pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
             }
 
             result = task_broadcast_rx.recv() => {
+                crate::server::perf::record_task_broadcast_queue_depth(task_broadcast_rx.len() as u64);
                 channels::handle_task_broadcast_channel_event(result, socket, conn_meta).await;
             }
 
@@ -112,5 +112,9 @@ pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
                 break;
             }
         }
+
+        crate::server::perf::record_ws_outbound_loop_tick(
+            tick_started.elapsed().as_millis() as u64,
+        );
     }
 }

@@ -24,6 +24,7 @@ pub(in crate::server::ws) async fn handle_task_broadcast_event(
             }
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+            crate::server::perf::record_task_broadcast_lag(n);
             warn!("Task broadcast lagged by {} messages", n);
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
