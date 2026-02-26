@@ -13,6 +13,14 @@ static TERMINAL_UNACKED_TIMEOUT_TOTAL: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_LOOP_TICK_MS: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_LOOP_TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 static WS_OUTBOUND_LOOP_TICK_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `ws_outbound_select_wait_ms`（最近一次采样）
+static WS_OUTBOUND_SELECT_WAIT_MS: AtomicU64 = AtomicU64::new(0);
+static WS_OUTBOUND_SELECT_WAIT_COUNT: AtomicU64 = AtomicU64::new(0);
+static WS_OUTBOUND_SELECT_WAIT_MAX_MS: AtomicU64 = AtomicU64::new(0);
+/// `ws_outbound_handle_ms`（最近一次采样）
+static WS_OUTBOUND_HANDLE_MS: AtomicU64 = AtomicU64::new(0);
+static WS_OUTBOUND_HANDLE_COUNT: AtomicU64 = AtomicU64::new(0);
+static WS_OUTBOUND_HANDLE_MAX_MS: AtomicU64 = AtomicU64::new(0);
 
 const PERF_LOG_INTERVAL: u64 = 200;
 
@@ -48,24 +56,53 @@ pub fn record_terminal_unacked_timeout(term_id: &str, unacked_before_decay: u64)
     }
 }
 
+fn update_max(target: &AtomicU64, value: u64) {
+    let mut prev_max = target.load(Ordering::Relaxed);
+    while value > prev_max
+        && target
+            .compare_exchange(prev_max, value, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
+        prev_max = target.load(Ordering::Relaxed);
+    }
+}
+
+pub fn record_ws_outbound_select_wait(ms: u64) {
+    WS_OUTBOUND_SELECT_WAIT_MS.store(ms, Ordering::Relaxed);
+    WS_OUTBOUND_SELECT_WAIT_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_max(&WS_OUTBOUND_SELECT_WAIT_MAX_MS, ms);
+}
+
+pub fn record_ws_outbound_handle(ms: u64) {
+    WS_OUTBOUND_HANDLE_MS.store(ms, Ordering::Relaxed);
+    WS_OUTBOUND_HANDLE_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_max(&WS_OUTBOUND_HANDLE_MAX_MS, ms);
+}
+
 pub fn record_ws_outbound_loop_tick(ms: u64) {
     WS_OUTBOUND_LOOP_TICK_MS.store(ms, Ordering::Relaxed);
     let count = WS_OUTBOUND_LOOP_TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-
-    let mut prev_max = WS_OUTBOUND_LOOP_TICK_MAX_MS.load(Ordering::Relaxed);
-    while ms > prev_max
-        && WS_OUTBOUND_LOOP_TICK_MAX_MS
-            .compare_exchange(prev_max, ms, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
-    {
-        prev_max = WS_OUTBOUND_LOOP_TICK_MAX_MS.load(Ordering::Relaxed);
-    }
+    update_max(&WS_OUTBOUND_LOOP_TICK_MAX_MS, ms);
 
     if count % PERF_LOG_INTERVAL == 0 {
         let max_ms = WS_OUTBOUND_LOOP_TICK_MAX_MS.load(Ordering::Relaxed);
+        let select_wait_ms = WS_OUTBOUND_SELECT_WAIT_MS.load(Ordering::Relaxed);
+        let select_wait_max_ms = WS_OUTBOUND_SELECT_WAIT_MAX_MS.load(Ordering::Relaxed);
+        let select_wait_count = WS_OUTBOUND_SELECT_WAIT_COUNT.load(Ordering::Relaxed);
+        let handle_ms = WS_OUTBOUND_HANDLE_MS.load(Ordering::Relaxed);
+        let handle_max_ms = WS_OUTBOUND_HANDLE_MAX_MS.load(Ordering::Relaxed);
+        let handle_count = WS_OUTBOUND_HANDLE_COUNT.load(Ordering::Relaxed);
         info!(
-            "perf ws_outbound_loop_tick_ms={} ws_outbound_loop_tick_max_ms={} ws_outbound_loop_tick_count={}",
-            ms, max_ms, count
+            "perf ws_outbound_loop_tick_ms={} ws_outbound_loop_tick_max_ms={} ws_outbound_loop_tick_count={} ws_outbound_select_wait_ms={} ws_outbound_select_wait_max_ms={} ws_outbound_select_wait_count={} ws_outbound_handle_ms={} ws_outbound_handle_max_ms={} ws_outbound_handle_count={}",
+            ms,
+            max_ms,
+            count,
+            select_wait_ms,
+            select_wait_max_ms,
+            select_wait_count,
+            handle_ms,
+            handle_max_ms,
+            handle_count
         );
     }
 }
