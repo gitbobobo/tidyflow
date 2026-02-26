@@ -1,9 +1,11 @@
 #[cfg(unix)]
 use std::os::unix::process::parent_id;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use tracing::{info, warn};
 
-pub(in crate::server::ws) fn spawn_parent_monitor() {
+pub(in crate::server::ws) fn spawn_parent_monitor(shutdown_flag: Arc<AtomicBool>) {
     #[cfg(unix)]
     {
         let initial_ppid = parent_id();
@@ -22,12 +24,16 @@ pub(in crate::server::ws) fn spawn_parent_monitor() {
                 let current_ppid = parent_id();
                 if current_ppid != initial_ppid {
                     warn!(
-                        "Parent process died (PPID changed from {} to {}), shutting down",
+                        "Parent process died (PPID changed from {} to {}), requesting graceful shutdown",
                         initial_ppid, current_ppid
                     );
-                    std::process::exit(0);
+                    shutdown_flag.store(true, Ordering::SeqCst);
+                    break;
                 }
             }
         });
     }
+
+    #[cfg(not(unix))]
+    let _ = shutdown_flag;
 }

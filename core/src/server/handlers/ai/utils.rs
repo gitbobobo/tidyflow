@@ -500,6 +500,33 @@ pub(crate) async fn preload_agents_on_startup(ai_state: &SharedAIState) {
     }
 }
 
+pub(crate) async fn shutdown_agents(ai_state: &SharedAIState) {
+    let agents = {
+        let mut ai = ai_state.lock().await;
+        let drained = ai.agents.drain().collect::<Vec<_>>();
+        ai.active_streams.clear();
+        ai.directory_active_streams.clear();
+        ai.directory_last_used_ms.clear();
+        drained
+    };
+
+    if agents.is_empty() {
+        info!("AI shutdown: no agents to stop");
+        return;
+    }
+
+    for (tool, agent) in agents {
+        match tokio::time::timeout(std::time::Duration::from_secs(8), agent.stop()).await {
+            Ok(Ok(())) => info!("AI shutdown: stopped agent tool={}", tool),
+            Ok(Err(e)) => warn!(
+                "AI shutdown: failed to stop agent tool={}, error={}",
+                tool, e
+            ),
+            Err(_) => warn!("AI shutdown: stop timeout tool={}", tool),
+        }
+    }
+}
+
 pub(crate) async fn ensure_maintenance(ai_state: &SharedAIState) {
     let should_start = {
         let mut ai = ai_state.lock().await;

@@ -29,6 +29,10 @@ pub async fn preload_agents_on_startup(ai_state: &SharedAIState) {
     utils::preload_agents_on_startup(ai_state).await;
 }
 
+pub async fn shutdown_agents(ai_state: &SharedAIState) {
+    utils::shutdown_agents(ai_state).await;
+}
+
 pub async fn handle_ai_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
