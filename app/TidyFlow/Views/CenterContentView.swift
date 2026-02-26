@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CenterContentView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var editorStore: EditorStore
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,7 +24,7 @@ struct CenterContentView: View {
                 }
             }
         }
-        .alert("tabContent.unsavedChanges".localized, isPresented: $appState.showUnsavedChangesAlert) {
+        .alert("tabContent.unsavedChanges".localized, isPresented: $editorStore.showUnsavedChangesAlert) {
             Button("common.save".localized, role: nil) {
                 if let wsKey = appState.pendingCloseWorkspaceKey,
                    let tabId = appState.pendingCloseTabId {

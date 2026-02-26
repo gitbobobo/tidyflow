@@ -111,6 +111,7 @@ struct TerminalContentView: View {
 
 struct TerminalStatusBar: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var terminalStore: TerminalStore
 
     var body: some View {
         HStack {
@@ -120,7 +121,7 @@ struct TerminalStatusBar: View {
                 .foregroundColor(.green)
 
             // Session info
-            switch appState.terminalState {
+            switch terminalStore.terminalState {
             case .idle:
                 Text("Terminal")
                     .font(.system(size: 11, design: .monospaced))
@@ -157,6 +158,7 @@ struct TerminalStatusBar: View {
 struct NativeEditorContentView: View {
     let path: String
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var editorStore: EditorStore
     @State private var highlightedLine: Int?
 
     var body: some View {
@@ -193,7 +195,7 @@ struct NativeEditorContentView: View {
         .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
             openDocumentIfNeeded(force: true)
         }
-        .onChange(of: appState.pendingEditorReveal?.path) { _, _ in
+        .onChange(of: editorStore.pendingEditorReveal?.path) { _, _ in
             consumePendingRevealIfNeeded()
         }
     }
@@ -213,9 +215,9 @@ struct NativeEditorContentView: View {
     }
 
     private func consumePendingRevealIfNeeded() {
-        guard let reveal = appState.pendingEditorReveal, reveal.path == path else { return }
+        guard let reveal = editorStore.pendingEditorReveal, reveal.path == path else { return }
         highlightedLine = reveal.line
-        appState.pendingEditorReveal = nil
+        editorStore.pendingEditorReveal = nil
     }
 }
 
@@ -224,6 +226,7 @@ struct NativeEditorContentView: View {
 struct EditorStatusBar: View {
     let path: String
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var editorStore: EditorStore
 
     var body: some View {
         HStack {
@@ -256,10 +259,10 @@ struct EditorStatusBar: View {
                     appState.reloadEditorDocument(project: appState.selectedProjectName, workspace: workspace, path: path)
                 }
                 .buttonStyle(.borderless)
-            } else if !appState.editorStatus.isEmpty {
-                Text(appState.editorStatus)
+            } else if !editorStore.editorStatus.isEmpty {
+                Text(editorStore.editorStatus)
                     .font(.system(size: 11))
-                    .foregroundColor(appState.editorStatusIsError ? .red : .green)
+                    .foregroundColor(editorStore.editorStatusIsError ? .red : .green)
             }
         }
         .padding(.horizontal, 8)

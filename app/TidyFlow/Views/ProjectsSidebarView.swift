@@ -7,6 +7,7 @@ import AppKit
 /// UX-1: Replaces flat workspace list with collapsible project tree
 struct ProjectsSidebarView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var terminalStore: TerminalStore
 
     /// 缓存排序后的项目索引，避免每次 body 重算都执行 O(n log n) 排序
     @State private var cachedSortedIndices: [Int] = []
@@ -40,7 +41,7 @@ struct ProjectsSidebarView: View {
             debouncedSort()
         }
         // 快捷键分配或终端打开时间变化时重新排序
-        .onChange(of: appState.workspaceTerminalOpenTime) {
+        .onChange(of: terminalStore.workspaceTerminalOpenTime) {
             debouncedSort()
         }
         // 工作空间删除状态变化时重新排序
@@ -104,7 +105,7 @@ struct ProjectsSidebarView: View {
         var earliest: Date?
         for workspace in project.workspaces {
             let key = "\(project.name):\(workspace.name)"
-            if let time = appState.workspaceTerminalOpenTime[key] {
+            if let time = terminalStore.workspaceTerminalOpenTime[key] {
                 if earliest == nil || time < earliest! {
                     earliest = time
                 }
@@ -330,6 +331,7 @@ struct WorkspaceRowView: View {
     let projectName: String
     let isSelected: Bool
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var taskManager: BackgroundTaskManager
     @State private var showDeleteConfirmation = false
     @State private var showEndWorkConfirmation = false
     @State private var showNoAgentAlert = false
@@ -384,7 +386,7 @@ struct WorkspaceRowView: View {
 
     /// 当前工作空间是否有活跃的后台任务
     private var hasActiveTask: Bool {
-        appState.taskManager.activeTaskCount(for: globalWorkspaceKey) > 0
+        taskManager.activeTaskCount(for: globalWorkspaceKey) > 0
     }
 
     /// 当前工作空间是否正在删除中
@@ -394,7 +396,7 @@ struct WorkspaceRowView: View {
 
     /// 该工作空间是否有未读完成的后台任务（侧边栏铃铛提示）
     private var hasUnseenCompletion: Bool {
-        appState.taskManager.workspaceKeysWithUnseenCompletion.contains(globalWorkspaceKey)
+        taskManager.workspaceKeysWithUnseenCompletion.contains(globalWorkspaceKey)
     }
 
     var body: some View {
