@@ -113,8 +113,6 @@ pub(in crate::server::ws) async fn run_main_loop(deps: &mut LoopDeps<'_>) {
             }
         }
 
-        crate::server::perf::record_ws_outbound_loop_tick(
-            tick_started.elapsed().as_millis() as u64,
-        );
+        crate::server::perf::record_ws_outbound_loop_tick(tick_started.elapsed().as_millis() as u64);
     }
 }

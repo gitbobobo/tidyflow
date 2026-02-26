@@ -311,7 +311,13 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
 pub fn git_file_status(workspace_root: &Path, path: &str) -> Option<(String, bool)> {
     let started = Instant::now();
     let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "--untracked-files=all", "--", path])
+        .args([
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            path,
+        ])
         .current_dir(workspace_root)
         .output()
         .ok()?;
