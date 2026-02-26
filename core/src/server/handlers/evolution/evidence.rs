@@ -243,17 +243,8 @@ fn build_rebuild_prompt_sync(
     let mut detected_platforms = detect_platforms(workspace_root, &evidence_root);
     dedup_sort_platforms(&mut detected_platforms);
 
-    let cross_apple_platform_note = if ["ios", "macos", "tvos"]
-        .iter()
-        .all(|p| detected_platforms.iter().any(|x| x == p))
-    {
-        "已识别 iOS + macOS + tvOS：三端都必须各自具备端到端测试基础设施、真实截图与日志证据，禁止缺任一端。"
-    } else {
-        "若项目支持 iOS/macOS/tvOS，必须覆盖每个平台，缺失平台需先向用户确认是否支持。"
-    };
-
     let prompt = format!(
-        r#"你是 TidyFlow 的执行代理。请重建当前工作空间的全链路证据体系，并严格遵循以下规则。
+        r#"请重建当前工作空间的全链路证据体系，并严格遵循以下规则。
 
 【工作空间上下文】
 - project: {project}
@@ -268,7 +259,6 @@ fn build_rebuild_prompt_sync(
 4. 产出并维护 evidence.index.json，确保证据可追溯、可复核、可排序展示。
 
 【平台覆盖要求】
-- {cross_apple_platform_note}
 - 每个平台都要有独立的端到端测试入口与证据目录。
 - 如果平台识别不确定，先停下来询问用户，不允许猜测。
 
@@ -308,7 +298,6 @@ fn build_rebuild_prompt_sync(
         workspace = workspace,
         evidence_root = evidence_root.to_string_lossy(),
         index_file = index_file.to_string_lossy(),
-        cross_apple_platform_note = cross_apple_platform_note,
     );
 
     Ok(EvidenceRebuildPromptPayload {
@@ -336,8 +325,13 @@ fn read_evidence_item_chunk_sync(
         .find(|x| x.item_id == item_id)
         .ok_or_else(|| format!("evidence item not found: {}", item_id))?;
 
-    let mut file = fs::File::open(&item.full_path)
-        .map_err(|e| format!("open evidence item failed ({}): {}", item.full_path.display(), e))?;
+    let mut file = fs::File::open(&item.full_path).map_err(|e| {
+        format!(
+            "open evidence item failed ({}): {}",
+            item.full_path.display(),
+            e
+        )
+    })?;
     let total_size_bytes = file
         .metadata()
         .map_err(|e| format!("read evidence item metadata failed: {}", e))?
@@ -382,10 +376,15 @@ fn load_and_validate_index(
     index_file: &Path,
     evidence_root: &Path,
 ) -> Result<ValidatedEvidenceIndex, String> {
-    let content = fs::read_to_string(index_file)
-        .map_err(|e| format!("read evidence index failed ({}): {}", index_file.display(), e))?;
-    let raw: EvidenceIndexRaw =
-        serde_json::from_str(&content).map_err(|e| format!("parse evidence index failed: {}", e))?;
+    let content = fs::read_to_string(index_file).map_err(|e| {
+        format!(
+            "read evidence index failed ({}): {}",
+            index_file.display(),
+            e
+        )
+    })?;
+    let raw: EvidenceIndexRaw = serde_json::from_str(&content)
+        .map_err(|e| format!("parse evidence index failed: {}", e))?;
 
     let schema_version = raw
         .schema_version
@@ -487,10 +486,7 @@ fn normalize_relative_path(path: &str) -> Result<String, String> {
                 ));
             }
             Component::RootDir | Component::Prefix(_) => {
-                return Err(format!(
-                    "evidence.index.json item path 非法: {}",
-                    trimmed
-                ));
+                return Err(format!("evidence.index.json item path 非法: {}", trimmed));
             }
         }
     }
@@ -554,7 +550,11 @@ fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInf
         if !entry.file_type().is_dir() {
             continue;
         }
-        let dir_name = entry.path().file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let dir_name = entry
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         if !dir_name.ends_with(".xcodeproj") {
             continue;
         }
@@ -569,11 +569,13 @@ fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInf
         }
     }
 
-    result.sort_by(|a, b| (a.path.as_str(), a.kind.as_str(), a.id.as_str()).cmp(&(
-        b.path.as_str(),
-        b.kind.as_str(),
-        b.id.as_str(),
-    )));
+    result.sort_by(|a, b| {
+        (a.path.as_str(), a.kind.as_str(), a.id.as_str()).cmp(&(
+            b.path.as_str(),
+            b.kind.as_str(),
+            b.id.as_str(),
+        ))
+    });
     result
 }
 
@@ -604,7 +606,11 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
         if !entry.file_type().is_dir() {
             continue;
         }
-        let dir_name = entry.path().file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let dir_name = entry
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         if !dir_name.ends_with(".xcodeproj") {
             continue;
         }
@@ -634,7 +640,10 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
         {
             detected.push("watchos".to_string());
         }
-        if lowered.contains("xros") || lowered.contains("visionos") || lowered.contains("xros_deployment_target") {
+        if lowered.contains("xros")
+            || lowered.contains("visionos")
+            || lowered.contains("xros_deployment_target")
+        {
             detected.push("visionos".to_string());
         }
     }
@@ -648,7 +657,11 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
         if !entry.file_type().is_file() {
             continue;
         }
-        let file_name = entry.path().file_name().and_then(|x| x.to_str()).unwrap_or("");
+        let file_name = entry
+            .path()
+            .file_name()
+            .and_then(|x| x.to_str())
+            .unwrap_or("");
         if file_name != "Package.swift" {
             continue;
         }
@@ -678,11 +691,13 @@ fn detect_platforms(workspace_root: &Path, evidence_root: &Path) -> Vec<String> 
 }
 
 fn sort_evidence_items(items: &mut [EvolutionEvidenceItemInfo]) {
-    items.sort_by(|a, b| (a.platform.as_str(), a.order, a.item_id.as_str()).cmp(&(
-        b.platform.as_str(),
-        b.order,
-        b.item_id.as_str(),
-    )));
+    items.sort_by(|a, b| {
+        (a.platform.as_str(), a.order, a.item_id.as_str()).cmp(&(
+            b.platform.as_str(),
+            b.order,
+            b.item_id.as_str(),
+        ))
+    });
 }
 
 fn dedup_sort_platforms(platforms: &mut Vec<String>) {
@@ -717,7 +732,11 @@ fn relative_path_string(base: &Path, target: &Path) -> String {
     match target.strip_prefix(base) {
         Ok(rel) => {
             let value = pathbuf_to_slash_string(rel);
-            if value.is_empty() { ".".to_string() } else { value }
+            if value.is_empty() {
+                ".".to_string()
+            } else {
+                value
+            }
         }
         Err(_) => ".".to_string(),
     }
@@ -763,7 +782,10 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
 
-fn issue_warning(code: impl Into<String>, message: impl Into<String>) -> EvolutionEvidenceIssueInfo {
+fn issue_warning(
+    code: impl Into<String>,
+    message: impl Into<String>,
+) -> EvolutionEvidenceIssueInfo {
     EvolutionEvidenceIssueInfo {
         code: code.into(),
         level: "warning".to_string(),
@@ -888,7 +910,8 @@ mod tests {
         )
         .expect("write index");
 
-        let chunk = read_evidence_item_chunk_sync(dir.path(), "ev-1", 2, Some(4)).expect("read chunk");
+        let chunk =
+            read_evidence_item_chunk_sync(dir.path(), "ev-1", 2, Some(4)).expect("read chunk");
         assert_eq!(chunk.content, b"cdef");
         assert_eq!(chunk.offset, 2);
         assert_eq!(chunk.next_offset, 6);
