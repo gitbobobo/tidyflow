@@ -7,8 +7,10 @@ use gix::bstr::ByteSlice;
 use gix::status::index_worktree::iter::Summary;
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
+use tracing::debug;
 
 use super::utils::*;
 
@@ -307,13 +309,47 @@ fn git_status_uncached(workspace_root: &Path) -> Result<GitStatusResult, GitErro
 
 /// 获取单个文件的 git 状态码（仅 1 个查询）
 pub fn git_file_status(workspace_root: &Path, path: &str) -> Option<(String, bool)> {
-    let result = git_status_uncached(workspace_root).ok()?;
-    result
-        .items
-        .iter()
-        .find(|item| item.path == path && item.staged)
-        .or_else(|| result.items.iter().find(|item| item.path == path))
-        .map(|item| (item.code.clone(), item.staged))
+    let started = Instant::now();
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "--untracked-files=all", "--", path])
+        .current_dir(workspace_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().find(|line| !line.trim().is_empty())?;
+    let parsed = parse_porcelain_status_line(line);
+    debug!(
+        "git_file_status path={} elapsed_ms={} hit={}",
+        path,
+        started.elapsed().as_millis(),
+        parsed.is_some()
+    );
+    parsed
+}
+
+fn parse_porcelain_status_line(line: &str) -> Option<(String, bool)> {
+    let bytes = line.as_bytes();
+    if bytes.len() < 3 {
+        return None;
+    }
+
+    let x = bytes[0] as char;
+    let y = bytes[1] as char;
+    if x == '?' && y == '?' {
+        return Some(("??".to_string(), false));
+    }
+
+    if x != ' ' && x != '?' {
+        return Some((x.to_string(), true));
+    }
+    if y != ' ' && y != '?' {
+        return Some((y.to_string(), false));
+    }
+    None
 }
 
 /// Get git log (commit history) for a workspace
@@ -498,5 +534,29 @@ mod tests {
             offset: 0,
         };
         assert!(!git_time_to_iso(t).is_empty());
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_tracked_staged() {
+        assert_eq!(
+            parse_porcelain_status_line("M  src/main.rs"),
+            Some(("M".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_tracked_unstaged() {
+        assert_eq!(
+            parse_porcelain_status_line(" M src/main.rs"),
+            Some(("M".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_status_line_untracked() {
+        assert_eq!(
+            parse_porcelain_status_line("?? src/new.rs"),
+            Some(("??".to_string(), false))
+        );
     }
 }
