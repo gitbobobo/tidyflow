@@ -271,44 +271,41 @@ fn build_rebuild_prompt_sync(
 - evidence_root: {evidence_root}
 - evidence_index_file: {index_file}
 
-【目标】
+【总体目标】
 1. 识别仓库中的子系统与设备类型（device_type）。
-2. 按 device_type 建立端到端测试基础设施与执行脚本。
-3. 使用真实数据执行端到端流程并采集截图/日志。
-4. 产出并维护 evidence.index.json，确保证据可追溯、可复核、可排序展示。
+2. 构建或改造可重复执行的端到端验证框架（e2e）。
+3. 让日志/截图等证据成为 e2e 运行的自动产物。
+4. 由 e2e 测试在执行过程中自动生成/更新 evidence.index.json，确保仅索引真实执行产物并可追溯、可复核、可排序。
 
-【任务焦点（避免误解）】
-- 本次任务的核心是“重建高可读的证据索引”，不是“把文件名或命令名搬运进索引”。
-- 先重建 evidence.index.json 的语义质量（title/description/scenario/subsystem/order），再决定是否需要补跑与补采集。
-- 对已存在证据，优先读取证据内容并提炼语义；不要仅依据文件名猜测。
+【通用性要求】
+- 本提示词是跨项目通用模板，不预设技术栈、目录结构或测试框架名称。
+- 优先复用仓库现有测试基础设施；仅在缺失时新增最小必要入口。
+- 若用户明确限定设备范围，只覆盖用户指定范围；否则按仓库扫描结果与设备基线共同评估覆盖面。
 
-【标题与描述语义规则（最高优先级）】
-- title 必须回答“在什么场景下，这条证据证明了什么状态/结果”；禁止仅写工具名、文件名、设备 ID、run_id、序号。
-- description 必须包含 3 类信息：执行动作、关键观察、证据用途（它用于证明或排除什么）。
-- title/description 不得与 path 同义重复；即使隐藏 path，读者也能理解该证据的意义。
-- 日志类证据需基于关键日志行提炼语义，截图类证据需描述页面/流程状态与上下文步骤。
-- 无法判断语义时，立即提出缺失信息问题；禁止写“日志证据/截图证据/文件=xxx”这类占位描述。
+【执行优先级（必须按顺序）】
+1) 先审计现有测试与证据链路：测试入口、可运行性、断言覆盖、产物输出点。
+2) 先补齐/改造 e2e 框架：每条验收标准必须映射到可执行 check 与证据产物。
+3) 在 e2e 测试代码内定义证据语义（title/description/scenario/subsystem/order），并在执行时自动写入 evidence.index.json。
+4) 最后才考虑补采集；补采集也必须通过 e2e 执行产出，禁止离线拼装。
 
-【title/description 示例（必须对齐）】
-- 反例（禁止）：
-  - title: `xcodebuild`
-  - description: `日志证据，run=run-20260226T083719Z，文件=xcodebuild.log`
-- 正例（期望）：
-  - title: `iOS 调试构建失败（Swift 编译错误）`
-  - description: `在 iPhone 16 模拟器执行 Debug 构建时，日志出现类型解析错误并中断编译，该条用于定位 verify 阶段失败原因。`
-- 反例（禁止）：
-  - title: `iphone 282719A2 5A8C 449C 83FF 9C2FE12F7649 1`
-  - description: `截图证据，run=run-20260226T083719Z，文件=iphone-...png`
-- 正例（期望）：
-  - title: `登录页初始态（验证码未发送）`
-  - description: `进入登录流程后页面显示手机号输入框和发送验证码按钮，尚未触发提交，作为 e2e 第一步基线截图。`
+【禁止事项（强约束）】
+- 禁止把“写脚本生成证据文件”作为主方案。
+- 禁止通过独立脚本离线搬运、拼接、伪造日志或截图来替代 e2e 执行。
+- 禁止通过后处理脚本单独生成或重写 evidence.index.json。
+- 禁止把“索引语义优化”当成主目标而跳过测试框架改造与语义化测试用例。
+- 禁止把“未执行”写成“已完成”。
+
+【允许事项（边界）】
+- 允许新增很薄的统一入口脚本，但职责仅限触发 e2e 流程与收集退出状态。
+- 入口脚本不得生成伪证据内容，不得绕过断言或测试执行。
+- 若某设备类型当前确实无法执行，必须输出阻塞原因、已尝试动作和最小改造建议，状态标记为 `blocked` 或 `not_applicable`。
 
 【目录与设备类型规则（高优先级）】
 - evidence_root 下第一层目录必须是 device_type，所有 device_type 必须同级。
 - 禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录，所有 device_type 必须直接落在 evidence_root 同级目录。
 - 设备类型固定基线（默认全部覆盖，除非用户明确删减）：iphone、ipad、apple-tv、apple-watch、vision-pro、mac、android-phone、android-pad、android-tv、android-wear、ohos-phone、ohos-pad、ohos-tv、web、web-mobile、linux、windows、server。
 - 每个 device_type 都必须有独立的 e2e 入口与证据子目录（示例：`<device_type>/e2e/...`）。
-- 若某个 device_type 暂不支持真实执行，仍需保留该 device_type 的目录与计划项，并在输出里标记 `not_applicable` 与原因。
+- 若某个 device_type 暂不支持真实执行，仍需保留该 device_type 的 e2e 计划项，并在输出里标记 `not_applicable` 与原因。
 - 若扫描到基线之外的新设备类型，必须新增同级目录与对应 e2e 计划；禁止把多个设备类型合并到同一目录。
 
 【evidence.index.json 契约（必须满足）】
@@ -336,16 +333,25 @@ fn build_rebuild_prompt_sync(
 - path 必须是相对 evidence_root 的相对路径，禁止绝对路径和 `..`，且首段必须是 device_type
 - path 的首段必须与该条目的 device_type 完全一致（示例：device_type=android-phone 时，path 必须以 `android-phone/` 开头）
 - order 用于同一 device_type 内时序排序，数值越小越靠前
+- type 仅允许 `log|screenshot`，且必须来自真实执行产物。
+- evidence.index.json 必须由 e2e 执行自动生成/更新，禁止脱离测试执行离线写入。
+
+【标题与描述语义规则（次优先级，仍需满足）】
+- title 必须回答“在什么场景下，这条证据证明了什么状态/结果”；禁止仅写工具名、文件名、设备 ID、run_id、序号。
+- description 必须包含 3 类信息：执行动作、关键观察、证据用途（用于证明或排除什么）。
+- title/description 不得与 path 同义重复；即使隐藏 path，读者也能理解该证据意义。
+- 日志类证据需基于关键日志行提炼语义；截图类证据需描述页面/流程状态与上下文步骤。
+- 语义来源应直接来自测试步骤与断言上下文，而非事后从文件名反推。
 
 【执行约束（强制）】
 - 必须使用真实数据，禁止 mock，禁止占位，禁止伪造截图。
-- 禁止把“未执行”写成“已完成”。
-- 任一步骤缺少必要信息时，立即停止并向用户提问，不允许自行补假设继续推进。
+- 若上下文不足以继续执行，必须输出阻塞项与最小可执行下一步，不得虚构结果。
 - 输出中必须明确列出：已完成项、未完成项、阻塞项、下一步问题。
 
 现在开始执行：
-1) 先扫描现有证据并重建高可读的 evidence.index.json（重点修复 title/description 语义）。
-2) 再输出按 device_type 拆分的端到端测试计划与证据补采集计划。"#,
+1) 先完成“测试框架审计 + e2e 可执行性改造计划”（按 device_type 拆分）。
+2) 再给出“通过 e2e 自动产证据并自动生成 evidence.index.json”的实施与补采集计划。
+3) 最后给出基于测试语义的 evidence.index.json 验收标准。"#,
         project = project,
         workspace = workspace,
         evidence_root = evidence_root.to_string_lossy(),
@@ -961,36 +967,26 @@ mod tests {
             build_rebuild_prompt_sync(dir.path(), "demo-project", "default").expect("prompt");
         let prompt = payload.prompt;
 
+        assert!(prompt.contains("【通用性要求】"));
+        assert!(prompt.contains("本提示词是跨项目通用模板"));
+        assert!(prompt.contains("【执行优先级（必须按顺序）】"));
+        assert!(prompt.contains("先审计现有测试与证据链路"));
+        assert!(prompt.contains("先补齐/改造 e2e 框架"));
+        assert!(prompt.contains("禁止把“写脚本生成证据文件”作为主方案"));
+        assert!(prompt.contains("由 e2e 测试在执行过程中自动生成/更新 evidence.index.json"));
+        assert!(prompt.contains("禁止通过后处理脚本单独生成或重写 evidence.index.json"));
+        assert!(prompt.contains("允许新增很薄的统一入口脚本"));
         assert!(prompt.contains(
             "禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录"
         ));
         assert!(prompt.contains("设备类型固定基线（默认全部覆盖，除非用户明确删减）"));
-        assert!(prompt.contains("iphone"));
-        assert!(prompt.contains("ipad"));
-        assert!(prompt.contains("apple-tv"));
-        assert!(prompt.contains("apple-watch"));
-        assert!(prompt.contains("vision-pro"));
-        assert!(prompt.contains("mac"));
-        assert!(prompt.contains("android-phone"));
-        assert!(prompt.contains("android-pad"));
-        assert!(prompt.contains("android-tv"));
-        assert!(prompt.contains("android-wear"));
-        assert!(prompt.contains("ohos-phone"));
-        assert!(prompt.contains("ohos-pad"));
-        assert!(prompt.contains("ohos-tv"));
-        assert!(prompt.contains("web"));
-        assert!(prompt.contains("web-mobile"));
-        assert!(prompt.contains("linux"));
-        assert!(prompt.contains("windows"));
-        assert!(prompt.contains("server"));
+        assert!(!prompt.contains("detected_device_types"));
         assert!(prompt.contains("path 的首段必须与该条目的 device_type 完全一致"));
-        assert!(prompt.contains("【标题与描述语义规则（最高优先级）】"));
+        assert!(prompt.contains("【标题与描述语义规则（次优先级，仍需满足）】"));
         assert!(prompt.contains(
             "禁止仅写工具名、文件名、设备 ID、run_id、序号"
         ));
-        assert!(prompt.contains("title: `xcodebuild`"));
-        assert!(prompt.contains("description: `日志证据，run=run-20260226T083719Z，文件=xcodebuild.log`"));
-        assert!(prompt.contains("先扫描现有证据并重建高可读的 evidence.index.json"));
+        assert!(prompt.contains("先完成“测试框架审计 + e2e 可执行性改造计划”"));
     }
 
     #[test]
