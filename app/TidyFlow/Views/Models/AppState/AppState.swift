@@ -340,6 +340,8 @@ class AppState: ObservableObject {
         get { terminalStore.terminalSessionByTabId }
         set { terminalStore.terminalSessionByTabId = newValue }
     }
+    /// SessionId → Tab 映射，避免终端输出路径每次线性扫描全部 Tab。
+    var terminalTabIdBySessionId: [String: UUID] = [:]
     var staleTerminalTabs: Set<UUID> {
         get { terminalStore.staleTerminalTabs }
         set { terminalStore.staleTerminalTabs = newValue }
@@ -478,9 +480,10 @@ class AppState: ObservableObject {
     }
 
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
-        aiSessionsByTool[tool] = sessions
+        let sortedSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
+        aiSessionsByTool[tool] = sortedSessions
         if aiChatTool == tool {
-            aiSessions = sessions
+            aiSessions = sortedSessions
         } else {
             refreshMergedAISessions()
         }
@@ -1277,9 +1280,44 @@ class AppState: ObservableObject {
     }
 
     private func refreshMergedAISessions() {
-        aiMergedSessions = AIChatTool.allCases
-            .flatMap { aiSessionsByTool[$0] ?? [] }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        aiMergedSessions = mergeAISessionsByUpdatedAt(aiSessionsByTool)
+    }
+
+    /// 按工具桶做 k-way merge，避免每次全量 flatMap + sort。
+    private func mergeAISessionsByUpdatedAt(
+        _ buckets: [AIChatTool: [AISessionInfo]]
+    ) -> [AISessionInfo] {
+        var indices: [AIChatTool: Int] = [:]
+        var merged: [AISessionInfo] = []
+        merged.reserveCapacity(buckets.values.reduce(0) { $0 + $1.count })
+
+        while true {
+            var bestTool: AIChatTool?
+            var bestSession: AISessionInfo?
+
+            for tool in AIChatTool.allCases {
+                let idx = indices[tool] ?? 0
+                guard let sessions = buckets[tool], idx < sessions.count else { continue }
+                let candidate = sessions[idx]
+                if let currentBest = bestSession {
+                    if candidate.updatedAt > currentBest.updatedAt {
+                        bestSession = candidate
+                        bestTool = tool
+                    }
+                } else {
+                    bestSession = candidate
+                    bestTool = tool
+                }
+            }
+
+            guard let chosenTool = bestTool, let chosenSession = bestSession else {
+                break
+            }
+            merged.append(chosenSession)
+            indices[chosenTool] = (indices[chosenTool] ?? 0) + 1
+        }
+
+        return merged
     }
 
 }

@@ -108,6 +108,7 @@ extension AppState {
         if tab.kind == .terminal {
             if let sessionId = terminalSessionByTabId[tabId] {
                 wsClient.requestTermClose(termId: sessionId)
+                terminalTabIdBySessionId.removeValue(forKey: sessionId)
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)

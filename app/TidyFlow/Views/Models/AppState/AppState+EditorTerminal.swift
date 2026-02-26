@@ -316,11 +316,30 @@ extension AppState {
     }
 
     func handleTermClosed(_ termId: String) {
+        if let tabId = terminalTabIdBySessionId.removeValue(forKey: termId) {
+            terminalSessionByTabId.removeValue(forKey: tabId)
+            staleTerminalTabs.remove(tabId)
+            for (globalKey, var tabs) in workspaceTabs {
+                if let index = tabs.firstIndex(where: { $0.id == tabId }) {
+                    tabs[index].terminalSessionId = nil
+                    workspaceTabs[globalKey] = tabs
+                    break
+                }
+            }
+            if terminalSinkTabId == tabId {
+                terminalSink?.resetTerminal()
+            }
+            wsClient.requestTermList()
+            return
+        }
+
+        // 兼容历史状态：反向映射缺失时做一次兜底扫描并回填。
         for (globalKey, var tabs) in workspaceTabs {
             if let index = tabs.firstIndex(where: { $0.terminalSessionId == termId }) {
                 let tabId = tabs[index].id
                 terminalSessionByTabId.removeValue(forKey: tabId)
                 staleTerminalTabs.remove(tabId)
+                terminalTabIdBySessionId.removeValue(forKey: termId)
                 tabs[index].terminalSessionId = nil
                 workspaceTabs[globalKey] = tabs
                 if terminalSinkTabId == tabId {
@@ -338,6 +357,7 @@ extension AppState {
             staleTerminalTabs.insert(tabId)
         }
         terminalSessionByTabId.removeAll()
+        terminalTabIdBySessionId.removeAll()
         terminalState = .idle
     }
 
@@ -373,6 +393,7 @@ extension AppState {
         let workspace = parts[1]
 
         if let termId = terminalSessionByTabId[tab.id], !termId.isEmpty {
+            terminalTabIdBySessionId[termId] = tab.id
             wsClient.requestTermAttach(termId: termId)
             requestTerminal()
             return
@@ -423,7 +444,15 @@ extension AppState {
     #endif
 
     private func bindTermToTab(tabId: UUID, termId: String, globalKey: String) {
+        if let oldTermId = terminalSessionByTabId[tabId], oldTermId != termId {
+            terminalTabIdBySessionId.removeValue(forKey: oldTermId)
+        }
+        if let oldTabId = terminalTabIdBySessionId[termId], oldTabId != tabId {
+            terminalSessionByTabId.removeValue(forKey: oldTabId)
+            staleTerminalTabs.insert(oldTabId)
+        }
         terminalSessionByTabId[tabId] = termId
+        terminalTabIdBySessionId[termId] = tabId
         staleTerminalTabs.remove(tabId)
         pendingSpawnTabs.remove(tabId)
         if workspaceTerminalOpenTime[globalKey] == nil {
@@ -437,11 +466,16 @@ extension AppState {
     }
 
     private func findTabIdByTermId(_ termId: String) -> UUID? {
+        if let tabId = terminalTabIdBySessionId[termId] {
+            return tabId
+        }
         if let hit = terminalSessionByTabId.first(where: { $0.value == termId }) {
+            terminalTabIdBySessionId[termId] = hit.key
             return hit.key
         }
         for (_, tabs) in workspaceTabs {
             if let tab = tabs.first(where: { $0.kind == .terminal && $0.terminalSessionId == termId }) {
+                terminalTabIdBySessionId[termId] = tab.id
                 return tab.id
             }
         }
