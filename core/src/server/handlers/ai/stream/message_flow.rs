@@ -273,6 +273,7 @@ pub(crate) async fn handle_ai_chat_send(
     tokio::spawn(async move {
         let task_broadcast_tx = &task_broadcast_tx;
         let origin_conn_id = origin_conn_id.as_str();
+        let mut emit_state = StreamEmitState::default();
         let mut stream = match agent
             .send_message(
                 &directory,
@@ -295,7 +296,7 @@ pub(crate) async fn handle_ai_chat_send(
                     status_meta_cloned.clone(),
                     AiSessionStatus::Error { message: e.clone() },
                 );
-                let _ = emit_server_message(
+                let _ = emit_server_message_with_state(
                     &output_tx,
                     task_broadcast_tx,
                     origin_conn_id,
@@ -306,6 +307,7 @@ pub(crate) async fn handle_ai_chat_send(
                         session_id: session_id.clone(),
                         error: e,
                     },
+                    &mut emit_state,
                 )
                 .await;
                 cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
@@ -323,7 +325,7 @@ pub(crate) async fn handle_ai_chat_send(
                             project_name, workspace_name, session_id, e
                         );
                     }
-                    let _ = emit_server_message(
+                    let _ = emit_server_message_with_state(
                         &output_tx,
                         task_broadcast_tx,
                         origin_conn_id,
@@ -334,6 +336,7 @@ pub(crate) async fn handle_ai_chat_send(
                             session_id: session_id.clone(),
                             selection_hint: None,
                         },
+                        &mut emit_state,
                     )
                     .await;
                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
@@ -348,7 +351,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     role,
                                     selection_hint,
                                 } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -367,11 +370,13 @@ pub(crate) async fn handle_ai_chat_send(
                                                 }
                                             }),
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::PartUpdated { message_id, part } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -383,11 +388,13 @@ pub(crate) async fn handle_ai_chat_send(
                                             message_id,
                                             part: normalize_part_for_wire(part),
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -402,11 +409,13 @@ pub(crate) async fn handle_ai_chat_send(
                                             field,
                                             delta,
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::QuestionAsked { request } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -440,11 +449,13 @@ pub(crate) async fn handle_ai_chat_send(
                                                 tool_call_id: request.tool_call_id,
                                             },
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::QuestionCleared { request_id, .. } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -455,15 +466,17 @@ pub(crate) async fn handle_ai_chat_send(
                                             session_id: session_id.clone(),
                                             request_id,
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::Error { message } => {
                                     status_store_cloned.set_status_with_meta(
                                         status_meta_cloned.clone(),
                                         AiSessionStatus::Error { message: message.clone() },
                                     );
-                                    let _ = emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -474,6 +487,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             session_id: session_id.clone(),
                                             error: message,
                                         },
+                                        &mut emit_state,
                                     )
                                     .await;
                                     false
@@ -489,7 +503,7 @@ pub(crate) async fn handle_ai_chat_send(
                                         &ai_tool,
                                     )
                                     .await;
-                                    let _ = emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -500,6 +514,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             session_id: session_id.clone(),
                                             selection_hint,
                                         },
+                                        &mut emit_state,
                                     )
                                     .await;
                                     false
@@ -514,7 +529,7 @@ pub(crate) async fn handle_ai_chat_send(
                                 status_meta_cloned.clone(),
                                 AiSessionStatus::Error { message: e.clone() },
                             );
-                            let _ = emit_server_message(
+                            let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
                                 origin_conn_id,
@@ -525,6 +540,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     session_id: session_id.clone(),
                                     error: e,
                                 },
+                                &mut emit_state,
                             )
                             .await;
                             break;
@@ -541,7 +557,7 @@ pub(crate) async fn handle_ai_chat_send(
                                 &ai_tool,
                             )
                             .await;
-                            let _ = emit_server_message(
+                            let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
                                 origin_conn_id,
@@ -552,6 +568,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     session_id: session_id.clone(),
                                     selection_hint,
                                 },
+                                &mut emit_state,
                             )
                             .await;
                             break;
@@ -709,6 +726,7 @@ pub(crate) async fn handle_ai_chat_command(
     tokio::spawn(async move {
         let task_broadcast_tx = &task_broadcast_tx;
         let origin_conn_id = origin_conn_id.as_str();
+        let mut emit_state = StreamEmitState::default();
         let mut stream = match agent
             .send_command(
                 &directory,
@@ -732,7 +750,7 @@ pub(crate) async fn handle_ai_chat_command(
                     status_meta_cloned.clone(),
                     AiSessionStatus::Error { message: e.clone() },
                 );
-                let _ = emit_server_message(
+                let _ = emit_server_message_with_state(
                     &output_tx,
                     task_broadcast_tx,
                     origin_conn_id,
@@ -743,6 +761,7 @@ pub(crate) async fn handle_ai_chat_command(
                         session_id: session_id.clone(),
                         error: e,
                     },
+                    &mut emit_state,
                 )
                 .await;
                 cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
@@ -760,7 +779,7 @@ pub(crate) async fn handle_ai_chat_command(
                             project_name, workspace_name, session_id, e
                         );
                     }
-                    let _ = emit_server_message(
+                    let _ = emit_server_message_with_state(
                         &output_tx,
                         task_broadcast_tx,
                         origin_conn_id,
@@ -771,6 +790,7 @@ pub(crate) async fn handle_ai_chat_command(
                             session_id: session_id.clone(),
                             selection_hint: None,
                         },
+                        &mut emit_state,
                     )
                     .await;
                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
@@ -785,7 +805,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     role,
                                     selection_hint,
                                 } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -804,11 +824,13 @@ pub(crate) async fn handle_ai_chat_command(
                                                 }
                                             }),
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::PartUpdated { message_id, part } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -820,11 +842,13 @@ pub(crate) async fn handle_ai_chat_command(
                                             message_id,
                                             part: normalize_part_for_wire(part),
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
-                                    emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -839,8 +863,10 @@ pub(crate) async fn handle_ai_chat_command(
                                             field,
                                             delta,
                                         },
+                                        &mut emit_state,
                                     )
-                                    .await
+                                    .await;
+                                    true
                                 }
                                 AiEvent::QuestionAsked { .. } | AiEvent::QuestionCleared { .. } => true,
                                 AiEvent::Error { message } => {
@@ -848,7 +874,7 @@ pub(crate) async fn handle_ai_chat_command(
                                         status_meta_cloned.clone(),
                                         AiSessionStatus::Error { message: message.clone() },
                                     );
-                                    let _ = emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -859,6 +885,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             session_id: session_id.clone(),
                                             error: message,
                                         },
+                                        &mut emit_state,
                                     )
                                     .await;
                                     false
@@ -874,7 +901,7 @@ pub(crate) async fn handle_ai_chat_command(
                                         &ai_tool,
                                     )
                                     .await;
-                                    let _ = emit_server_message(
+                                    let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
@@ -885,6 +912,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             session_id: session_id.clone(),
                                             selection_hint,
                                         },
+                                        &mut emit_state,
                                     )
                                     .await;
                                     false
@@ -899,7 +927,7 @@ pub(crate) async fn handle_ai_chat_command(
                                 status_meta_cloned.clone(),
                                 AiSessionStatus::Error { message: e.clone() },
                             );
-                            let _ = emit_server_message(
+                            let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
                                 origin_conn_id,
@@ -910,6 +938,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     session_id: session_id.clone(),
                                     error: e,
                                 },
+                                &mut emit_state,
                             )
                             .await;
                             break;
@@ -925,7 +954,7 @@ pub(crate) async fn handle_ai_chat_command(
                                 &ai_tool,
                             )
                             .await;
-                            let _ = emit_server_message(
+                            let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
                                 origin_conn_id,
@@ -936,6 +965,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     session_id: session_id.clone(),
                                     selection_hint,
                                 },
+                                &mut emit_state,
                             )
                             .await;
                             break;

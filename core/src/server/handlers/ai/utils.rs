@@ -20,7 +20,10 @@ pub(crate) const PRELOAD_AI_TOOLS: [&str; 3] = ["opencode", "codex", "copilot"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
-const AI_STREAM_BROADCAST_SUMMARY_INTERVAL: Duration = Duration::from_millis(250);
+const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_LOW: Duration = Duration::from_millis(250);
+const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_MEDIUM: Duration = Duration::from_millis(500);
+const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGH: Duration = Duration::from_millis(1000);
+const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGHEST: Duration = Duration::from_millis(1500);
 
 fn parse_env_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
@@ -42,14 +45,26 @@ fn session_summary_broadcast_gate() -> &'static Mutex<HashMap<String, Instant>> 
     GATE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn allow_summary_broadcast(session_id: &str) -> bool {
+fn summary_broadcast_interval_by_depth(depth: usize) -> Duration {
+    if depth < 128 {
+        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_LOW
+    } else if depth < 256 {
+        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_MEDIUM
+    } else if depth < 512 {
+        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGH
+    } else {
+        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGHEST
+    }
+}
+
+fn allow_summary_broadcast(session_id: &str, interval: Duration) -> bool {
     let now = Instant::now();
     let mut gate = session_summary_broadcast_gate()
         .lock()
         .expect("summary broadcast gate poisoned");
 
     if let Some(last) = gate.get(session_id) {
-        if now.duration_since(*last) < AI_STREAM_BROADCAST_SUMMARY_INTERVAL {
+        if now.duration_since(*last) < interval {
             return false;
         }
     }
@@ -61,7 +76,7 @@ fn allow_summary_broadcast(session_id: &str) -> bool {
     true
 }
 
-fn should_broadcast_stream_message(msg: &ServerMessage) -> bool {
+fn should_broadcast_stream_message(msg: &ServerMessage, broadcast_depth: usize) -> bool {
     if !perf_active_only_delta_broadcast_enabled() {
         return true;
     }
@@ -72,10 +87,17 @@ fn should_broadcast_stream_message(msg: &ServerMessage) -> bool {
         // 其余连接只接收节流后的阶段性摘要更新。
         ServerMessage::AIChatPartUpdated { session_id, .. }
         | ServerMessage::AIChatMessageUpdated { session_id, .. } => {
-            allow_summary_broadcast(session_id)
+            let interval = summary_broadcast_interval_by_depth(broadcast_depth);
+            allow_summary_broadcast(session_id, interval)
         }
         _ => true,
     }
+}
+
+#[derive(Default)]
+pub(crate) struct StreamEmitState {
+    pub(crate) direct_channel_closed: bool,
+    direct_send_failed_logged: bool,
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -145,12 +167,34 @@ pub(crate) async fn emit_server_message(
     origin_conn_id: &str,
     msg: ServerMessage,
 ) -> bool {
+    let mut state = StreamEmitState::default();
+    emit_server_message_with_state(output_tx, task_broadcast_tx, origin_conn_id, msg, &mut state)
+        .await
+}
+
+pub(crate) async fn emit_server_message_with_state(
+    output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
+    msg: ServerMessage,
+    emit_state: &mut StreamEmitState,
+) -> bool {
     let mut delivered = false;
-    let should_broadcast = should_broadcast_stream_message(&msg);
-    if let Err(e) = output_tx.send(msg.clone()).await {
-        warn!("AI stream: failed to enqueue server message: {}", e);
-    } else {
-        delivered = true;
+    let broadcast_depth = task_broadcast_tx.len();
+    let should_broadcast = should_broadcast_stream_message(&msg, broadcast_depth);
+
+    if !emit_state.direct_channel_closed {
+        if let Err(e) = output_tx.send(msg.clone()).await {
+            if !emit_state.direct_send_failed_logged {
+                warn!("AI stream: failed to enqueue server message: {}", e);
+                emit_state.direct_send_failed_logged = true;
+            } else {
+                trace!("AI stream: skip direct enqueue after channel closed: {}", e);
+            }
+            emit_state.direct_channel_closed = true;
+        } else {
+            delivered = true;
+        }
     }
 
     if should_broadcast {
@@ -825,7 +869,7 @@ mod tests {
             delta: "hello".to_string(),
         };
 
-        assert!(!should_broadcast_stream_message(&msg));
+        assert!(!should_broadcast_stream_message(&msg, 0));
     }
 
     #[test]
@@ -838,7 +882,7 @@ mod tests {
             selection_hint: None,
         };
 
-        assert!(should_broadcast_stream_message(&msg));
+        assert!(should_broadcast_stream_message(&msg, 0));
     }
 
     #[test]
@@ -868,8 +912,39 @@ mod tests {
             selection_hint: None,
         };
 
-        assert!(should_broadcast_stream_message(&msg));
-        assert!(!should_broadcast_stream_message(&same_session_msg));
+        assert!(should_broadcast_stream_message(&msg, 0));
+        assert!(!should_broadcast_stream_message(&same_session_msg, 0));
+    }
+
+    #[test]
+    fn stream_message_update_uses_longer_window_with_high_queue_depth() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_id = format!("session-throttle-depth-{}", unique);
+
+        let msg = ServerMessage::AIChatMessageUpdated {
+            project_name: "p".to_string(),
+            workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id: session_id.clone(),
+            message_id: "m1".to_string(),
+            role: "assistant".to_string(),
+            selection_hint: None,
+        };
+        let same_session_msg = ServerMessage::AIChatMessageUpdated {
+            project_name: "p".to_string(),
+            workspace_name: "w".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id,
+            message_id: "m1".to_string(),
+            role: "assistant".to_string(),
+            selection_hint: None,
+        };
+
+        assert!(should_broadcast_stream_message(&msg, 600));
+        assert!(!should_broadcast_stream_message(&same_session_msg, 600));
     }
 }
 
