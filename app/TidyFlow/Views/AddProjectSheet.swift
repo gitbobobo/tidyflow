@@ -1,6 +1,5 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import os
 
 /// Add Project Sheet - Allows importing a local directory as a project
 /// UX-1: Minimal implementation using fileImporter
@@ -13,6 +12,7 @@ struct AddProjectSheet: View {
     @State private var showFileImporter = false
     @State private var importError: String?
     @State private var isImporting = false
+    @State private var securityScopedPath: URL?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -75,6 +75,7 @@ struct AddProjectSheet: View {
             // 操作按钮
             HStack {
                 Button("common.cancel".localized) {
+                    stopAccessingSecurityScopedPath()
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -104,6 +105,24 @@ struct AddProjectSheet: View {
             allowsMultipleSelection: false
         ) { result in
             handleFileSelection(result)
+        }
+        .onChange(of: appState.projectImportInFlight) { _, inFlight in
+            guard isImporting else { return }
+            isImporting = inFlight
+            if !inFlight && appState.projectImportError == nil {
+                stopAccessingSecurityScopedPath()
+                dismiss()
+            }
+        }
+        .onChange(of: appState.projectImportError) { _, error in
+            guard isImporting else { return }
+            guard let error, !error.isEmpty else { return }
+            stopAccessingSecurityScopedPath()
+            importError = error
+            isImporting = false
+        }
+        .onDisappear {
+            stopAccessingSecurityScopedPath()
         }
     }
 
@@ -144,63 +163,23 @@ struct AddProjectSheet: View {
             return
         }
 
-        // UX-2: Call backend API to import project
-        // Start security-scoped access for the selected path
-        let didStartAccess = path.startAccessingSecurityScopedResource()
-
-        // Store previous handlers to restore later
-        let previousImportHandler = appState.wsClient.onProjectImported
-        let previousErrorHandler = appState.wsClient.onError
-
-        // 使用 @State 绑定来跟踪超时是否已取消
-        var timeoutCancelled = false
-
-        // 添加超时保护（30秒，因为大型仓库的 git 操作可能较慢）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak appState] in
-            guard !timeoutCancelled else { return }
-            TFLog.app.error("Import timeout for project at path: \(path.path, privacy: .public)")
-            if didStartAccess {
-                path.stopAccessingSecurityScopedResource()
-            }
-            appState?.wsClient.onProjectImported = previousImportHandler
-            appState?.wsClient.onError = previousErrorHandler
-            self.importError = "Import timed out. Please check if the server is running."
-            self.isImporting = false
+        startAccessingSecurityScopedPath(path)
+        appState.importProject(name: trimmedName, path: path.path)
+        if !appState.projectImportInFlight {
+            stopAccessingSecurityScopedPath()
+            importError = appState.projectImportError ?? "Import failed"
+            isImporting = false
         }
+    }
 
-        appState.wsClient.onProjectImported = { [weak appState] result in
-            timeoutCancelled = true
-            DispatchQueue.main.async {
-                if didStartAccess {
-                    path.stopAccessingSecurityScopedResource()
-                }
-                // Restore previous handler
-                appState?.wsClient.onProjectImported = previousImportHandler
-                appState?.wsClient.onError = previousErrorHandler
-                // Handle the result
-                appState?.handleProjectImported(result)
-                self.isImporting = false
-                self.dismiss()
-            }
-        }
+    private func startAccessingSecurityScopedPath(_ path: URL) {
+        guard path.startAccessingSecurityScopedResource() else { return }
+        securityScopedPath = path
+    }
 
-        appState.wsClient.onError = { [weak appState] errorMsg in
-            timeoutCancelled = true
-            DispatchQueue.main.async {
-                if didStartAccess {
-                    path.stopAccessingSecurityScopedResource()
-                }
-                // Restore previous handlers
-                appState?.wsClient.onProjectImported = previousImportHandler
-                appState?.wsClient.onError = previousErrorHandler
-                self.importError = errorMsg
-                self.isImporting = false
-            }
-        }
-
-        appState.wsClient.requestImportProject(
-            name: trimmedName,
-            path: path.path
-        )
+    private func stopAccessingSecurityScopedPath() {
+        guard let path = securityScopedPath else { return }
+        path.stopAccessingSecurityScopedResource()
+        securityScopedPath = nil
     }
 }

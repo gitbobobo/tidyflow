@@ -740,6 +740,12 @@ extension AppState {
     }
 
     func handleClientErrorMessage(_ errorMsg: String) {
+        // 导入项目期间收到服务端错误，结束导入并透传错误给 UI。
+        if projectImportInFlight {
+            projectImportInFlight = false
+            projectImportError = errorMsg
+        }
+
         if let ws = selectedWorkspaceKey {
             var cache = fileIndexCache[ws] ?? FileIndexCache.empty()
             if cache.isLoading {
