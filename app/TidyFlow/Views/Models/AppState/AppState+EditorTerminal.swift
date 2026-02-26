@@ -284,6 +284,7 @@ extension AppState {
         }
         let globalKey = globalWorkspaceKey(projectName: result.project, workspaceName: result.workspace)
         bindTermToTab(tabId: tabId, termId: result.termId, globalKey: globalKey)
+        terminalAttachRequestedAtByTermId[result.termId] = Date()
         wsClient.requestTermAttach(termId: result.termId)
         wsClient.requestTermList()
     }
@@ -293,11 +294,15 @@ extension AppState {
             TFLog.app.warning("收到 term_attached 但未找到 tab，term=\(result.termId, privacy: .public)")
             return
         }
+        if let requestedAt = terminalAttachRequestedAtByTermId.removeValue(forKey: result.termId) {
+            let costMs = Int(Date().timeIntervalSince(requestedAt) * 1000)
+            TFLog.app.info("perf.terminal.attach.rtt_ms=\(costMs, privacy: .public) term=\(result.termId, privacy: .public)")
+        }
         terminalState = .ready(sessionId: result.termId)
         if !result.scrollback.isEmpty {
             emitTerminalOutput(termId: result.termId, bytes: result.scrollback)
             wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
-            termOutputUnackedBytes = 0
+            termOutputUnackedBytesByTermId[result.termId] = 0
         }
         if let sink = terminalSink, terminalSinkTabId == tabId {
             sink.focusTerminal()
@@ -319,6 +324,9 @@ extension AppState {
         if let tabId = terminalTabIdBySessionId.removeValue(forKey: termId) {
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)
+            termOutputUnackedBytesByTermId.removeValue(forKey: termId)
+            terminalAttachRequestedAtByTermId.removeValue(forKey: termId)
+            terminalDetachRequestedAtByTermId.removeValue(forKey: termId)
             for (globalKey, var tabs) in workspaceTabs {
                 if let index = tabs.firstIndex(where: { $0.id == tabId }) {
                     tabs[index].terminalSessionId = nil
@@ -340,6 +348,9 @@ extension AppState {
                 terminalSessionByTabId.removeValue(forKey: tabId)
                 staleTerminalTabs.remove(tabId)
                 terminalTabIdBySessionId.removeValue(forKey: termId)
+                termOutputUnackedBytesByTermId.removeValue(forKey: termId)
+                terminalAttachRequestedAtByTermId.removeValue(forKey: termId)
+                terminalDetachRequestedAtByTermId.removeValue(forKey: termId)
                 tabs[index].terminalSessionId = nil
                 workspaceTabs[globalKey] = tabs
                 if terminalSinkTabId == tabId {
@@ -358,6 +369,9 @@ extension AppState {
         }
         terminalSessionByTabId.removeAll()
         terminalTabIdBySessionId.removeAll()
+        termOutputUnackedBytesByTermId.removeAll()
+        terminalAttachRequestedAtByTermId.removeAll()
+        terminalDetachRequestedAtByTermId.removeAll()
         terminalState = .idle
     }
 
@@ -368,6 +382,7 @@ extension AppState {
             for tab in tabs where tab.kind == .terminal && staleTerminalTabs.contains(tab.id) {
                 if let sessionId = tab.terminalSessionId, !sessionId.isEmpty {
                     TFLog.app.info("终端重连附着: tab=\(tab.id), session=\(sessionId, privacy: .public)")
+                    terminalAttachRequestedAtByTermId[sessionId] = Date()
                     wsClient.requestTermAttach(termId: sessionId)
                 }
             }
@@ -394,6 +409,7 @@ extension AppState {
 
         if let termId = terminalSessionByTabId[tab.id], !termId.isEmpty {
             terminalTabIdBySessionId[termId] = tab.id
+            terminalAttachRequestedAtByTermId[termId] = Date()
             wsClient.requestTermAttach(termId: termId)
             requestTerminal()
             return
@@ -424,10 +440,22 @@ extension AppState {
 
     #if os(macOS)
     func attachTerminalSink(_ sink: MacTerminalOutputSink, tabId: UUID) {
+        let switchStartedAt = Date()
+        if isPerfTerminalAutoDetachEnabled,
+           let previousTabId = terminalSinkTabId,
+           previousTabId != tabId,
+           let previousTermId = terminalSessionByTabId[previousTabId],
+           !previousTermId.isEmpty {
+            terminalDetachRequestedAtByTermId[previousTermId] = Date()
+            wsClient.requestTermDetach(termId: previousTermId)
+        }
+
         terminalSink = sink
         terminalSinkTabId = tabId
         sink.resetTerminal()
         flushPendingTerminalOutput()
+        let switchCostMs = Int(Date().timeIntervalSince(switchStartedAt) * 1000)
+        TFLog.app.info("perf.terminal.switch_ms=\(switchCostMs, privacy: .public)")
     }
 
     func detachTerminalSink(_ sink: MacTerminalOutputSink? = nil, tabId: UUID) {
@@ -435,10 +463,15 @@ extension AppState {
             return
         }
         if terminalSinkTabId == tabId {
+            if isPerfTerminalAutoDetachEnabled,
+               let termId = terminalSessionByTabId[tabId],
+               !termId.isEmpty {
+                terminalDetachRequestedAtByTermId[termId] = Date()
+                wsClient.requestTermDetach(termId: termId)
+            }
             terminalSink = nil
             terminalSinkTabId = nil
             pendingTerminalOutput.removeAll()
-            termOutputUnackedBytes = 0
         }
     }
     #endif
@@ -446,6 +479,9 @@ extension AppState {
     private func bindTermToTab(tabId: UUID, termId: String, globalKey: String) {
         if let oldTermId = terminalSessionByTabId[tabId], oldTermId != termId {
             terminalTabIdBySessionId.removeValue(forKey: oldTermId)
+            termOutputUnackedBytesByTermId.removeValue(forKey: oldTermId)
+            terminalAttachRequestedAtByTermId.removeValue(forKey: oldTermId)
+            terminalDetachRequestedAtByTermId.removeValue(forKey: oldTermId)
         }
         if let oldTabId = terminalTabIdBySessionId[termId], oldTabId != tabId {
             terminalSessionByTabId.removeValue(forKey: oldTabId)
@@ -484,21 +520,25 @@ extension AppState {
 
     private func emitTerminalOutput(termId: String, bytes: [UInt8]) {
         guard !bytes.isEmpty else { return }
-        guard let tabId = findTabIdByTermId(termId), terminalSinkTabId == tabId else { return }
+        guard let tabId = findTabIdByTermId(termId) else { return }
 
-        if let sink = terminalSink {
-            sink.writeOutput(bytes)
-        } else {
-            pendingTerminalOutput.append(bytes)
-            if pendingTerminalOutput.count > pendingOutputChunkLimit {
-                pendingTerminalOutput.removeFirst(pendingTerminalOutput.count - pendingOutputChunkLimit)
+        if terminalSinkTabId == tabId {
+            if let sink = terminalSink {
+                sink.writeOutput(bytes)
+            } else {
+                pendingTerminalOutput.append(bytes)
+                if pendingTerminalOutput.count > pendingOutputChunkLimit {
+                    pendingTerminalOutput.removeFirst(pendingTerminalOutput.count - pendingOutputChunkLimit)
+                }
             }
         }
 
-        termOutputUnackedBytes += bytes.count
-        if termOutputUnackedBytes >= termOutputAckThreshold {
-            wsClient.sendTermOutputAck(termId: termId, bytes: termOutputUnackedBytes)
-            termOutputUnackedBytes = 0
+        let newUnacked = (termOutputUnackedBytesByTermId[termId] ?? 0) + bytes.count
+        if newUnacked >= termOutputAckThreshold {
+            wsClient.sendTermOutputAck(termId: termId, bytes: newUnacked)
+            termOutputUnackedBytesByTermId[termId] = 0
+        } else {
+            termOutputUnackedBytesByTermId[termId] = newUnacked
         }
     }
 

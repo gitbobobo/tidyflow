@@ -27,6 +27,15 @@ struct EvolutionEvidenceReadRequestState {
 }
 
 class AppState: ObservableObject {
+    private static let perfTerminalAutoDetachEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["PERF_TERMINAL_AUTO_DETACH"]?.lowercased() {
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return true
+        }
+    }()
+
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
     @Published var connectionState: ConnectionState = .disconnected
@@ -110,15 +119,12 @@ class AppState: ObservableObject {
 
     // 终端领域状态（独立 ObservableObject，减少终端状态变化对全局视图的影响）
     let terminalStore = TerminalStore()
-    private var terminalStoreCancellable: AnyCancellable?
 
     // 编辑器领域状态（独立 ObservableObject，减少编辑器状态变化对全局视图的影响）
     let editorStore = EditorStore()
-    private var editorStoreCancellable: AnyCancellable?
 
     // 后台任务管理器
     let taskManager = BackgroundTaskManager()
-    private var taskManagerCancellable: AnyCancellable?
     private var coreProcessManagerCancellable: AnyCancellable?
     private var evolutionReplayStoreCancellable: AnyCancellable?
     private var subAgentViewerStoreCancellable: AnyCancellable?
@@ -360,8 +366,10 @@ class AppState: ObservableObject {
     #endif
     var pendingTerminalOutput: [[UInt8]] = []
     let pendingOutputChunkLimit = 128
-    var termOutputUnackedBytes: Int = 0
+    var termOutputUnackedBytesByTermId: [String: Int] = [:]
     let termOutputAckThreshold = 50 * 1024
+    var terminalAttachRequestedAtByTermId: [String: Date] = [:]
+    var terminalDetachRequestedAtByTermId: [String: Date] = [:]
 
     // 系统唤醒通知观察者
     var wakeObserver: NSObjectProtocol?
@@ -396,21 +404,6 @@ class AppState: ObservableObject {
         // 从 UserDefaults 加载 Evolution 全局默认配置
         loadEvolutionDefaultProfiles()
 
-        // 转发 taskManager 变更到 AppState，驱动侧边栏等视图刷新
-        taskManagerCancellable = taskManager.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-
-        // 转发 terminalStore 变更到 AppState，保持向后兼容
-        terminalStoreCancellable = terminalStore.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-
-        // 转发 editorStore 变更到 AppState，保持向后兼容
-        editorStoreCancellable = editorStore.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-
         // 转发阶段聊天回放 store 的消息，兼容旧的数组状态读取路径。
         evolutionReplayStoreCancellable = evolutionReplayStore.$messages
             .receive(on: RunLoop.main)
@@ -436,6 +429,10 @@ class AppState: ObservableObject {
 
         // Start Core process first (WS will connect when Core is ready)
         startCoreIfNeeded()
+    }
+
+    var isPerfTerminalAutoDetachEnabled: Bool {
+        Self.perfTerminalAutoDetachEnabled
     }
 
     private func configureAIToolBuckets() {

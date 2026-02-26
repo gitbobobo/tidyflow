@@ -107,8 +107,12 @@ extension AppState {
         // Phase C1-2: Send terminal kill and clean up session mapping
         if tab.kind == .terminal {
             if let sessionId = terminalSessionByTabId[tabId] {
+                terminalDetachRequestedAtByTermId[sessionId] = Date()
                 wsClient.requestTermClose(termId: sessionId)
                 terminalTabIdBySessionId.removeValue(forKey: sessionId)
+                termOutputUnackedBytesByTermId.removeValue(forKey: sessionId)
+                terminalAttachRequestedAtByTermId.removeValue(forKey: sessionId)
+                terminalDetachRequestedAtByTermId.removeValue(forKey: sessionId)
             }
             terminalSessionByTabId.removeValue(forKey: tabId)
             staleTerminalTabs.remove(tabId)

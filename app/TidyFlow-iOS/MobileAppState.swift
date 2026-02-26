@@ -118,6 +118,15 @@ protocol MobileTerminalOutputSink: AnyObject {
 
 @MainActor
 final class MobileAppState: ObservableObject {
+    private static let perfTerminalAutoDetachEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["PERF_TERMINAL_AUTO_DETACH"]?.lowercased() {
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return true
+        }
+    }()
+
     // 连接表单
     @Published var host: String = ""
     @Published var port: String = "47999"
@@ -240,9 +249,13 @@ final class MobileAppState: ObservableObject {
     /// 终端视图是否已经拿到有效 cols/rows
     private var isTerminalViewReady: Bool = false
     /// 终端输出流控 ACK：累计未确认字节数
-    private var termOutputUnackedBytes: Int = 0
+    private var termOutputUnackedBytesByTermId: [String: Int] = [:]
     /// ACK 阈值（50KB），与 macOS 原生终端端保持一致
     private let termOutputAckThreshold = 50 * 1024
+    /// 终端附着请求时间，用于采样 RTT
+    private var termAttachRequestedAtByTermId: [String: Date] = [:]
+    /// 终端取消订阅请求时间（用于观测）
+    private var termDetachRequestedAtByTermId: [String: Date] = [:]
 
     /// 原生终端输出目标（SwiftTerm）
     private weak var terminalSink: MobileTerminalOutputSink?
@@ -334,6 +347,10 @@ final class MobileAppState: ObservableObject {
     /// 进入后台时标记连接为 stale，确保回到前台时能正确触发探活/重连
     func handleEnterBackground() {
         guard !wsClient.isIntentionalDisconnect else { return }
+        if Self.perfTerminalAutoDetachEnabled, !currentTermId.isEmpty {
+            termDetachRequestedAtByTermId[currentTermId] = Date()
+            wsClient.requestTermDetach(termId: currentTermId)
+        }
         wsClient.markStaleIfConnected()
     }
 
@@ -366,6 +383,7 @@ final class MobileAppState: ObservableObject {
     /// 重连成功后或 ping 存活时，重新附着当前终端的输出订阅
     private func reattachTerminalIfNeeded() {
         guard !currentTermId.isEmpty else { return }
+        termAttachRequestedAtByTermId[currentTermId] = Date()
         wsClient.requestTermAttach(termId: currentTermId)
     }
 
@@ -2254,6 +2272,7 @@ final class MobileAppState: ObservableObject {
             pendingCustomCommand = ""
             pendingCustomCommandIcon = ""
             pendingCustomCommandName = ""
+            termAttachRequestedAtByTermId[attachId] = Date()
             wsClient.requestTermAttach(termId: attachId)
         } else {
             // 创建新终端，携带展示信息供 Core 持久化
@@ -2271,19 +2290,27 @@ final class MobileAppState: ObservableObject {
     }
 
     private func switchToTerminal(termId: String) {
+        let switchStartedAt = Date()
         let newId = termId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !newId.isEmpty else { return }
         guard newId != currentTermId else { return }
+        let oldId = currentTermId
+        if Self.perfTerminalAutoDetachEnabled, !oldId.isEmpty {
+            termDetachRequestedAtByTermId[oldId] = Date()
+            wsClient.requestTermDetach(termId: oldId)
+        }
 
         // 防止 SwiftUI 复用同一个 TerminalView 时，把新终端输出追加到旧缓冲。
         pendingOutputChunks.removeAll()
-        termOutputUnackedBytes = 0
+        termOutputUnackedBytesByTermId[newId] = 0
         currentTermId = newId
         lastRenderedTermId = ""
         if let sink = terminalSink {
             sink.resetTerminal()
             lastRenderedTermId = newId
         }
+        let switchCostMs = Int(Date().timeIntervalSince(switchStartedAt) * 1000)
+        TFLog.app.info("perf.mobile.terminal.switch_ms=\(switchCostMs, privacy: .public)")
     }
 
     /// 发送特殊键序列到终端
@@ -2337,6 +2364,7 @@ final class MobileAppState: ObservableObject {
         // 离开页面时仅取消输出订阅，避免后台持续转发导致卡顿/抖动/不必要的资源占用。
         // 注意：不要触发 term_close（那会直接 kill 远端 PTY）。
         if !currentTermId.isEmpty {
+            termDetachRequestedAtByTermId[currentTermId] = Date()
             wsClient.requestTermDetach(termId: currentTermId)
         }
         currentTermId = ""
@@ -2347,7 +2375,9 @@ final class MobileAppState: ObservableObject {
         pendingCustomCommandIcon = ""
         pendingCustomCommandName = ""
         isTerminalViewReady = false
-        termOutputUnackedBytes = 0
+        termOutputUnackedBytesByTermId.removeAll()
+        termAttachRequestedAtByTermId.removeAll()
+        termDetachRequestedAtByTermId.removeAll()
         pendingOutputChunks.removeAll()
         terminalSink = nil
         lastRenderedTermId = ""
@@ -2544,6 +2574,10 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onTermAttached = { [weak self] result in
             guard let self else { return }
+            if let requestedAt = self.termAttachRequestedAtByTermId.removeValue(forKey: result.termId) {
+                let costMs = Int(Date().timeIntervalSince(requestedAt) * 1000)
+                TFLog.app.info("perf.mobile.terminal.attach.rtt_ms=\(costMs, privacy: .public) term=\(result.termId, privacy: .public)")
+            }
             self.switchToTerminal(termId: result.termId)
             // 从服务端恢复展示信息
             if self.terminalPresentationById[result.termId] == nil,
@@ -2556,11 +2590,11 @@ final class MobileAppState: ObservableObject {
             }
             // 写入 scrollback 到 SwiftTerm
             if !result.scrollback.isEmpty {
-                self.emitTerminalOutput(result.scrollback)
+                self.emitTerminalOutput(result.scrollback, termId: result.termId, shouldRender: true)
                 // scrollback 回放后立即发送 ACK，避免大量 scrollback 数据触发背压
                 if !result.termId.isEmpty {
                     self.wsClient.sendTermOutputAck(termId: result.termId, bytes: result.scrollback.count)
-                    self.termOutputUnackedBytes = 0
+                    self.termOutputUnackedBytesByTermId[result.termId] = 0
                 }
             }
             self.wsClient.requestTermResize(
@@ -2576,9 +2610,8 @@ final class MobileAppState: ObservableObject {
             if let termId, self.currentTermId.isEmpty {
                 self.switchToTerminal(termId: termId)
             }
-            // 只接受当前查看终端的输出，其他终端的数据丢弃（scrollback 在服务端保留）
-            guard let termId, termId == self.currentTermId else { return }
-            self.emitTerminalOutput(bytes)
+            guard let termId else { return }
+            self.emitTerminalOutput(bytes, termId: termId, shouldRender: termId == self.currentTermId)
         }
 
         wsClient.onTerminalExit = { [weak self] _, _ in
@@ -2589,6 +2622,9 @@ final class MobileAppState: ObservableObject {
         wsClient.onTermClosed = { [weak self] termId in
             guard let self else { return }
             self.terminalPresentationById.removeValue(forKey: termId)
+            self.termOutputUnackedBytesByTermId.removeValue(forKey: termId)
+            self.termAttachRequestedAtByTermId.removeValue(forKey: termId)
+            self.termDetachRequestedAtByTermId.removeValue(forKey: termId)
             if self.currentTermId == termId {
                 self.currentTermId = ""
             }
@@ -3789,16 +3825,19 @@ final class MobileAppState: ObservableObject {
 
     // MARK: - 输出缓冲
 
-    private func emitTerminalOutput(_ bytes: [UInt8]) {
+    private func emitTerminalOutput(_ bytes: [UInt8], termId: String, shouldRender: Bool) {
         guard !bytes.isEmpty else { return }
 
         // 流控 ACK：累计字节数，超过阈值时通知 Core 释放背压
-        termOutputUnackedBytes += bytes.count
-        if termOutputUnackedBytes >= termOutputAckThreshold, !currentTermId.isEmpty {
-            wsClient.sendTermOutputAck(termId: currentTermId, bytes: termOutputUnackedBytes)
-            termOutputUnackedBytes = 0
+        let unacked = (termOutputUnackedBytesByTermId[termId] ?? 0) + bytes.count
+        if unacked >= termOutputAckThreshold {
+            wsClient.sendTermOutputAck(termId: termId, bytes: unacked)
+            termOutputUnackedBytesByTermId[termId] = 0
+        } else {
+            termOutputUnackedBytesByTermId[termId] = unacked
         }
 
+        guard shouldRender else { return }
         if let sink = terminalSink {
             sink.writeOutput(bytes)
             return
