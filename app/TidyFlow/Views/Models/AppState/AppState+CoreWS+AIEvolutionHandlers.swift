@@ -28,6 +28,8 @@ extension AppState {
         effectiveHint: AISessionSelectionHint?,
         messagesCount: Int? = nil
     ) {
+        guard isPerfAISelectionDebugLogEnabled else { return }
+
         var detail: [String: Any] = [
             "event": event,
             "tool": tool.rawValue,
@@ -234,9 +236,11 @@ extension AppState {
         let store = aiStore(for: ev.aiTool)
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if store.isAbortPending(for: ev.sessionId) { return }
-        TFLog.app.debug(
-            "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
-        )
+        if isPerfAISelectionDebugLogEnabled {
+            TFLog.app.debug(
+                "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
+            )
+        }
         store.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
         sendAISelectionPipelineLog(
             event: "message_updated_received",
@@ -265,9 +269,11 @@ extension AppState {
         let store = aiStore(for: ev.aiTool)
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if store.isAbortPending(for: ev.sessionId) { return }
-        TFLog.app.debug(
-            "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
-        )
+        if isPerfAISelectionDebugLogEnabled {
+            TFLog.app.debug(
+                "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
+            )
+        }
         store.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
         applyAISessionSelectionHintFromPart(
             ev.part,
@@ -287,9 +293,11 @@ extension AppState {
         let store = aiStore(for: ev.aiTool)
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if store.isAbortPending(for: ev.sessionId) { return }
-        TFLog.app.debug(
-            "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
-        )
+        if isPerfAISelectionDebugLogEnabled {
+            TFLog.app.debug(
+                "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
+            )
+        }
         store.enqueuePartDelta(
             messageId: ev.messageId,
             partId: ev.partId,
@@ -309,7 +317,9 @@ extension AppState {
         let store = aiStore(for: ev.aiTool)
         store.clearAbortPendingIfMatches(ev.sessionId)
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
-        TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
+        if isPerfAISelectionDebugLogEnabled {
+            TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
+        }
         sendAISelectionPipelineLog(
             event: "chat_done_received",
             tool: ev.aiTool,

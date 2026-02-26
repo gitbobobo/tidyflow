@@ -35,6 +35,14 @@ class AppState: ObservableObject {
             return true
         }
     }()
+    private static let perfAISelectionDebugLogEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["PERF_AI_SELECTION_DEBUG_LOG"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
 
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
@@ -435,6 +443,10 @@ class AppState: ObservableObject {
         Self.perfTerminalAutoDetachEnabled
     }
 
+    var isPerfAISelectionDebugLogEnabled: Bool {
+        Self.perfAISelectionDebugLogEnabled
+    }
+
     private func configureAIToolBuckets() {
         for tool in AIChatTool.allCases {
             aiChatStoresByTool[tool] = AIChatStore()
@@ -747,6 +759,8 @@ class AppState: ObservableObject {
         unresolved: AISessionSelectionHint?,
         extra: [String: Any]
     ) {
+        guard isPerfAISelectionDebugLogEnabled else { return }
+
         var detail: [String: Any] = [
             "event": event,
             "trigger": trigger,
