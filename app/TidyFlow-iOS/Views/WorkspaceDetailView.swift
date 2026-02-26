@@ -711,10 +711,17 @@ struct MobileEvidenceView: View {
                     Text(itemError)
                         .foregroundColor(.red)
                 } else if let itemImage {
-                    Image(uiImage: itemImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ZStack {
+                        Color.black.opacity(0.04)
+                        Image(uiImage: itemImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                            .padding(10)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 320)
+                    .clipShape(.rect(cornerRadius: 10))
                 } else if !itemTextChunks.isEmpty {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {

@@ -877,14 +877,16 @@ struct EvidenceTabView: View {
                         .foregroundColor(.red)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 } else if let itemImage {
-                    ScrollView([.horizontal, .vertical]) {
+                    ZStack {
+                        Color.black.opacity(0.04)
                         Image(nsImage: itemImage)
                             .resizable()
                             .scaledToFit()
-                            .frame(maxWidth: .infinity, alignment: .center)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                            .padding(10)
                     }
-                    .background(Color.black.opacity(0.04))
-                    .cornerRadius(10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(.rect(cornerRadius: 10))
                 } else if !itemTextChunks.isEmpty {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
