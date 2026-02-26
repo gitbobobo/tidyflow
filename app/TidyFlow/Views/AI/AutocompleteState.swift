@@ -1,6 +1,18 @@
 import Foundation
 import Combine
 
+private let autocompleteCandidateLimit = 200
+private let autocompleteDisplayLimit = 50
+private let autocompletePerfWarnMs = 20.0
+private let perfAutocompleteIndexEnabled: Bool = {
+    switch ProcessInfo.processInfo.environment["PERF_AUTOCOMPLETE_INDEX"]?.lowercased() {
+    case "0", "false", "no", "off":
+        return false
+    default:
+        return true
+    }
+}()
+
 // MARK: - 自动补全模式
 
 enum AutocompleteMode {
@@ -106,7 +118,7 @@ func updateAutocomplete(
         autocomplete.query = query
         autocomplete.replaceRange = NSRange(triggerIndex..<cursor, in: text)
         let matched = matchFileItems(query: query, fileItems: fileItems)
-        autocomplete.items = matched.prefix(20).map { makeFileItem($0) }
+        autocomplete.items = matched.prefix(autocompleteDisplayLimit).map { makeFileItem($0) }
         autocomplete.selectedIndex = 0
         return
     }
@@ -176,27 +188,103 @@ private func isLikelyWordCharacter(_ char: Character) -> Bool {
 }
 
 private func matchFileItems(query: String, fileItems: [String]) -> [String] {
-    guard !query.isEmpty else { return fileItems }
+    let started = CFAbsoluteTimeGetCurrent()
+    let result: [String]
+
+    if query.isEmpty {
+        result = Array(fileItems.prefix(autocompleteCandidateLimit))
+    } else if perfAutocompleteIndexEnabled {
+        result = matchFileItemsIndexed(query: query, fileItems: fileItems)
+    } else {
+        result = matchFileItemsLegacy(query: query, fileItems: fileItems)
+    }
+
+    let costMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
+    if costMs >= autocompletePerfWarnMs {
+        TFLog.app.info(
+            "perf.autocomplete.match_ms=\(Int(costMs), privacy: .public) query_len=\(query.count, privacy: .public) files=\(fileItems.count, privacy: .public) hit=\(result.count, privacy: .public)"
+        )
+    }
+    return result
+}
+
+/// 新匹配策略：单次遍历 + 分桶评分，限制候选规模，降低大索引下 CPU 压力。
+private func matchFileItemsIndexed(query: String, fileItems: [String]) -> [String] {
+    let lower = query.lowercased()
+    var pathPrefix: [String] = []
+    var filenamePrefix: [String] = []
+    var contains: [String] = []
+    pathPrefix.reserveCapacity(min(autocompleteCandidateLimit, 64))
+    filenamePrefix.reserveCapacity(min(autocompleteCandidateLimit, 64))
+    contains.reserveCapacity(min(autocompleteCandidateLimit, 64))
+
+    for item in fileItems {
+        if pathPrefix.count >= autocompleteCandidateLimit &&
+            filenamePrefix.count >= autocompleteCandidateLimit &&
+            contains.count >= autocompleteCandidateLimit {
+            break
+        }
+
+        let pathLower = item.lowercased()
+        if pathPrefix.count < autocompleteCandidateLimit, pathLower.hasPrefix(lower) {
+            pathPrefix.append(item)
+            continue
+        }
+
+        let filenameLower = (item as NSString).lastPathComponent.lowercased()
+        if filenamePrefix.count < autocompleteCandidateLimit, filenameLower.hasPrefix(lower) {
+            filenamePrefix.append(item)
+            continue
+        }
+
+        if contains.count < autocompleteCandidateLimit, pathLower.contains(lower) {
+            contains.append(item)
+        }
+    }
+
+    var merged: [String] = []
+    merged.reserveCapacity(autocompleteCandidateLimit)
+    for item in pathPrefix {
+        merged.append(item)
+        if merged.count >= autocompleteCandidateLimit { return merged }
+    }
+    for item in filenamePrefix {
+        merged.append(item)
+        if merged.count >= autocompleteCandidateLimit { return merged }
+    }
+    for item in contains {
+        merged.append(item)
+        if merged.count >= autocompleteCandidateLimit { return merged }
+    }
+    return merged
+}
+
+private func matchFileItemsLegacy(query: String, fileItems: [String]) -> [String] {
     let lower = query.lowercased()
     var results: [String] = []
     var seen = Set<String>()
 
-    let exactPrefix = fileItems.filter { $0.lowercased().hasPrefix(lower) }
-    for item in exactPrefix where seen.insert(item).inserted {
-        results.append(item)
+    for item in fileItems where item.lowercased().hasPrefix(lower) {
+        if seen.insert(item).inserted {
+            results.append(item)
+            if results.count >= autocompleteCandidateLimit { return results }
+        }
     }
 
-    let filenamePrefix = fileItems.filter {
-        let name = ($0 as NSString).lastPathComponent.lowercased()
-        return name.hasPrefix(lower)
-    }
-    for item in filenamePrefix where seen.insert(item).inserted {
-        results.append(item)
+    for item in fileItems {
+        let name = (item as NSString).lastPathComponent.lowercased()
+        guard name.hasPrefix(lower) else { continue }
+        if seen.insert(item).inserted {
+            results.append(item)
+            if results.count >= autocompleteCandidateLimit { return results }
+        }
     }
 
-    let contains = fileItems.filter { $0.lowercased().contains(lower) }
-    for item in contains where seen.insert(item).inserted {
-        results.append(item)
+    for item in fileItems where item.lowercased().contains(lower) {
+        if seen.insert(item).inserted {
+            results.append(item)
+            if results.count >= autocompleteCandidateLimit { return results }
+        }
     }
 
     return results
