@@ -624,8 +624,11 @@ struct EvidenceTabView: View {
 
     @State private var selectedItemID: String?
     @State private var itemLoading: Bool = false
+    @State private var itemPaging: Bool = false
     @State private var itemError: String?
-    @State private var itemTextContent: String?
+    @State private var itemTextChunks: [String] = []
+    @State private var itemTextNextOffset: UInt64 = 0
+    @State private var itemTextHasMore: Bool = false
     @State private var itemImage: NSImage?
     @State private var itemByteCount: Int = 0
     @State private var actionMessage: String?
@@ -879,13 +882,30 @@ struct EvidenceTabView: View {
                     }
                     .background(Color.black.opacity(0.04))
                     .cornerRadius(10)
-                } else if let itemTextContent {
+                } else if !itemTextChunks.isEmpty {
                     ScrollView {
-                        Text(itemTextContent)
-                            .font(.system(size: 12, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(itemTextChunks.indices, id: \.self) { idx in
+                                Text(itemTextChunks[idx])
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if itemPaging || itemTextHasMore {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text(itemPaging ? "加载更多中..." : "滚动到底部继续加载")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 8)
+                                .onAppear {
+                                    loadNextTextPageIfNeeded(for: selected)
+                                }
+                            }
+                        }
+                        .padding(10)
                     }
                     .background(Color.black.opacity(0.03))
                     .cornerRadius(10)
@@ -905,7 +925,7 @@ struct EvidenceTabView: View {
                 if selectedItemID != selected.itemID {
                     selectedItemID = selected.itemID
                     loadItem(selected)
-                } else if itemTextContent == nil && itemImage == nil && !itemLoading && itemError == nil {
+                } else if itemTextChunks.isEmpty && itemImage == nil && !itemLoading && itemError == nil {
                     loadItem(selected)
                 }
             }
@@ -947,8 +967,11 @@ struct EvidenceTabView: View {
 
     private func clearItemPreview() {
         itemLoading = false
+        itemPaging = false
         itemError = nil
-        itemTextContent = nil
+        itemTextChunks = []
+        itemTextNextOffset = 0
+        itemTextHasMore = false
         itemImage = nil
         itemByteCount = 0
     }
@@ -986,34 +1009,78 @@ struct EvidenceTabView: View {
     private func loadItem(_ item: EvolutionEvidenceItemInfoV2) {
         guard let workspace, !workspace.isEmpty else { return }
         itemLoading = true
+        itemPaging = false
         itemError = nil
-        itemTextContent = nil
+        itemTextChunks = []
+        itemTextNextOffset = 0
+        itemTextHasMore = false
         itemImage = nil
         itemByteCount = 0
 
-        appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
-            DispatchQueue.main.async {
-                itemLoading = false
-                if let payload {
-                    let data = Data(payload.content)
-                    itemByteCount = payload.content.count
-                    if payload.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
+        if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
+            appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
+                DispatchQueue.main.async {
+                    itemLoading = false
+                    if let payload {
+                        let data = Data(payload.content)
+                        itemByteCount = payload.content.count
                         if let image = NSImage(data: data) {
                             itemImage = image
                             return
                         }
                         itemError = "图片解码失败"
-                        return
+                    } else {
+                        itemError = errorMessage ?? "未知错误"
                     }
-                    let text = String(data: data, encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)
-                    itemTextContent = text
-                } else {
-                    let error = errorMessage ?? "未知错误"
-                    itemError = error
                 }
+            }
+            return
+        }
+
+        loadNextTextPage(for: item, reset: true)
+    }
+
+    private func loadNextTextPageIfNeeded(for item: EvolutionEvidenceItemInfoV2) {
+        guard selectedItemID == item.itemID else { return }
+        guard itemTextHasMore, !itemPaging, !itemLoading else { return }
+        loadNextTextPage(for: item, reset: false)
+    }
+
+    private func loadNextTextPage(for item: EvolutionEvidenceItemInfoV2, reset: Bool) {
+        guard let workspace, !workspace.isEmpty else { return }
+        let offset: UInt64 = reset ? 0 : itemTextNextOffset
+        if !reset, offset == 0 {
+            return
+        }
+        itemPaging = true
+        appState.readEvolutionEvidenceItemPage(
+            project: project,
+            workspace: workspace,
+            itemID: item.itemID,
+            offset: offset,
+            limit: 131_072
+        ) { payload, errorMessage in
+            DispatchQueue.main.async {
+                itemLoading = false
+                itemPaging = false
+                guard selectedItemID == item.itemID else { return }
+                if let payload {
+                    itemByteCount = Int(payload.totalSizeBytes)
+                    let text = String(data: Data(payload.content), encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)
+                    if reset {
+                        itemTextChunks = [text]
+                    } else {
+                        itemTextChunks.append(text)
+                    }
+                    itemTextNextOffset = payload.nextOffset
+                    itemTextHasMore = !payload.eof
+                    return
+                }
+                itemError = errorMessage ?? "未知错误"
             }
         }
     }
+
 }
 
 struct EvolutionEditableProfile: Identifiable, Equatable {
