@@ -507,6 +507,10 @@ pub(crate) async fn handle_ai_chat_send(
                                     true
                                 }
                                 AiEvent::Error { message } => {
+                                    warn!(
+                                        "AIChatSend: stream event error, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                                        project_name, workspace_name, ai_tool, session_id, message
+                                    );
                                     status_store_cloned.set_status_with_meta(
                                         status_meta_cloned.clone(),
                                         AiSessionStatus::Error { message: message.clone() },
@@ -560,6 +564,10 @@ pub(crate) async fn handle_ai_chat_send(
                             }
                         }
                         Some(Err(e)) => {
+                            warn!(
+                                "AIChatSend: stream failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                                project_name, workspace_name, ai_tool, session_id, e
+                            );
                             status_store_cloned.set_status_with_meta(
                                 status_meta_cloned.clone(),
                                 AiSessionStatus::Error { message: e.clone() },
