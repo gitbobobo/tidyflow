@@ -1251,92 +1251,96 @@ struct MobileEvolutionView: View {
 
     var body: some View {
         List {
-            Section("调度器状态") {
-                LabeledContent("激活状态") {
+            Section("evolution.page.scheduler.section".localized) {
+                LabeledContent("evolution.page.scheduler.activation".localized) {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(appState.evolutionScheduler.activationState.lowercased() == "active" ? Color.green : Color.secondary)
+                            .fill(isSchedulerActive(appState.evolutionScheduler.activationState) ? Color.green : Color.secondary)
                             .frame(width: 8, height: 8)
-                        Text(appState.evolutionScheduler.activationState)
+                        Text(localizedSchedulerActivationDisplay(appState.evolutionScheduler.activationState))
                     }
                 }
-                LabeledContent("并发上限") {
+                LabeledContent("evolution.page.scheduler.maxParallel".localized) {
                     Text("\(appState.evolutionScheduler.maxParallelWorkspaces)")
                 }
-                LabeledContent("运行中 / 排队") {
+                LabeledContent("evolution.page.scheduler.runningQueued".localized) {
                     Text("\(appState.evolutionScheduler.runningCount) / \(appState.evolutionScheduler.queuedCount)")
                 }
             }
 
-            Section("工作空间控制") {
-                LabeledContent("当前工作空间") {
+            Section("evolution.page.workspace.section".localized) {
+                LabeledContent("evolution.page.workspace.currentWorkspace".localized) {
                     Text("\(project)/\(workspace)")
                 }
                 if let item {
-                    LabeledContent("状态") {
+                    LabeledContent("evolution.page.workspace.status".localized) {
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(mobileWorkspaceStatusColor(item.status))
                                 .frame(width: 8, height: 8)
-                            Text(item.status)
+                            Text(localizedWorkspaceStatusDisplay(item.status))
                         }
                     }
-                    LabeledContent("当前阶段") {
-                        Text(item.currentStage)
+                    LabeledContent("evolution.page.workspace.currentStage".localized) {
+                        Text(stageDisplayName(item.currentStage))
                     }
-                    LabeledContent("轮次") {
+                    LabeledContent("evolution.page.workspace.loopRound".localized) {
                         Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
                     }
-                    LabeledContent("校验轮次") {
+                    LabeledContent("evolution.page.workspace.verifyRound".localized) {
                         Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
                     }
-                    LabeledContent("活跃代理") {
-                        Text(item.activeAgents.isEmpty ? "无" : item.activeAgents.joined(separator: ", "))
+                    LabeledContent("evolution.page.workspace.activeAgents".localized) {
+                        Text(
+                            item.activeAgents.isEmpty
+                                ? "evolution.page.workspace.noActiveAgents".localized
+                                : item.activeAgents.joined(separator: ", ")
+                        )
                             .lineLimit(1)
                     }
                 } else {
-                    Text("状态: 未启动")
+                    Text("evolution.page.workspace.notStarted".localized)
                         .foregroundColor(.secondary)
                 }
 
-                LabeledContent("循环轮次") {
-                    TextField("1", text: $loopRoundLimitText)
+                LabeledContent("evolution.page.workspace.loopRoundInput".localized) {
+                    TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 80)
                 }
 
-                Text("验证循环固定 3 次")
+                Text("evolution.page.workspace.verifyLoopFixed".localized)
                     .font(.caption)
                     .foregroundColor(.secondary)
 
                 ControlGroup {
-                    Button("手动启动") {
+                    Button("evolution.page.action.startManual".localized) {
                         startEvolution()
                     }
                     .buttonStyle(.borderedProminent)
-                    Button("停止") {
+                    Button("evolution.page.action.stop".localized) {
                         appState.stopEvolution(project: project, workspace: workspace)
                     }
-                    Button("恢复") {
+                    Button("evolution.page.action.resume".localized) {
                         appState.resumeEvolution(project: project, workspace: workspace)
                     }
                 }
                 .buttonStyle(.bordered)
             }
 
-            Section("代理类型说明") {
-                Text("按代理类型配置 AI 工具 / 模式 / 模型；运行中或已完成的代理可进入聊天详情。")
+            Section("evolution.page.agentType.description.section".localized) {
+                Text("evolution.page.agentType.description.text".localized)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
             if let blocking = activeBlockingRequest {
-                Section("阻塞任务") {
-                    Text("存在未完成阻塞项，需人工处理后才能继续循环")
+                Section("evolution.page.blocker.section".localized) {
+                    Text("evolution.page.blocker.pendingHint".localized)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("触发: \(blocking.trigger)")
+                    Text(String(format: "evolution.page.blocker.triggerOnly".localized, blocking.trigger))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     ForEach(blocking.unresolvedItems, id: \.blockerID) { item in
@@ -1346,20 +1350,20 @@ struct MobileEvolutionView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             if !item.options.isEmpty {
-                                Picker("选项", selection: bindingOption(item.blockerID)) {
-                                    Text("请选择").tag("")
+                                Picker("evolution.page.blocker.option".localized, selection: bindingOption(item.blockerID)) {
+                                    Text("evolution.page.blocker.choose".localized).tag("")
                                     ForEach(item.options, id: \.optionID) { option in
                                         Text(option.label).tag(option.optionID)
                                     }
                                 }
                             }
                             if item.allowCustomInput || item.options.isEmpty {
-                                TextField("输入答案", text: bindingAnswer(item.blockerID))
+                                TextField("evolution.page.blocker.answerInput".localized, text: bindingAnswer(item.blockerID))
                             }
                         }
                         .padding(.vertical, 4)
                     }
-                    Button("提交已勾选项") {
+                    Button("evolution.page.blocker.submitSelected".localized) {
                         submitBlockers(blocking)
                     }
                     .buttonStyle(.borderedProminent)
@@ -1367,15 +1371,15 @@ struct MobileEvolutionView: View {
             }
 
             if profiles.isEmpty {
-                Section("代理类型") {
-                    Text("暂无阶段配置")
+                Section("evolution.page.agentType.section".localized) {
+                    Text("evolution.page.agentType.empty".localized)
                         .foregroundColor(.secondary)
                 }
             } else {
                 ForEach($profiles) { $profile in
                     let stage = profile.stage
                     let runtime = runtimeAgent(for: stage)
-                    let statusText = runtime?.status ?? "未启动"
+                    let statusText = runtime?.status ?? "not_started"
                     let aiToolBinding = Binding<AIChatTool>(
                         get: { profile.aiTool },
                         set: { newValue in
@@ -1388,7 +1392,7 @@ struct MobileEvolutionView: View {
                     )
                     Section(sectionTitle(for: profile, runtime: runtime)) {
                         if canOpenStageChat(statusText) {
-                            LabeledContent("工作状态") {
+                            LabeledContent("evolution.page.agent.status".localized) {
                                 Button {
                                     guard let currentItem = item else { return }
                                     appState.openEvolutionStageChat(
@@ -1400,7 +1404,7 @@ struct MobileEvolutionView: View {
                                     appState.navigationPath.append(MobileRoute.aiChat(project: project, workspace: workspace))
                                 } label: {
                                     HStack(spacing: 4) {
-                                        Text(statusText)
+                                        Text(localizedStageStatusDisplay(statusText))
                                             .foregroundColor(stageStatusColor(statusText))
                                         Image(systemName: "chevron.right")
                                             .font(.caption2)
@@ -1410,13 +1414,13 @@ struct MobileEvolutionView: View {
                                 .buttonStyle(.plain)
                             }
                         } else {
-                            LabeledContent("工作状态") {
-                                Text(statusText)
+                            LabeledContent("evolution.page.agent.status".localized) {
+                                Text(localizedStageStatusDisplay(statusText))
                                     .foregroundColor(stageStatusColor(statusText))
                             }
                         }
 
-                        LabeledContent("AI 工具") {
+                        LabeledContent("settings.evolution.aiTool".localized) {
                             Picker("", selection: aiToolBinding) {
                                 ForEach(AIChatTool.allCases) { tool in
                                     Text(tool.displayName).tag(tool)
@@ -1426,16 +1430,16 @@ struct MobileEvolutionView: View {
                             .pickerStyle(.menu)
                         }
 
-                        LabeledContent("模式") {
+                        LabeledContent("settings.evolution.mode".localized) {
                             Menu {
-                                Button("默认模式") {
+                                Button("settings.evolution.defaultMode".localized) {
                                     hasPendingUserProfileEdit = true
                                     profile.mode = ""
                                     autoSaveProfilesIfNeeded()
                                 }
                                 let options = modeOptions(for: profile.aiTool)
                                 if options.isEmpty {
-                                    Text("暂无可用模式")
+                                    Text("settings.evolution.noModes".localized)
                                 } else {
                                     ForEach(options, id: \.self) { mode in
                                         Button(mode) {
@@ -1450,14 +1454,14 @@ struct MobileEvolutionView: View {
                                     }
                                 }
                             } label: {
-                                Text(profile.mode.isEmpty ? "默认模式" : profile.mode)
+                                Text(profile.mode.isEmpty ? "settings.evolution.defaultMode".localized : profile.mode)
                                     .foregroundColor(.secondary)
                             }
                         }
 
-                        LabeledContent("模型") {
+                        LabeledContent("settings.evolution.model".localized) {
                             Menu {
-                                Button("默认模型") {
+                                Button("settings.evolution.defaultModel".localized) {
                                     hasPendingUserProfileEdit = true
                                     profile.providerID = ""
                                     profile.modelID = ""
@@ -1465,7 +1469,7 @@ struct MobileEvolutionView: View {
                                 }
                                 let providers = modelProviders(for: profile.aiTool)
                                 if providers.isEmpty {
-                                    Text("暂无可用模型")
+                                    Text("settings.evolution.noModels".localized)
                                 } else if providers.count == 1 {
                                     if let onlyProvider = providers.first {
                                         ForEach(onlyProvider.models) { model in
@@ -1501,11 +1505,11 @@ struct MobileEvolutionView: View {
                 }
             }
         }
-        .navigationTitle("自主进化")
+        .navigationTitle("evolution.page.title".localized)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("刷新") {
+                Button("common.refresh".localized) {
                     appState.refreshEvolution(project: project, workspace: workspace)
                     loadProfiles()
                 }
@@ -1620,7 +1624,7 @@ struct MobileEvolutionView: View {
         if !runtimeAgent.isEmpty { return runtimeAgent }
         let configuredMode = profile.mode.trimmingCharacters(in: .whitespacesAndNewlines)
         if !configuredMode.isEmpty { return configuredMode }
-        return profile.stage
+        return stageDisplayName(profile.stage)
     }
 
     private func applyAgentDefaultModelIfAvailable(profileID: String, agentName: String) {
@@ -1651,7 +1655,7 @@ struct MobileEvolutionView: View {
 
     private func selectedModelDisplayName(for profile: EvolutionProfileDraft) -> String {
         guard !profile.providerID.isEmpty, !profile.modelID.isEmpty else {
-            return "默认模型"
+            return "settings.evolution.defaultModel".localized
         }
         for provider in modelProviders(for: profile.aiTool) {
             if provider.id == profile.providerID,
@@ -1855,5 +1859,83 @@ struct MobileEvolutionView: View {
     private func normalizeWorkspace(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "default" : trimmed
+    }
+
+    private func isSchedulerActive(_ status: String) -> Bool {
+        let normalized = normalizedStageStatus(status)
+        return normalized == "active" || normalized == "激活"
+    }
+
+    private func localizedSchedulerActivationDisplay(_ status: String) -> String {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
+        case "active", "激活":
+            return "evolution.status.active".localized
+        default:
+            return status
+        }
+    }
+
+    private func localizedWorkspaceStatusDisplay(_ status: String) -> String {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
+        case "running", "进行中":
+            return "evolution.status.running".localized
+        case "queued", "排队中":
+            return "evolution.status.queued".localized
+        case "idle", "空闲":
+            return "evolution.status.idle".localized
+        case "stopped", "已停止":
+            return "evolution.status.stopped".localized
+        case "error", "failed", "失败":
+            return "evolution.status.failed".localized
+        case "completed", "done", "success", "succeeded", "已完成", "完成":
+            return "evolution.status.completed".localized
+        default:
+            return status
+        }
+    }
+
+    private func localizedStageStatusDisplay(_ status: String) -> String {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
+        case "running":
+            return "evolution.status.running".localized
+        case "completed", "done", "success", "succeeded", "已完成", "完成":
+            return "evolution.status.completed".localized
+        case "error", "failed", "失败":
+            return "evolution.status.failed".localized
+        case "queued":
+            return "evolution.status.queued".localized
+        case "idle":
+            return "evolution.status.idle".localized
+        case "stopped":
+            return "evolution.status.stopped".localized
+        case "not_started", "not started", "未启动", "未运行":
+            return "evolution.status.notStarted".localized
+        default:
+            return status
+        }
+    }
+
+    private func stageDisplayName(_ stage: String) -> String {
+        let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
+        switch trimmed.lowercased() {
+        case "direction":
+            return "evolution.stage.direction".localized
+        case "plan":
+            return "evolution.stage.plan".localized
+        case "implement":
+            return "evolution.stage.implement".localized
+        case "verify":
+            return "evolution.stage.verify".localized
+        case "judge":
+            return "evolution.stage.judge".localized
+        case "report":
+            return "evolution.stage.report".localized
+        default:
+            return trimmed
+        }
     }
 }

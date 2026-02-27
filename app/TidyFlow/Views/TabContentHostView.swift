@@ -1603,9 +1603,15 @@ struct EvolutionTabView: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 if let blocking = appState.evolutionBlockingRequired {
-                    Text("检测到阻塞任务，需人工完成后才能继续循环")
+                    Text("evolution.page.blocker.detectedHint".localized)
                         .font(.headline)
-                    Text("触发: \(blocking.trigger)  阻塞文件: \(blocking.blockerFilePath)")
+                    Text(
+                        String(
+                            format: "evolution.page.blocker.triggerAndFile".localized,
+                            blocking.trigger,
+                            blocking.blockerFilePath
+                        )
+                    )
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
@@ -1620,8 +1626,8 @@ struct EvolutionTabView: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 if !item.options.isEmpty {
-                                    Picker("选项", selection: bindingOption(item.blockerID)) {
-                                        Text("请选择").tag("")
+                                    Picker("evolution.page.blocker.option".localized, selection: bindingOption(item.blockerID)) {
+                                        Text("evolution.page.blocker.choose".localized).tag("")
                                         ForEach(item.options, id: \.optionID) { option in
                                             Text(option.label).tag(option.optionID)
                                         }
@@ -1629,7 +1635,7 @@ struct EvolutionTabView: View {
                                     .pickerStyle(.menu)
                                 }
                                 if item.allowCustomInput || item.options.isEmpty {
-                                    TextField("输入答案", text: bindingAnswer(item.blockerID))
+                                    TextField("evolution.page.blocker.answerInput".localized, text: bindingAnswer(item.blockerID))
                                         .textFieldStyle(.roundedBorder)
                                 }
                             }
@@ -1637,25 +1643,25 @@ struct EvolutionTabView: View {
                         }
                     }
                     HStack {
-                        Button("关闭") {
+                        Button("common.close".localized) {
                             isBlockerSheetPresented = false
                         }
                         Spacer()
-                        Button("提交已勾选项") {
+                        Button("evolution.page.blocker.submitSelected".localized) {
                             submitBlockerAnswers(blocking)
                         }
                         .buttonStyle(.borderedProminent)
                     }
                 } else {
-                    Text("暂无阻塞任务")
-                    Button("关闭") {
+                    Text("evolution.page.blocker.noTasks".localized)
+                    Button("common.close".localized) {
                         isBlockerSheetPresented = false
                     }
                 }
             }
             .padding(16)
             .frame(minWidth: 640, minHeight: 420)
-            .navigationTitle("阻塞任务处理")
+            .navigationTitle("evolution.page.blocker.sheetTitle".localized)
         }
     }
 
@@ -1744,7 +1750,7 @@ struct EvolutionTabView: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ))
-            Text("自主进化")
+            Text("evolution.page.title".localized)
                 .font(.title3)
                 .fontWeight(.semibold)
             Spacer()
@@ -1754,7 +1760,7 @@ struct EvolutionTabView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
-            .help("刷新状态")
+            .help("evolution.page.refreshStatusHelp".localized)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -1763,25 +1769,25 @@ struct EvolutionTabView: View {
     private var schedulerCard: some View {
         HStack(spacing: 12) {
             schedulerStatCard(
-                title: "激活状态",
-                value: appState.evolutionScheduler.activationState,
+                title: "evolution.page.scheduler.activation".localized,
+                value: localizedSchedulerActivationDisplay(appState.evolutionScheduler.activationState),
                 icon: "power",
                 color: .green
             )
             schedulerStatCard(
-                title: "并发上限",
+                title: "evolution.page.scheduler.maxParallel".localized,
                 value: "\(appState.evolutionScheduler.maxParallelWorkspaces)",
                 icon: "square.stack.3d.up",
                 color: .blue
             )
             schedulerStatCard(
-                title: "运行中",
+                title: "evolution.page.scheduler.running".localized,
                 value: "\(appState.evolutionScheduler.runningCount)",
                 icon: "play.circle.fill",
                 color: .orange
             )
             schedulerStatCard(
-                title: "排队中",
+                title: "evolution.page.scheduler.queued".localized,
                 value: "\(appState.evolutionScheduler.queuedCount)",
                 icon: "clock.fill",
                 color: .secondary
@@ -1820,30 +1826,34 @@ struct EvolutionTabView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 if let workspace {
-                    LabeledContent("当前工作空间") {
+                    LabeledContent("evolution.page.workspace.currentWorkspace".localized) {
                         Text("\(project)/\(workspace)")
                             .fontWeight(.medium)
                     }
                     if let item = currentItem {
-                        LabeledContent("状态") {
+                        LabeledContent("evolution.page.workspace.status".localized) {
                             HStack(spacing: 6) {
                                 Circle()
                                     .fill(workspaceStatusColor(item.status))
                                     .frame(width: 8, height: 8)
-                                Text(item.status)
+                                Text(localizedWorkspaceStatusDisplay(item.status))
                             }
                         }
-                        LabeledContent("当前阶段") {
-                            Text(item.currentStage)
+                        LabeledContent("evolution.page.workspace.currentStage".localized) {
+                            Text(stageDisplayName(item.currentStage))
                         }
-                        LabeledContent("轮次") {
+                        LabeledContent("evolution.page.workspace.loopRound".localized) {
                             Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
                         }
-                        LabeledContent("校验轮次") {
+                        LabeledContent("evolution.page.workspace.verifyRound".localized) {
                             Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
                         }
-                        LabeledContent("活跃代理") {
-                            Text(item.activeAgents.isEmpty ? "无" : item.activeAgents.joined(separator: ", "))
+                        LabeledContent("evolution.page.workspace.activeAgents".localized) {
+                            Text(
+                                item.activeAgents.isEmpty
+                                    ? "evolution.page.workspace.noActiveAgents".localized
+                                    : item.activeAgents.joined(separator: ", ")
+                            )
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -1852,7 +1862,7 @@ struct EvolutionTabView: View {
                             Circle()
                                 .fill(Color.secondary.opacity(0.5))
                                 .frame(width: 8, height: 8)
-                            Text("未启动")
+                            Text("evolution.page.workspace.notStarted".localized)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -1860,35 +1870,35 @@ struct EvolutionTabView: View {
                     Divider()
 
                     HStack(spacing: 12) {
-                        TextField("循环轮次", text: $loopRoundLimitText)
+                        TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 100)
-                        Text("验证循环固定 3 次")
+                        Text("evolution.page.workspace.verifyLoopFixed".localized)
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Spacer()
                         ControlGroup {
-                            Button("手动启动") {
+                            Button("evolution.page.action.startManual".localized) {
                                 startCurrentWorkspace()
                             }
                             .buttonStyle(.borderedProminent)
-                            Button("停止") {
+                            Button("evolution.page.action.stop".localized) {
                                 appState.stopEvolution(project: project, workspace: workspace)
                             }
-                            Button("恢复") {
+                            Button("evolution.page.action.resume".localized) {
                                 appState.resumeEvolution(project: project, workspace: workspace)
                             }
                         }
                         .controlSize(.small)
                     }
                 } else {
-                    Text("请先选择工作空间")
+                    Text("evolution.page.workspace.selectWorkspaceFirst".localized)
                         .foregroundColor(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            Label("工作空间控制", systemImage: "gearshape.2")
+            Label("evolution.page.workspace.section".localized, systemImage: "gearshape.2")
         }
     }
 
@@ -1897,7 +1907,7 @@ struct EvolutionTabView: View {
             VStack(alignment: .leading, spacing: 12) {
                 let sortedAgents = sortedAgents()
                 if sortedAgents.isEmpty {
-                    Text("暂无代理配置")
+                    Text("evolution.page.agentList.empty".localized)
                         .foregroundColor(.secondary)
                 } else {
                     LazyVGrid(
@@ -1914,7 +1924,7 @@ struct EvolutionTabView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            Label("代理列表", systemImage: "person.3.sequence")
+            Label("evolution.page.agentList.section".localized, systemImage: "person.3.sequence")
         }
     }
 
@@ -1974,7 +1984,7 @@ struct EvolutionTabView: View {
                         id: key,
                         stage: profile.stage,
                         agent: agentName,
-                        status: "未运行",
+                        status: "not_started",
                         toolCallCount: 0
                     )
                 )
@@ -2009,6 +2019,7 @@ struct EvolutionTabView: View {
 
     private func stageStatusCard(agent: EvolutionAgentDisplayItem) -> some View {
         let statusText = agent.status
+        let displayStatusText = localizedStageStatusDisplay(statusText)
         let isRunning = normalizedStageStatus(statusText) == "running"
         let isCompleted = isCompletedStatus(normalizedStageStatus(statusText))
 
@@ -2049,7 +2060,7 @@ struct EvolutionTabView: View {
                         openStageChat(stage: agent.stage)
                     } label: {
                         HStack(spacing: 4) {
-                            Text(statusText)
+                            Text(displayStatusText)
                             Image(systemName: "chevron.right")
                                 .font(.caption2)
                         }
@@ -2062,7 +2073,7 @@ struct EvolutionTabView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Text(statusText)
+                    Text(displayStatusText)
                         .font(.caption)
                         .foregroundColor(stageStatusColor(statusText))
                         .padding(.horizontal, 8)
@@ -2076,7 +2087,7 @@ struct EvolutionTabView: View {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                Text("工具调用 \(agent.toolCallCount) 次")
+                Text(String(format: "evolution.page.toolCallCount".localized, agent.toolCallCount))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -2180,22 +2191,74 @@ struct EvolutionTabView: View {
 
     private func stageDisplayName(_ stage: String) -> String {
         let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "未命名类型" }
+        guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
         switch trimmed.lowercased() {
         case "direction":
-            return "direction"
+            return "evolution.stage.direction".localized
         case "plan":
-            return "plan"
+            return "evolution.stage.plan".localized
         case "implement":
-            return "implement"
+            return "evolution.stage.implement".localized
         case "verify":
-            return "verify"
+            return "evolution.stage.verify".localized
         case "judge":
-            return "judge"
+            return "evolution.stage.judge".localized
         case "report":
-            return "report"
+            return "evolution.stage.report".localized
         default:
             return trimmed
+        }
+    }
+
+    private func localizedSchedulerActivationDisplay(_ status: String) -> String {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
+        case "active", "激活":
+            return "evolution.status.active".localized
+        default:
+            return status
+        }
+    }
+
+    private func localizedWorkspaceStatusDisplay(_ status: String) -> String {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
+        case "running", "进行中":
+            return "evolution.status.running".localized
+        case "queued", "排队中":
+            return "evolution.status.queued".localized
+        case "idle", "空闲":
+            return "evolution.status.idle".localized
+        case "stopped", "已停止":
+            return "evolution.status.stopped".localized
+        case "error", "failed", "失败":
+            return "evolution.status.failed".localized
+        case "completed", "done", "success", "succeeded", "已完成", "完成":
+            return "evolution.status.completed".localized
+        default:
+            return status
+        }
+    }
+
+    private func localizedStageStatusDisplay(_ status: String) -> String {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
+        case "running":
+            return "evolution.status.running".localized
+        case "queued":
+            return "evolution.status.queued".localized
+        case "idle":
+            return "evolution.status.idle".localized
+        case "stopped":
+            return "evolution.status.stopped".localized
+        case "completed", "done", "success", "succeeded", "已完成", "完成":
+            return "evolution.status.completed".localized
+        case "error", "failed", "失败":
+            return "evolution.status.failed".localized
+        case "not_started", "not started", "未启动", "未运行":
+            return "evolution.status.notStarted".localized
+        default:
+            return status
         }
     }
 
@@ -2277,7 +2340,7 @@ struct EvolutionSessionDrawerView: View {
                 Text(appState.evolutionReplayTitle)
                     .font(.headline)
                 Spacer()
-                Button("关闭") {
+                Button("common.close".localized) {
                     isSessionViewerPresented = false
                     appState.clearEvolutionReplay()
                 }
@@ -2295,7 +2358,7 @@ struct EvolutionSessionDrawerView: View {
                     .foregroundColor(.red)
                     .padding()
             } else if appState.evolutionReplayStore.messages.isEmpty {
-                Text("暂无消息")
+                Text("evolution.page.session.noMessages".localized)
                     .foregroundColor(.secondary)
                     .padding()
             } else {
