@@ -6,7 +6,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 
 【角色功能】
 - 你是本轮迭代的产品方向负责人，职责是用证据做取舍，不是罗列信息。
-- 你必须给出可执行方向：优先级、验收口径、证据策略、风险边界、不做项（non-goals）。
+- 你必须给出可执行方向：优先级、验收口径、风险边界、不做项（non-goals）。
 - 你的输出要让后续 plan/implement/verify/judge 直接落地，减少二次猜测。
 
 【任务目标】
@@ -40,11 +40,10 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 架构健康：耦合、可维护性、扩展性、技术债。
 - 质量稳定：缺陷密度、回归风险、故障恢复、可观测性。
 - 交付效率：实现复杂度、验证成本、反馈周期、发布风险。
-- 测试设施完整性：Unit / Integration / E2E / Evidence 四项能力。
 
 【机会评分模型（0~1）】
-- 每个机会都要评估：`product_value`、`urgency`、`feasibility`、`verification_cost`（越低越好）、`risk`（越低越好）、`time_to_feedback`（越短越好）、`test_infra_completeness`。
-- 必须给出 `priority_score` 并按降序排序，且在 `reason` 中说明 `test_infra_completeness` 如何影响排序。
+- 每个机会都要评估：`product_value`、`urgency`、`feasibility`、`verification_cost`（越低越好）、`risk`（越低越好）、`time_to_feedback`（越短越好）。
+- 必须给出 `priority_score` 并按降序排序，且在 `reason` 中说明关键取舍因素。
 - `candidate_scores` 仍只用于五类 `selected_type` 比较（`feature|performance|bugfix|architecture|ui`），不可改变其结构。
 
 【阶段判定（必须）】
@@ -95,11 +94,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 若主方向在本轮无法形成可验证结果，必须降级为更小范围方案。
 - 验收标准必须"可验证、可观察、可判定"
 - 混合架构项目，以可独立运行为标准，确保各子系统都已搭建测试基础设施。
-- 最小证据策略优先：`test_log|build_log|metrics|screenshot|diff_summary`
-- 若存在前端/可视界面（`ui_capability` 不为 `none`），`minimum_evidence_policy` 必须显式要求 `screenshot`，并描述关键页面/状态的截图采集要求。
-- 必须在 direction 阶段明确截图策略：
-  - 若项目具备可执行截图通道（自动化或人工流程可落地），可要求 `screenshot`。
-  - 若项目当前不具备截图通道，必须在 `final_reason` 与 `llm_defined_acceptance.criteria` 中显式写明该现实约束与后续补齐路径；禁止通过占位图、合成图、纯脚本生成图伪造可视证据。
 - 最终选择必须引用 lifecycle_scan 中的关键证据与机会
 - 若证据不足，必须在 reason 中写明不确定性与保守决策依据
 
@@ -119,11 +113,9 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `direction.candidate_scores`
 - `direction.final_reason`
 - `llm_defined_acceptance.criteria`
-- `llm_defined_acceptance.minimum_evidence_policy`
 - `updated_at`
 - 禁止改动 `status/current_stage/verify_iteration/pipeline`
 - 当"可观测测试基础设施缺口"存在时，`llm_defined_acceptance.criteria` 必须至少包含一条针对该缺口的可验收标准。
-- 当存在前端/可视界面时，`llm_defined_acceptance.minimum_evidence_policy` 必须包含截图证据要求。
 
 3) `handoff.md`（建议追加）
 - 方向选择
@@ -170,6 +162,11 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 【输入使用约束】
 - 仅基于当前 cycle 的阶段产物文档与证据进行规划。
 - 若某类输入缺失，记录风险并给出保守可执行计划。
+
+【独立证据系统联动规则（仅本阶段）】
+- 若识别到项目已具备独立 e2e 证据体系，且本轮涉及用户操作链路调整，计划必须同步安排 e2e 调整任务。
+- 若不满足上述条件，则按常规开发流程推进，不额外新增 e2e 同步任务。
+- 该规则仅适用于 PlanAgent，不外溢到其它 stage。
 
 【规划范围（全链路）】
 计划必须覆盖以下维度并给出具体动作：
@@ -222,6 +219,12 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
       }
     ]
   },
+  "external_e2e_linkage": {
+    "detected": true,
+    "requires_sync": true,
+    "sync_plan_item_ids": ["w-2"],
+    "notes": "..."
+  },
   "observability_plan": {
     "logs": ["..."],
     "metrics": ["..."],
@@ -258,6 +261,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 - 每条 acceptance criteria 必须至少映射到 1 个 check 与证据类型。
 - 高风险项必须给出 rollback。
 - 计划必须与 `direction.selected_type` 一致，不得偏航。
+- 当 `external_e2e_linkage.requires_sync = true` 时，`work_items` 中必须有明确的 e2e 同步任务。
 "####;
 
 pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
@@ -276,7 +280,6 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 在当前 cycle 目录下写入/更新：
 - `stage.implement.json`（必须）
 - `implement.result.json`（必须：供 verify/judge 读取）
-- `evidence.index.json`（若本阶段产生证据则必须更新）
 - `handoff.md`（建议：追加 implement 摘要）
 - 除特别说明外，所有读写路径均相对当前 cycle 目录。
 - 本阶段默认不修改 `cycle.json`；尤其禁止修改控制字段：`status/current_stage/verify_iteration/pipeline`。
@@ -300,7 +303,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 2. 改动范围默认受 `scope.in` 与 `work_items.targets` 约束；若确需超范围改动，必须在结果文件说明原因、风险与收益。
 3. 每个 work_item 必须记录执行结果：`done|skipped|blocked|failed`，以及对应变更文件。
 4. 对关键改动执行最小可行自检（如编译、受影响测试、静态检查或必要手动检查步骤）。
-5. 产生可复核证据（如构建日志、测试日志、diff 摘要、截图、指标片段）并结构化记录。
+5. 产出可复核的执行记录（如命令结果、检查结论、关键输出路径）并结构化记录。
 6. 若发现计划本身不可执行，允许保守调整实现顺序，但必须在结果中记录偏差与理由。
 
 【implement.result.json 结构要求】
@@ -337,33 +340,15 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
       "evidence_path": "..."
     }
   ],
-  "evidence_generated": [
-    {
-      "type": "test_log|build_log|screenshot|metrics|diff_summary|custom",
-      "path": "...",
-      "linked_criteria_ids": ["ac-1"],
-      "summary": "..."
-    }
-  ],
+  "external_e2e_sync": {
+    "required": true,
+    "status": "done|partial|not_needed",
+    "touched_targets": ["..."],
+    "notes": "..."
+  },
   "known_issues_or_followups": ["..."],
   "updated_at": "RFC3339 UTC"
 }
-
-【evidence.index.json 更新要求】
-- 若 `implement.result.json.evidence_generated` 非空，必须创建或更新 `evidence.index.json`。
-- 合并写入时保留已有条目，不覆盖无关项。
-- 证据路径必须按类型分目录：
-  - 日志类证据统一写入 `evidence/logs/*.log`
-  - 截图类证据统一写入 `evidence/screenshots/*.png`
-  - `evidence/` 下禁止新增 `.md/.json/.txt` 等其他类型文件作为证据文件
-- 新增条目字段要求：
-  - `evidence_id`：唯一 ID
-  - `type`：`test_log|build_log|screenshot|metrics|diff_summary|custom`
-  - `path`：证据文件路径
-  - `generated_by_stage`：固定 `implement`
-  - `linked_criteria_ids`：数组
-  - `summary`：摘要
-  - `created_at`：RFC3339 UTC
 
 【stage.implement.json 写入要求】
 - `stage = "implement"`
@@ -373,7 +358,6 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
   - `decision.reason` 必须说明本阶段实施已完成
   - `next_action = {"type":"goto_stage","target":"verify"}`
   - `outputs` 至少包含 `implement.result.json`
-  - 若有证据输出，`outputs` 包含证据文件与 `evidence.index.json`
   - `error = null`
   - 必须完整包含并正确填写以下字段：`$schema_version`、`cycle_id`、`stage`、`agent`、`status`、`inputs`、`outputs`、`decision`、`next_action`、`timing`、`error`。
   - `next_action.type` 只能为 `goto_stage|finish_cycle|stop_cycle|none`；`next_action.target` 必须为 `string|null`。
@@ -409,7 +393,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 在当前 cycle 目录下写入/更新：
 - `stage.verify.json`（必须）
 - `verify.result.json`（必须：供 judge 读取）
-- `evidence.index.json`（若本阶段产生证据则必须更新）
 - `handoff.md`（建议：追加 verify 摘要）
 - 除特别说明外，所有读写路径均相对当前 cycle 目录。
 - 本阶段默认不修改 `cycle.json`；尤其禁止修改控制字段：`status/current_stage/verify_iteration/pipeline`。
@@ -424,7 +407,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - `plan.execution.json`
 - `implement.result.json`
 - `direction.lifecycle_scan.json`
-- `evidence.index.json`（若存在）
 - `handoff.md`（若存在）
 并在 `stage.verify.json.inputs` 记录关键输入路径。
 
@@ -438,18 +420,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 4. 每条验收标准都必须给出判定：`pass|fail|insufficient_evidence`。
 5. 证据必须可复核，禁止伪造、禁止仅口头结论。
 6. 若发现实现与计划明显偏离，必须在结果中单列风险与影响。
-7. 禁止将合成图、占位图、纯色图、重复图作为真实截图证据；发现时必须判定 `insufficient_evidence`。
-
-【前端/可视项目截图证据规则（必须执行）】
-- 执行验证前，必须读取 `direction.lifecycle_scan.json` 中的 `ui_capability` 字段。
-- 若 `ui_capability` 不为 `none`（即 `web|desktop|mobile|mixed`），则：
-  1. 必须检查 `evidence.index.json` 中是否存在 `type = "screenshot"` 的证据条目。
-  2. 若缺失截图证据，且 `llm_defined_acceptance.minimum_evidence_policy` 显式要求 `screenshot`，则对应验收标准必须判定为 `insufficient_evidence`，不得判定为 `pass`。
-  3. 若缺失截图证据，且未进行截图采集尝试，必须在 `defects_or_risks` 中新增一条 `severity = "high"` 的缺陷，标题为"前端项目缺少截图证据"，并在建议中列出具体截图采集方式（如 e2e 截图、手动截图）。
-  4. 截图证据类型必须使用 `"screenshot"`，与 `evidence.index.json` type 枚举保持一致；禁止使用 `"image"`、`"png"` 等非标准类型名。
-  5. 对证据文件执行抽样检查时，必须实际读取图片内容（像素矩阵），至少输出：分辨率、颜色分布/亮度变化、跨样本差异；仅检查文件名、扩展名、元数据或 hash 视为无效检查。
-  6. 若截图内容被判定为占位/合成/高度重复（例如纯色、极低信息量、跨状态几乎一致），对应验收标准必须判定为 `insufficient_evidence`，并在 `defects_or_risks` 中登记 `high` 缺陷。
-- 若 `ui_capability = "none"`，截图证据为可选项，不强制要求。
 
 【verify.result.json 结构要求】
 {
@@ -482,14 +452,11 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
     "result": "pass|fail",
     "reason": "..."
   },
-  "evidence_generated": [
-    {
-      "type": "test_log|build_log|screenshot|metrics|diff_summary|custom",
-      "path": "...",
-      "linked_criteria_ids": ["ac-1"],
-      "summary": "..."
-    }
-  ],
+  "external_e2e_sync": {
+    "required": true,
+    "status": "verified|not_verified|not_needed",
+    "notes": "..."
+  },
   "defects_or_risks": [
     {
       "id": "d-1",
@@ -508,22 +475,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
   "updated_at": "RFC3339 UTC"
 }
 
-【evidence.index.json 更新要求】
-- 若 `verify.result.json.evidence_generated` 非空，必须创建或更新 `evidence.index.json`。
-- 合并写入时保留已有条目，不覆盖无关项。
-- 证据路径必须按类型分目录：
-  - 日志类证据统一写入 `evidence/logs/*.log`
-  - 截图类证据统一写入 `evidence/screenshots/*.png`
-  - `evidence/` 下禁止新增 `.md/.json/.txt` 等其他类型文件作为证据文件
-- 新增条目字段要求：
-  - `evidence_id`：唯一 ID
-  - `type`：`test_log|build_log|screenshot|metrics|diff_summary|custom`
-  - `path`：证据文件路径
-  - `generated_by_stage`：固定 `verify`
-  - `linked_criteria_ids`：数组
-  - `summary`：摘要
-  - `created_at`：RFC3339 UTC
-
 【stage.verify.json 写入要求】
 - `stage = "verify"`
 - 成功时：
@@ -532,7 +483,6 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
   - `decision.reason` 必须概述通过或失败的主要证据依据
   - `next_action = {"type":"goto_stage","target":"judge"}`
   - `outputs` 至少包含 `verify.result.json`
-  - 若有证据输出，`outputs` 包含证据文件与 `evidence.index.json`
   - `error = null`
   - 必须完整包含并正确填写以下字段：`$schema_version`、`cycle_id`、`stage`、`agent`、`status`、`inputs`、`outputs`、`decision`、`next_action`、`timing`、`error`。
   - `next_action.type` 只能为 `goto_stage|finish_cycle|stop_cycle|none`；`next_action.target` 必须为 `string|null`。
@@ -540,7 +490,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
   - 写入后必须满足通用 `stage.<name>.json` schema 校验。
 - 失败时：
   - `status = "failed"`（验证流程无法执行）
-  - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_evidence_index_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
+  - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
   - `error` 至少包含 `code`、`message`、`context`
 - 阻塞时（可选）：
   - `status = "blocked"`（存在明确外部阻塞）
@@ -584,7 +534,6 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - `plan.execution.json`
 - `implement.result.json`
 - `verify.result.json`
-- `evidence.index.json`（必须；若缺失或无效按失败写入处理）
 - `handoff.md`（若存在）
 并在 `stage.judge.json.inputs` 记录关键输入路径。
 
@@ -593,7 +542,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 
 【裁决规则（必须执行）】
 1. 逐条评估 `llm_defined_acceptance.criteria`，每条输出 `pass|fail|insufficient_evidence`。
-2. 必须校验 `verify.result.json.acceptance_evaluation` 与证据索引的一致性，发现冲突要显式记录。
+2. 必须校验 `verify.result.json.acceptance_evaluation` 与阶段输入输出的一致性，发现冲突要显式记录。
 3. 若任一关键验收标准为 `fail`，整体结果为 `fail`。
 4. 若存在 `insufficient_evidence`，默认整体结果为 `fail`（除非有充分替代证据并给出明确理由）。
 5. 回路决策必须遵循：
@@ -602,17 +551,6 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
    - 整体 `fail` 且 `verify_iteration >= verify_iteration_limit`：`next_action = stop_cycle`
    - 当触发 `verify_iteration >= verify_iteration_limit` 时，应在裁决理由或上下文中标记 `evo_verify_iteration_exhausted`。
 6. 裁决必须给出可执行建议：继续实现时列出修复重点；通过时列出发布前关注点。
-
-【前端/可视项目截图证据裁决规则（必须执行）】
-- 裁决前，必须从 `direction.lifecycle_scan.json` 读取 `ui_capability`。
-- 若 `ui_capability` 不为 `none`（即 `web|desktop|mobile|mixed`），则：
-  1. 必须检查 `evidence.index.json` 中 `type = "screenshot"` 的条目数量。
-  2. 若截图证据条目数为 0，且 `cycle.json.llm_defined_acceptance.minimum_evidence_policy` 中有截图要求，则：
-     - 相关验收标准裁决为 `insufficient_evidence`，不得裁决为 `pass`。
-     - 在 `focus_for_next_iteration` 中必须包含"补充前端截图证据"，并说明需覆盖的关键页面/状态。
-  3. 证据一致性校验（规则第2条）必须特别核查截图条目的 `linked_criteria_ids` 是否与验收标准对应；若截图与任何验收标准均无关联，视为弱证据并在 `evidence_consistency_check.issues` 中记录。
-  4. 对截图证据必须做内容真实性复核：若截图表现为占位图/合成图/重复图（而非真实界面状态），不得作为通过依据，相关标准应裁决为 `insufficient_evidence`。
-- `evidence.index.json` 中截图证据的 `type` 字段必须为 `"screenshot"`，裁决时不接受其他类型名替代。
 
 【judge.result.json 结构要求】
 {
@@ -663,7 +601,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
   - 写入后必须满足通用 `stage.<name>.json` schema 校验。
 - 失败时：
   - `status = "failed"`（裁决流程无法完成）
-  - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_evidence_index_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_verify_iteration_exhausted|evo_internal_error`
+  - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_verify_iteration_exhausted|evo_internal_error`
   - `error` 至少包含 `code`、`message`、`context`
 - 阻塞时（可选）：
   - `status = "blocked"`（存在明确外部阻塞）
@@ -711,7 +649,6 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - `implement.result.json`
 - `verify.result.json`
 - `judge.result.json`
-- `evidence.index.json`（若存在）
 - `handoff.md`（若存在）
 并在 `stage.report.json.inputs` 记录关键输入路径。
 
@@ -725,7 +662,6 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 4. 对证据做结构化盘点：数量、类型分布、关键证据、缺口证据。
 5. 汇总本轮变更影响面与残余风险，标注优先级。
 6. 报告必须可被后续代理直接消费，避免只写叙述性文字。
-7. 若存在截图证据但被标记为占位/合成/重复，报告中不得将其记为有效通过证据，必须列入证据缺口或残余风险。
 
 【report.result.json 结构要求】
 {
@@ -760,6 +696,11 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
     "checks_passed": 0,
     "checks_failed": 0,
     "blocked_checks": 0
+  },
+  "external_e2e_sync": {
+    "required": true,
+    "status": "completed|partial|not_needed|unknown",
+    "summary": "..."
   },
   "evidence_summary": {
     "total": 0,
@@ -821,7 +762,7 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
   - 写入后必须满足通用 `stage.<name>.json` schema 校验。
 - 失败时：
   - `status = "failed"`（报告流程无法完成）
-  - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_evidence_index_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
+  - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
   - `error` 至少包含 `code`、`message`、`context`
 - 阻塞时（可选）：
   - `status = "blocked"`（存在明确外部阻塞）
