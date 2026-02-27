@@ -33,6 +33,14 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `handoff.md`（建议：追加 direction 摘要）
 - 除特别说明外，所有读写路径均相对当前 cycle 目录。
 
+【多源证据输入基线（本轮必须覆盖）】
+必须从以下五类来源分析“当前项目不足”，并在 `direction.lifecycle_scan.json` 的 `domains[*].evidence_paths/findings` 中留下可追溯证据：
+- 文档（docs）：产品文档、协议文档、README、变更说明。至少引用 2 个文件路径，并指出目标与现状偏差。
+- 代码（code）：核心实现、关键状态流、测试文件。至少引用 3 个文件路径，并指出可维护性/一致性/可验证性缺口。
+- 日志（logs）：运行日志、错误日志、测试日志。提取高频或高影响异常信号（含关键关键词/次数/时间范围）。
+- 截图（screenshots）：UI 截图或录屏关键帧。至少覆盖 2 个关键场景；
+- 竞品（benchmarks）：同类产品或参考项目。至少对比 2 个竞品/参考实现，输出“能力项-现状差距-可借鉴策略”结论。
+
 【方向评估维度（必须覆盖）】
 - 产品价值：转化、留存、完成率、关键任务成功率。
 - 用户体验：可用性、认知负担、界面一致性、响应体验。
@@ -96,6 +104,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 混合架构项目，以可独立运行为标准，确保各子系统都已搭建测试基础设施。
 - 最终选择必须引用 lifecycle_scan 中的关键证据与机会
 - 若证据不足，必须在 reason 中写明不确定性与保守决策依据
+- 严禁仅凭单一来源（只看文档或只看代码）确定主方向。
 
 【写入内容要求】
 1) `stage.direction.json`
@@ -122,6 +131,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 生命周期关键缺口
 - 前三优先机会
 - 验收与证据摘要
+- 五类证据摘要（docs/code/logs/screenshots/benchmarks）与最终取舍理由
 
 【失败写入】
 任一步骤失败：
