@@ -209,15 +209,8 @@ impl AcpClient {
             .and_then(|v| v.as_str())
             .unwrap_or("New Chat")
             .to_string();
-        let cwd = value
-            .get("cwd")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let updated_at_ms = value
-            .get("updatedAt")
-            .and_then(|v| v.as_str())
-            .and_then(Self::parse_rfc3339_millis)
+        let cwd = Self::parse_session_cwd(&value).unwrap_or_default();
+        let updated_at_ms = Self::parse_session_updated_at_ms(&value)
             .unwrap_or_else(|| Utc::now().timestamp_millis());
 
         Some(AcpSessionSummary {
@@ -226,6 +219,156 @@ impl AcpClient {
             cwd,
             updated_at_ms,
         })
+    }
+
+    fn parse_session_cwd(value: &Value) -> Option<String> {
+        for key in [
+            "cwd",
+            "cwdUri",
+            "cwd_uri",
+            "directory",
+            "root",
+            "workspace",
+            "workdir",
+            "path",
+        ] {
+            if let Some(raw) = value.get(key) {
+                if let Some(parsed) = Self::parse_directory_value(raw) {
+                    return Some(Self::decode_file_url_if_needed(&parsed));
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_directory_value(value: &Value) -> Option<String> {
+        if let Some(text) = value.as_str() {
+            return Self::normalize_optional_token(Some(text.to_string()));
+        }
+
+        let obj = value.as_object()?;
+        for key in [
+            "cwd",
+            "cwdUri",
+            "cwd_uri",
+            "directory",
+            "root",
+            "workspace",
+            "workdir",
+            "path",
+            "uri",
+            "value",
+        ] {
+            if let Some(next) = obj.get(key) {
+                if let Some(parsed) = Self::parse_directory_value(next) {
+                    return Some(parsed);
+                }
+            }
+        }
+        None
+    }
+
+    fn decode_file_url_if_needed(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if let Ok(url) = url::Url::parse(trimmed) {
+            if url.scheme().eq_ignore_ascii_case("file") {
+                if let Ok(path) = url.to_file_path() {
+                    return path.to_string_lossy().to_string();
+                }
+            }
+        }
+        trimmed.to_string()
+    }
+
+    fn parse_session_updated_at_ms(value: &Value) -> Option<i64> {
+        for key in [
+            "updatedAt",
+            "updated_at",
+            "lastUpdatedAt",
+            "last_updated_at",
+        ] {
+            if let Some(raw) = value.get(key) {
+                if let Some(parsed) = Self::parse_timestamp_millis(raw) {
+                    return Some(parsed);
+                }
+            }
+        }
+
+        if let Some(time) = value.get("time") {
+            for key in ["updated", "updatedAt", "updated_at", "timestamp", "ms"] {
+                if let Some(raw) = time.get(key) {
+                    if let Some(parsed) = Self::parse_timestamp_millis(raw) {
+                        return Some(parsed);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_timestamp_millis(value: &Value) -> Option<i64> {
+        if let Some(text) = value.as_str() {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Some(ts) = Self::parse_rfc3339_millis(trimmed) {
+                return Some(ts);
+            }
+            if let Ok(numeric) = trimmed.parse::<i64>() {
+                return Some(Self::normalize_epoch_millis(numeric));
+            }
+            return None;
+        }
+
+        if let Some(number) = value.as_i64() {
+            return Some(Self::normalize_epoch_millis(number));
+        }
+
+        if let Some(number) = value.as_u64() {
+            if let Ok(number) = i64::try_from(number) {
+                return Some(Self::normalize_epoch_millis(number));
+            }
+            return None;
+        }
+
+        if let Some(number) = value.as_f64() {
+            if !number.is_finite() {
+                return None;
+            }
+            return Some(Self::normalize_epoch_millis(number as i64));
+        }
+
+        let obj = value.as_object()?;
+        for key in [
+            "ms",
+            "millis",
+            "timestampMs",
+            "timestamp_ms",
+            "updatedAt",
+            "updated_at",
+            "timestamp",
+        ] {
+            if let Some(raw) = obj.get(key) {
+                if let Some(parsed) = Self::parse_timestamp_millis(raw) {
+                    return Some(parsed);
+                }
+            }
+        }
+        for key in ["seconds", "sec", "ts", "unix"] {
+            if let Some(raw) = obj.get(key).and_then(|v| v.as_i64()) {
+                return Some(raw.saturating_mul(1000));
+            }
+        }
+        None
+    }
+
+    fn normalize_epoch_millis(raw: i64) -> i64 {
+        if raw.abs() < 10_000_000_000 {
+            raw.saturating_mul(1000)
+        } else {
+            raw
+        }
     }
 
     fn parse_rfc3339_millis(raw: &str) -> Option<i64> {
@@ -597,5 +740,49 @@ impl AcpClient {
             modes,
             current_mode_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AcpClient;
+    use serde_json::json;
+
+    #[test]
+    fn parse_session_summary_should_accept_file_url_and_epoch_millis() {
+        let payload = json!({
+            "sessionId": "ses_1",
+            "title": "Kimi Chat",
+            "cwdUri": "file:///tmp/demo",
+            "updatedAt": 1_706_000_000_123i64
+        });
+
+        let session = AcpClient::parse_session_summary(payload).expect("session should parse");
+        assert_eq!(session.id, "ses_1");
+        assert_eq!(session.title, "Kimi Chat");
+        assert_eq!(session.cwd, "/tmp/demo");
+        assert_eq!(session.updated_at_ms, 1_706_000_000_123i64);
+    }
+
+    #[test]
+    fn parse_session_summary_should_accept_nested_directory_and_rfc3339_time() {
+        let payload = json!({
+            "id": "ses_2",
+            "directory": { "path": "/Users/test/workspace" },
+            "time": { "updated": "2026-02-27T11:00:00Z" }
+        });
+
+        let session = AcpClient::parse_session_summary(payload).expect("session should parse");
+        assert_eq!(session.id, "ses_2");
+        assert_eq!(session.title, "New Chat");
+        assert_eq!(session.cwd, "/Users/test/workspace");
+        assert_eq!(session.updated_at_ms, 1_772_190_000_000i64);
+    }
+
+    #[test]
+    fn parse_timestamp_millis_should_treat_seconds_as_epoch_seconds() {
+        let millis = AcpClient::parse_timestamp_millis(&json!(1_706_000_000i64))
+            .expect("timestamp should parse");
+        assert_eq!(millis, 1_706_000_000_000i64);
     }
 }

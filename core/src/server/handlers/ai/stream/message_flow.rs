@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::WebSocket;
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
@@ -60,6 +61,39 @@ async fn resolve_selection_hint_for_done(
     };
 
     merge_session_selection_hint(adapter_hint, inferred_hint)
+}
+
+async fn resolve_selection_hint_for_done_with_timeout(
+    agent: &Arc<dyn AiAgent>,
+    directory: &str,
+    session_id: &str,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+) -> Option<crate::server::protocol::ai::SessionSelectionHint> {
+    const DONE_HINT_TIMEOUT_MS: u64 = 1500;
+    match timeout(
+        Duration::from_millis(DONE_HINT_TIMEOUT_MS),
+        resolve_selection_hint_for_done(
+            agent,
+            directory,
+            session_id,
+            project_name,
+            workspace_name,
+            ai_tool,
+        ),
+    )
+    .await
+    {
+        Ok(hint) => hint,
+        Err(_) => {
+            warn!(
+                "AIChatDone selection hint resolve timeout: project={}, workspace={}, ai_tool={}, session_id={}, timeout_ms={}",
+                project_name, workspace_name, ai_tool, session_id, DONE_HINT_TIMEOUT_MS
+            );
+            None
+        }
+    }
 }
 
 pub(crate) async fn handle_ai_chat_start(
@@ -495,7 +529,7 @@ pub(crate) async fn handle_ai_chat_send(
                                 }
                                 AiEvent::Done => {
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
-                                    let selection_hint = resolve_selection_hint_for_done(
+                                    let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                         &agent,
                                         &directory,
                                         &session_id,
@@ -549,7 +583,7 @@ pub(crate) async fn handle_ai_chat_send(
                         None => {
                             // Hub 断开等情况下可能出现 None，确保收敛
                             status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
-                            let selection_hint = resolve_selection_hint_for_done(
+                            let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                 &agent,
                                 &directory,
                                 &session_id,
@@ -896,7 +930,7 @@ pub(crate) async fn handle_ai_chat_command(
                                 }
                                 AiEvent::Done => {
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
-                                    let selection_hint = resolve_selection_hint_for_done(
+                                    let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                         &agent,
                                         &directory,
                                         &session_id,
@@ -949,7 +983,7 @@ pub(crate) async fn handle_ai_chat_command(
                         }
                         None => {
                             status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
-                            let selection_hint = resolve_selection_hint_for_done(
+                            let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                 &agent,
                                 &directory,
                                 &session_id,

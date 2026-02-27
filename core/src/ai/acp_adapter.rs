@@ -7,12 +7,15 @@ use super::{
     AiSession, AiSessionSelectionHint, AiSlashCommand,
 };
 use async_trait::async_trait;
+use chrono::Utc;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::{Duration, Instant, MissedTickBehavior};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::debug;
+use tracing::{debug, warn};
+use url::Url;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -48,15 +51,27 @@ struct PendingPermission {
     request_id: Value,
 }
 
+#[derive(Debug, Clone)]
+struct CachedSessionRecord {
+    title: String,
+    updated_at_ms: i64,
+    messages: Vec<AiMessage>,
+}
+
 pub struct AcpAgent {
     client: AcpClient,
     profile: AcpBackendProfile,
     metadata_by_directory: Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
     metadata_by_session: Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    cached_sessions: Arc<Mutex<HashMap<String, HashMap<String, CachedSessionRecord>>>>,
 }
 
 impl AcpAgent {
+    const REQUEST_DONE_GRACE_MS: u64 = 700;
+    const STREAM_IDLE_DONE_TIMEOUT_SECS: u64 = 20;
+    const SESSION_LOAD_TIMEOUT_SECS: u64 = 4;
+
     pub fn new(manager: Arc<CodexAppServerManager>, profile: AcpBackendProfile) -> Self {
         Self {
             client: AcpClient::new(manager),
@@ -64,6 +79,7 @@ impl AcpAgent {
             metadata_by_directory: Arc::new(Mutex::new(HashMap::new())),
             metadata_by_session: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
+            cached_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -76,11 +92,242 @@ impl AcpAgent {
     }
 
     fn normalize_directory(directory: &str) -> String {
-        directory.trim_end_matches('/').to_string()
+        let trimmed = directory.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+        let as_path = if let Ok(url) = Url::parse(trimmed) {
+            if url.scheme().eq_ignore_ascii_case("file") {
+                url.to_file_path()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| trimmed.to_string())
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            trimmed.to_string()
+        };
+        as_path.trim_end_matches('/').to_string()
     }
 
     fn session_cache_key(directory: &str, session_id: &str) -> String {
         format!("{}::{}", Self::normalize_directory(directory), session_id)
+    }
+
+    fn now_ms() -> i64 {
+        Utc::now().timestamp_millis()
+    }
+
+    fn normalized_title(raw: Option<&str>) -> Option<String> {
+        let title = raw?;
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    async fn upsert_cached_session_in_map(
+        cache: &Arc<Mutex<HashMap<String, HashMap<String, CachedSessionRecord>>>>,
+        directory: &str,
+        session_id: &str,
+        title: Option<&str>,
+        updated_at_ms: Option<i64>,
+    ) {
+        let directory_key = Self::normalize_directory(directory);
+        let mut sessions = cache.lock().await;
+        let by_session = sessions.entry(directory_key).or_default();
+        let entry =
+            by_session
+                .entry(session_id.to_string())
+                .or_insert_with(|| CachedSessionRecord {
+                    title: Self::normalized_title(title).unwrap_or_else(|| "New Chat".to_string()),
+                    updated_at_ms: updated_at_ms.unwrap_or_else(Self::now_ms),
+                    messages: Vec::new(),
+                });
+        if let Some(next_title) = Self::normalized_title(title) {
+            entry.title = next_title;
+        }
+        entry.updated_at_ms = entry
+            .updated_at_ms
+            .max(updated_at_ms.unwrap_or_else(Self::now_ms));
+    }
+
+    async fn append_cached_message_in_map(
+        cache: &Arc<Mutex<HashMap<String, HashMap<String, CachedSessionRecord>>>>,
+        directory: &str,
+        session_id: &str,
+        message: AiMessage,
+    ) {
+        let directory_key = Self::normalize_directory(directory);
+        let mut sessions = cache.lock().await;
+        let by_session = sessions.entry(directory_key).or_default();
+        let entry =
+            by_session
+                .entry(session_id.to_string())
+                .or_insert_with(|| CachedSessionRecord {
+                    title: "New Chat".to_string(),
+                    updated_at_ms: Self::now_ms(),
+                    messages: Vec::new(),
+                });
+        entry.messages.push(message);
+        entry.updated_at_ms = Self::now_ms();
+    }
+
+    async fn replace_cached_messages_in_map(
+        cache: &Arc<Mutex<HashMap<String, HashMap<String, CachedSessionRecord>>>>,
+        directory: &str,
+        session_id: &str,
+        messages: Vec<AiMessage>,
+    ) {
+        let directory_key = Self::normalize_directory(directory);
+        let mut sessions = cache.lock().await;
+        let by_session = sessions.entry(directory_key).or_default();
+        let entry =
+            by_session
+                .entry(session_id.to_string())
+                .or_insert_with(|| CachedSessionRecord {
+                    title: "New Chat".to_string(),
+                    updated_at_ms: Self::now_ms(),
+                    messages: Vec::new(),
+                });
+        entry.messages = messages;
+        entry.updated_at_ms = Self::now_ms();
+    }
+
+    async fn upsert_cached_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+        title: Option<&str>,
+        updated_at_ms: Option<i64>,
+    ) {
+        Self::upsert_cached_session_in_map(
+            &self.cached_sessions,
+            directory,
+            session_id,
+            title,
+            updated_at_ms,
+        )
+        .await;
+    }
+
+    async fn append_cached_message(&self, directory: &str, session_id: &str, message: AiMessage) {
+        Self::append_cached_message_in_map(&self.cached_sessions, directory, session_id, message)
+            .await;
+    }
+
+    async fn replace_cached_messages(
+        &self,
+        directory: &str,
+        session_id: &str,
+        messages: Vec<AiMessage>,
+    ) {
+        Self::replace_cached_messages_in_map(
+            &self.cached_sessions,
+            directory,
+            session_id,
+            messages,
+        )
+        .await;
+    }
+
+    async fn cached_messages_for_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Option<Vec<AiMessage>> {
+        let directory_key = Self::normalize_directory(directory);
+        let sessions = self.cached_sessions.lock().await;
+        sessions
+            .get(&directory_key)
+            .and_then(|by_session| by_session.get(session_id))
+            .map(|entry| entry.messages.clone())
+    }
+
+    async fn cached_sessions_for_directory(&self, directory: &str) -> Vec<AiSession> {
+        let directory_key = Self::normalize_directory(directory);
+        let sessions = self.cached_sessions.lock().await;
+        let mut cached = sessions
+            .get(&directory_key)
+            .map(|by_session| {
+                by_session
+                    .iter()
+                    .map(|(session_id, entry)| AiSession {
+                        id: session_id.clone(),
+                        title: entry.title.clone(),
+                        updated_at: entry.updated_at_ms,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        cached.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        cached
+    }
+
+    fn merge_sessions(remote: Vec<AiSession>, cached: Vec<AiSession>) -> Vec<AiSession> {
+        let mut merged = HashMap::<String, AiSession>::new();
+        for session in cached.into_iter().chain(remote.into_iter()) {
+            if let Some(existing) = merged.get_mut(&session.id) {
+                existing.updated_at = existing.updated_at.max(session.updated_at);
+                if existing.title.trim().is_empty() && !session.title.trim().is_empty() {
+                    existing.title = session.title;
+                }
+            } else {
+                merged.insert(session.id.clone(), session);
+            }
+        }
+        let mut sessions = merged.into_values().collect::<Vec<_>>();
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions
+    }
+
+    fn build_cached_user_message(message_id: String, text: String) -> AiMessage {
+        AiMessage {
+            id: message_id.clone(),
+            role: "user".to_string(),
+            created_at: Some(Self::now_ms()),
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts: vec![AiPart::new_text(format!("{}-text", message_id), text)],
+        }
+    }
+
+    fn build_cached_assistant_message(
+        message_id: String,
+        reasoning_text: String,
+        answer_text: String,
+    ) -> Option<AiMessage> {
+        let mut parts = Vec::new();
+        if !reasoning_text.is_empty() {
+            parts.push(AiPart {
+                id: format!("{}-reasoning", message_id),
+                part_type: "reasoning".to_string(),
+                text: Some(reasoning_text),
+                ..Default::default()
+            });
+        }
+        if !answer_text.is_empty() {
+            parts.push(AiPart::new_text(
+                format!("{}-text", message_id),
+                answer_text,
+            ));
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        Some(AiMessage {
+            id: message_id,
+            role: "assistant".to_string(),
+            created_at: Some(Self::now_ms()),
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts,
+        })
     }
 
     async fn cache_metadata(&self, directory: &str, metadata: AcpSessionMetadata) {
@@ -148,11 +395,14 @@ impl AcpAgent {
 
         for _ in 0..max_pages {
             let (page, next_cursor) = self.client.session_list_page(cursor.as_deref()).await?;
-            for item in page {
-                if Self::normalize_directory(&item.cwd) == expected {
-                    sessions.push(item);
-                }
+            let (selected, used_fallback) = Self::select_sessions_for_directory(page, &expected);
+            if used_fallback {
+                warn!(
+                    "{}: session/list missing cwd for current directory, fallback to unknown-cwd sessions",
+                    self.profile.tool_id
+                );
             }
+            sessions.extend(selected);
             match next_cursor {
                 Some(next) if !next.is_empty() => cursor = Some(next),
                 _ => break,
@@ -381,18 +631,18 @@ impl AcpAgent {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let content = event.get("content")?;
+        let content = event.get("content");
         let content_type = content
-            .get("type")
+            .and_then(|v| v.get("type"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
         let text = content
-            .get("text")
+            .and_then(|v| v.get("text"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        // text 为空时仍返回 Some，由调用方按需过滤
+        // content 可能为空（如 terminal update），此时返回空 type/text 供上层判定。
         Some((session_update, content_type, text))
     }
 
@@ -403,6 +653,85 @@ impl AcpAgent {
             "user_message_chunk" => Some(("text", false)),
             _ => None,
         }
+    }
+
+    fn normalized_update_token(raw: &str) -> String {
+        raw.trim()
+            .to_lowercase()
+            .replace('-', "_")
+            .replace(' ', "_")
+    }
+
+    fn is_terminal_update(session_update: &str, content_type: &str) -> bool {
+        let update = Self::normalized_update_token(session_update);
+        if !update.is_empty() {
+            if update.contains("chunk") {
+                return false;
+            }
+            if matches!(
+                update.as_str(),
+                "done"
+                    | "idle"
+                    | "session_idle"
+                    | "session_done"
+                    | "session_completed"
+                    | "session_complete"
+                    | "turn_done"
+                    | "turn_completed"
+                    | "turn_complete"
+                    | "agent_turn_done"
+                    | "agent_turn_completed"
+                    | "agent_turn_complete"
+            ) {
+                return true;
+            }
+            if update.contains("complete")
+                || update.contains("finished")
+                || update.ends_with("_end")
+                || update.ends_with("_ended")
+                || update.contains("cancelled")
+                || update.contains("canceled")
+            {
+                return true;
+            }
+        }
+
+        let content = Self::normalized_update_token(content_type);
+        matches!(content.as_str(), "done" | "end" | "completed" | "finished")
+    }
+
+    fn is_error_update(session_update: &str, content_type: &str) -> bool {
+        let update = Self::normalized_update_token(session_update);
+        if update.contains("error") || update.contains("failed") || update.contains("failure") {
+            return true;
+        }
+        let content = Self::normalized_update_token(content_type);
+        content == "error" || content == "failed"
+    }
+
+    fn select_sessions_for_directory(
+        page: Vec<AcpSessionSummary>,
+        expected_directory: &str,
+    ) -> (Vec<AcpSessionSummary>, bool) {
+        let expected = Self::normalize_directory(expected_directory);
+        let mut exact = Vec::new();
+        let mut unknown_cwd = Vec::new();
+
+        for item in page {
+            let normalized_cwd = Self::normalize_directory(&item.cwd);
+            if normalized_cwd.is_empty() {
+                unknown_cwd.push(item);
+                continue;
+            }
+            if normalized_cwd == expected {
+                exact.push(item);
+            }
+        }
+
+        if exact.is_empty() && !unknown_cwd.is_empty() {
+            return (unknown_cwd, true);
+        }
+        (exact, false)
     }
 
     fn push_chunk_message(
@@ -531,11 +860,19 @@ impl AiAgent for AcpAgent {
         self.cache_metadata(directory, metadata.clone()).await;
         self.cache_session_metadata(directory, &session_id, metadata)
             .await;
-        Ok(AiSession {
+        let session = AiSession {
             id: session_id,
             title: title.to_string(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-        })
+        };
+        self.upsert_cached_session(
+            directory,
+            &session.id,
+            Some(&session.title),
+            Some(session.updated_at),
+        )
+        .await;
+        Ok(session)
     }
 
     async fn send_message(
@@ -566,12 +903,15 @@ impl AiAgent for AcpAgent {
         let tool_id = self.profile.tool_id.clone();
         let message_id_prefix = self.profile.message_id_prefix.clone();
         let directory = directory.to_string();
+        let cache_directory = directory.clone();
         let session_id = session_id.to_string();
+        let cache_session_id = session_id.clone();
         let original_text = message.to_string();
         let assistant_message_id =
             format!("{}-assistant-{}", message_id_prefix, uuid::Uuid::new_v4());
         let user_message_id = format!("{}-user-{}", message_id_prefix, uuid::Uuid::new_v4());
         let pending_permissions = self.pending_permissions.clone();
+        let cached_sessions = self.cached_sessions.clone();
 
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
@@ -582,8 +922,19 @@ impl AiAgent for AcpAgent {
             message_id: user_message_id.clone(),
             part: AiPart::new_text(format!("{}-text", user_message_id), original_text),
         }));
+        self.upsert_cached_session(directory.as_str(), &session_id, None, None)
+            .await;
+        self.append_cached_message(
+            directory.as_str(),
+            &session_id,
+            Self::build_cached_user_message(user_message_id.clone(), message.to_string()),
+        )
+        .await;
 
         tokio::spawn(async move {
+            let mut buffered_assistant_reasoning = String::new();
+            let mut buffered_assistant_text = String::new();
+
             let request_fut = async {
                 match client
                     .session_prompt(
@@ -607,18 +958,46 @@ impl AiAgent for AcpAgent {
             tokio::pin!(request_fut);
 
             let mut assistant_opened = false;
+            let mut request_completed = false;
+            let mut last_activity_at = Instant::now();
+            let mut idle_tick = tokio::time::interval(Duration::from_millis(200));
+            idle_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
-                    request_result = &mut request_fut => {
+                    request_result = &mut request_fut, if !request_completed => {
                         match request_result {
                             Ok(_) => {
-                                let _ = tx.send(Ok(AiEvent::Done));
+                                request_completed = true;
+                                if !assistant_opened {
+                                    let _ = tx.send(Ok(AiEvent::Done));
+                                    break;
+                                }
                             }
                             Err(err) => {
                                 let _ = tx.send(Err(err));
+                                break;
                             }
                         }
-                        break;
+                    }
+                    _ = idle_tick.tick() => {
+                        if !assistant_opened {
+                            continue;
+                        }
+                        let idle_for = last_activity_at.elapsed();
+                        if request_completed && idle_for >= Duration::from_millis(Self::REQUEST_DONE_GRACE_MS) {
+                            let _ = tx.send(Ok(AiEvent::Done));
+                            break;
+                        }
+                        if idle_for >= Duration::from_secs(Self::STREAM_IDLE_DONE_TIMEOUT_SECS) {
+                            warn!(
+                                "{} stream idle fallback triggered: session_id={}, idle_secs={}",
+                                tool_id,
+                                session_id,
+                                idle_for.as_secs()
+                            );
+                            let _ = tx.send(Ok(AiEvent::Done));
+                            break;
+                        }
                     }
                     recv = notifications.recv() => {
                         let Ok(notification) = recv else {
@@ -634,7 +1013,23 @@ impl AiAgent for AcpAgent {
                             continue;
                         }
                         let Some(update) = params.get("update") else { continue };
-                        let Some((session_update, _content_type, text)) = Self::extract_update(update) else { continue };
+                        let Some((session_update, content_type, text)) = Self::extract_update(update) else { continue };
+                        last_activity_at = Instant::now();
+
+                        if Self::is_error_update(&session_update, &content_type) {
+                            let err_msg = if text.is_empty() {
+                                format!("{} stream error update: {}", tool_id, session_update)
+                            } else {
+                                text.clone()
+                            };
+                            let _ = tx.send(Err(err_msg));
+                            break;
+                        }
+
+                        if Self::is_terminal_update(&session_update, &content_type) {
+                            let _ = tx.send(Ok(AiEvent::Done));
+                            break;
+                        }
 
                         let Some((part_type, should_emit)) = Self::map_update_to_output(&session_update) else {
                             debug!(
@@ -645,6 +1040,11 @@ impl AiAgent for AcpAgent {
                         };
                         if !should_emit || text.is_empty() {
                             continue;
+                        }
+                        if part_type == "reasoning" {
+                            buffered_assistant_reasoning.push_str(&text);
+                        } else if part_type == "text" {
+                            buffered_assistant_text.push_str(&text);
                         }
 
                         if !assistant_opened {
@@ -685,21 +1085,54 @@ impl AiAgent for AcpAgent {
                     }
                 }
             }
+
+            if let Some(cached_assistant) = Self::build_cached_assistant_message(
+                assistant_message_id.clone(),
+                buffered_assistant_reasoning,
+                buffered_assistant_text,
+            ) {
+                Self::append_cached_message_in_map(
+                    &cached_sessions,
+                    &cache_directory,
+                    &cache_session_id,
+                    cached_assistant,
+                )
+                .await;
+            }
+            Self::upsert_cached_session_in_map(
+                &cached_sessions,
+                &cache_directory,
+                &cache_session_id,
+                None,
+                Some(Self::now_ms()),
+            )
+            .await;
         });
 
         Ok(Box::pin(UnboundedReceiverStream::new(rx)))
     }
 
     async fn list_sessions(&self, directory: &str) -> Result<Vec<AiSession>, String> {
-        let sessions = self.list_sessions_for_directory(directory, 8).await?;
-        Ok(sessions
+        let remote_sessions = self
+            .list_sessions_for_directory(directory, 8)
+            .await?
             .into_iter()
             .map(|s| AiSession {
                 id: s.id,
                 title: s.title,
                 updated_at: s.updated_at_ms,
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let cached_sessions = self.cached_sessions_for_directory(directory).await;
+        if remote_sessions.is_empty() && !cached_sessions.is_empty() {
+            warn!(
+                "{}: session/list returned empty, using cached sessions, directory={}, cached_count={}",
+                self.profile.tool_id,
+                directory,
+                cached_sessions.len()
+            );
+        }
+        Ok(Self::merge_sessions(remote_sessions, cached_sessions))
     }
 
     async fn delete_session(&self, _directory: &str, _session_id: &str) -> Result<(), String> {
@@ -714,10 +1147,47 @@ impl AiAgent for AcpAgent {
         limit: Option<u32>,
     ) -> Result<Vec<AiMessage>, String> {
         self.client.ensure_started().await?;
-        let (mut messages, metadata) = self.collect_loaded_messages(directory, session_id).await?;
+        let (mut messages, metadata) = match tokio::time::timeout(
+            Duration::from_secs(Self::SESSION_LOAD_TIMEOUT_SECS),
+            self.collect_loaded_messages(directory, session_id),
+        )
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => {
+                warn!(
+                    "{}: session/load timeout in list_messages, session_id={}",
+                    self.profile.tool_id, session_id
+                );
+                (
+                    Vec::new(),
+                    self.metadata_for_session(directory, session_id)
+                        .await
+                        .unwrap_or_default(),
+                )
+            }
+        };
         self.cache_metadata(directory, metadata.clone()).await;
         self.cache_session_metadata(directory, session_id, metadata)
             .await;
+        if messages.is_empty() {
+            if let Some(cached) = self
+                .cached_messages_for_session(directory, session_id)
+                .await
+            {
+                warn!(
+                    "{}: list_messages fallback to cached history, session_id={}, cached_messages_count={}",
+                    self.profile.tool_id,
+                    session_id,
+                    cached.len()
+                );
+                messages = cached;
+            }
+        } else {
+            self.replace_cached_messages(directory, session_id, messages.clone())
+                .await;
+        }
 
         if let Some(limit) = limit {
             let limit = limit as usize;
@@ -744,11 +1214,30 @@ impl AiAgent for AcpAgent {
             && metadata.models.is_empty()
             && metadata.modes.is_empty()
         {
-            if let Ok(refreshed) = self.client.session_load(directory, session_id).await {
-                self.cache_metadata(directory, refreshed.clone()).await;
-                self.cache_session_metadata(directory, session_id, refreshed.clone())
-                    .await;
-                metadata = refreshed;
+            match tokio::time::timeout(
+                Duration::from_secs(Self::SESSION_LOAD_TIMEOUT_SECS),
+                self.client.session_load(directory, session_id),
+            )
+            .await
+            {
+                Ok(Ok(refreshed)) => {
+                    self.cache_metadata(directory, refreshed.clone()).await;
+                    self.cache_session_metadata(directory, session_id, refreshed.clone())
+                        .await;
+                    metadata = refreshed;
+                }
+                Ok(Err(err)) => {
+                    debug!(
+                        "{} session_selection_hint load failed: session_id={}, error={}",
+                        self.profile.tool_id, session_id, err
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        "{} session_selection_hint load timeout: session_id={}",
+                        self.profile.tool_id, session_id
+                    );
+                }
             }
         }
         let hint = AiSessionSelectionHint {
@@ -913,7 +1402,8 @@ impl AiAgent for AcpAgent {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcpAgent, AcpBackendProfile};
+    use super::{AcpAgent, AcpBackendProfile, AcpSessionSummary};
+    use crate::ai::AiSession;
 
     #[test]
     fn map_update_to_output_should_follow_acp_mapping_contract() {
@@ -933,6 +1423,76 @@ mod tests {
     }
 
     #[test]
+    fn terminal_update_detection_should_cover_common_variants() {
+        assert!(AcpAgent::is_terminal_update("turn_complete", ""));
+        assert!(AcpAgent::is_terminal_update("session_idle", ""));
+        assert!(AcpAgent::is_terminal_update("foo_completed", ""));
+        assert!(AcpAgent::is_terminal_update("", "done"));
+        assert!(!AcpAgent::is_terminal_update("agent_message_chunk", ""));
+    }
+
+    #[test]
+    fn select_sessions_for_directory_should_fallback_to_unknown_cwd_when_needed() {
+        let page = vec![
+            AcpSessionSummary {
+                id: "a".to_string(),
+                title: "A".to_string(),
+                cwd: "".to_string(),
+                updated_at_ms: 1,
+            },
+            AcpSessionSummary {
+                id: "b".to_string(),
+                title: "B".to_string(),
+                cwd: "".to_string(),
+                updated_at_ms: 2,
+            },
+        ];
+
+        let (selected, used_fallback) =
+            AcpAgent::select_sessions_for_directory(page, "/tmp/workspace");
+        assert!(used_fallback);
+        assert_eq!(selected.len(), 2);
+    }
+
+    #[test]
+    fn select_sessions_for_directory_should_prefer_exact_matches() {
+        let page = vec![
+            AcpSessionSummary {
+                id: "a".to_string(),
+                title: "A".to_string(),
+                cwd: "/tmp/workspace".to_string(),
+                updated_at_ms: 1,
+            },
+            AcpSessionSummary {
+                id: "b".to_string(),
+                title: "B".to_string(),
+                cwd: "".to_string(),
+                updated_at_ms: 2,
+            },
+            AcpSessionSummary {
+                id: "c".to_string(),
+                title: "C".to_string(),
+                cwd: "/tmp/other".to_string(),
+                updated_at_ms: 3,
+            },
+        ];
+
+        let (selected, used_fallback) =
+            AcpAgent::select_sessions_for_directory(page, "/tmp/workspace");
+        assert!(!used_fallback);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "a");
+    }
+
+    #[test]
+    fn normalize_directory_should_handle_file_urls() {
+        assert_eq!(
+            AcpAgent::normalize_directory("file:///tmp/workspace"),
+            "/tmp/workspace"
+        );
+    }
+
+    #[test]
     fn backend_profile_should_expose_expected_provider_ids() {
         let copilot = AcpBackendProfile::copilot();
         assert_eq!(copilot.provider_id, "copilot");
@@ -941,5 +1501,49 @@ mod tests {
         let kimi = AcpBackendProfile::kimi();
         assert_eq!(kimi.provider_id, "kimi");
         assert_eq!(kimi.provider_name, "Kimi");
+    }
+
+    #[test]
+    fn merge_sessions_should_include_cached_sessions_when_remote_empty() {
+        let cached = vec![AiSession {
+            id: "cached-1".to_string(),
+            title: "Cached".to_string(),
+            updated_at: 42,
+        }];
+        let merged = AcpAgent::merge_sessions(Vec::new(), cached);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "cached-1");
+    }
+
+    #[test]
+    fn merge_sessions_should_merge_same_id_and_keep_newest_timestamp() {
+        let remote = vec![AiSession {
+            id: "same".to_string(),
+            title: "Remote".to_string(),
+            updated_at: 100,
+        }];
+        let cached = vec![AiSession {
+            id: "same".to_string(),
+            title: "Cached".to_string(),
+            updated_at: 200,
+        }];
+        let merged = AcpAgent::merge_sessions(remote, cached);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "same");
+        assert_eq!(merged[0].updated_at, 200);
+    }
+
+    #[test]
+    fn build_cached_assistant_message_should_capture_reasoning_and_text() {
+        let message = AcpAgent::build_cached_assistant_message(
+            "assistant-1".to_string(),
+            "思考".to_string(),
+            "回答".to_string(),
+        )
+        .expect("assistant message should exist");
+        assert_eq!(message.role, "assistant");
+        assert_eq!(message.parts.len(), 2);
+        assert_eq!(message.parts[0].part_type, "reasoning");
+        assert_eq!(message.parts[1].part_type, "text");
     }
 }
