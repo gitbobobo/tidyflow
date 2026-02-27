@@ -47,15 +47,10 @@ impl EvolutionManager {
                 "final_reason": "evolution auto scheduler"
             },
             "llm_defined_acceptance": {
-                "criteria": entry.llm_defined_acceptance_criteria.clone(),
-                "minimum_evidence_policy": {
-                    "strategy": "llm_decided",
-                    "description": "auto"
-                }
+                "criteria": entry.llm_defined_acceptance_criteria.clone()
             },
             "stage_files": stage_files,
             "chat_map_file": "chat.map.json",
-            "evidence_index_file": "evidence.index.json",
             "handoff_file": "handoff.md",
             "terminal_reason_code": entry.terminal_reason_code.clone(),
             "created_at": entry.created_at.clone(),
@@ -196,11 +191,7 @@ impl EvolutionManager {
             "STAGE_FILE_PATH": stage_file,
             "DIRECTION_STAGE_FILE_PATH": cycle_dir.join("stage.direction.json"),
             "DIRECTION_LIFECYCLE_SCAN_PATH": cycle_dir.join("direction.lifecycle_scan.json"),
-            "EVIDENCE_INDEX_PATH": cycle_dir.join("evidence.index.json"),
             "CHAT_MAP_PATH": cycle_dir.join("chat.map.json"),
-            "TEST_ADAPTER_PATH": evolution_workspace_dir(&workspace_root)
-                .map(|p| p.join("test.adapter.json"))
-                .unwrap_or_else(|_| Path::new("test.adapter.json").to_path_buf()),
             "ENV_CONTRACT_PATH": evolution_workspace_dir(&workspace_root)
                 .map(|p| p.join("env.contract.json"))
                 .unwrap_or_else(|_| Path::new("env.contract.json").to_path_buf()),
