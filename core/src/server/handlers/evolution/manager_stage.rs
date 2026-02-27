@@ -1,6 +1,6 @@
 use chrono::Utc;
 use futures::StreamExt;
-use tokio::time::{timeout, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -16,6 +16,9 @@ use crate::server::protocol::ServerMessage;
 use super::profile::profile_for_stage;
 use super::utils::cycle_dir_path;
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
+
+const AUTO_COMMIT_MAX_ATTEMPTS: u32 = 2;
+const AUTO_COMMIT_RETRY_DELAY_SECS: u64 = 2;
 
 fn parse_judge_result_text(value: &str) -> Option<bool> {
     let normalized = value.trim().to_ascii_lowercase();
@@ -41,6 +44,14 @@ fn parse_judge_result_from_json(value: &serde_json::Value) -> Option<bool> {
         .pointer("/decision/result")
         .and_then(|v| v.as_str())
         .and_then(parse_judge_result_text)
+}
+
+fn should_auto_commit_after_report(status: &str) -> bool {
+    status == "completed"
+}
+
+fn should_start_next_round(status: &str, global_loop_round: u32, loop_round_limit: u32) -> bool {
+    should_auto_commit_after_report(status) && global_loop_round < loop_round_limit
 }
 
 impl EvolutionManager {
@@ -264,7 +275,72 @@ impl EvolutionManager {
         Ok(())
     }
 
-    async fn run_auto_commit_before_next_round(
+    async fn run_with_retry<F, Fut>(
+        max_attempts: u32,
+        retry_delay: Duration,
+        mut runner: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(u32) -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        if max_attempts == 0 {
+            return Err("max_attempts must be greater than 0".to_string());
+        }
+
+        let mut last_err: Option<String> = None;
+        for attempt in 1..=max_attempts {
+            match runner(attempt).await {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    last_err = Some(err.clone());
+                    if attempt < max_attempts {
+                        warn!(
+                            "auto commit attempt {}/{} failed: {}, retrying in {}s",
+                            attempt,
+                            max_attempts,
+                            err,
+                            retry_delay.as_secs()
+                        );
+                        sleep(retry_delay).await;
+                    } else {
+                        warn!(
+                            "auto commit attempt {}/{} failed: {}",
+                            attempt, max_attempts, err
+                        );
+                    }
+                }
+            }
+        }
+
+        Err(format!(
+            "auto commit failed after {} attempts: {}",
+            max_attempts,
+            last_err.unwrap_or_else(|| "unknown error".to_string())
+        ))
+    }
+
+    async fn run_auto_commit_once(
+        workspace_root: std::path::PathBuf,
+        ai_agent: String,
+    ) -> Result<(), String> {
+        let result = timeout(
+            Duration::from_secs(600),
+            tokio::task::spawn_blocking(move || {
+                run_ai_commit_internal(&workspace_root, &ai_agent, None)
+            }),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(Ok(_output))) => Ok(()),
+            Ok(Ok(Err(err))) => Err(err),
+            Ok(Err(err)) => Err(format!("AI commit task failed: {}", err)),
+            Err(_) => Err("AI agent timed out after 600 seconds".to_string()),
+        }
+    }
+
+    async fn run_auto_commit_after_round(
         &self,
         workspace_root: &str,
         ctx: &HandlerContext,
@@ -278,20 +354,16 @@ impl EvolutionManager {
                 .unwrap_or_else(|| "cursor".to_string())
         };
         let root = std::path::PathBuf::from(workspace_root);
-        let agent = ai_agent.clone();
-
-        let result = timeout(
-            Duration::from_secs(600),
-            tokio::task::spawn_blocking(move || run_ai_commit_internal(&root, &agent, None)),
+        Self::run_with_retry(
+            AUTO_COMMIT_MAX_ATTEMPTS,
+            Duration::from_secs(AUTO_COMMIT_RETRY_DELAY_SECS),
+            move |_attempt| {
+                let root = root.clone();
+                let ai_agent = ai_agent.clone();
+                async move { Self::run_auto_commit_once(root, ai_agent).await }
+            },
         )
-        .await;
-
-        match result {
-            Ok(Ok(Ok(_output))) => Ok(()),
-            Ok(Ok(Err(err))) => Err(err),
-            Ok(Err(err)) => Err(format!("AI commit task failed: {}", err)),
-            Err(_) => Err("AI agent timed out after 600 seconds".to_string()),
-        }
+        .await
     }
 
     pub(super) async fn run_stage(
@@ -722,10 +794,15 @@ impl EvolutionManager {
                             "failed_exhausted".to_string()
                         };
                     }
-                    let should_start_next_round = entry.status == "completed"
-                        && entry.global_loop_round < entry.loop_round_limit;
-                    if should_start_next_round {
+                    if should_auto_commit_after_report(&entry.status) {
                         auto_commit_workspace_root = Some(entry.workspace_root.clone());
+                    }
+                    let should_start_next_round = should_start_next_round(
+                        &entry.status,
+                        entry.global_loop_round,
+                        entry.loop_round_limit,
+                    );
+                    if should_start_next_round {
                         auto_loop_gate = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
@@ -782,13 +859,13 @@ impl EvolutionManager {
 
         if let Some(workspace_root) = auto_commit_workspace_root {
             if let Err(err) = self
-                .run_auto_commit_before_next_round(&workspace_root, ctx)
+                .run_auto_commit_after_round(&workspace_root, ctx)
                 .await
             {
                 self.mark_failed_with_code(
                     key,
                     "evo_auto_commit_failed",
-                    &format!("auto commit before next round failed: {}", err),
+                    &format!("auto commit after round failed: {}", err),
                     ctx,
                 )
                 .await;
@@ -977,7 +1054,13 @@ impl EvolutionManager {
 #[cfg(test)]
 mod tests {
     use super::super::{stage::next_stage, STAGES};
-    use super::{parse_judge_result_from_json, EvolutionManager};
+    use super::{
+        parse_judge_result_from_json, should_auto_commit_after_report, should_start_next_round,
+        EvolutionManager,
+    };
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    use tokio::time::Duration;
 
     #[test]
     fn parse_judge_result_json_schema() {
@@ -1064,6 +1147,93 @@ mod tests {
             err.contains("check_ids"),
             "error should mention check_ids, got: {}",
             err
+        );
+    }
+
+    #[test]
+    fn report_completed_final_round_should_auto_commit_but_not_start_next_round() {
+        assert!(
+            should_auto_commit_after_report("completed"),
+            "completed 应触发自动提交"
+        );
+        assert!(
+            !should_start_next_round("completed", 1, 1),
+            "最终轮不应自动开始下一轮"
+        );
+    }
+
+    #[test]
+    fn report_completed_non_final_round_should_auto_commit_and_start_next_round() {
+        assert!(
+            should_auto_commit_after_report("completed"),
+            "completed 应触发自动提交"
+        );
+        assert!(
+            should_start_next_round("completed", 1, 3),
+            "非最终轮应自动开始下一轮"
+        );
+    }
+
+    #[test]
+    fn report_failed_exhausted_should_not_auto_commit_or_start_next_round() {
+        assert!(
+            !should_auto_commit_after_report("failed_exhausted"),
+            "失败轮不应触发自动提交"
+        );
+        assert!(
+            !should_start_next_round("failed_exhausted", 1, 3),
+            "失败轮不应自动开始下一轮"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_commit_retry_should_succeed_on_second_attempt() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_for_runner = attempts.clone();
+        let result = EvolutionManager::run_with_retry(2, Duration::from_millis(0), move |_| {
+            let attempts = attempts_for_runner.clone();
+            async move {
+                let current = attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                if current == 1 {
+                    return Err("first attempt failed".to_string());
+                }
+                Ok(())
+            }
+        })
+        .await;
+
+        assert!(result.is_ok(), "第二次重试应成功");
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            2,
+            "应执行两次自动提交尝试"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_commit_retry_should_fail_after_two_attempts() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_for_runner = attempts.clone();
+        let result = EvolutionManager::run_with_retry(2, Duration::from_millis(0), move |_| {
+            let attempts = attempts_for_runner.clone();
+            async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Err("always failed".to_string())
+            }
+        })
+        .await;
+
+        assert!(result.is_err(), "两次都失败时应返回错误");
+        let err = result.expect_err("应返回失败结果");
+        assert!(
+            err.contains("after 2 attempts"),
+            "错误信息应包含重试次数，实际: {}",
+            err
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            2,
+            "失败场景也应执行两次自动提交尝试"
         );
     }
 }
