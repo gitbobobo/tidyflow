@@ -784,6 +784,25 @@ impl AcpAgent {
         directory: &str,
         session_id: &str,
     ) -> Result<(Vec<AiMessage>, AcpSessionMetadata), String> {
+        if !self.client.supports_load_session().await {
+            debug!(
+                "{}: loadSession capability unsupported, skip session/load for history collection",
+                self.profile.tool_id
+            );
+            let cached = if let Some(meta) = self.metadata_for_session(directory, session_id).await
+            {
+                meta
+            } else {
+                self.metadata_by_directory
+                    .lock()
+                    .await
+                    .get(&Self::normalize_directory(directory))
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            return Ok((Vec::new(), cached));
+        }
+
         let mut notifications = self.client.subscribe_notifications();
         let load_fut = self.client.session_load(directory, session_id);
         tokio::pin!(load_fut);
@@ -912,6 +931,7 @@ impl AiAgent for AcpAgent {
         let user_message_id = format!("{}-user-{}", message_id_prefix, uuid::Uuid::new_v4());
         let pending_permissions = self.pending_permissions.clone();
         let cached_sessions = self.cached_sessions.clone();
+        let supports_load_session = self.client.supports_load_session().await;
 
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
@@ -947,10 +967,14 @@ impl AiAgent for AcpAgent {
                 {
                     Ok(result) => Ok(result),
                     Err(err) if Self::is_session_not_found(&err) => {
-                        client.session_load(&directory, &session_id).await?;
-                        client
-                            .session_prompt(&session_id, prompt, model_id, mode_id)
-                            .await
+                        if supports_load_session {
+                            client.session_load(&directory, &session_id).await?;
+                            client
+                                .session_prompt(&session_id, prompt, model_id, mode_id)
+                                .await
+                        } else {
+                            Err(err)
+                        }
                     }
                     Err(err) => Err(err),
                 }
@@ -1214,29 +1238,31 @@ impl AiAgent for AcpAgent {
             && metadata.models.is_empty()
             && metadata.modes.is_empty()
         {
-            match tokio::time::timeout(
-                Duration::from_secs(Self::SESSION_LOAD_TIMEOUT_SECS),
-                self.client.session_load(directory, session_id),
-            )
-            .await
-            {
-                Ok(Ok(refreshed)) => {
-                    self.cache_metadata(directory, refreshed.clone()).await;
-                    self.cache_session_metadata(directory, session_id, refreshed.clone())
-                        .await;
-                    metadata = refreshed;
-                }
-                Ok(Err(err)) => {
-                    debug!(
-                        "{} session_selection_hint load failed: session_id={}, error={}",
-                        self.profile.tool_id, session_id, err
-                    );
-                }
-                Err(_) => {
-                    warn!(
-                        "{} session_selection_hint load timeout: session_id={}",
-                        self.profile.tool_id, session_id
-                    );
+            if self.client.supports_load_session().await {
+                match tokio::time::timeout(
+                    Duration::from_secs(Self::SESSION_LOAD_TIMEOUT_SECS),
+                    self.client.session_load(directory, session_id),
+                )
+                .await
+                {
+                    Ok(Ok(refreshed)) => {
+                        self.cache_metadata(directory, refreshed.clone()).await;
+                        self.cache_session_metadata(directory, session_id, refreshed.clone())
+                            .await;
+                        metadata = refreshed;
+                    }
+                    Ok(Err(err)) => {
+                        debug!(
+                            "{} session_selection_hint load failed: session_id={}, error={}",
+                            self.profile.tool_id, session_id, err
+                        );
+                    }
+                    Err(_) => {
+                        warn!(
+                            "{} session_selection_hint load timeout: session_id={}",
+                            self.profile.tool_id, session_id
+                        );
+                    }
                 }
             }
         }
@@ -1279,6 +1305,13 @@ impl AiAgent for AcpAgent {
         directory: &str,
         session_id: &str,
     ) -> Result<Option<AiSessionContextUsage>, String> {
+        if !self.client.supports_load_session().await {
+            debug!(
+                "{}: loadSession capability unsupported, skip session/load for context usage",
+                self.profile.tool_id
+            );
+            return Ok(None);
+        }
         let raw = self.client.session_load_raw(directory, session_id).await?;
         Ok(Some(AiSessionContextUsage {
             context_remaining_percent: extract_context_remaining_percent(&raw),
