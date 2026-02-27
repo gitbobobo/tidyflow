@@ -216,6 +216,7 @@ fn normalize_ai_tool_compatible(tool: &str) -> Option<String> {
         "open-code" => "opencode",
         "codex-app-server" | "codex-app" => "codex",
         "copilot-acp" | "github-copilot" => "copilot",
+        "kimi-code" => "kimi",
         _ => return None,
     };
     Some(mapped.to_string())
@@ -245,6 +246,10 @@ mod tests {
         assert_eq!(
             normalize_ai_tool_compatible("open-code").as_deref(),
             Some("opencode")
+        );
+        assert_eq!(
+            normalize_ai_tool_compatible("kimi-code").as_deref(),
+            Some("kimi")
         );
         assert_eq!(normalize_ai_tool_compatible("unknown-tool"), None);
     }

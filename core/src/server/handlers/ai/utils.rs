@@ -9,14 +9,14 @@ use super::SharedAIState;
 use crate::ai::session_status::AiSessionStatus;
 use crate::ai::{
     AiAgent, AiSessionSelectionHint, CodexAppServerAgent, CodexAppServerManager, CopilotAcpAgent,
-    OpenCodeAgent, OpenCodeManager,
+    KimiAcpAgent, OpenCodeAgent, OpenCodeManager,
 };
 use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::ServerMessage;
 
 pub(crate) const IDLE_DISPOSE_TTL_MS: i64 = 15 * 60 * 1000;
 pub(crate) const MAINTENANCE_INTERVAL_SECS: u64 = 60;
-pub(crate) const PRELOAD_AI_TOOLS: [&str; 3] = ["opencode", "codex", "copilot"];
+pub(crate) const PRELOAD_AI_TOOLS: [&str; 4] = ["opencode", "codex", "copilot", "kimi"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
@@ -146,7 +146,17 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
                 "Copilot ACP server",
                 Some(1),
             );
-            Ok(Arc::new(CopilotAcpAgent::new(Arc::new(manager))))
+            Ok(Arc::new(CopilotAcpAgent::new_copilot(Arc::new(manager))))
+        }
+        "kimi" => {
+            let manager = CodexAppServerManager::new_with_command_and_protocol(
+                std::env::temp_dir(),
+                "kimi",
+                vec!["acp".to_string()],
+                "Kimi ACP server",
+                Some(1),
+            );
+            Ok(Arc::new(KimiAcpAgent::new_kimi(Arc::new(manager))))
         }
         other => Err(format!("Unsupported AI tool: {}", other)),
     }
@@ -155,7 +165,8 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
 pub(crate) fn normalize_ai_tool(tool: &str) -> Result<String, String> {
     let normalized = tool.trim().to_lowercase();
     match normalized.as_str() {
-        "opencode" | "codex" | "copilot" => Ok(normalized),
+        "opencode" | "codex" | "copilot" | "kimi" => Ok(normalized),
+        "kimi-code" => Ok("kimi".to_string()),
         _ => Err(format!("Unsupported AI tool: {}", tool)),
     }
 }
@@ -843,7 +854,9 @@ pub(crate) async fn normalize_ai_image_parts(
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_selection_hint_from_messages, should_broadcast_stream_message};
+    use super::{
+        infer_selection_hint_from_messages, normalize_ai_tool, should_broadcast_stream_message,
+    };
     use crate::server::protocol::ServerMessage;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1002,6 +1015,13 @@ mod tests {
 
         assert!(should_broadcast_stream_message(&msg, 600));
         assert!(!should_broadcast_stream_message(&same_session_msg, 600));
+    }
+
+    #[test]
+    fn normalize_ai_tool_should_accept_kimi_aliases() {
+        assert_eq!(normalize_ai_tool("kimi").as_deref(), Ok("kimi"));
+        assert_eq!(normalize_ai_tool("KIMI-CODE").as_deref(), Ok("kimi"));
+        assert!(normalize_ai_tool("kimi-agent").is_err());
     }
 }
 
