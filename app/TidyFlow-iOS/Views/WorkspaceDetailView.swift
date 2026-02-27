@@ -518,13 +518,38 @@ private struct ExplorerFilePreviewSheet: View {
     }
 }
 
+// MARK: - Evidence Tab Types (iOS)
+
+enum MobileEvidenceTabType: String, CaseIterable, Identifiable {
+    case screenshot = "screenshot"
+    case log = "log"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .screenshot: return "截图"
+        case .log: return "日志"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .screenshot: return "photo"
+        case .log: return "doc.text"
+        }
+    }
+}
+
 struct MobileEvidenceView: View {
     @EnvironmentObject var appState: MobileAppState
 
     let project: String
     let workspace: String
 
-    @State private var selectedItemID: String?
+    @State private var selectedTab: MobileEvidenceTabType = .screenshot
+    @State private var selectedScreenshotID: String?
+    @State private var selectedLogID: String?
     @State private var itemLoading: Bool = false
     @State private var itemPaging: Bool = false
     @State private var itemError: String?
@@ -534,6 +559,7 @@ struct MobileEvidenceView: View {
     @State private var itemImage: UIImage?
     @State private var itemByteCount: Int = 0
     @State private var headerHint: String?
+    @State private var showingDetailSheet: Bool = false
 
     private var snapshot: EvolutionEvidenceSnapshotV2? {
         appState.evidenceSnapshot(project: project, workspace: workspace)
@@ -546,9 +572,42 @@ struct MobileEvidenceView: View {
     private var snapshotError: String? {
         appState.evidenceError(project: project, workspace: workspace)
     }
+    
+    /// 根据当前选中的标签页获取对应的证据条目
+    private var currentTabItems: [EvolutionEvidenceItemInfoV2] {
+        guard let snapshot else { return [] }
+        return snapshot.items.filter { item in
+            switch selectedTab {
+            case .screenshot:
+                return item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/")
+            case .log:
+                return item.evidenceType == "log" || (!item.mimeType.hasPrefix("image/") && item.evidenceType != "screenshot")
+            }
+        }.sorted { $0.order < $1.order }
+    }
+    
+    /// 获取当前标签页下的设备类型列表（保持原有顺序）
+    private var currentTabDeviceTypes: [String] {
+        let deviceTypes = currentTabItems.map { $0.deviceType }
+        var seen = Set<String>()
+        var result: [String] = []
+        for type in deviceTypes {
+            if !seen.contains(type) {
+                seen.insert(type)
+                result.append(type)
+            }
+        }
+        return result
+    }
+    
+    /// 获取指定设备类型的条目
+    private func items(for deviceType: String) -> [EvolutionEvidenceItemInfoV2] {
+        currentTabItems.filter { $0.deviceType == deviceType }
+    }
 
     var body: some View {
         List {
+            // 重建按钮
             Section {
                 Button("重建全链路证据") {
                     rebuildEvidence()
@@ -559,6 +618,20 @@ struct MobileEvidenceView: View {
                     Text(headerHint)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+            }
+            
+            // 类型切换 Picker
+            Section {
+                Picker("类型", selection: $selectedTab) {
+                    ForEach(MobileEvidenceTabType.allCases) { tab in
+                        Label(tab.displayName, systemImage: tab.iconName)
+                            .tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: selectedTab) { _, _ in
+                    clearPreview()
                 }
             }
 
@@ -578,90 +651,17 @@ struct MobileEvidenceView: View {
                         refreshEvidence()
                     }
                 }
+            } else if currentTabItems.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "暂无\(selectedTab.displayName)数据",
+                        systemImage: selectedTab == .screenshot ? "photo" : "doc.text"
+                    )
+                }
             } else if let snapshot {
-                Section("状态") {
-                    LabeledContent("证据目录") {
-                        Text(snapshot.evidenceRoot)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("索引文件") {
-                        Text(snapshot.indexFile)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("索引状态") {
-                        Text(snapshot.indexExists ? "存在" : "缺失")
-                            .foregroundColor(snapshot.indexExists ? .green : .orange)
-                    }
-                    LabeledContent("子系统") {
-                        Text(snapshot.detectedSubsystems.isEmpty ? "未识别" : snapshot.detectedSubsystems.map(\.id).joined(separator: ", "))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("设备类型") {
-                        Text(snapshot.detectedDeviceTypes.isEmpty ? "未识别" : snapshot.detectedDeviceTypes.joined(separator: ", "))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-
-                if !snapshot.issues.isEmpty {
-                    Section("告警") {
-                        ForEach(snapshot.issues.indices, id: \.self) { idx in
-                            let issue = snapshot.issues[idx]
-                            Text("[\(issue.level)] \(issue.message)")
-                                .font(.caption)
-                                .foregroundColor(issue.level.lowercased() == "warning" ? .orange : .secondary)
-                        }
-                    }
-                }
-
-                ForEach(displayDeviceTypes(in: snapshot), id: \.self) { deviceType in
-                    Section(deviceType) {
-                        let rows = snapshot.items.filter { $0.deviceType == deviceType }
-                        if rows.isEmpty {
-                            Text("暂无条目")
-                                .foregroundColor(.secondary)
-                        } else {
-                            ForEach(rows, id: \.itemID) { item in
-                                Button {
-                                    selectedItemID = item.itemID
-                                    loadItem(item)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack {
-                                            Text("#\(item.order) \(item.title)")
-                                                .font(.body)
-                                            Spacer()
-                                            Image(systemName: item.exists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                                .foregroundColor(item.exists ? .green : .orange)
-                                        }
-                                        Text(item.description)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                        Text(item.path)
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    .padding(.vertical, 2)
-                                }
-                                .buttonStyle(.plain)
-                                .listRowBackground(
-                                    selectedItemID == item.itemID ? Color.accentColor.opacity(0.14) : Color.clear
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Section("条目详情") {
-                    detailView(snapshot: snapshot)
+                // 按设备类型分组展示
+                ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
+                    deviceSection(deviceType: deviceType, items: items(for: deviceType))
                 }
             } else {
                 Section {
@@ -681,6 +681,9 @@ struct MobileEvidenceView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingDetailSheet) {
+            detailSheet
+        }
         .onAppear {
             refreshEvidence()
             syncSelectionIfNeeded()
@@ -693,100 +696,266 @@ struct MobileEvidenceView: View {
             refreshEvidence()
         }
     }
-
+    
+    /// 设备分组 Section
     @ViewBuilder
-    private func detailView(snapshot: EvolutionEvidenceSnapshotV2) -> some View {
-        let selected = snapshot.items.first { $0.itemID == selectedItemID } ?? snapshot.items.first
-        if let selected {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(selected.title)
-                    .font(.headline)
-                Text(selected.path)
+    private func deviceSection(deviceType: String, items: [EvolutionEvidenceItemInfoV2]) -> some View {
+        if selectedTab == .screenshot {
+            // 截图使用网格布局
+            Section("\(deviceType) (\(items.count)张)") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 120), spacing: 12)], spacing: 12) {
+                    ForEach(items, id: \.itemID) { item in
+                        screenshotThumbnail(item: item)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        } else {
+            // 日志使用列表布局
+            Section(deviceType) {
+                ForEach(items, id: \.itemID) { item in
+                    logRow(item: item)
+                }
+            }
+        }
+    }
+    
+    /// 截图缩略图
+    private func screenshotThumbnail(item: EvolutionEvidenceItemInfoV2) -> some View {
+        Button {
+            selectedScreenshotID = item.itemID
+            loadItem(item)
+            showingDetailSheet = true
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(.systemGray6))
+                        .aspectRatio(16/9, contentMode: .fit)
+                    
+                    Image(systemName: "photo")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(
+                            selectedScreenshotID == item.itemID ? Color.accentColor : Color.clear,
+                            lineWidth: 2
+                        )
+                )
+                
+                Text("#\(item.order)")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                if itemLoading {
-                    ProgressView("加载内容中...")
-                        .padding(.vertical, 6)
-                } else if let itemError {
-                    Text(itemError)
-                        .foregroundColor(.red)
-                } else if let itemImage {
-                    ZStack {
-                        Color.black.opacity(0.04)
-                        Image(uiImage: itemImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                            .padding(10)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+    
+    /// 日志列表行
+    private func logRow(item: EvolutionEvidenceItemInfoV2) -> some View {
+        Button {
+            selectedLogID = item.itemID
+            loadItem(item)
+            showingDetailSheet = true
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("#\(item.order) \(item.title)")
+                        .font(.body)
+                        .foregroundColor(.primary)
+                    
+                    if !item.description.isEmpty && item.description != item.title {
+                        Text(item.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 320)
-                    .clipShape(.rect(cornerRadius: 10))
-                } else if !itemTextChunks.isEmpty {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(itemTextChunks.indices, id: \.self) { idx in
-                                Text(itemTextChunks[idx])
-                                    .font(.system(.footnote, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            if itemPaging || itemTextHasMore {
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                    Text(itemPaging ? "加载更多中..." : "滚动到底部继续加载")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, 8)
-                                .onAppear {
-                                    loadNextTextPageIfNeeded(for: selected)
-                                }
-                            }
-                        }
-                    }
-                    .frame(minHeight: 180)
-                } else {
-                    Text("无法预览该条目（\(itemByteCount) bytes）")
+                    
+                    Text(item.path)
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                if item.sizeBytes > 0 {
+                    Text(formatByteCount(item.sizeBytes))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary.opacity(0.6))
             }
-            .onAppear {
-                if selectedItemID != selected.itemID {
-                    selectedItemID = selected.itemID
-                    loadItem(selected)
-                } else if itemTextChunks.isEmpty && itemImage == nil && itemError == nil && !itemLoading {
-                    loadItem(selected)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(
+            selectedLogID == item.itemID ? Color.accentColor.opacity(0.12) : Color.clear
+        )
+    }
+    
+    /// 格式化字节数
+    private func formatByteCount(_ bytes: UInt64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+    
+    /// 当前选中的条目
+    private var currentSelectedItem: EvolutionEvidenceItemInfoV2? {
+        let selectedID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
+        if let id = selectedID {
+            return currentTabItems.first { $0.itemID == id }
+        }
+        return currentTabItems.first
+    }
+    
+    /// 详情 Sheet
+    private var detailSheet: some View {
+        NavigationStack {
+            Group {
+                if let item = currentSelectedItem {
+                    detailContent(for: item)
+                } else {
+                    ContentUnavailableView("无内容", systemImage: "doc")
                 }
             }
-        } else {
-            Text("暂无条目")
-                .foregroundColor(.secondary)
+            .navigationTitle(currentSelectedItem?.title ?? "详情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") {
+                        showingDetailSheet = false
+                    }
+                }
+            }
         }
     }
-
-    private func displayDeviceTypes(in snapshot: EvolutionEvidenceSnapshotV2) -> [String] {
-        var ordered: [String] = []
-        for deviceType in snapshot.detectedDeviceTypes where !ordered.contains(deviceType) {
-            ordered.append(deviceType)
+    
+    /// 详情内容
+    @ViewBuilder
+    private func detailContent(for item: EvolutionEvidenceItemInfoV2) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                // 信息卡片
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.title)
+                        .font(.headline)
+                    if !item.description.isEmpty {
+                        Text(item.description)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text(item.path)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        if item.sizeBytes > 0 {
+                            Text(formatByteCount(item.sizeBytes))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(10)
+                
+                // 内容区域
+                if itemLoading {
+                    ProgressView("加载内容中...")
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                } else if let itemError {
+                    ContentUnavailableView(
+                        "加载失败",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(itemError)
+                    )
+                } else if let itemImage, selectedTab == .screenshot {
+                    Image(uiImage: itemImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .clipShape(.rect(cornerRadius: 10))
+                } else if !itemTextChunks.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(itemTextChunks.indices, id: \.self) { idx in
+                            Text(itemTextChunks[idx])
+                                .font(.system(.footnote, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if itemPaging || itemTextHasMore {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text(itemPaging ? "加载更多中..." : "滚动到底部继续加载")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                            .onAppear {
+                                loadNextTextPageIfNeeded(for: item)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(10)
+                } else {
+                    ContentUnavailableView(
+                        "无法预览",
+                        systemImage: "doc",
+                        description: Text("该文件格式暂不支持预览")
+                    )
+                }
+            }
+            .padding()
         }
-        for item in snapshot.items where !ordered.contains(item.deviceType) {
-            ordered.append(item.deviceType)
+        .onAppear {
+            loadItemIfNeeded(item)
         }
-        return ordered
+        .onChange(of: item.itemID) { _, _ in
+            loadItem(item)
+        }
+    }
+    
+    private func loadItemIfNeeded(_ item: EvolutionEvidenceItemInfoV2) {
+        let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
+        if currentID != item.itemID {
+            if selectedTab == .screenshot {
+                selectedScreenshotID = item.itemID
+            } else {
+                selectedLogID = item.itemID
+            }
+            loadItem(item)
+        } else if itemTextChunks.isEmpty && itemImage == nil && !itemLoading && itemError == nil {
+            loadItem(item)
+        }
     }
 
     private func syncSelectionIfNeeded() {
         guard let snapshot else { return }
-        if let selectedItemID,
-           snapshot.items.contains(where: { $0.itemID == selectedItemID }) {
+        let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
+        if let id = currentID,
+           snapshot.items.contains(where: { $0.itemID == id }) {
             return
         }
-        selectedItemID = snapshot.items.first?.itemID
-        clearPreview()
-        if let first = snapshot.items.first {
-            loadItem(first)
+        // 自动选中第一个
+        if let first = currentTabItems.first {
+            if selectedTab == .screenshot {
+                selectedScreenshotID = first.itemID
+            } else {
+                selectedLogID = first.itemID
+            }
+            clearPreview()
         }
     }
 
@@ -858,7 +1027,8 @@ struct MobileEvidenceView: View {
     }
 
     private func loadNextTextPageIfNeeded(for item: EvolutionEvidenceItemInfoV2) {
-        guard selectedItemID == item.itemID else { return }
+        let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
+        guard currentID == item.itemID else { return }
         guard itemTextHasMore, !itemPaging, !itemLoading else { return }
         loadNextTextPage(for: item, reset: false)
     }
@@ -879,7 +1049,8 @@ struct MobileEvidenceView: View {
             DispatchQueue.main.async {
                 itemLoading = false
                 itemPaging = false
-                guard selectedItemID == item.itemID else { return }
+                let currentID = self.selectedTab == .screenshot ? self.selectedScreenshotID : self.selectedLogID
+                guard currentID == item.itemID else { return }
                 if let payload {
                     itemByteCount = Int(payload.totalSizeBytes)
                     let text = String(data: Data(payload.content), encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)
