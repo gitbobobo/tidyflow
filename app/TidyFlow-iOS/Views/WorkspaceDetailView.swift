@@ -567,7 +567,7 @@ struct MobileEvidenceView: View {
     @State private var screenshotThumbnailActiveID: String?
     @State private var screenshotThumbnailRequestSequence: UInt64 = 0
 
-    private var snapshot: EvolutionEvidenceSnapshotV2? {
+    private var snapshot: EvidenceSnapshotV2? {
         appState.evidenceSnapshot(project: project, workspace: workspace)
     }
 
@@ -580,7 +580,7 @@ struct MobileEvidenceView: View {
     }
     
     /// 根据当前选中的标签页获取对应的证据条目
-    private var currentTabItems: [EvolutionEvidenceItemInfoV2] {
+    private var currentTabItems: [EvidenceItemInfoV2] {
         guard let snapshot else { return [] }
         return snapshot.items.filter { item in
             switch selectedTab {
@@ -607,7 +607,7 @@ struct MobileEvidenceView: View {
     }
     
     /// 获取指定设备类型的条目
-    private func items(for deviceType: String) -> [EvolutionEvidenceItemInfoV2] {
+    private func items(for deviceType: String) -> [EvidenceItemInfoV2] {
         currentTabItems.filter { $0.deviceType == deviceType }
     }
 
@@ -696,7 +696,7 @@ struct MobileEvidenceView: View {
             refreshEvidence()
             syncSelectionIfNeeded()
         }
-        .onReceive(appState.$evolutionEvidenceSnapshotsByWorkspace) { _ in
+        .onReceive(appState.$evidenceSnapshotsByWorkspace) { _ in
             syncSelectionIfNeeded()
             pruneScreenshotThumbnailCache()
             processNextScreenshotThumbnailLoadIfNeeded()
@@ -716,7 +716,7 @@ struct MobileEvidenceView: View {
     
     /// 设备分组 Section
     @ViewBuilder
-    private func deviceSection(deviceType: String, items: [EvolutionEvidenceItemInfoV2]) -> some View {
+    private func deviceSection(deviceType: String, items: [EvidenceItemInfoV2]) -> some View {
         if selectedTab == .screenshot {
             // 截图使用网格布局
             Section("\(deviceType) (\(items.count)张)") {
@@ -738,7 +738,7 @@ struct MobileEvidenceView: View {
     }
     
     /// 截图缩略图
-    private func screenshotThumbnail(item: EvolutionEvidenceItemInfoV2) -> some View {
+    private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
         Button {
             selectedScreenshotID = item.itemID
             showingDetailSheet = true
@@ -787,7 +787,7 @@ struct MobileEvidenceView: View {
     }
     
     /// 日志列表行
-    private func logRow(item: EvolutionEvidenceItemInfoV2) -> some View {
+    private func logRow(item: EvidenceItemInfoV2) -> some View {
         Button {
             selectedLogID = item.itemID
             showingDetailSheet = true
@@ -840,7 +840,7 @@ struct MobileEvidenceView: View {
     }
     
     /// 当前选中的条目
-    private var currentSelectedItem: EvolutionEvidenceItemInfoV2? {
+    private var currentSelectedItem: EvidenceItemInfoV2? {
         let selectedID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if let id = selectedID {
             return currentTabItems.first { $0.itemID == id }
@@ -872,7 +872,7 @@ struct MobileEvidenceView: View {
     
     /// 详情内容
     @ViewBuilder
-    private func detailContent(for item: EvolutionEvidenceItemInfoV2) -> some View {
+    private func detailContent(for item: EvidenceItemInfoV2) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 // 信息卡片
@@ -959,7 +959,7 @@ struct MobileEvidenceView: View {
         }
     }
     
-    private func loadItemIfNeeded(_ item: EvolutionEvidenceItemInfoV2) {
+    private func loadItemIfNeeded(_ item: EvidenceItemInfoV2) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if currentID != item.itemID {
             if selectedTab == .screenshot {
@@ -1037,7 +1037,7 @@ struct MobileEvidenceView: View {
         selectedTab == .screenshot && !showingDetailSheet
     }
 
-    private func enqueueScreenshotThumbnailLoad(for item: EvolutionEvidenceItemInfoV2) {
+    private func enqueueScreenshotThumbnailLoad(for item: EvidenceItemInfoV2) {
         guard canPrefetchScreenshotThumbnails else { return }
         guard screenshotThumbnails[item.itemID] == nil else { return }
         guard !screenshotThumbnailLoadingIDs.contains(item.itemID) else { return }
@@ -1064,7 +1064,7 @@ struct MobileEvidenceView: View {
             screenshotThumbnailRequestSequence &+= 1
             let requestSequence = screenshotThumbnailRequestSequence
 
-            appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: itemID) { payload, _ in
+            appState.readEvidenceItem(project: project, workspace: workspace, itemID: itemID) { payload, _ in
                 DispatchQueue.main.async {
                     finalizeScreenshotThumbnailRequest(
                         itemID: itemID,
@@ -1106,11 +1106,11 @@ struct MobileEvidenceView: View {
     }
 
     private func refreshEvidence() {
-        appState.requestEvolutionEvidenceSnapshot(project: project, workspace: workspace)
+        appState.requestEvidenceSnapshot(project: project, workspace: workspace)
     }
 
     private func rebuildEvidence() {
-        appState.requestEvolutionEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
+        appState.requestEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
             DispatchQueue.main.async {
                 if let prompt {
                     UIPasteboard.general.string = prompt.prompt
@@ -1129,7 +1129,7 @@ struct MobileEvidenceView: View {
         }
     }
 
-    private func loadItem(_ item: EvolutionEvidenceItemInfoV2) {
+    private func loadItem(_ item: EvidenceItemInfoV2) {
         itemLoading = true
         itemPaging = false
         itemError = nil
@@ -1140,7 +1140,7 @@ struct MobileEvidenceView: View {
         itemByteCount = 0
 
         if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
-            appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
+            appState.readEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
                 DispatchQueue.main.async {
                     let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
                     guard currentID == item.itemID else { return }
@@ -1163,20 +1163,20 @@ struct MobileEvidenceView: View {
         loadNextTextPage(for: item, reset: true)
     }
 
-    private func loadNextTextPageIfNeeded(for item: EvolutionEvidenceItemInfoV2) {
+    private func loadNextTextPageIfNeeded(for item: EvidenceItemInfoV2) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         guard currentID == item.itemID else { return }
         guard itemTextHasMore, !itemPaging, !itemLoading else { return }
         loadNextTextPage(for: item, reset: false)
     }
 
-    private func loadNextTextPage(for item: EvolutionEvidenceItemInfoV2, reset: Bool) {
+    private func loadNextTextPage(for item: EvidenceItemInfoV2, reset: Bool) {
         let offset: UInt64 = reset ? 0 : itemTextNextOffset
         if !reset, offset == 0 {
             return
         }
         itemPaging = true
-        appState.readEvolutionEvidenceItemPage(
+        appState.readEvidenceItemPage(
             project: project,
             workspace: workspace,
             itemID: item.itemID,

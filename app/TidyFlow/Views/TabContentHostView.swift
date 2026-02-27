@@ -670,7 +670,7 @@ struct EvidenceTabView: View {
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
 
-    private var snapshot: EvolutionEvidenceSnapshotV2? {
+    private var snapshot: EvidenceSnapshotV2? {
         guard let workspace else { return nil }
         return appState.evidenceSnapshot(project: project, workspace: workspace)
     }
@@ -678,17 +678,17 @@ struct EvidenceTabView: View {
     private var snapshotLoading: Bool {
         guard let workspace else { return false }
         let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(workspace))
-        return appState.evolutionEvidenceLoadingByWorkspace[key] ?? false
+        return appState.evidenceLoadingByWorkspace[key] ?? false
     }
 
     private var snapshotError: String? {
         guard let workspace else { return nil }
         let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(workspace))
-        return appState.evolutionEvidenceErrorByWorkspace[key]
+        return appState.evidenceErrorByWorkspace[key]
     }
     
     /// 根据当前选中的标签页获取对应的证据条目
-    private var currentTabItems: [EvolutionEvidenceItemInfoV2] {
+    private var currentTabItems: [EvidenceItemInfoV2] {
         guard let snapshot else { return [] }
         return snapshot.items.filter { item in
             switch selectedTab {
@@ -715,7 +715,7 @@ struct EvidenceTabView: View {
     }
     
     /// 获取指定设备类型的条目
-    private func items(for deviceType: String) -> [EvolutionEvidenceItemInfoV2] {
+    private func items(for deviceType: String) -> [EvidenceItemInfoV2] {
         currentTabItems.filter { $0.deviceType == deviceType }
     }
 
@@ -894,7 +894,7 @@ struct EvidenceTabView: View {
     }
     
     @ViewBuilder
-    private func deviceSection(deviceType: String, items: [EvolutionEvidenceItemInfoV2]) -> some View {
+    private func deviceSection(deviceType: String, items: [EvidenceItemInfoV2]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             // 设备类型标题
             HStack {
@@ -918,7 +918,7 @@ struct EvidenceTabView: View {
     }
     
     /// 截图网格布局
-    private func screenshotGrid(items: [EvolutionEvidenceItemInfoV2]) -> some View {
+    private func screenshotGrid(items: [EvidenceItemInfoV2]) -> some View {
         LazyVGrid(
             columns: [
                 GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)
@@ -932,7 +932,7 @@ struct EvidenceTabView: View {
     }
     
     /// 截图缩略图卡片
-    private func screenshotThumbnail(item: EvolutionEvidenceItemInfoV2) -> some View {
+    private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 selectedScreenshotID = item.itemID
@@ -990,7 +990,7 @@ struct EvidenceTabView: View {
     }
     
     /// 日志列表布局
-    private func logList(items: [EvolutionEvidenceItemInfoV2]) -> some View {
+    private func logList(items: [EvidenceItemInfoV2]) -> some View {
         VStack(spacing: 0) {
             ForEach(items, id: \.itemID) { item in
                 logRow(item: item)
@@ -1007,7 +1007,7 @@ struct EvidenceTabView: View {
     }
     
     /// 日志列表行
-    private func logRow(item: EvolutionEvidenceItemInfoV2) -> some View {
+    private func logRow(item: EvidenceItemInfoV2) -> some View {
         Button {
             selectedLogID = item.itemID
         } label: {
@@ -1156,7 +1156,7 @@ struct EvidenceTabView: View {
     }
     
     /// 当前选中的条目
-    private var currentSelectedItem: EvolutionEvidenceItemInfoV2? {
+    private var currentSelectedItem: EvidenceItemInfoV2? {
         let selectedID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if let id = selectedID {
             return currentTabItems.first { $0.itemID == id }
@@ -1166,7 +1166,7 @@ struct EvidenceTabView: View {
     
     /// 详情内容
     @ViewBuilder
-    private func detailContent(for item: EvolutionEvidenceItemInfoV2) -> some View {
+    private func detailContent(for item: EvidenceItemInfoV2) -> some View {
         if itemLoading {
             ProgressView("加载内容中...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -1237,7 +1237,7 @@ struct EvidenceTabView: View {
         }
     }
     
-    private func loadItemIfNeeded(_ item: EvolutionEvidenceItemInfoV2) {
+    private func loadItemIfNeeded(_ item: EvidenceItemInfoV2) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         if currentID != item.itemID {
             if selectedTab == .screenshot {
@@ -1319,7 +1319,7 @@ struct EvidenceTabView: View {
         selectedTab == .screenshot && selectedScreenshotID == nil
     }
 
-    private func enqueueScreenshotThumbnailLoad(for item: EvolutionEvidenceItemInfoV2) {
+    private func enqueueScreenshotThumbnailLoad(for item: EvidenceItemInfoV2) {
         guard canPrefetchScreenshotThumbnails else { return }
         guard screenshotThumbnails[item.itemID] == nil else { return }
         guard !screenshotThumbnailLoadingIDs.contains(item.itemID) else { return }
@@ -1347,7 +1347,7 @@ struct EvidenceTabView: View {
             screenshotThumbnailRequestSequence &+= 1
             let requestSequence = screenshotThumbnailRequestSequence
 
-            appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: itemID) { payload, _ in
+            appState.readEvidenceItem(project: project, workspace: workspace, itemID: itemID) { payload, _ in
                 DispatchQueue.main.async {
                     finalizeScreenshotThumbnailRequest(
                         itemID: itemID,
@@ -1390,12 +1390,12 @@ struct EvidenceTabView: View {
 
     private func refreshEvidence() {
         guard let workspace, !workspace.isEmpty else { return }
-        appState.requestEvolutionEvidenceSnapshot(project: project, workspace: workspace)
+        appState.requestEvidenceSnapshot(project: project, workspace: workspace)
     }
 
     private func rebuildEvidence() {
         guard let workspace, !workspace.isEmpty else { return }
-        appState.requestEvolutionEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
+        appState.requestEvidenceRebuildPrompt(project: project, workspace: workspace) { prompt, errorMessage in
             DispatchQueue.main.async {
                 if let prompt {
                     let pb = NSPasteboard.general
@@ -1418,7 +1418,7 @@ struct EvidenceTabView: View {
         }
     }
 
-    private func loadItem(_ item: EvolutionEvidenceItemInfoV2) {
+    private func loadItem(_ item: EvidenceItemInfoV2) {
         guard let workspace, !workspace.isEmpty else { return }
         itemLoading = true
         itemPaging = false
@@ -1430,7 +1430,7 @@ struct EvidenceTabView: View {
         itemByteCount = 0
 
         if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
-            appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
+            appState.readEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
                 DispatchQueue.main.async {
                     let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
                     guard currentID == item.itemID else { return }
@@ -1454,21 +1454,21 @@ struct EvidenceTabView: View {
         loadNextTextPage(for: item, reset: true)
     }
 
-    private func loadNextTextPageIfNeeded(for item: EvolutionEvidenceItemInfoV2) {
+    private func loadNextTextPageIfNeeded(for item: EvidenceItemInfoV2) {
         let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
         guard currentID == item.itemID else { return }
         guard itemTextHasMore, !itemPaging, !itemLoading else { return }
         loadNextTextPage(for: item, reset: false)
     }
 
-    private func loadNextTextPage(for item: EvolutionEvidenceItemInfoV2, reset: Bool) {
+    private func loadNextTextPage(for item: EvidenceItemInfoV2, reset: Bool) {
         guard let workspace, !workspace.isEmpty else { return }
         let offset: UInt64 = reset ? 0 : itemTextNextOffset
         if !reset, offset == 0 {
             return
         }
         itemPaging = true
-        appState.readEvolutionEvidenceItemPage(
+        appState.readEvidenceItemPage(
             project: project,
             workspace: workspace,
             itemID: item.itemID,
