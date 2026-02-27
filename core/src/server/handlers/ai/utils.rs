@@ -152,7 +152,8 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             let manager = CodexAppServerManager::new_with_command_and_protocol(
                 std::env::temp_dir(),
                 "kimi",
-                vec!["acp".to_string()],
+                // Kimi ACP 走全自动执行：跳过权限确认，避免 Evolution 流程在 verify 阶段被 permission 问题阻断。
+                vec!["-y".to_string(), "acp".to_string()],
                 "Kimi ACP server",
                 Some(1),
             );
