@@ -303,9 +303,8 @@ fn build_rebuild_prompt_sync(
 【目录与设备类型规则（高优先级）】
 - evidence_root 下第一层目录必须是 device_type，所有 device_type 必须同级。
 - 禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录，所有 device_type 必须直接落在 evidence_root 同级目录。
-- 设备类型固定基线（默认全部覆盖，除非用户明确删减）：iphone、ipad、apple-tv、apple-watch、vision-pro、mac、android-phone、android-pad、android-tv、android-wear、ohos-phone、ohos-pad、ohos-tv、web、web-mobile、linux、windows、server。
+- 设备类型基线：iphone、ipad、apple-tv、apple-watch、vision-pro、mac、android-phone、android-pad、android-tv、android-wear、ohos-phone、ohos-pad、ohos-tv、web、web-mobile、linux、windows、server。
 - 每个 device_type 都必须有独立的 e2e 入口与证据子目录（示例：`<device_type>/e2e/...`）。
-- 若某个 device_type 暂不支持真实执行，仍需保留该 device_type 的 e2e 计划项，并在输出里标记 `not_applicable` 与原因。
 - 若扫描到基线之外的新设备类型，必须新增同级目录与对应 e2e 计划；禁止把多个设备类型合并到同一目录。
 
 【evidence.index.json 契约（必须满足）】
@@ -983,9 +982,7 @@ mod tests {
         assert!(!prompt.contains("detected_device_types"));
         assert!(prompt.contains("path 的首段必须与该条目的 device_type 完全一致"));
         assert!(prompt.contains("【标题与描述语义规则（次优先级，仍需满足）】"));
-        assert!(prompt.contains(
-            "禁止仅写工具名、文件名、设备 ID、run_id、序号"
-        ));
+        assert!(prompt.contains("禁止仅写工具名、文件名、设备 ID、run_id、序号"));
         assert!(prompt.contains("先完成“测试框架审计 + e2e 可执行性改造计划”"));
     }
 
