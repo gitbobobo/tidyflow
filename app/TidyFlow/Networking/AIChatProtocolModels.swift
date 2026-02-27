@@ -1098,37 +1098,37 @@ struct EvolutionAgentProfileV2 {
     }
 }
 
-struct EvolutionEvidenceSubsystemInfoV2 {
+struct EvidenceSubsystemInfoV2 {
     let id: String
     let kind: String
     let path: String
 
-    static func from(json: [String: Any]) -> EvolutionEvidenceSubsystemInfoV2? {
+    static func from(json: [String: Any]) -> EvidenceSubsystemInfoV2? {
         guard let id = parseOptionalString(json["id"]),
               let kind = parseOptionalString(json["kind"]),
               let path = parseOptionalString(json["path"]) else {
             return nil
         }
-        return EvolutionEvidenceSubsystemInfoV2(id: id, kind: kind, path: path)
+        return EvidenceSubsystemInfoV2(id: id, kind: kind, path: path)
     }
 }
 
-struct EvolutionEvidenceIssueInfoV2 {
+struct EvidenceIssueInfoV2 {
     let code: String
     let level: String
     let message: String
 
-    static func from(json: [String: Any]) -> EvolutionEvidenceIssueInfoV2? {
+    static func from(json: [String: Any]) -> EvidenceIssueInfoV2? {
         guard let code = parseOptionalString(json["code"]),
               let level = parseOptionalString(json["level"]),
               let message = parseOptionalString(json["message"]) else {
             return nil
         }
-        return EvolutionEvidenceIssueInfoV2(code: code, level: level, message: message)
+        return EvidenceIssueInfoV2(code: code, level: level, message: message)
     }
 }
 
-struct EvolutionEvidenceItemInfoV2 {
+struct EvidenceItemInfoV2 {
     let itemID: String
     let deviceType: String
     let evidenceType: String
@@ -1143,7 +1143,7 @@ struct EvolutionEvidenceItemInfoV2 {
     let exists: Bool
     let mimeType: String
 
-    static func from(json: [String: Any]) -> EvolutionEvidenceItemInfoV2? {
+    static func from(json: [String: Any]) -> EvidenceItemInfoV2? {
         guard let itemID = parseOptionalString(json["item_id"]),
               let deviceType = parseOptionalString(json["device_type"]),
               let evidenceType = parseOptionalString(json["type"]),
@@ -1152,7 +1152,7 @@ struct EvolutionEvidenceItemInfoV2 {
               let description = parseOptionalString(json["description"]) else {
             return nil
         }
-        return EvolutionEvidenceItemInfoV2(
+        return EvidenceItemInfoV2(
             itemID: itemID,
             deviceType: deviceType,
             evidenceType: evidenceType,
@@ -1170,19 +1170,19 @@ struct EvolutionEvidenceItemInfoV2 {
     }
 }
 
-struct EvolutionEvidenceSnapshotV2 {
+struct EvidenceSnapshotV2 {
     let project: String
     let workspace: String
     let evidenceRoot: String
     let indexFile: String
     let indexExists: Bool
-    let detectedSubsystems: [EvolutionEvidenceSubsystemInfoV2]
+    let detectedSubsystems: [EvidenceSubsystemInfoV2]
     let detectedDeviceTypes: [String]
-    let items: [EvolutionEvidenceItemInfoV2]
-    let issues: [EvolutionEvidenceIssueInfoV2]
+    let items: [EvidenceItemInfoV2]
+    let issues: [EvidenceIssueInfoV2]
     let updatedAt: String
 
-    static func from(json: [String: Any]) -> EvolutionEvidenceSnapshotV2? {
+    static func from(json: [String: Any]) -> EvidenceSnapshotV2? {
         guard let project = parseOptionalString(json["project"]),
               let workspace = parseOptionalString(json["workspace"]),
               let evidenceRoot = parseOptionalString(json["evidence_root"]),
@@ -1191,13 +1191,13 @@ struct EvolutionEvidenceSnapshotV2 {
             return nil
         }
         let detectedSubsystems = (json["detected_subsystems"] as? [[String: Any]] ?? [])
-            .compactMap { EvolutionEvidenceSubsystemInfoV2.from(json: $0) }
+            .compactMap { EvidenceSubsystemInfoV2.from(json: $0) }
         let detectedDeviceTypes = parseStringArray(json["detected_device_types"])
         let items = (json["items"] as? [[String: Any]] ?? [])
-            .compactMap { EvolutionEvidenceItemInfoV2.from(json: $0) }
+            .compactMap { EvidenceItemInfoV2.from(json: $0) }
         let issues = (json["issues"] as? [[String: Any]] ?? [])
-            .compactMap { EvolutionEvidenceIssueInfoV2.from(json: $0) }
-        return EvolutionEvidenceSnapshotV2(
+            .compactMap { EvidenceIssueInfoV2.from(json: $0) }
+        return EvidenceSnapshotV2(
             project: project,
             workspace: workspace,
             evidenceRoot: evidenceRoot,
@@ -1212,17 +1212,17 @@ struct EvolutionEvidenceSnapshotV2 {
     }
 }
 
-struct EvolutionEvidenceRebuildPromptV2 {
+struct EvidenceRebuildPromptV2 {
     let project: String
     let workspace: String
     let prompt: String
     let evidenceRoot: String
     let indexFile: String
-    let detectedSubsystems: [EvolutionEvidenceSubsystemInfoV2]
+    let detectedSubsystems: [EvidenceSubsystemInfoV2]
     let detectedDeviceTypes: [String]
     let generatedAt: String
 
-    static func from(json: [String: Any]) -> EvolutionEvidenceRebuildPromptV2? {
+    static func from(json: [String: Any]) -> EvidenceRebuildPromptV2? {
         guard let project = parseOptionalString(json["project"]),
               let workspace = parseOptionalString(json["workspace"]),
               let prompt = json["prompt"] as? String,
@@ -1232,9 +1232,9 @@ struct EvolutionEvidenceRebuildPromptV2 {
             return nil
         }
         let detectedSubsystems = (json["detected_subsystems"] as? [[String: Any]] ?? [])
-            .compactMap { EvolutionEvidenceSubsystemInfoV2.from(json: $0) }
+            .compactMap { EvidenceSubsystemInfoV2.from(json: $0) }
         let detectedDeviceTypes = parseStringArray(json["detected_device_types"])
-        return EvolutionEvidenceRebuildPromptV2(
+        return EvidenceRebuildPromptV2(
             project: project,
             workspace: workspace,
             prompt: prompt,
@@ -1247,7 +1247,7 @@ struct EvolutionEvidenceRebuildPromptV2 {
     }
 }
 
-struct EvolutionEvidenceItemChunkV2 {
+struct EvidenceItemChunkV2 {
     let project: String
     let workspace: String
     let itemID: String
@@ -1258,14 +1258,14 @@ struct EvolutionEvidenceItemChunkV2 {
     let mimeType: String
     let content: [UInt8]
 
-    static func from(json: [String: Any]) -> EvolutionEvidenceItemChunkV2? {
+    static func from(json: [String: Any]) -> EvidenceItemChunkV2? {
         guard let project = parseOptionalString(json["project"]),
               let workspace = parseOptionalString(json["workspace"]),
               let itemID = parseOptionalString(json["item_id"]),
               let mimeType = parseOptionalString(json["mime_type"]) else {
             return nil
         }
-        return EvolutionEvidenceItemChunkV2(
+        return EvidenceItemChunkV2(
             project: project,
             workspace: workspace,
             itemID: itemID,

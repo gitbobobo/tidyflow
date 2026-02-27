@@ -67,6 +67,7 @@ extension WSClient {
         ("project", "cancel_project_command"),
         ("log", "log_"),
         ("ai", "ai_"),
+        ("evidence", "evidence_"),
         ("evolution", "evo_"),
         ]
     }
@@ -1171,23 +1172,23 @@ extension WSClient {
         ])
     }
 
-    func requestEvoEvidenceSnapshot(project: String, workspace: String) {
+    func requestEvidenceSnapshot(project: String, workspace: String) {
         send([
-            "type": "evo_get_evidence_snapshot",
+            "type": "evidence_get_snapshot",
             "project": project,
             "workspace": workspace
         ])
     }
 
-    func requestEvoEvidenceRebuildPrompt(project: String, workspace: String) {
+    func requestEvidenceRebuildPrompt(project: String, workspace: String) {
         send([
-            "type": "evo_get_evidence_rebuild_prompt",
+            "type": "evidence_get_rebuild_prompt",
             "project": project,
             "workspace": workspace
         ])
     }
 
-    func requestEvoReadEvidenceItem(
+    func requestEvidenceReadItem(
         project: String,
         workspace: String,
         itemID: String,
@@ -1195,7 +1196,7 @@ extension WSClient {
         limit: UInt32? = 262_144
     ) {
         var msg: [String: Any] = [
-            "type": "evo_read_evidence_item",
+            "type": "evidence_read_item",
             "project": project,
             "workspace": workspace,
             "item_id": itemID,

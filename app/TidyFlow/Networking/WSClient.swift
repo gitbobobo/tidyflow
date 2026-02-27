@@ -53,6 +53,7 @@ class WSClient: NSObject, ObservableObject {
     weak var settingsMessageHandler: SettingsMessageHandler?
     weak var terminalMessageHandler: TerminalMessageHandler?
     weak var aiMessageHandler: AIMessageHandler?
+    weak var evidenceMessageHandler: EvidenceMessageHandler?
     weak var evolutionMessageHandler: EvolutionMessageHandler?
     weak var errorMessageHandler: ErrorMessageHandler?
 
@@ -150,9 +151,9 @@ class WSClient: NSObject, ObservableObject {
     var onEvoAgentProfile: ((EvolutionAgentProfileV2) -> Void)?
     var onEvoBlockingRequired: ((EvolutionBlockingRequiredV2) -> Void)?
     var onEvoBlockersUpdated: ((EvolutionBlockersUpdatedV2) -> Void)?
-    var onEvoEvidenceSnapshot: ((EvolutionEvidenceSnapshotV2) -> Void)?
-    var onEvoEvidenceRebuildPrompt: ((EvolutionEvidenceRebuildPromptV2) -> Void)?
-    var onEvoEvidenceItemChunk: ((EvolutionEvidenceItemChunkV2) -> Void)?
+    var onEvidenceSnapshot: ((EvidenceSnapshotV2) -> Void)?
+    var onEvidenceRebuildPrompt: ((EvidenceRebuildPromptV2) -> Void)?
+    var onEvidenceItemChunk: ((EvidenceItemChunkV2) -> Void)?
     var onEvoError: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onConnectionStateChanged: ((Bool) -> Void)?

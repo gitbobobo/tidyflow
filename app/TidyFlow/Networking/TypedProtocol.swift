@@ -174,9 +174,6 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2)
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2)
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
-    func handleEvolutionEvidenceSnapshot(_ snapshot: EvolutionEvidenceSnapshotV2)
-    func handleEvolutionEvidenceRebuildPrompt(_ prompt: EvolutionEvidenceRebuildPromptV2)
-    func handleEvolutionEvidenceItemChunk(_ chunk: EvolutionEvidenceItemChunkV2)
     func handleEvolutionError(_ message: String)
 }
 
@@ -187,10 +184,19 @@ extension EvolutionMessageHandler {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {}
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {}
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
-    func handleEvolutionEvidenceSnapshot(_ snapshot: EvolutionEvidenceSnapshotV2) {}
-    func handleEvolutionEvidenceRebuildPrompt(_ prompt: EvolutionEvidenceRebuildPromptV2) {}
-    func handleEvolutionEvidenceItemChunk(_ chunk: EvolutionEvidenceItemChunkV2) {}
     func handleEvolutionError(_ message: String) {}
+}
+
+protocol EvidenceMessageHandler: AnyObject {
+    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2)
+    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2)
+    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2)
+}
+
+extension EvidenceMessageHandler {
+    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) {}
+    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) {}
+    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) {}
 }
 
 protocol ErrorMessageHandler: AnyObject {

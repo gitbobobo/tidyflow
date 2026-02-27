@@ -236,39 +236,46 @@ extension WSClient {
                 }
             }
             return true
-        case "evo_evidence_snapshot":
-            if let ev = EvolutionEvidenceSnapshotV2.from(json: json) {
-                if let handler = evolutionMessageHandler {
-                    handler.handleEvolutionEvidenceSnapshot(ev)
-                } else {
-                    onEvoEvidenceSnapshot?(ev)
-                }
-            }
-            return true
-        case "evo_evidence_rebuild_prompt":
-            if let ev = EvolutionEvidenceRebuildPromptV2.from(json: json) {
-                if let handler = evolutionMessageHandler {
-                    handler.handleEvolutionEvidenceRebuildPrompt(ev)
-                } else {
-                    onEvoEvidenceRebuildPrompt?(ev)
-                }
-            }
-            return true
-        case "evo_evidence_item_chunk":
-            if let ev = EvolutionEvidenceItemChunkV2.from(json: json) {
-                if let handler = evolutionMessageHandler {
-                    handler.handleEvolutionEvidenceItemChunk(ev)
-                } else {
-                    onEvoEvidenceItemChunk?(ev)
-                }
-            }
-            return true
         case "evo_error":
             let message = json["message"] as? String ?? "evolution error"
             if let handler = evolutionMessageHandler {
                 handler.handleEvolutionError(message)
             } else {
                 onEvoError?(message)
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func handleEvidenceDomain(_ action: String, json: [String: Any]) -> Bool {
+        switch action {
+        case "evidence_snapshot":
+            if let ev = EvidenceSnapshotV2.from(json: json) {
+                if let handler = evidenceMessageHandler {
+                    handler.handleEvidenceSnapshot(ev)
+                } else {
+                    onEvidenceSnapshot?(ev)
+                }
+            }
+            return true
+        case "evidence_rebuild_prompt":
+            if let ev = EvidenceRebuildPromptV2.from(json: json) {
+                if let handler = evidenceMessageHandler {
+                    handler.handleEvidenceRebuildPrompt(ev)
+                } else {
+                    onEvidenceRebuildPrompt?(ev)
+                }
+            }
+            return true
+        case "evidence_item_chunk":
+            if let ev = EvidenceItemChunkV2.from(json: json) {
+                if let handler = evidenceMessageHandler {
+                    handler.handleEvidenceItemChunk(ev)
+                } else {
+                    onEvidenceItemChunk?(ev)
+                }
             }
             return true
         default:

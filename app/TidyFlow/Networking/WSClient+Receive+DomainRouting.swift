@@ -34,6 +34,7 @@ extension WSClient {
         ("project", "cancel_project_command"),
         ("log", "log_"),
         ("ai", "ai_"),
+        ("evidence", "evidence_"),
         ("evolution", "evo_"),
         ]
     }
@@ -80,6 +81,8 @@ extension WSClient {
             return handleSettingsDomain(action, json: json)
         case "ai":
             return handleAiDomain(action, json: json)
+        case "evidence":
+            return handleEvidenceDomain(action, json: json)
         case "evolution":
             return handleEvolutionDomain(action, json: json)
         default:
