@@ -377,6 +377,7 @@
 "evolution.stage.verify" = "验证";
 "evolution.stage.judge" = "裁决";
 "evolution.stage.report" = "报告";
+"evolution.stage.autoCommit" = "智能提交";
 "evolution.stage.unnamed" = "未命名阶段";
 
 "evolution.status.active" = "激活";

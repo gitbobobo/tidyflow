@@ -1248,6 +1248,7 @@ struct MobileEvolutionView: View {
     private var item: EvolutionWorkspaceItemV2? {
         appState.evolutionItem(project: project, workspace: workspace)
     }
+    private let evolutionStageOrder: [String] = ["direction", "plan", "implement", "verify", "judge", "report", "auto_commit"]
 
     var body: some View {
         List {
@@ -1391,7 +1392,7 @@ struct MobileEvolutionView: View {
                         }
                     )
                     Section(sectionTitle(for: profile, runtime: runtime)) {
-                        if canOpenStageChat(statusText) {
+                        if canOpenStageChat(stage: stage, status: statusText) {
                             LabeledContent("evolution.page.agent.status".localized) {
                                 Button {
                                     guard let currentItem = item else { return }
@@ -1504,6 +1505,25 @@ struct MobileEvolutionView: View {
                     }
                 }
             }
+            let runtimeOnly = runtimeOnlyAgents()
+            if !runtimeOnly.isEmpty {
+                Section("evolution.page.agentList.section".localized) {
+                    ForEach(Array(runtimeOnly.enumerated()), id: \.offset) { _, runtime in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(stageDisplayName(runtime.stage))
+                                .font(.headline)
+                            LabeledContent("evolution.page.agent.status".localized) {
+                                Text(localizedStageStatusDisplay(runtime.status))
+                                    .foregroundColor(stageStatusColor(runtime.status))
+                            }
+                            Text(String(format: "evolution.page.toolCallCount".localized, runtime.toolCallCount))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
         }
         .navigationTitle("evolution.page.title".localized)
         .navigationBarTitleDisplayMode(.inline)
@@ -1580,14 +1600,15 @@ struct MobileEvolutionView: View {
     }
 
     private func runtimeAgent(for stage: String) -> EvolutionAgentInfoV2? {
-        item?.agents.first { $0.stage == stage }
+        item?.agents.first { normalizedStageKey($0.stage) == normalizedStageKey(stage) }
     }
 
     private func stageStatusColor(_ status: String) -> Color {
-        switch normalizedStageStatus(status) {
+        let normalized = normalizedStageStatus(status)
+        switch normalized {
         case "running":
             return .orange
-        case "completed":
+        case _ where isCompletedStatus(normalized):
             return .green
         default:
             return .secondary
@@ -1610,13 +1631,58 @@ struct MobileEvolutionView: View {
         }
     }
 
-    private func canOpenStageChat(_ status: String) -> Bool {
+    private func canOpenStageChat(stage: String, status: String) -> Bool {
+        if normalizedStageKey(stage) == "auto_commit" {
+            return false
+        }
         let normalized = normalizedStageStatus(status)
-        return normalized == "running" || normalized == "completed"
+        return normalized == "running" ||
+            normalized == "completed" ||
+            normalized == "done" ||
+            normalized == "success" ||
+            normalized == "succeeded" ||
+            normalized == "已完成" ||
+            normalized == "完成"
     }
 
     private func normalizedStageStatus(_ status: String) -> String {
         status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func normalizedStageKey(_ stage: String) -> String {
+        stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func isCompletedStatus(_ status: String) -> Bool {
+        status == "completed" ||
+            status == "done" ||
+            status == "success" ||
+            status == "succeeded" ||
+            status == "已完成" ||
+            status == "完成"
+    }
+
+    private func stageOrder(for stage: String) -> Int {
+        let normalized = normalizedStageKey(stage)
+        if let index = evolutionStageOrder.firstIndex(of: normalized) {
+            return index
+        }
+        return evolutionStageOrder.count
+    }
+
+    private func runtimeOnlyAgents() -> [EvolutionAgentInfoV2] {
+        guard let item else { return [] }
+        let configuredStages = Set(profiles.map { normalizedStageKey($0.stage) })
+        return item.agents
+            .filter { !configuredStages.contains(normalizedStageKey($0.stage)) }
+            .sorted { lhs, rhs in
+                let leftOrder = stageOrder(for: lhs.stage)
+                let rightOrder = stageOrder(for: rhs.stage)
+                if leftOrder != rightOrder {
+                    return leftOrder < rightOrder
+                }
+                return lhs.stage < rhs.stage
+            }
     }
 
     private func sectionTitle(for profile: EvolutionProfileDraft, runtime: EvolutionAgentInfoV2?) -> String {
@@ -1934,6 +2000,8 @@ struct MobileEvolutionView: View {
             return "evolution.stage.judge".localized
         case "report":
             return "evolution.stage.report".localized
+        case "auto_commit":
+            return "evolution.stage.autoCommit".localized
         default:
             return trimmed
         }

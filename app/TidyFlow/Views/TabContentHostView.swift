@@ -1539,7 +1539,7 @@ struct EvolutionTabView: View {
         return appState.evolutionItem(project: project, workspace: workspace)
     }
 
-    private let evolutionStageOrder: [String] = ["direction", "plan", "implement", "verify", "judge", "report"]
+    private let evolutionStageOrder: [String] = ["direction", "plan", "implement", "verify", "judge", "report", "auto_commit"]
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -2055,7 +2055,7 @@ struct EvolutionTabView: View {
                         .modifier(RunningPulseModifier())
                 }
 
-                if canOpenStageChat(statusText) {
+                if canOpenStageChat(stage: agent.stage, status: statusText) {
                     Button {
                         openStageChat(stage: agent.stage)
                     } label: {
@@ -2166,7 +2166,10 @@ struct EvolutionTabView: View {
         }
     }
 
-    private func canOpenStageChat(_ status: String) -> Bool {
+    private func canOpenStageChat(stage: String, status: String) -> Bool {
+        if normalizedStageKey(stage) == "auto_commit" {
+            return false
+        }
         let normalized = normalizedStageStatus(status)
         return normalized == "running" ||
             normalized == "done" ||
@@ -2205,6 +2208,8 @@ struct EvolutionTabView: View {
             return "evolution.stage.judge".localized
         case "report":
             return "evolution.stage.report".localized
+        case "auto_commit":
+            return "evolution.stage.autoCommit".localized
         default:
             return trimmed
         }
@@ -2278,6 +2283,8 @@ struct EvolutionTabView: View {
             return "scalemass"
         case "report":
             return "doc.text"
+        case "auto_commit":
+            return "sparkles"
         default:
             return "person.crop.square"
         }

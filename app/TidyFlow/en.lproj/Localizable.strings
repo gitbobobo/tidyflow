@@ -375,6 +375,7 @@
 "evolution.stage.verify" = "Verify";
 "evolution.stage.judge" = "Judge";
 "evolution.stage.report" = "Report";
+"evolution.stage.autoCommit" = "Auto Commit";
 "evolution.stage.unnamed" = "Unnamed Stage";
 
 "evolution.status.active" = "Active";
