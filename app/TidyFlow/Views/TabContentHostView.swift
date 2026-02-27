@@ -1824,40 +1824,60 @@ struct EvolutionTabView: View {
 
     private var workspaceCard: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 if let workspace {
-                    LabeledContent("evolution.page.workspace.currentWorkspace".localized) {
-                        Text("\(project)/\(workspace)")
-                            .fontWeight(.medium)
-                    }
                     if let item = currentItem {
-                        LabeledContent("evolution.page.workspace.status".localized) {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(workspaceStatusColor(item.status))
-                                    .frame(width: 8, height: 8)
-                                Text(localizedWorkspaceStatusDisplay(item.status))
-                            }
-                        }
-                        LabeledContent("evolution.page.workspace.currentStage".localized) {
-                            Text(stageDisplayName(item.currentStage))
-                        }
-                        LabeledContent("evolution.page.workspace.loopRound".localized) {
-                            Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
-                        }
-                        LabeledContent("evolution.page.workspace.verifyRound".localized) {
-                            Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
-                        }
-                        LabeledContent("evolution.page.workspace.activeAgents".localized) {
-                            Text(
-                                item.activeAgents.isEmpty
-                                    ? "evolution.page.workspace.noActiveAgents".localized
-                                    : item.activeAgents.joined(separator: ", ")
+                        // 状态信息网格：两列布局，紧凑展示
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(), spacing: 16),
+                                GridItem(.flexible(), spacing: 16)
+                            ],
+                            alignment: .leading,
+                            spacing: 10
+                        ) {
+                            workspaceInfoCell(
+                                label: "evolution.page.workspace.currentWorkspace".localized,
+                                value: "\(project)/\(workspace)",
+                                icon: "folder.fill",
+                                color: .blue
                             )
-                                .lineLimit(1)
-                                .truncationMode(.tail)
+                            workspaceStatusCell(item: item)
+                            workspaceInfoCell(
+                                label: "evolution.page.workspace.currentStage".localized,
+                                value: stageDisplayName(item.currentStage),
+                                icon: "flag.fill",
+                                color: .purple
+                            )
+                            workspaceInfoCell(
+                                label: "evolution.page.workspace.loopRound".localized,
+                                value: "\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))",
+                                icon: "arrow.triangle.2.circlepath",
+                                color: .teal
+                            )
+                            workspaceInfoCell(
+                                label: "evolution.page.workspace.verifyRound".localized,
+                                value: "\(item.verifyIteration)/\(item.verifyIterationLimit)",
+                                icon: "checkmark.shield.fill",
+                                color: .indigo
+                            )
+                            workspaceInfoCell(
+                                label: "evolution.page.workspace.activeAgents".localized,
+                                value: item.activeAgents.isEmpty
+                                    ? "evolution.page.workspace.noActiveAgents".localized
+                                    : item.activeAgents.joined(separator: ", "),
+                                icon: "person.fill",
+                                color: .orange
+                            )
                         }
                     } else {
+                        // 未启动状态
+                        workspaceInfoCell(
+                            label: "evolution.page.workspace.currentWorkspace".localized,
+                            value: "\(project)/\(workspace)",
+                            icon: "folder.fill",
+                            color: .blue
+                        )
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(Color.secondary.opacity(0.5))
@@ -1869,27 +1889,41 @@ struct EvolutionTabView: View {
 
                     Divider()
 
-                    HStack(spacing: 12) {
-                        TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 100)
-                        Text("evolution.page.workspace.verifyLoopFixed".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        ControlGroup {
-                            Button("evolution.page.action.startManual".localized) {
+                    // 控制区域
+                    HStack(spacing: 10) {
+                        HStack(spacing: 8) {
+                            TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 60)
+                            Text("evolution.page.workspace.verifyLoopFixed".localized)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 12)
+                        HStack(spacing: 6) {
+                            Button {
                                 startCurrentWorkspace()
+                            } label: {
+                                Label("evolution.page.action.startManual".localized, systemImage: "play.fill")
                             }
                             .buttonStyle(.borderedProminent)
-                            Button("evolution.page.action.stop".localized) {
+                            .controlSize(.small)
+                            Button {
                                 appState.stopEvolution(project: project, workspace: workspace)
+                            } label: {
+                                Label("evolution.page.action.stop".localized, systemImage: "stop.fill")
                             }
-                            Button("evolution.page.action.resume".localized) {
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button {
                                 appState.resumeEvolution(project: project, workspace: workspace)
+                            } label: {
+                                Label("evolution.page.action.resume".localized, systemImage: "arrow.clockwise")
                             }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .controlSize(.small)
                     }
                 } else {
                     Text("evolution.page.workspace.selectWorkspaceFirst".localized)
@@ -1899,6 +1933,52 @@ struct EvolutionTabView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             Label("evolution.page.workspace.section".localized, systemImage: "gearshape.2")
+        }
+    }
+
+    /// 工作空间信息单元格
+    private func workspaceInfoCell(label: String, value: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundColor(color)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(color.opacity(0.12))
+                )
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.callout)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+
+    /// 状态单元格（带指示灯）
+    private func workspaceStatusCell(item: EvolutionWorkspaceItemV2) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(workspaceStatusColor(item.status))
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Circle()
+                        .fill(workspaceStatusColor(item.status).opacity(0.3))
+                        .frame(width: 28, height: 28)
+                )
+            VStack(alignment: .leading, spacing: 1) {
+                Text("evolution.page.workspace.status".localized)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text(localizedWorkspaceStatusDisplay(item.status))
+                    .font(.callout)
+                    .fontWeight(.medium)
+            }
         }
     }
 

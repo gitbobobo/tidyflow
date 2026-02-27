@@ -1315,19 +1315,29 @@ struct MobileEvolutionView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                ControlGroup {
-                    Button("evolution.page.action.startManual".localized) {
+                HStack(spacing: 8) {
+                    Button {
                         startEvolution()
+                    } label: {
+                        Label("evolution.page.action.startManual".localized, systemImage: "play.fill")
                     }
                     .buttonStyle(.borderedProminent)
-                    Button("evolution.page.action.stop".localized) {
+                    .controlSize(.small)
+                    Button {
                         appState.stopEvolution(project: project, workspace: workspace)
+                    } label: {
+                        Label("evolution.page.action.stop".localized, systemImage: "stop.fill")
                     }
-                    Button("evolution.page.action.resume".localized) {
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button {
                         appState.resumeEvolution(project: project, workspace: workspace)
+                    } label: {
+                        Label("evolution.page.action.resume".localized, systemImage: "arrow.clockwise")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.bordered)
             }
 
             Section("evolution.page.agentType.description.section".localized) {
