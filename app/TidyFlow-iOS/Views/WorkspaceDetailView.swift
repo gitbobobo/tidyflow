@@ -720,12 +720,7 @@ struct MobileEvidenceView: View {
         if selectedTab == .screenshot {
             // 截图使用网格布局
             Section("\(deviceType) (\(items.count)张)") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 120), spacing: 12)], spacing: 12) {
-                    ForEach(items, id: \.itemID) { item in
-                        screenshotThumbnail(item: item)
-                    }
-                }
-                .padding(.vertical, 4)
+                screenshotGrid(items: items)
             }
         } else {
             // 日志使用列表布局
@@ -736,25 +731,36 @@ struct MobileEvidenceView: View {
             }
         }
     }
+
+    private func screenshotGrid(items: [EvidenceItemInfoV2]) -> some View {
+        return LazyVGrid(
+            columns: [
+                GridItem(.adaptive(minimum: 100, maximum: 120), spacing: 12)
+            ],
+            spacing: 12
+        ) {
+            ForEach(items, id: \.itemID) { item in
+                screenshotThumbnail(item: item)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+    }
     
     /// 截图缩略图
     private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
-        Button {
+        let thumbnailHeight: CGFloat = 64
+        return Button {
             selectedScreenshotID = item.itemID
             showingDetailSheet = true
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(.systemGray6))
-                        .aspectRatio(16/9, contentMode: .fit)
-
                     if let thumbnail = screenshotThumbnails[item.itemID] {
                         Image(uiImage: thumbnail)
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .clipShape(.rect(cornerRadius: 6))
                     } else {
                         Image(systemName: "photo")
                             .font(.system(size: 20))
@@ -766,6 +772,9 @@ struct MobileEvidenceView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: thumbnailHeight)
+                .clipped()
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(
@@ -1204,7 +1213,6 @@ struct MobileEvidenceView: View {
             }
         }
     }
-
 }
 
 private struct EvolutionProfileDraft: Identifiable {

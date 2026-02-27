@@ -889,6 +889,7 @@ struct EvidenceTabView: View {
                     deviceSection(deviceType: deviceType, items: items(for: deviceType))
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
         }
     }
@@ -919,7 +920,7 @@ struct EvidenceTabView: View {
     
     /// 截图网格布局
     private func screenshotGrid(items: [EvidenceItemInfoV2]) -> some View {
-        LazyVGrid(
+        return LazyVGrid(
             columns: [
                 GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)
             ],
@@ -929,11 +930,13 @@ struct EvidenceTabView: View {
                 screenshotThumbnail(item: item)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     
     /// 截图缩略图卡片
     private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
-        Button {
+        let thumbnailHeight: CGFloat = 96
+        return Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 selectedScreenshotID = item.itemID
             }
@@ -941,16 +944,11 @@ struct EvidenceTabView: View {
             VStack(alignment: .leading, spacing: 6) {
                 // 缩略图区域
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(NSColor.controlBackgroundColor))
-                        .aspectRatio(16/9, contentMode: .fit)
-
                     if let thumbnail = screenshotThumbnails[item.itemID] {
                         Image(nsImage: thumbnail)
                             .resizable()
                             .scaledToFill()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .clipShape(.rect(cornerRadius: 6))
                     } else {
                         Image(systemName: "photo")
                             .font(.system(size: 24))
@@ -962,6 +960,9 @@ struct EvidenceTabView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: thumbnailHeight)
+                .clipped()
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(
