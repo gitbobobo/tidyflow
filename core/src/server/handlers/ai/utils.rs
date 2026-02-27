@@ -153,8 +153,8 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             let manager = CodexAppServerManager::new_with_command_and_protocol(
                 std::env::temp_dir(),
                 "kimi",
-                // Kimi ACP 走全自动执行：`--yolo` 作为全局参数放在 `acp` 前，避免 verify 阶段被权限确认阻断。
-                vec!["--yolo".to_string(), "acp".to_string()],
+                // Kimi ACP 使用标准启动参数；会话级 `/yolo` 由适配器在首次发言前自动注入。
+                vec!["acp".to_string()],
                 "Kimi ACP server",
                 Some(1),
             );

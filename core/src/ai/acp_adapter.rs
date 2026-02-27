@@ -9,7 +9,7 @@ use super::{
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant, MissedTickBehavior};
@@ -65,6 +65,7 @@ pub struct AcpAgent {
     metadata_by_session: Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     cached_sessions: Arc<Mutex<HashMap<String, HashMap<String, CachedSessionRecord>>>>,
+    runtime_yolo_sessions: Arc<Mutex<HashSet<String>>>,
 }
 
 impl AcpAgent {
@@ -80,6 +81,7 @@ impl AcpAgent {
             metadata_by_session: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
             cached_sessions: Arc::new(Mutex::new(HashMap::new())),
+            runtime_yolo_sessions: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -113,6 +115,61 @@ impl AcpAgent {
 
     fn session_cache_key(directory: &str, session_id: &str) -> String {
         format!("{}::{}", Self::normalize_directory(directory), session_id)
+    }
+
+    fn should_auto_enable_runtime_yolo(&self) -> bool {
+        self.profile.tool_id == "kimi"
+    }
+
+    async fn ensure_runtime_yolo_for_session(
+        &self,
+        directory: &str,
+        session_id: &str,
+    ) -> Result<(), String> {
+        if !self.should_auto_enable_runtime_yolo() {
+            return Ok(());
+        }
+
+        let session_key = Self::session_cache_key(directory, session_id);
+        {
+            let sessions = self.runtime_yolo_sessions.lock().await;
+            if sessions.contains(&session_key) {
+                return Ok(());
+            }
+        }
+
+        let yolo_prompt = vec![serde_json::json!({
+            "type": "text",
+            "text": "/yolo"
+        })];
+        let supports_load_session = self.client.supports_load_session().await;
+        let result = match self
+            .client
+            .session_prompt(session_id, yolo_prompt.clone(), None, None)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) if Self::is_session_not_found(&err) => {
+                if supports_load_session {
+                    self.client.session_load(directory, session_id).await?;
+                    self.client
+                        .session_prompt(session_id, yolo_prompt, None, None)
+                        .await
+                        .map(|_| ())
+                } else {
+                    Err(err)
+                }
+            }
+            Err(err) => Err(err),
+        };
+
+        match result {
+            Ok(()) => {
+                self.runtime_yolo_sessions.lock().await.insert(session_key);
+                Ok(())
+            }
+            Err(err) => Err(format!("enable kimi runtime yolo failed: {}", err)),
+        }
     }
 
     fn now_ms() -> i64 {
@@ -905,6 +962,8 @@ impl AiAgent for AcpAgent {
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
         self.client.ensure_started().await?;
+        self.ensure_runtime_yolo_for_session(directory, session_id)
+            .await?;
 
         let metadata = self.metadata_for_directory(directory).await;
         let mode_id = Self::resolve_mode_id(&metadata, agent.as_deref());
