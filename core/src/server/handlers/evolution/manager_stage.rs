@@ -679,36 +679,39 @@ impl EvolutionManager {
             match next {
                 Ok(Some(Ok(event))) => match event {
                     crate::ai::AiEvent::Done => {
-                        let adapter_hint = match agent.session_selection_hint(directory, session_id).await
-                        {
-                            Ok(Some(adapter_hint)) => adapter_hint,
-                            Ok(None) => crate::ai::AiSessionSelectionHint::default(),
-                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                        };
-                        let inferred_hint = match agent.list_messages(directory, session_id, Some(200)).await
-                        {
-                            Ok(messages) => {
-                                let wire_messages: Vec<crate::server::protocol::ai::MessageInfo> = messages
-                                    .into_iter()
-                                    .map(|m| crate::server::protocol::ai::MessageInfo {
-                                        id: m.id,
-                                        role: m.role,
-                                        created_at: m.created_at,
-                                        agent: m.agent,
-                                        model_provider_id: m.model_provider_id,
-                                        model_id: m.model_id,
-                                        parts: m
-                                            .parts
-                                            .into_iter()
-                                            .map(normalize_part_for_wire)
-                                            .collect(),
-                                    })
-                                    .collect();
-                                infer_selection_hint_from_messages(&wire_messages)
-                            }
-                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                        };
-                        let selection_hint = merge_session_selection_hint(adapter_hint, inferred_hint);
+                        let adapter_hint =
+                            match agent.session_selection_hint(directory, session_id).await {
+                                Ok(Some(adapter_hint)) => adapter_hint,
+                                Ok(None) => crate::ai::AiSessionSelectionHint::default(),
+                                Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                            };
+                        let inferred_hint =
+                            match agent.list_messages(directory, session_id, Some(200)).await {
+                                Ok(messages) => {
+                                    let wire_messages: Vec<
+                                        crate::server::protocol::ai::MessageInfo,
+                                    > = messages
+                                        .into_iter()
+                                        .map(|m| crate::server::protocol::ai::MessageInfo {
+                                            id: m.id,
+                                            role: m.role,
+                                            created_at: m.created_at,
+                                            agent: m.agent,
+                                            model_provider_id: m.model_provider_id,
+                                            model_id: m.model_id,
+                                            parts: m
+                                                .parts
+                                                .into_iter()
+                                                .map(normalize_part_for_wire)
+                                                .collect(),
+                                        })
+                                        .collect();
+                                    infer_selection_hint_from_messages(&wire_messages)
+                                }
+                                Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                            };
+                        let selection_hint =
+                            merge_session_selection_hint(adapter_hint, inferred_hint);
                         self.broadcast(
                             ctx,
                             ServerMessage::AIChatDone {
@@ -837,11 +840,7 @@ impl EvolutionManager {
         Ok(())
     }
 
-    async fn resolve_judge_result(
-        &self,
-        key: &str,
-        cycle_id: &str,
-    ) -> Result<bool, String> {
+    async fn resolve_judge_result(&self, key: &str, cycle_id: &str) -> Result<bool, String> {
         let mut judge_pass = true;
         let maybe_workspace_root = {
             let state = self.state.lock().await;
@@ -884,7 +883,10 @@ impl EvolutionManager {
                 }
             }
         } else {
-            warn!("judge result resolve skipped: workspace missing, key={}", key);
+            warn!(
+                "judge result resolve skipped: workspace missing, key={}",
+                key
+            );
         }
 
         Ok(judge_pass)
@@ -933,8 +935,8 @@ impl EvolutionManager {
             .await
             .map_err(|e| format!("validation reminder send failed: {}", e))?;
         self.consume_stage_stream(
-            key, project, workspace, cycle_id, stage, ai_tool, session_id, directory, agent, stream,
-            ctx,
+            key, project, workspace, cycle_id, stage, ai_tool, session_id, directory, agent,
+            stream, ctx,
         )
         .await
     }
@@ -1045,7 +1047,8 @@ impl EvolutionManager {
                     }
 
                     if reminder_attempts >= VALIDATION_REMINDER_MAX_RETRIES {
-                        self.finalize_stage_failed(key, stage, &validation_err, ctx).await;
+                        self.finalize_stage_failed(key, stage, &validation_err, ctx)
+                            .await;
                         return Err(validation_err);
                     }
 

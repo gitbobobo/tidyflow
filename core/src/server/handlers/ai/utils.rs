@@ -16,7 +16,8 @@ use crate::server::protocol::ServerMessage;
 
 pub(crate) const IDLE_DISPOSE_TTL_MS: i64 = 15 * 60 * 1000;
 pub(crate) const MAINTENANCE_INTERVAL_SECS: u64 = 60;
-pub(crate) const PRELOAD_AI_TOOLS: [&str; 5] = ["opencode", "codex", "copilot", "kimi", "claude_code"];
+pub(crate) const PRELOAD_AI_TOOLS: [&str; 5] =
+    ["opencode", "codex", "copilot", "kimi", "claude_code"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
@@ -152,8 +153,8 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             let manager = CodexAppServerManager::new_with_command_and_protocol(
                 std::env::temp_dir(),
                 "kimi",
-                // Kimi ACP 走全自动执行：跳过权限确认，避免 Evolution 流程在 verify 阶段被 permission 问题阻断。
-                vec!["-y".to_string(), "acp".to_string()],
+                // Kimi ACP 走全自动执行：`--yolo` 作为全局参数放在 `acp` 前，避免 verify 阶段被权限确认阻断。
+                vec!["--yolo".to_string(), "acp".to_string()],
                 "Kimi ACP server",
                 Some(1),
             );
