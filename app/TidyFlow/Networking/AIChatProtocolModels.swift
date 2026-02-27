@@ -609,10 +609,10 @@ private func parseDouble(_ any: Any?) -> Double? {
 
 private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
     guard let raw = any as? String else { return nil }
-    let normalized = raw
+    let normalizedRaw = raw
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
-        .replacingOccurrences(of: "_", with: "-")
+    let normalized = normalizedRaw.replacingOccurrences(of: "_", with: "-")
     let mapped = switch normalized {
     case "open-code":
         "opencode"
@@ -622,8 +622,10 @@ private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
         "copilot"
     case "kimi-code":
         "kimi"
+    case "claude-code", "claudecode":
+        "claude_code"
     default:
-        normalized
+        normalizedRaw
     }
     return AIChatTool(rawValue: mapped)
 }
