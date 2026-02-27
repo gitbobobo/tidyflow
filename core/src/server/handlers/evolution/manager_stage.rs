@@ -1,5 +1,7 @@
 use chrono::Utc;
 use futures::StreamExt;
+use std::collections::HashSet;
+use std::path::Path;
 use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
@@ -54,7 +56,265 @@ fn should_start_next_round(status: &str, global_loop_round: u32, loop_round_limi
     should_auto_commit_after_report(status) && global_loop_round < loop_round_limit
 }
 
+fn read_json_file(cycle_dir: &Path, file_name: &str) -> Result<serde_json::Value, String> {
+    let path = cycle_dir.join(file_name);
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败: {}", file_name, e))?;
+    serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|e| format!("解析 {} 失败: {}", file_name, e))
+}
+
+fn id_from_value(item: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    if let Some(value) = item.as_str() {
+        let normalized = value.trim();
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+    }
+    let obj = item.as_object()?;
+    for key in keys {
+        if let Some(value) = obj.get(*key).and_then(|v| v.as_str()) {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                return Some(normalized.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn collect_unique_ids(
+    items: &[serde_json::Value],
+    keys: &[&str],
+    label: &str,
+) -> Result<Vec<String>, String> {
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (idx, item) in items.iter().enumerate() {
+        let id =
+            id_from_value(item, keys).ok_or_else(|| format!("{}[{}] 缺少有效 id", label, idx))?;
+        if !seen.insert(id.clone()) {
+            return Err(format!("{} 存在重复 id: {}", label, id));
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+fn as_failing_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "fail" | "failed" | "insufficient_evidence" | "missing" | "not_covered" | "not_done"
+    )
+}
+
 impl EvolutionManager {
+    fn validate_implement_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
+        if verify_iteration == 0 {
+            return Ok(());
+        }
+        let value = read_json_file(cycle_dir, "implement.result.json")?;
+        let backlog = value
+            .pointer("/failure_backlog")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "implement.result.json 缺少 failure_backlog（重实现轮必须提供）".to_string()
+            })?;
+        let coverage = value
+            .pointer("/backlog_coverage")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "implement.result.json 缺少 backlog_coverage（重实现轮必须提供）".to_string()
+            })?;
+        let summary = value
+            .pointer("/backlog_coverage_summary")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| {
+                "implement.result.json 缺少 backlog_coverage_summary（重实现轮必须提供）"
+                    .to_string()
+            })?;
+        for key in ["total", "done", "blocked", "not_done"] {
+            if !summary
+                .get(key)
+                .and_then(|v| v.as_u64())
+                .map(|_| true)
+                .unwrap_or(false)
+            {
+                return Err(format!(
+                    "implement.result.json.backlog_coverage_summary.{} 必须是数字",
+                    key
+                ));
+            }
+        }
+        let backlog_ids = collect_unique_ids(backlog, &["id"], "failure_backlog")?;
+        let coverage_ids = collect_unique_ids(coverage, &["id", "item_id"], "backlog_coverage")?;
+        if backlog_ids.len() != coverage_ids.len() {
+            return Err(format!(
+                "failure_backlog 与 backlog_coverage 数量不一致: {} vs {}",
+                backlog_ids.len(),
+                coverage_ids.len()
+            ));
+        }
+        let backlog_set: HashSet<String> = backlog_ids.into_iter().collect();
+        let coverage_set: HashSet<String> = coverage_ids.into_iter().collect();
+        if backlog_set != coverage_set {
+            return Err("backlog_coverage 未完整覆盖 failure_backlog".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_verify_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
+        if verify_iteration == 0 {
+            return Ok(());
+        }
+        let verify_value = read_json_file(cycle_dir, "verify.result.json")?;
+        let implement_value = read_json_file(cycle_dir, "implement.result.json")?;
+
+        let backlog = implement_value
+            .pointer("/failure_backlog")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "implement.result.json 缺少 failure_backlog".to_string())?;
+        let backlog_ids = collect_unique_ids(backlog, &["id"], "failure_backlog")?;
+        let backlog_set: HashSet<String> = backlog_ids.iter().cloned().collect();
+
+        let carry_items = verify_value
+            .pointer("/carryover_verification/items")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "verify.result.json 缺少 carryover_verification.items（重实现轮必须提供）"
+                    .to_string()
+            })?;
+        let carry_summary = verify_value
+            .pointer("/carryover_verification/summary")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| {
+                "verify.result.json 缺少 carryover_verification.summary（重实现轮必须提供）"
+                    .to_string()
+            })?;
+        for key in ["total", "covered", "missing", "blocked"] {
+            if !carry_summary
+                .get(key)
+                .and_then(|v| v.as_u64())
+                .map(|_| true)
+                .unwrap_or(false)
+            {
+                return Err(format!(
+                    "verify.result.json.carryover_verification.summary.{} 必须是数字",
+                    key
+                ));
+            }
+        }
+        let total = carry_summary
+            .get("total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_default() as usize;
+        if total != backlog_ids.len() {
+            return Err(format!(
+                "carryover_verification.summary.total 与 failure_backlog 数量不一致: {} vs {}",
+                total,
+                backlog_ids.len()
+            ));
+        }
+        let carry_ids = collect_unique_ids(
+            carry_items,
+            &["id", "item_id"],
+            "carryover_verification.items",
+        )?;
+        let carry_set: HashSet<String> = carry_ids.into_iter().collect();
+        let missing_ids: Vec<String> = backlog_set
+            .difference(&carry_set)
+            .cloned()
+            .collect::<Vec<String>>();
+        if !missing_ids.is_empty() {
+            return Err(format!(
+                "carryover_verification.items 缺少 backlog 项: {:?}",
+                missing_ids
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_judge_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
+        if verify_iteration == 0 {
+            return Ok(());
+        }
+        let judge_value = read_json_file(cycle_dir, "judge.result.json")?;
+        let verify_value = read_json_file(cycle_dir, "verify.result.json")?;
+
+        let requirements = judge_value
+            .pointer("/full_next_iteration_requirements")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
+                    .to_string()
+            })?;
+        let requirement_ids = collect_unique_ids(
+            requirements,
+            &["id", "item_id", "criteria_id", "title"],
+            "full_next_iteration_requirements",
+        )?;
+        let requirement_set: HashSet<String> = requirement_ids.into_iter().collect();
+
+        let acceptance = verify_value
+            .pointer("/acceptance_evaluation")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "verify.result.json 缺少 acceptance_evaluation".to_string())?;
+        let mut expected = HashSet::new();
+        for (idx, item) in acceptance.iter().enumerate() {
+            let status = item
+                .get("status")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 status", idx))?;
+            if as_failing_status(status) {
+                let criteria_id = id_from_value(item, &["criteria_id"])
+                    .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 criteria_id", idx))?;
+                expected.insert(criteria_id);
+            }
+        }
+
+        if let Some(items) = verify_value
+            .pointer("/carryover_verification/items")
+            .and_then(|v| v.as_array())
+        {
+            for (idx, item) in items.iter().enumerate() {
+                let status = item
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("missing");
+                if as_failing_status(status) {
+                    let item_id = id_from_value(item, &["id", "item_id"])
+                        .ok_or_else(|| format!("carryover_verification.items[{}] 缺少 id", idx))?;
+                    expected.insert(item_id);
+                }
+            }
+        }
+
+        let missing_expected: Vec<String> = expected
+            .difference(&requirement_set)
+            .cloned()
+            .collect::<Vec<String>>();
+        if !missing_expected.is_empty() {
+            return Err(format!(
+                "full_next_iteration_requirements 未覆盖 verify 未通过项: {:?}",
+                missing_expected
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_stage_artifacts(
+        stage: &str,
+        cycle_dir: &Path,
+        verify_iteration: u32,
+    ) -> Result<(), String> {
+        match stage {
+            "implement" => Self::validate_implement_artifact(cycle_dir, verify_iteration),
+            "verify" => Self::validate_verify_artifact(cycle_dir, verify_iteration),
+            "judge" => Self::validate_judge_artifact(cycle_dir, verify_iteration),
+            _ => Ok(()),
+        }
+    }
+
     fn extract_acceptance_mapping_criteria(
         value: &serde_json::Value,
     ) -> Result<Vec<serde_json::Value>, String> {
@@ -634,6 +894,19 @@ impl EvolutionManager {
             }
         }
 
+        let validation_ctx = {
+            let state = self.state.lock().await;
+            state
+                .workspaces
+                .get(key)
+                .map(|entry| (entry.workspace_root.clone(), entry.verify_iteration))
+        };
+        if let Some((workspace_root, verify_iteration)) = validation_ctx {
+            let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+            Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration)
+                .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
+        }
+
         let blocker_check_ctx = {
             let state = self.state.lock().await;
             state.workspaces.get(key).map(|entry| {
@@ -858,10 +1131,7 @@ impl EvolutionManager {
         }
 
         if let Some(workspace_root) = auto_commit_workspace_root {
-            if let Err(err) = self
-                .run_auto_commit_after_round(&workspace_root, ctx)
-                .await
-            {
+            if let Err(err) = self.run_auto_commit_after_round(&workspace_root, ctx).await {
                 self.mark_failed_with_code(
                     key,
                     "evo_auto_commit_failed",
@@ -1060,7 +1330,13 @@ mod tests {
     };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use tempfile::tempdir;
     use tokio::time::Duration;
+
+    fn write_json(path: &std::path::Path, value: serde_json::Value) {
+        let content = serde_json::to_string_pretty(&value).expect("serialize json failed");
+        std::fs::write(path, content).expect("write json failed");
+    }
 
     #[test]
     fn parse_judge_result_json_schema() {
@@ -1203,11 +1479,7 @@ mod tests {
         .await;
 
         assert!(result.is_ok(), "第二次重试应成功");
-        assert_eq!(
-            attempts.load(Ordering::SeqCst),
-            2,
-            "应执行两次自动提交尝试"
-        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2, "应执行两次自动提交尝试");
     }
 
     #[tokio::test]
@@ -1235,5 +1507,105 @@ mod tests {
             2,
             "失败场景也应执行两次自动提交尝试"
         );
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_missing_failure_backlog_on_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("implement.result.json"),
+            serde_json::json!({
+                "backlog_coverage": [],
+                "backlog_coverage_summary": {
+                    "total": 0,
+                    "done": 0,
+                    "blocked": 0,
+                    "not_done": 0
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("implement", dir.path(), 1)
+            .expect_err("missing failure_backlog should fail");
+        assert!(err.contains("failure_backlog"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_backlog_coverage_mismatch() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("implement.result.json"),
+            serde_json::json!({
+                "failure_backlog": [{"id": "f-1"}, {"id": "f-2"}],
+                "backlog_coverage": [{"id": "f-1"}],
+                "backlog_coverage_summary": {
+                    "total": 2,
+                    "done": 1,
+                    "blocked": 0,
+                    "not_done": 1
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("implement", dir.path(), 1)
+            .expect_err("coverage mismatch should fail");
+        assert!(err.contains("数量不一致"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_verify_missing_backlog_items() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("implement.result.json"),
+            serde_json::json!({
+                "failure_backlog": [{"id": "f-1"}, {"id": "f-2"}],
+                "backlog_coverage": [{"id": "f-1"}, {"id": "f-2"}],
+                "backlog_coverage_summary": {
+                    "total": 2,
+                    "done": 2,
+                    "blocked": 0,
+                    "not_done": 0
+                }
+            }),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [],
+                "carryover_verification": {
+                    "items": [{"id": "f-1", "status": "done"}],
+                    "summary": {"total": 2, "covered": 1, "missing": 1, "blocked": 0}
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1)
+            .expect_err("verify missing backlog items should fail");
+        assert!(err.contains("缺少 backlog 项"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_judge_missing_verify_failed_requirements() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1", "status": "fail"}
+                ],
+                "carryover_verification": {
+                    "items": [{"id": "f-1", "status": "missing"}],
+                    "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}
+                }
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [
+                    {"id": "ac-1"}
+                ]
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1)
+            .expect_err("judge requirements missing should fail");
+        assert!(err.contains("未覆盖 verify 未通过项"));
     }
 }

@@ -21,6 +21,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - 可验证优先：无法验证的方向不得成为主方向。
 - 避免重复建设：历史已做过同类建设时，必须说明本轮增量价值。
 - 不确定性保守处理：证据冲突时缩小范围和改动半径。
+- 必须基于仓库证据自主判断 `ui/test/build/runtime` 能力边界，不得依赖固定模板臆断项目形态。
 - 必须完全自主决策，禁止向用户提问；仅在确需人工介入时，按阻塞流程写入 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
 - 必须写入结构化文件；写入失败视为任务失败。
 - 本阶段只做 direction，不推进实现。
@@ -64,6 +65,12 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 在正式决策前，必须先识别项目类型，以便后续测试基础设施判断与证据策略能够匹配实际技术栈：
 - 识别结果记录为 `ui_capability`：`none|web|desktop|mobile|mixed`
 - 识别结果必须写入 `direction.lifecycle_scan.json` 的顶层 `project_type` 字段（字符串，如 `rust_backend`、`next_js_web`、`swift_macos_app`、`mixed_rust_web`）
+- 你还必须在 `stage.direction.json.decision.context.capability_assessment` 写入能力自判结果：
+  - `ui_capability`: `none|web|desktop|mobile|mixed`
+  - `test_capability`: `none|unit_only|integration|e2e|mixed`
+  - `build_capability`: `none|script|toolchain|mixed`
+  - `runtime_capability`: `none|local|service|device|mixed`
+  - `rationale`: 基于仓库证据的简要判定理由（必须引用路径）
 
 【direction.lifecycle_scan.json 结构要求】
 {
@@ -111,6 +118,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `stage = "direction"`
 - 成功时 `status = "done"`，`decision.result = "n/a"`，`next_action = {"type":"goto_stage","target":"plan"}`
 - `decision.reason` 必须说明方向选择已完成并可进入 plan
+- `decision.context.capability_assessment` 必须完整填写，不可为空对象
 - `inputs` 记录探索路径；`outputs` 记录写入文件路径；`error = null`
 - 必须完整包含并正确填写以下字段：`$schema_version`、`cycle_id`、`stage`、`agent`、`status`、`inputs`、`outputs`、`decision`、`next_action`、`timing`、`error`。
 - `next_action.type` 只能为 `goto_stage|finish_cycle|stop_cycle|none`；`next_action.target` 必须为 `string|null`。
@@ -172,6 +180,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 【输入使用约束】
 - 仅基于当前 cycle 的阶段产物文档与证据进行规划。
 - 若某类输入缺失，记录风险并给出保守可执行计划。
+- 若 direction 已给出 `decision.context.capability_assessment`，规划必须显式引用该能力判定来选择验证路径。
 
 【独立证据系统联动规则（仅本阶段）】
 - 若识别到项目已具备独立 e2e 证据体系，且本轮涉及用户操作链路调整，计划必须同步安排 e2e 调整任务。
@@ -187,6 +196,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 5. 证据采集设计（每条验收标准对应证据）
 6. 发布与升级影响（版本、脚本、清单、兼容性）
 7. 可观测性补强（日志关键字、指标、追踪点）
+8. 能力驱动验证裁剪（不可执行检查必须标记并提供替代证据）
 
 【plan.execution.json 结构要求】
 {
@@ -217,6 +227,9 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
         "id": "v-1",
         "kind": "unit|integration|e2e|manual|build",
         "command_or_method": "...",
+        "executable": true,
+        "not_executable_reason": "",
+        "fallback_evidence_plan": "",
         "expected": "...",
         "evidence_type": "test_log|build_log|metrics|screenshot|diff_summary"
       }
@@ -269,6 +282,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 【质量门槛】
 - 每个 work_item 必须可直接执行，不允许空泛描述。
 - 每条 acceptance criteria 必须至少映射到 1 个 check 与证据类型。
+- `verification_plan.checks` 中 `executable=false` 的条目必须提供 `not_executable_reason` 与 `fallback_evidence_plan`。
 - 高风险项必须给出 rollback。
 - 计划必须与 `direction.selected_type` 一致，不得偏航。
 - 当 `external_e2e_linkage.requires_sync = true` 时，`work_items` 中必须有明确的 e2e 同步任务。
@@ -303,6 +317,11 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - `plan.execution.json`
 - `direction.lifecycle_scan.json`
 - `handoff.md`（若存在）
+- 当 `VERIFY_ITERATION > 0` 时，额外必须读取：
+  - `verify.result.json`
+  - `judge.result.json`
+  - `stage.verify.json`（若存在）
+  - `stage.judge.json`（若存在）
 并在 `stage.implement.json.inputs` 记录关键输入路径。
 
 【输入使用约束】
@@ -315,6 +334,12 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 4. 对关键改动执行最小可行自检（如编译、受影响测试、静态检查或必要手动检查步骤）。
 5. 产出可复核的执行记录（如命令结果、检查结论、关键输出路径）并结构化记录。
 6. 若发现计划本身不可执行，允许保守调整实现顺序，但必须在结果中记录偏差与理由。
+7. 当 `VERIFY_ITERATION > 0` 时，必须先构造“上一轮未通过项全量清单”，来源至少包含：
+   - `verify.result.acceptance_evaluation` 中 `fail|insufficient_evidence`
+   - `verify.result.defects_or_risks`
+   - `judge.result.criteria_judgement` 中 `fail|insufficient_evidence`
+   - `judge.result.focus_for_next_iteration`
+8. 上述全量清单中的每一项都必须在本轮给出处理结果：`done|blocked|not_done`，禁止静默省略。
 
 【implement.result.json 结构要求】
 {
@@ -322,6 +347,35 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
   "cycle_id": "...",
   "selected_direction_type": "feature|performance|bugfix|architecture|ui",
   "summary": "...",
+  "reimplementation_context": {
+    "verify_iteration": 0,
+    "source_files": ["verify.result.json", "judge.result.json"],
+    "collected_failure_items_count": 0
+  },
+  "failure_backlog": [
+    {
+      "id": "fb-1",
+      "source": "verify.acceptance|verify.defect|judge.criteria|judge.focus",
+      "reason": "...",
+      "required_evidence": ["..."]
+    }
+  ],
+  "backlog_coverage": [
+    {
+      "id": "fb-1",
+      "status": "done|blocked|not_done",
+      "action_taken": "...",
+      "changed_targets": ["..."],
+      "evidence_paths": ["..."],
+      "not_done_reason": ""
+    }
+  ],
+  "backlog_coverage_summary": {
+    "total": 0,
+    "done": 0,
+    "blocked": 0,
+    "not_done": 0
+  },
   "work_item_results": [
     {
       "id": "w-1",
@@ -386,6 +440,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - `changed_files` 与实际改动文件一致，不得遗漏关键文件。
 - 每条高风险改动必须记录回滚思路或缓解措施。
 - 输出必须让 VerifyAgent 能直接据此执行验证。
+- 当 `VERIFY_ITERATION > 0` 时，`failure_backlog` 与 `backlog_coverage` 必须一一对应且数量一致。
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
@@ -430,6 +485,8 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 4. 每条验收标准都必须给出判定：`pass|fail|insufficient_evidence`。
 5. 证据必须可复核，禁止伪造、禁止仅口头结论。
 6. 若发现实现与计划明显偏离，必须在结果中单列风险与影响。
+7. 当 `VERIFY_ITERATION > 0` 时，必须执行“整改覆盖审计”：逐项核验 implement 的 `failure_backlog` 是否都出现在 `backlog_coverage` 且给出证据结论。
+8. 若存在任何整改项缺失（missing），`verification_overall.result` 必须判定为 `fail`。
 
 【verify.result.json 结构要求】
 {
@@ -461,6 +518,22 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
   "verification_overall": {
     "result": "pass|fail",
     "reason": "..."
+  },
+  "carryover_verification": {
+    "items": [
+      {
+        "id": "fb-1",
+        "status": "covered|missing|blocked",
+        "evidence_paths": ["..."],
+        "reason": "..."
+      }
+    ],
+    "summary": {
+      "total": 0,
+      "covered": 0,
+      "missing": 0,
+      "blocked": 0
+    }
   },
   "external_e2e_sync": {
     "required": true,
@@ -512,6 +585,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - 高严重度问题必须进入 `defects_or_risks`，并给出可执行建议。
 - 输出必须让 JudgeAgent 可直接做通过/失败裁决。
 - `verify.result.json.verify_iteration` 必须从 `cycle.json.verify_iteration` 读取并回填，禁止写死常量。
+- 当 `VERIFY_ITERATION > 0` 时，`carryover_verification.summary.missing > 0` 必须导致 `verification_overall.result = "fail"`。
 "####;
 
 pub const STAGE_JUDGE_PROMPT: &str = r####"
@@ -561,6 +635,9 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
    - 整体 `fail` 且 `verify_iteration >= verify_iteration_limit`：`next_action = stop_cycle`
    - 当触发 `verify_iteration >= verify_iteration_limit` 时，应在裁决理由或上下文中标记 `evo_verify_iteration_exhausted`。
 6. 裁决必须给出可执行建议：继续实现时列出修复重点；通过时列出发布前关注点。
+7. 当 `VERIFY_ITERATION > 0` 时，必须先检查 `verify.result.json.carryover_verification`：
+   - 若存在 `missing > 0`，不得给出 pass。
+   - 必须在裁决理由中写明缺失整改项 ID。
 
 【judge.result.json 结构要求】
 {
@@ -588,6 +665,19 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
     "type": "goto_stage|stop_cycle",
     "target": "<string|null>"
   },
+  "carryover_judgement": {
+    "result": "pass|fail",
+    "missing_item_ids": ["fb-1"],
+    "reason": "..."
+  },
+  "full_next_iteration_requirements": [
+    {
+      "id": "fb-1",
+      "source": "carryover|criteria",
+      "reason": "...",
+      "required_evidence": ["..."]
+    }
+  ],
   "focus_for_next_iteration": ["..."],
   "release_readiness_notes": ["..."],
   "updated_at": "RFC3339 UTC"
@@ -623,6 +713,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - `overall_result` 与 `next_action` 必须严格符合回路规则。
 - fail 结论必须输出"最小修复集"导向的下一轮重点，避免泛化建议。
 - `judge.result.json.verify_iteration` 与 `verify_iteration_limit` 必须分别从 `cycle.json.verify_iteration`、`cycle.json.verify_iteration_limit` 读取并回填，禁止写死常量。
+- 当 `VERIFY_ITERATION > 0` 时，`full_next_iteration_requirements` 必须覆盖 verify 未通过项，不得只保留部分条目。
 "####;
 
 pub const STAGE_REPORT_PROMPT: &str = r####"
@@ -672,6 +763,7 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 4. 对证据做结构化盘点：数量、类型分布、关键证据、缺口证据。
 5. 汇总本轮变更影响面与残余风险，标注优先级。
 6. 报告必须可被后续代理直接消费，避免只写叙述性文字。
+7. 当存在重实现（`VERIFY_ITERATION > 0`）时，必须生成“全量整改追踪表”，覆盖每个失败项的状态与证据路径。
 
 【report.result.json 结构要求】
 {
@@ -706,6 +798,20 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
     "checks_passed": 0,
     "checks_failed": 0,
     "blocked_checks": 0
+  },
+  "remediation_tracking": {
+    "total_items": 0,
+    "done_items": 0,
+    "blocked_items": 0,
+    "not_done_items": 0,
+    "items": [
+      {
+        "id": "fb-1",
+        "status": "done|blocked|not_done",
+        "evidence_paths": ["..."],
+        "reason": "..."
+      }
+    ]
   },
   "external_e2e_sync": {
     "required": true,
@@ -753,8 +859,9 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
   2. 方向与目标
   3. 实施摘要
   4. 验证与证据摘要
-  5. 风险与技术债
-  6. 下一轮建议
+ 5. 整改覆盖追踪
+ 6. 风险与技术债
+ 7. 下一轮建议
 - 内容要求与 `report.result.json` 一致，不得冲突。
 
 【stage.report.json 写入要求】
