@@ -18,5 +18,7 @@ domains:
     action_rule: prefix("log_")
   - id: ai
     action_rule: prefix("ai_")
+  - id: evidence
+    action_rule: prefix("evidence_")
   - id: evolution
     action_rule: prefix("evo_")

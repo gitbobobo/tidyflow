@@ -8,6 +8,7 @@ fn matches_known_rules() {
     assert!(matches_action_domain("file", "file_read"));
     assert!(matches_action_domain("git", "cancel_ai_task"));
     assert!(matches_action_domain("settings", "save_client_settings"));
+    assert!(matches_action_domain("evidence", "evidence_get_snapshot"));
     assert!(matches_action_domain("evolution", "evo_get_snapshot"));
 }
 

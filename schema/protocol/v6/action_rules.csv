@@ -24,4 +24,5 @@ prefix,project,cancel_project_command
 contains,settings,client_settings
 prefix,log,log_
 prefix,ai,ai_
+prefix,evidence,evidence_
 prefix,evolution,evo_

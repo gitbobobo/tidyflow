@@ -32,6 +32,9 @@ pub(super) async fn dispatch_domain_handler(
         }
         DomainRoute::Log => core_domains::handle_log_domain(client_msg)?,
         DomainRoute::Ai => core_domains::handle_ai_domain(client_msg, socket, ctx).await?,
+        DomainRoute::Evidence => {
+            core_domains::handle_evidence_domain(client_msg, socket, ctx).await?
+        }
         DomainRoute::Evolution => {
             core_domains::handle_evolution_domain(client_msg, socket, ctx).await?
         }

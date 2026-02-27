@@ -30,6 +30,7 @@ pub const PREFIX_RULES: &[(&str, &str)] = &[
     ("project", "cancel_project_command"),
     ("log", "log_"),
     ("ai", "ai_"),
+    ("evidence", "evidence_"),
     ("evolution", "evo_"),
 ];
 

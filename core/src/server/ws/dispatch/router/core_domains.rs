@@ -76,6 +76,14 @@ pub(super) async fn handle_ai_domain(
     .await
 }
 
+pub(super) async fn handle_evidence_domain(
+    client_msg: &ClientMessage,
+    socket: &mut WebSocket,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    crate::server::handlers::evidence::handle_evidence_message(client_msg, socket, ctx).await
+}
+
 pub(super) async fn handle_evolution_domain(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,

@@ -644,18 +644,18 @@ pub enum ClientMessage {
         #[serde(default)]
         resolutions: Vec<EvolutionBlockerResolutionInput>,
     },
-    #[serde(rename = "evo_get_evidence_snapshot")]
-    EvoGetEvidenceSnapshot {
+    #[serde(rename = "evidence_get_snapshot")]
+    EvidenceGetSnapshot {
         project: String,
         workspace: String,
     },
-    #[serde(rename = "evo_get_evidence_rebuild_prompt")]
-    EvoGetEvidenceRebuildPrompt {
+    #[serde(rename = "evidence_get_rebuild_prompt")]
+    EvidenceGetRebuildPrompt {
         project: String,
         workspace: String,
     },
-    #[serde(rename = "evo_read_evidence_item")]
-    EvoReadEvidenceItem {
+    #[serde(rename = "evidence_read_item")]
+    EvidenceReadItem {
         project: String,
         workspace: String,
         item_id: String,
@@ -1428,32 +1428,32 @@ pub enum ServerMessage {
         unresolved_count: u32,
         unresolved_items: Vec<EvolutionBlockerItemInfo>,
     },
-    #[serde(rename = "evo_evidence_snapshot")]
-    EvoEvidenceSnapshot {
+    #[serde(rename = "evidence_snapshot")]
+    EvidenceSnapshot {
         project: String,
         workspace: String,
         evidence_root: String,
         index_file: String,
         index_exists: bool,
-        detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
+        detected_subsystems: Vec<EvidenceSubsystemInfo>,
         detected_device_types: Vec<String>,
-        items: Vec<EvolutionEvidenceItemInfo>,
-        issues: Vec<EvolutionEvidenceIssueInfo>,
+        items: Vec<EvidenceItemInfo>,
+        issues: Vec<EvidenceIssueInfo>,
         updated_at: String,
     },
-    #[serde(rename = "evo_evidence_rebuild_prompt")]
-    EvoEvidenceRebuildPrompt {
+    #[serde(rename = "evidence_rebuild_prompt")]
+    EvidenceRebuildPrompt {
         project: String,
         workspace: String,
         prompt: String,
         evidence_root: String,
         index_file: String,
-        detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
+        detected_subsystems: Vec<EvidenceSubsystemInfo>,
         detected_device_types: Vec<String>,
         generated_at: String,
     },
-    #[serde(rename = "evo_evidence_item_chunk")]
-    EvoEvidenceItemChunk {
+    #[serde(rename = "evidence_item_chunk")]
+    EvidenceItemChunk {
         project: String,
         workspace: String,
         item_id: String,
@@ -1726,21 +1726,21 @@ pub struct EvolutionBlockerResolutionInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvolutionEvidenceSubsystemInfo {
+pub struct EvidenceSubsystemInfo {
     pub id: String,
     pub kind: String,
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvolutionEvidenceIssueInfo {
+pub struct EvidenceIssueInfo {
     pub code: String,
     pub level: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvolutionEvidenceItemInfo {
+pub struct EvidenceItemInfo {
     pub item_id: String,
     pub device_type: String,
     #[serde(rename = "type")]
@@ -1791,6 +1791,7 @@ pub fn v1_capabilities() -> Vec<String> {
         "project_commands".to_string(),
         "remote_term_tracking".to_string(),
         "task_history".to_string(),
+        "evidence".to_string(),
         "evolution".to_string(),
     ]
 }
