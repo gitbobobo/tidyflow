@@ -156,6 +156,7 @@
 		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
 		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
 		TST10001 /* ChatScrollPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10011 /* ChatScrollPolicyTests.swift */; };
+		TST10002 /* AIChatProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10012 /* AIChatProtocolModelsTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -195,6 +196,7 @@
 		MOB00043 /* MobileCommandIconView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MobileCommandIconView.swift; sourceTree = "<group>"; };
 		MOB00054 /* DisconnectBannerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DisconnectBannerView.swift; sourceTree = "<group>"; };
 		TST10011 /* ChatScrollPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollPolicyTests.swift; sourceTree = "<group>"; };
+		TST10012 /* AIChatProtocolModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatProtocolModelsTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -470,6 +472,7 @@
 		TST10030 /* TidyFlowTests */ = {
 			isa = PBXGroup;
 			children = (
+				TST10012 /* AIChatProtocolModelsTests.swift */,
 				TST10011 /* ChatScrollPolicyTests.swift */,
 			);
 			path = TidyFlowTests;
@@ -869,6 +872,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				TST10002 /* AIChatProtocolModelsTests.swift in Sources */,
 				TST10001 /* ChatScrollPolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
