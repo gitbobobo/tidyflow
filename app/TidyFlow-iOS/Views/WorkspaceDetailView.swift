@@ -1245,7 +1245,12 @@ struct MobileEvolutionView: View {
         List {
             Section("调度器状态") {
                 LabeledContent("激活状态") {
-                    Text(appState.evolutionScheduler.activationState)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(appState.evolutionScheduler.activationState.lowercased() == "active" ? Color.green : Color.secondary)
+                            .frame(width: 8, height: 8)
+                        Text(appState.evolutionScheduler.activationState)
+                    }
                 }
                 LabeledContent("并发上限") {
                     Text("\(appState.evolutionScheduler.maxParallelWorkspaces)")
@@ -1261,7 +1266,12 @@ struct MobileEvolutionView: View {
                 }
                 if let item {
                     LabeledContent("状态") {
-                        Text(item.status)
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(mobileWorkspaceStatusColor(item.status))
+                                .frame(width: 8, height: 8)
+                            Text(item.status)
+                        }
                     }
                     LabeledContent("当前阶段") {
                         Text(item.currentStage)
@@ -1567,6 +1577,22 @@ struct MobileEvolutionView: View {
             return .orange
         case "completed":
             return .green
+        default:
+            return .secondary
+        }
+    }
+
+    private func mobileWorkspaceStatusColor(_ status: String) -> Color {
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "running", "进行中":
+            return .orange
+        case "idle", "空闲":
+            return .green
+        case "queued", "排队中":
+            return .blue
+        case "stopped", "已停止", "error", "failed":
+            return .red
         default:
             return .secondary
         }
