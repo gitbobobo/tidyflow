@@ -6,7 +6,7 @@ use super::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -419,6 +419,7 @@ impl AiAgent for ClaudeCodeAgent {
                 prompt,
                 "--output-format".to_string(),
                 "stream-json".to_string(),
+                "--verbose".to_string(),
             ];
             if let Some(resume) = resume_session_id.as_ref() {
                 args.push("--resume".to_string());
@@ -475,6 +476,8 @@ impl AiAgent for ClaudeCodeAgent {
             let mut stderr_lines = BufReader::new(stderr).lines();
             let mut stdout_closed = false;
             let mut stderr_closed = false;
+            let mut stderr_tail: VecDeque<String> = VecDeque::new();
+            const STDERR_TAIL_MAX: usize = 8;
 
             while !(stdout_closed && stderr_closed) {
                 tokio::select! {
@@ -758,6 +761,15 @@ impl AiAgent for ClaudeCodeAgent {
                                 let trimmed = line.trim();
                                 if !trimmed.is_empty() {
                                     debug!("[claude stderr] {}", trimmed);
+                                    let snippet = if trimmed.chars().count() > 300 {
+                                        format!("{}...", trimmed.chars().take(300).collect::<String>())
+                                    } else {
+                                        trimmed.to_string()
+                                    };
+                                    if stderr_tail.len() >= STDERR_TAIL_MAX {
+                                        stderr_tail.pop_front();
+                                    }
+                                    stderr_tail.push_back(snippet);
                                 }
                             }
                             Ok(None) => {
@@ -786,7 +798,16 @@ impl AiAgent for ClaudeCodeAgent {
                         let _ = tx.send(Ok(AiEvent::Done));
                     }
                     Ok(status) => {
-                        let _ = tx.send(Err(format!("Claude exited with status: {}", status)));
+                        if stderr_tail.is_empty() {
+                            let _ = tx.send(Err(format!("Claude exited with status: {}", status)));
+                        } else {
+                            let stderr_summary =
+                                stderr_tail.into_iter().collect::<Vec<_>>().join(" | ");
+                            let _ = tx.send(Err(format!(
+                                "Claude exited with status: {}. stderr: {}",
+                                status, stderr_summary
+                            )));
+                        }
                     }
                     Err(err) => {
                         let _ = tx.send(Err(format!("Claude wait failed: {}", err)));
