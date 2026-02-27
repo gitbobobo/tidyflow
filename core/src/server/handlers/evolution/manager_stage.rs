@@ -254,7 +254,6 @@ impl EvolutionManager {
             key,
             stage,
             "blocked",
-            None,
             Some("human blocker created from AI question"),
             None,
         )
@@ -318,7 +317,7 @@ impl EvolutionManager {
         self.set_stage_status(key, stage, "running").await;
         self.reset_stage_tool_call_tracking(key, stage).await;
         self.persist_cycle_file(key).await.ok();
-        self.persist_stage_file(key, stage, "running", None, None, None)
+        self.persist_stage_file(key, stage, "running", None, None)
             .await
             .ok();
         self.broadcast_cycle_update(key, ctx, "orchestrator").await;
@@ -331,6 +330,9 @@ impl EvolutionManager {
         self.set_stage_session(key, stage, &ai_tool, &session.id)
             .await;
         self.persist_chat_map(key).await.ok();
+        self.persist_stage_file(key, stage, "running", None, None)
+            .await
+            .ok();
 
         let prompt = self
             .build_stage_prompt(key, project, workspace, cycle_id, stage, round)
@@ -589,7 +591,6 @@ impl EvolutionManager {
                 key,
                 stage,
                 "blocked",
-                Some(&session.id),
                 Some("stage blocked by unresolved human blocker"),
                 None,
             )
@@ -605,7 +606,6 @@ impl EvolutionManager {
             key,
             stage,
             "done",
-            Some(&session.id),
             None,
             if stage == "judge" {
                 Some(judge_pass)
@@ -810,6 +810,7 @@ impl EvolutionManager {
                 entry.terminal_reason_code = None;
                 entry.llm_defined_acceptance_criteria.clear();
                 entry.stage_sessions.clear();
+                entry.stage_session_history.clear();
                 entry.stage_statuses.clear();
                 for s in STAGES {
                     entry

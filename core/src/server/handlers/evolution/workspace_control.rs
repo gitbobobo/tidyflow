@@ -105,6 +105,7 @@ impl EvolutionManager {
                     stage_profiles,
                     stage_statuses,
                     stage_sessions: HashMap::new(),
+                    stage_session_history: HashMap::new(),
                     stage_tool_call_counts,
                     stage_seen_tool_calls,
                 },

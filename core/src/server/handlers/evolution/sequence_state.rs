@@ -19,13 +19,23 @@ impl EvolutionManager {
     ) {
         let mut state = self.state.lock().await;
         if let Some(entry) = state.workspaces.get_mut(key) {
-            entry.stage_sessions.insert(
-                stage.to_string(),
-                StageSession {
-                    ai_tool: ai_tool.to_string(),
-                    session_id: session_id.to_string(),
-                },
-            );
+            let stage_key = stage.to_string();
+            let session = StageSession {
+                ai_tool: ai_tool.to_string(),
+                session_id: session_id.to_string(),
+            };
+
+            let history = entry
+                .stage_session_history
+                .entry(stage_key.clone())
+                .or_insert_with(Vec::new);
+            if !history.iter().any(|item| {
+                item.ai_tool == session.ai_tool && item.session_id == session.session_id
+            }) {
+                history.push(session.clone());
+            }
+
+            entry.stage_sessions.insert(stage_key, session);
         }
     }
 

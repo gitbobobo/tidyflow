@@ -6,6 +6,16 @@ use super::stage::{agent_name, next_stage, prompt_id_for_stage, prompt_template_
 use super::utils::{cycle_dir_path, evolution_workspace_dir, write_json};
 use super::{EvolutionManager, StageSession, STAGES};
 
+fn collect_session_ids(sessions: &[StageSession]) -> Vec<String> {
+    let mut session_ids: Vec<String> = Vec::new();
+    for session in sessions {
+        if !session_ids.iter().any(|sid| sid == &session.session_id) {
+            session_ids.push(session.session_id.clone());
+        }
+    }
+    session_ids
+}
+
 impl EvolutionManager {
     pub(super) async fn persist_cycle_file(&self, key: &str) -> Result<(), String> {
         let state = self.state.lock().await;
@@ -65,7 +75,6 @@ impl EvolutionManager {
         key: &str,
         stage: &str,
         status: &str,
-        session_id: Option<&str>,
         error_message: Option<&str>,
         judge_result: Option<bool>,
     ) -> Result<(), String> {
@@ -75,6 +84,22 @@ impl EvolutionManager {
         };
         let cycle_dir = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)?;
         std::fs::create_dir_all(&cycle_dir).map_err(|e| e.to_string())?;
+        let session_ids = entry
+            .stage_session_history
+            .get(stage)
+            .map(|items| collect_session_ids(items))
+            .unwrap_or_default();
+        let outputs = if session_ids.is_empty() {
+            serde_json::json!([])
+        } else {
+            serde_json::json!([
+                {
+                    "type": "chat_session",
+                    "session_id": session_ids.last().cloned().unwrap_or_default(),
+                    "session_ids": session_ids,
+                }
+            ])
+        };
 
         let payload = serde_json::json!({
             "$schema_version": "1.0",
@@ -85,13 +110,7 @@ impl EvolutionManager {
             "inputs": [
                 {"type": "prompt", "path": prompt_id_for_stage(stage).unwrap_or_default()}
             ],
-            "outputs": if let Some(sid) = session_id {
-                serde_json::json!([
-                    {"type": "chat_session", "session_id": sid}
-                ])
-            } else {
-                serde_json::json!([])
-            },
+            "outputs": outputs,
             "decision": {
                 "result": if stage == "judge" && status == "done" {
                     if judge_result.unwrap_or(true) { "pass" } else { "fail" }
@@ -123,19 +142,22 @@ impl EvolutionManager {
         let cycle_dir = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)?;
         std::fs::create_dir_all(&cycle_dir).map_err(|e| e.to_string())?;
 
-        let mut session_rows: Vec<(String, StageSession)> = entry
-            .stage_sessions
+        let mut session_rows: Vec<(String, Vec<StageSession>)> = entry
+            .stage_session_history
             .iter()
-            .map(|(stage, session)| (stage.clone(), session.clone()))
+            .map(|(stage, sessions)| (stage.clone(), sessions.clone()))
             .collect();
         session_rows.sort_by(|a, b| a.0.cmp(&b.0));
         let sessions: Vec<serde_json::Value> = session_rows
             .into_iter()
-            .map(|(stage, session)| {
+            .map(|(stage, stage_sessions)| {
+                let session_ids = collect_session_ids(&stage_sessions);
+                let latest = stage_sessions.last().cloned();
                 serde_json::json!({
                     "stage": stage,
-                    "ai_tool": session.ai_tool,
-                    "session_id": session.session_id,
+                    "ai_tool": latest.as_ref().map(|item| item.ai_tool.clone()).unwrap_or_default(),
+                    "session_id": latest.as_ref().map(|item| item.session_id.clone()).unwrap_or_default(),
+                    "session_ids": session_ids,
                 })
             })
             .collect();
@@ -209,5 +231,33 @@ impl EvolutionManager {
             prompt_body,
             serde_json::to_string_pretty(&context).unwrap_or_else(|_| "{}".to_string())
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_session_ids, StageSession};
+
+    #[test]
+    fn collect_session_ids_should_keep_order_and_dedup() {
+        let sessions = vec![
+            StageSession {
+                ai_tool: "codex".to_string(),
+                session_id: "session-1".to_string(),
+            },
+            StageSession {
+                ai_tool: "codex".to_string(),
+                session_id: "session-1".to_string(),
+            },
+            StageSession {
+                ai_tool: "codex".to_string(),
+                session_id: "session-2".to_string(),
+            },
+        ];
+        let session_ids = collect_session_ids(&sessions);
+        assert_eq!(
+            session_ids,
+            vec!["session-1".to_string(), "session-2".to_string()]
+        );
     }
 }
