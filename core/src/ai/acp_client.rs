@@ -5,6 +5,7 @@ use super::codex_manager::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
@@ -204,11 +205,12 @@ impl AcpClient {
         &self,
         directory: &str,
     ) -> Result<(String, AcpSessionMetadata), String> {
+        let cwd_uri = Self::normalize_cwd_for_request(directory)?;
         let result = self
             .send_request_with_auth_retry(
                 "session/new",
                 Some(serde_json::json!({
-                    "cwd": directory,
+                    "cwd": cwd_uri,
                     "mcpServers": []
                 })),
             )
@@ -237,12 +239,13 @@ impl AcpClient {
         directory: &str,
         session_id: &str,
     ) -> Result<Value, String> {
+        let cwd_uri = Self::normalize_cwd_for_request(directory)?;
         let result = self
             .send_request_with_auth_retry(
                 "session/load",
                 Some(serde_json::json!({
                     "sessionId": session_id,
-                    "cwd": directory,
+                    "cwd": cwd_uri,
                     "mcpServers": []
                 })),
             )
@@ -425,6 +428,39 @@ impl AcpClient {
             }
         }
         trimmed.to_string()
+    }
+
+    fn normalize_cwd_for_request(directory: &str) -> Result<String, String> {
+        let trimmed = directory.trim();
+        if trimmed.is_empty() {
+            return Err("ACP session cwd 不能为空".to_string());
+        }
+
+        if let Ok(url) = url::Url::parse(trimmed) {
+            if !url.scheme().eq_ignore_ascii_case("file") {
+                return Err(format!(
+                    "ACP session cwd 仅支持绝对路径或 file URI，当前 scheme={}",
+                    url.scheme()
+                ));
+            }
+            let path = url
+                .to_file_path()
+                .map_err(|_| format!("ACP session cwd file URI 非法: {}", trimmed))?;
+            let normalized = url::Url::from_file_path(&path)
+                .map_err(|_| format!("ACP session cwd 无法转换为 file URI: {}", trimmed))?;
+            return Ok(normalized.to_string());
+        }
+
+        let path = Path::new(trimmed);
+        if !path.is_absolute() {
+            return Err(format!(
+                "ACP session cwd 必须是绝对路径或 file URI: {}",
+                trimmed
+            ));
+        }
+        let normalized = url::Url::from_file_path(path)
+            .map_err(|_| format!("ACP session cwd 无法转换为 file URI: {}", trimmed))?;
+        Ok(normalized.to_string())
     }
 
     fn parse_session_updated_at_ms(value: &Value) -> Option<i64> {
@@ -939,6 +975,15 @@ mod tests {
         async fn state_snapshot(&self) -> Option<AcpInitializationState> {
             self.init_state.lock().await.clone()
         }
+
+        async fn first_request_params(&self, method: &str) -> Option<Value> {
+            self.requests
+                .lock()
+                .await
+                .iter()
+                .find(|(m, _)| m == method)
+                .and_then(|(_, params)| params.clone())
+        }
     }
 
     #[async_trait]
@@ -1030,6 +1075,72 @@ mod tests {
         let millis = AcpClient::parse_timestamp_millis(&json!(1_706_000_000i64))
             .expect("timestamp should parse");
         assert_eq!(millis, 1_706_000_000_000i64);
+    }
+
+    #[test]
+    fn normalize_cwd_for_request_should_convert_absolute_path_to_file_uri() {
+        let cwd = AcpClient::normalize_cwd_for_request("/tmp/workspace")
+            .expect("absolute path should normalize");
+        assert_eq!(cwd, "file:///tmp/workspace");
+    }
+
+    #[test]
+    fn normalize_cwd_for_request_should_reject_relative_path() {
+        let err = AcpClient::normalize_cwd_for_request("relative/path")
+            .expect_err("relative path should fail");
+        assert!(err.contains("绝对路径"));
+    }
+
+    #[tokio::test]
+    async fn session_new_should_send_file_uri_cwd() {
+        let transport = Arc::new(MockTransport::new(
+            vec![Ok(json!({"sessionId": "session-1"}))],
+            None,
+        ));
+        let client = AcpClient::new_with_transport(transport.clone());
+        let _ = client
+            .session_new("/tmp/workspace")
+            .await
+            .expect("session/new should succeed");
+
+        let params = transport
+            .first_request_params("session/new")
+            .await
+            .expect("session/new params should exist");
+        assert_eq!(
+            params.get("cwd").and_then(|v| v.as_str()),
+            Some("file:///tmp/workspace")
+        );
+        assert_eq!(
+            params
+                .get("mcpServers")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len()),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn session_load_should_send_file_uri_cwd() {
+        let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
+        let client = AcpClient::new_with_transport(transport.clone());
+        let _ = client
+            .session_load("/tmp/workspace", "session-1")
+            .await
+            .expect("session/load should succeed");
+
+        let params = transport
+            .first_request_params("session/load")
+            .await
+            .expect("session/load params should exist");
+        assert_eq!(
+            params.get("cwd").and_then(|v| v.as_str()),
+            Some("file:///tmp/workspace")
+        );
+        assert_eq!(
+            params.get("sessionId").and_then(|v| v.as_str()),
+            Some("session-1")
+        );
     }
 
     #[tokio::test]
