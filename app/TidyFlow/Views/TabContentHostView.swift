@@ -1539,7 +1539,6 @@ struct EvolutionTabView: View {
     }
 
     private let evolutionStageOrder: [String] = ["direction", "plan", "implement", "verify", "judge", "report"]
-    private let stageCardHeight: CGFloat = 96
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -1547,12 +1546,13 @@ struct EvolutionTabView: View {
                 header
                 Divider()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 20) {
                         schedulerCard
                         workspaceCard
                         stageSectionsCard
                     }
-                    .padding(16)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
                 }
             }
             
@@ -1735,46 +1735,102 @@ struct EvolutionTabView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
+            Image(systemName: "brain.head.profile")
+                .font(.title3)
+                .foregroundStyle(.linearGradient(
+                    colors: [.purple, .blue],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ))
             Text("自主进化")
-                .font(.headline)
+                .font(.title3)
+                .fontWeight(.semibold)
             Spacer()
-            Button("刷新") {
+            Button {
                 refreshData()
+            } label: {
+                Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
+            .help("刷新状态")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
 
     private var schedulerCard: some View {
-        GroupBox("调度器状态") {
-            VStack(alignment: .leading, spacing: 8) {
-                LabeledContent("激活状态") {
-                    Text(appState.evolutionScheduler.activationState)
-                }
-                LabeledContent("并发上限") {
-                    Text("\(appState.evolutionScheduler.maxParallelWorkspaces)")
-                }
-                LabeledContent("运行中 / 排队") {
-                    Text("\(appState.evolutionScheduler.runningCount) / \(appState.evolutionScheduler.queuedCount)")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 12) {
+            schedulerStatCard(
+                title: "激活状态",
+                value: appState.evolutionScheduler.activationState,
+                icon: "power",
+                color: .green
+            )
+            schedulerStatCard(
+                title: "并发上限",
+                value: "\(appState.evolutionScheduler.maxParallelWorkspaces)",
+                icon: "square.stack.3d.up",
+                color: .blue
+            )
+            schedulerStatCard(
+                title: "运行中",
+                value: "\(appState.evolutionScheduler.runningCount)",
+                icon: "play.circle.fill",
+                color: .orange
+            )
+            schedulerStatCard(
+                title: "排队中",
+                value: "\(appState.evolutionScheduler.queuedCount)",
+                icon: "clock.fill",
+                color: .secondary
+            )
         }
     }
 
+    private func schedulerStatCard(title: String, value: String, icon: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Text(value)
+                .font(.title3)
+                .fontWeight(.medium)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+    }
+
     private var workspaceCard: some View {
-        GroupBox("工作空间控制") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 if let workspace {
                     LabeledContent("当前工作空间") {
                         Text("\(project)/\(workspace)")
+                            .fontWeight(.medium)
                     }
                     if let item = currentItem {
                         LabeledContent("状态") {
-                            Text(item.status)
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(workspaceStatusColor(item.status))
+                                    .frame(width: 8, height: 8)
+                                Text(item.status)
+                            }
                         }
                         LabeledContent("当前阶段") {
                             Text(item.currentStage)
@@ -1791,30 +1847,38 @@ struct EvolutionTabView: View {
                                 .truncationMode(.tail)
                         }
                     } else {
-                        Text("状态: 未启动")
-                            .foregroundColor(.secondary)
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.secondary.opacity(0.5))
+                                .frame(width: 8, height: 8)
+                            Text("未启动")
+                                .foregroundColor(.secondary)
+                        }
                     }
+
+                    Divider()
 
                     HStack(spacing: 12) {
                         TextField("循环轮次", text: $loopRoundLimitText)
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 140)
+                            .frame(width: 100)
                         Text("验证循环固定 3 次")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                    }
-
-                    ControlGroup {
-                        Button("手动启动") {
-                            startCurrentWorkspace()
+                        Spacer()
+                        ControlGroup {
+                            Button("手动启动") {
+                                startCurrentWorkspace()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("停止") {
+                                appState.stopEvolution(project: project, workspace: workspace)
+                            }
+                            Button("恢复") {
+                                appState.resumeEvolution(project: project, workspace: workspace)
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
-                        Button("停止") {
-                            appState.stopEvolution(project: project, workspace: workspace)
-                        }
-                        Button("恢复") {
-                            appState.resumeEvolution(project: project, workspace: workspace)
-                        }
+                        .controlSize(.small)
                     }
                 } else {
                     Text("请先选择工作空间")
@@ -1822,11 +1886,13 @@ struct EvolutionTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Label("工作空间控制", systemImage: "gearshape.2")
         }
     }
 
     private var stageSectionsCard: some View {
-        GroupBox("代理列表") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 let sortedAgents = sortedAgents()
                 if sortedAgents.isEmpty {
@@ -1834,7 +1900,7 @@ struct EvolutionTabView: View {
                         .foregroundColor(.secondary)
                 } else {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 320, maximum: 420), spacing: 12, alignment: .top)],
+                        columns: [GridItem(.adaptive(minimum: 300, maximum: 400), spacing: 12, alignment: .top)],
                         alignment: .leading,
                         spacing: 12
                     ) {
@@ -1846,6 +1912,8 @@ struct EvolutionTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Label("代理列表", systemImage: "person.3.sequence")
         }
     }
 
@@ -1941,27 +2009,40 @@ struct EvolutionTabView: View {
     private func stageStatusCard(agent: EvolutionAgentDisplayItem) -> some View {
         let statusText = agent.status
         let isRunning = normalizedStageStatus(statusText) == "running"
+        let isCompleted = isCompletedStatus(normalizedStageStatus(statusText))
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
+                Image(systemName: stageIconName(agent.stage))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(isRunning ? .orange : isCompleted ? .green : .accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill((isRunning ? Color.orange : isCompleted ? Color.green : Color.accentColor).opacity(0.12))
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stageDisplayName(agent.stage))
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(agent.agent)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer(minLength: 0)
+
                 if isRunning {
                     Circle()
                         .fill(Color.orange)
                         .frame(width: 8, height: 8)
                         .modifier(RunningPulseModifier())
                 }
-                Image(systemName: stageIconName(agent.stage))
-                    .foregroundColor(.accentColor)
-                Text(stageDisplayName(agent.stage))
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(agent.agent)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
+
                 if canOpenStageChat(statusText) {
                     Button {
                         openStageChat(stage: agent.stage)
@@ -1990,14 +2071,18 @@ struct EvolutionTabView: View {
                 }
             }
 
-            Text("工具调用 \(agent.toolCallCount) 次")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            HStack(spacing: 4) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text("工具调用 \(agent.toolCallCount) 次")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: stageCardHeight, alignment: .topLeading)
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2053,6 +2138,22 @@ struct EvolutionTabView: View {
         }
     }
 
+    private func workspaceStatusColor(_ status: String) -> Color {
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "running", "进行中":
+            return .orange
+        case "idle", "空闲":
+            return .green
+        case "queued", "排队中":
+            return .blue
+        case "stopped", "已停止", "error", "failed":
+            return .red
+        default:
+            return .secondary
+        }
+    }
+
     private func canOpenStageChat(_ status: String) -> Bool {
         let normalized = normalizedStageStatus(status)
         return normalized == "running" ||
@@ -2099,12 +2200,20 @@ struct EvolutionTabView: View {
 
     private func stageIconName(_ stage: String) -> String {
         switch stage.lowercased() {
+        case "direction":
+            return "arrow.triangle.branch"
         case "plan":
             return "map"
+        case "implement":
+            return "hammer"
         case "code":
             return "chevron.left.forwardslash.chevron.right"
         case "verify":
             return "checkmark.seal"
+        case "judge":
+            return "scalemass"
+        case "report":
+            return "doc.text"
         default:
             return "person.crop.square"
         }
