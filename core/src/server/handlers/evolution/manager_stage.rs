@@ -2,11 +2,12 @@ use chrono::Utc;
 use futures::StreamExt;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::ai::{AiModelSelection, AiQuestionRequest};
+use crate::ai::{AiAgent, AiModelSelection, AiQuestionRequest};
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::{
     ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
@@ -21,6 +22,7 @@ use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
 const AUTO_COMMIT_MAX_ATTEMPTS: u32 = 2;
 const AUTO_COMMIT_RETRY_DELAY_SECS: u64 = 2;
+const VALIDATION_REMINDER_MAX_RETRIES: u32 = 2;
 
 fn parse_judge_result_text(value: &str) -> Option<bool> {
     let normalized = value.trim().to_ascii_lowercase();
@@ -644,6 +646,314 @@ impl EvolutionManager {
         .await
     }
 
+    fn supports_validation_reminder(stage: &str) -> bool {
+        matches!(stage, "implement" | "verify" | "judge")
+    }
+
+    fn should_retry_validation_with_reminder(stage: &str, err: &str) -> bool {
+        Self::supports_validation_reminder(stage) && err.starts_with("evo_stage_output_invalid:")
+    }
+
+    fn build_validation_reminder_message(stage: &str, validation_err: &str) -> String {
+        format!(
+            "<system-reminder>{stage} 阶段产物有问题：{validation_err}。请修复</system-reminder>"
+        )
+    }
+
+    async fn consume_stage_stream(
+        &self,
+        key: &str,
+        project: &str,
+        workspace: &str,
+        cycle_id: &str,
+        stage: &str,
+        ai_tool: &str,
+        session_id: &str,
+        directory: &str,
+        agent: &Arc<dyn AiAgent>,
+        mut stream: crate::ai::AiEventStream,
+        ctx: &HandlerContext,
+    ) -> Result<(), String> {
+        loop {
+            let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
+            match next {
+                Ok(Some(Ok(event))) => match event {
+                    crate::ai::AiEvent::Done => {
+                        let adapter_hint = match agent.session_selection_hint(directory, session_id).await
+                        {
+                            Ok(Some(adapter_hint)) => adapter_hint,
+                            Ok(None) => crate::ai::AiSessionSelectionHint::default(),
+                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                        };
+                        let inferred_hint = match agent.list_messages(directory, session_id, Some(200)).await
+                        {
+                            Ok(messages) => {
+                                let wire_messages: Vec<crate::server::protocol::ai::MessageInfo> = messages
+                                    .into_iter()
+                                    .map(|m| crate::server::protocol::ai::MessageInfo {
+                                        id: m.id,
+                                        role: m.role,
+                                        created_at: m.created_at,
+                                        agent: m.agent,
+                                        model_provider_id: m.model_provider_id,
+                                        model_id: m.model_id,
+                                        parts: m
+                                            .parts
+                                            .into_iter()
+                                            .map(normalize_part_for_wire)
+                                            .collect(),
+                                    })
+                                    .collect();
+                                infer_selection_hint_from_messages(&wire_messages)
+                            }
+                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                        };
+                        let selection_hint = merge_session_selection_hint(adapter_hint, inferred_hint);
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatDone {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.to_string(),
+                                session_id: session_id.to_string(),
+                                selection_hint,
+                            },
+                        )
+                        .await;
+                        break;
+                    }
+                    crate::ai::AiEvent::Error { message } => {
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatErrorV2 {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.to_string(),
+                                session_id: session_id.to_string(),
+                                error: message.clone(),
+                            },
+                        )
+                        .await;
+                        return Err(format!("stage stream error: {}", message));
+                    }
+                    crate::ai::AiEvent::MessageUpdated {
+                        message_id,
+                        role,
+                        selection_hint,
+                    } => {
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatMessageUpdated {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.to_string(),
+                                session_id: session_id.to_string(),
+                                message_id,
+                                role,
+                                selection_hint: selection_hint.map(|hint| {
+                                    crate::server::protocol::ai::SessionSelectionHint {
+                                        agent: hint.agent,
+                                        model_provider_id: hint.model_provider_id,
+                                        model_id: hint.model_id,
+                                    }
+                                }),
+                            },
+                        )
+                        .await;
+                    }
+                    crate::ai::AiEvent::PartUpdated { message_id, part } => {
+                        let mut tool_call_count_changed = false;
+                        if part.part_type == "tool" {
+                            let call_key = part
+                                .tool_call_id
+                                .as_deref()
+                                .filter(|v| !v.trim().is_empty())
+                                .unwrap_or(part.id.as_str());
+                            tool_call_count_changed =
+                                self.record_stage_tool_call(key, stage, call_key).await;
+                        }
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatPartUpdated {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.to_string(),
+                                session_id: session_id.to_string(),
+                                message_id,
+                                part: normalize_part_for_wire(part),
+                            },
+                        )
+                        .await;
+                        if tool_call_count_changed {
+                            self.broadcast_cycle_update(key, ctx, "agent").await;
+                        }
+                    }
+                    crate::ai::AiEvent::PartDelta {
+                        message_id,
+                        part_id,
+                        part_type,
+                        field,
+                        delta,
+                    } => {
+                        let tool_call_count_changed = if part_type == "tool" {
+                            self.record_stage_tool_call(key, stage, &part_id).await
+                        } else {
+                            false
+                        };
+                        self.broadcast(
+                            ctx,
+                            ServerMessage::AIChatPartDelta {
+                                project_name: project.to_string(),
+                                workspace_name: workspace.to_string(),
+                                ai_tool: ai_tool.to_string(),
+                                session_id: session_id.to_string(),
+                                message_id,
+                                part_id,
+                                part_type,
+                                field,
+                                delta,
+                            },
+                        )
+                        .await;
+                        if tool_call_count_changed {
+                            self.broadcast_cycle_update(key, ctx, "agent").await;
+                        }
+                    }
+                    crate::ai::AiEvent::QuestionAsked { request } => {
+                        self.block_current_stage_by_question(
+                            key, project, workspace, cycle_id, stage, &request, ctx,
+                        )
+                        .await?;
+                        return Err("evo_human_blocking_required:ai_question".to_string());
+                    }
+                    crate::ai::AiEvent::QuestionCleared { .. } => {}
+                },
+                Ok(Some(Err(err))) => return Err(err),
+                Ok(None) => break,
+                Err(_) => return Err("stage stream timeout".to_string()),
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn resolve_judge_result(
+        &self,
+        key: &str,
+        cycle_id: &str,
+    ) -> Result<bool, String> {
+        let mut judge_pass = true;
+        let maybe_workspace_root = {
+            let state = self.state.lock().await;
+            state
+                .workspaces
+                .get(key)
+                .map(|entry| entry.workspace_root.clone())
+        };
+
+        if let Some(workspace_root) = maybe_workspace_root {
+            if let Ok(cycle_dir) = cycle_dir_path(&workspace_root, cycle_id) {
+                let mut file_judge_result: Option<bool> = None;
+                let judge_result_path = cycle_dir.join("judge.result.json");
+                if let Ok(content) = std::fs::read_to_string(&judge_result_path) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(parsed) = parse_judge_result_from_json(&json) {
+                            file_judge_result = Some(parsed);
+                        }
+                    }
+                }
+
+                if file_judge_result.is_none() {
+                    let stage_judge_path = cycle_dir.join("stage.judge.json");
+                    if let Ok(content) = std::fs::read_to_string(&stage_judge_path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(parsed) = parse_judge_result_from_json(&json) {
+                                file_judge_result = Some(parsed);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(parsed) = file_judge_result {
+                    judge_pass = parsed;
+                } else {
+                    return Err(
+                        "judge structured result missing: require judge.result.json or stage.judge.json with pass/fail"
+                            .to_string(),
+                    );
+                }
+            }
+        } else {
+            warn!("judge result resolve skipped: workspace missing, key={}", key);
+        }
+
+        Ok(judge_pass)
+    }
+
+    async fn validate_stage_outputs(
+        &self,
+        key: &str,
+        stage: &str,
+        cycle_id: &str,
+    ) -> Result<(), String> {
+        let validation_ctx = {
+            let state = self.state.lock().await;
+            state
+                .workspaces
+                .get(key)
+                .map(|entry| (entry.workspace_root.clone(), entry.verify_iteration))
+        };
+        if let Some((workspace_root, verify_iteration)) = validation_ctx {
+            let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+            Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration)
+                .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
+        }
+        Ok(())
+    }
+
+    async fn send_validation_reminder_in_same_session(
+        &self,
+        key: &str,
+        project: &str,
+        workspace: &str,
+        cycle_id: &str,
+        stage: &str,
+        ai_tool: &str,
+        session_id: &str,
+        directory: &str,
+        agent: &Arc<dyn AiAgent>,
+        validation_err: &str,
+        model: Option<AiModelSelection>,
+        mode: Option<String>,
+        ctx: &HandlerContext,
+    ) -> Result<(), String> {
+        let reminder = Self::build_validation_reminder_message(stage, validation_err);
+        let stream = agent
+            .send_message(directory, session_id, &reminder, None, None, model, mode)
+            .await
+            .map_err(|e| format!("validation reminder send failed: {}", e))?;
+        self.consume_stage_stream(
+            key, project, workspace, cycle_id, stage, ai_tool, session_id, directory, agent, stream,
+            ctx,
+        )
+        .await
+    }
+
+    async fn finalize_stage_failed(
+        &self,
+        key: &str,
+        stage: &str,
+        error_message: &str,
+        ctx: &HandlerContext,
+    ) {
+        self.set_stage_status(key, stage, "failed").await;
+        self.persist_stage_file(key, stage, "failed", Some(error_message), None)
+            .await
+            .ok();
+        self.persist_cycle_file(key).await.ok();
+        self.broadcast_cycle_update(key, ctx, "system").await;
+    }
+
     pub(super) async fn run_stage(
         &self,
         key: &str,
@@ -694,235 +1004,96 @@ impl EvolutionManager {
         });
         let mode = profile.mode.clone();
 
-        let mut stream = agent
-            .send_message(&directory, &session.id, &prompt, None, None, model, mode)
+        let stream = agent
+            .send_message(
+                &directory,
+                &session.id,
+                &prompt,
+                None,
+                None,
+                model.clone(),
+                mode.clone(),
+            )
             .await?;
+        self.consume_stage_stream(
+            key,
+            project,
+            workspace,
+            cycle_id,
+            stage,
+            &ai_tool,
+            &session.id,
+            &directory,
+            &agent,
+            stream,
+            ctx,
+        )
+        .await?;
 
         let mut judge_pass = true;
+        let mut reminder_attempts: u32 = 0;
         loop {
-            let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
-            match next {
-                Ok(Some(Ok(event))) => match event {
-                    crate::ai::AiEvent::Done => {
-                        let adapter_hint =
-                            match agent.session_selection_hint(&directory, &session.id).await {
-                                Ok(Some(adapter_hint)) => adapter_hint,
-                                Ok(None) => crate::ai::AiSessionSelectionHint::default(),
-                                Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                            };
-                        let inferred_hint = match agent
-                            .list_messages(&directory, &session.id, Some(200))
-                            .await
-                        {
-                            Ok(messages) => {
-                                let wire_messages: Vec<crate::server::protocol::ai::MessageInfo> =
-                                    messages
-                                        .into_iter()
-                                        .map(|m| crate::server::protocol::ai::MessageInfo {
-                                            id: m.id,
-                                            role: m.role,
-                                            created_at: m.created_at,
-                                            agent: m.agent,
-                                            model_provider_id: m.model_provider_id,
-                                            model_id: m.model_id,
-                                            parts: m
-                                                .parts
-                                                .into_iter()
-                                                .map(normalize_part_for_wire)
-                                                .collect(),
-                                        })
-                                        .collect();
-                                infer_selection_hint_from_messages(&wire_messages)
-                            }
-                            Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                        };
-                        let selection_hint =
-                            merge_session_selection_hint(adapter_hint, inferred_hint);
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatDone {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.clone(),
-                                session_id: session.id.clone(),
-                                selection_hint,
-                            },
-                        )
-                        .await;
-                        break;
-                    }
-                    crate::ai::AiEvent::Error { message } => {
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatErrorV2 {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.clone(),
-                                session_id: session.id.clone(),
-                                error: message.clone(),
-                            },
-                        )
-                        .await;
-                        return Err(format!("stage stream error: {}", message));
-                    }
-                    crate::ai::AiEvent::MessageUpdated {
-                        message_id,
-                        role,
-                        selection_hint,
-                    } => {
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatMessageUpdated {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.clone(),
-                                session_id: session.id.clone(),
-                                message_id,
-                                role,
-                                selection_hint: selection_hint.map(|hint| {
-                                    crate::server::protocol::ai::SessionSelectionHint {
-                                        agent: hint.agent,
-                                        model_provider_id: hint.model_provider_id,
-                                        model_id: hint.model_id,
-                                    }
-                                }),
-                            },
-                        )
-                        .await;
-                    }
-                    crate::ai::AiEvent::PartUpdated { message_id, part } => {
-                        let mut tool_call_count_changed = false;
-                        if part.part_type == "tool" {
-                            let call_key = part
-                                .tool_call_id
-                                .as_deref()
-                                .filter(|v| !v.trim().is_empty())
-                                .unwrap_or(part.id.as_str());
-                            tool_call_count_changed =
-                                self.record_stage_tool_call(key, stage, call_key).await;
-                        }
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatPartUpdated {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.clone(),
-                                session_id: session.id.clone(),
-                                message_id,
-                                part: normalize_part_for_wire(part),
-                            },
-                        )
-                        .await;
-                        if tool_call_count_changed {
-                            self.broadcast_cycle_update(key, ctx, "agent").await;
-                        }
-                    }
-                    crate::ai::AiEvent::PartDelta {
-                        message_id,
-                        part_id,
-                        part_type,
-                        field,
-                        delta,
-                    } => {
-                        let tool_call_count_changed = if part_type == "tool" {
-                            self.record_stage_tool_call(key, stage, &part_id).await
-                        } else {
-                            false
-                        };
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatPartDelta {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.clone(),
-                                session_id: session.id.clone(),
-                                message_id,
-                                part_id,
-                                part_type,
-                                field,
-                                delta,
-                            },
-                        )
-                        .await;
-                        if tool_call_count_changed {
-                            self.broadcast_cycle_update(key, ctx, "agent").await;
-                        }
-                    }
-                    crate::ai::AiEvent::QuestionAsked { request } => {
-                        self.block_current_stage_by_question(
-                            key, project, workspace, cycle_id, stage, &request, ctx,
-                        )
-                        .await?;
-                        return Err("evo_human_blocking_required:ai_question".to_string());
-                    }
-                    crate::ai::AiEvent::QuestionCleared { .. } => {}
-                },
-                Ok(Some(Err(err))) => return Err(err),
-                Ok(None) => break,
-                Err(_) => return Err("stage stream timeout".to_string()),
+            if stage == "judge" {
+                judge_pass = self.resolve_judge_result(key, cycle_id).await?;
             }
-        }
 
-        if stage == "judge" {
-            let maybe_workspace_root = {
-                let state = self.state.lock().await;
-                state
-                    .workspaces
-                    .get(key)
-                    .map(|entry| entry.workspace_root.clone())
-            };
-
-            if let Some(workspace_root) = maybe_workspace_root {
-                if let Ok(cycle_dir) = cycle_dir_path(&workspace_root, cycle_id) {
-                    let mut file_judge_result: Option<bool> = None;
-                    let judge_result_path = cycle_dir.join("judge.result.json");
-                    if let Ok(content) = std::fs::read_to_string(&judge_result_path) {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if let Some(parsed) = parse_judge_result_from_json(&json) {
-                                file_judge_result = Some(parsed);
-                            }
-                        }
+            match self.validate_stage_outputs(key, stage, cycle_id).await {
+                Ok(()) => break,
+                Err(validation_err) => {
+                    if !Self::should_retry_validation_with_reminder(stage, &validation_err) {
+                        return Err(validation_err);
                     }
 
-                    if file_judge_result.is_none() {
-                        let stage_judge_path = cycle_dir.join("stage.judge.json");
-                        if let Ok(content) = std::fs::read_to_string(&stage_judge_path) {
-                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                                if let Some(parsed) = parse_judge_result_from_json(&json) {
-                                    file_judge_result = Some(parsed);
-                                }
-                            }
-                        }
+                    if reminder_attempts >= VALIDATION_REMINDER_MAX_RETRIES {
+                        self.finalize_stage_failed(key, stage, &validation_err, ctx).await;
+                        return Err(validation_err);
                     }
 
-                    if let Some(parsed) = file_judge_result {
-                        judge_pass = parsed;
-                    } else {
-                        return Err(
-                            "judge structured result missing: require judge.result.json or stage.judge.json with pass/fail"
-                                .to_string(),
+                    reminder_attempts += 1;
+                    let reminder_result = self
+                        .send_validation_reminder_in_same_session(
+                            key,
+                            project,
+                            workspace,
+                            cycle_id,
+                            stage,
+                            &ai_tool,
+                            &session.id,
+                            &directory,
+                            &agent,
+                            &validation_err,
+                            model.clone(),
+                            mode.clone(),
+                            ctx,
+                        )
+                        .await;
+
+                    if let Err(reminder_err) = reminder_result {
+                        if reminder_err.starts_with("evo_human_blocking_required") {
+                            return Err(reminder_err);
+                        }
+
+                        let combined_err = format!(
+                            "{}; validation reminder failed: {}",
+                            validation_err, reminder_err
                         );
+                        warn!(
+                            "validation reminder failed: key={}, stage={}, attempt={}/{}, error={}",
+                            key,
+                            stage,
+                            reminder_attempts,
+                            VALIDATION_REMINDER_MAX_RETRIES,
+                            combined_err
+                        );
+
+                        if reminder_attempts >= VALIDATION_REMINDER_MAX_RETRIES {
+                            self.finalize_stage_failed(key, stage, &combined_err, ctx)
+                                .await;
+                            return Err(combined_err);
+                        }
                     }
                 }
-            } else {
-                warn!(
-                    "judge result resolve skipped: workspace missing, key={}",
-                    key
-                );
             }
-        }
-
-        let validation_ctx = {
-            let state = self.state.lock().await;
-            state
-                .workspaces
-                .get(key)
-                .map(|entry| (entry.workspace_root.clone(), entry.verify_iteration))
-        };
-        if let Some((workspace_root, verify_iteration)) = validation_ctx {
-            let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-            Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration)
-                .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
         }
 
         let blocker_check_ctx = {
@@ -1477,6 +1648,30 @@ mod tests {
             }
         });
         assert_eq!(parse_judge_result_from_json(&value), Some(true));
+    }
+
+    #[test]
+    fn should_retry_validation_with_reminder_should_match_supported_stage_and_error() {
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "implement",
+            "evo_stage_output_invalid: x"
+        ));
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "verify",
+            "evo_stage_output_invalid: y"
+        ));
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "judge",
+            "evo_stage_output_invalid: z"
+        ));
+        assert!(!EvolutionManager::should_retry_validation_with_reminder(
+            "plan",
+            "evo_stage_output_invalid: x"
+        ));
+        assert!(!EvolutionManager::should_retry_validation_with_reminder(
+            "judge",
+            "stage stream timeout"
+        ));
     }
 
     // ── 六阶段新约束回归测试 ──────────────────────────────────────────────
