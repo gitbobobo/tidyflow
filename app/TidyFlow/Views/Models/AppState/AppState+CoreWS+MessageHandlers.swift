@@ -185,10 +185,19 @@ final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { appState?.handleEvolutionAgentProfile(ev) }
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { appState?.handleEvolutionBlockingRequired(ev) }
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { appState?.handleEvolutionBlockersUpdated(ev) }
-    func handleEvolutionEvidenceSnapshot(_ snapshot: EvolutionEvidenceSnapshotV2) { appState?.handleEvolutionEvidenceSnapshot(snapshot) }
-    func handleEvolutionEvidenceRebuildPrompt(_ prompt: EvolutionEvidenceRebuildPromptV2) { appState?.handleEvolutionEvidenceRebuildPrompt(prompt) }
-    func handleEvolutionEvidenceItemChunk(_ chunk: EvolutionEvidenceItemChunkV2) { appState?.handleEvolutionEvidenceItemChunk(chunk) }
     func handleEvolutionError(_ message: String) { appState?.handleEvolutionError(message) }
+}
+
+final class AppStateEvidenceMessageHandlerAdapter: EvidenceMessageHandler {
+    weak var appState: AppState?
+
+    init(appState: AppState) {
+        self.appState = appState
+    }
+
+    func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) { appState?.handleEvidenceSnapshot(snapshot) }
+    func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) { appState?.handleEvidenceRebuildPrompt(prompt) }
+    func handleEvidenceItemChunk(_ chunk: EvidenceItemChunkV2) { appState?.handleEvidenceItemChunk(chunk) }
 }
 
 final class AppStateErrorMessageHandlerAdapter: ErrorMessageHandler {

@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - v1.24: 剪贴板模型
 
-struct EvolutionEvidenceReadRequestState {
+struct EvidenceReadRequestState {
     struct PagePayload {
         let mimeType: String
         let content: [UInt8]
@@ -143,6 +143,7 @@ class AppState: ObservableObject {
     var wsSettingsMessageHandler: SettingsMessageHandler?
     var wsTerminalMessageHandler: TerminalMessageHandler?
     var wsAIMessageHandler: AIMessageHandler?
+    var wsEvidenceMessageHandler: EvidenceMessageHandler?
     var wsEvolutionMessageHandler: EvolutionMessageHandler?
     var wsErrorMessageHandler: ErrorMessageHandler?
 
@@ -208,9 +209,9 @@ class AppState: ObservableObject {
     @Published var evolutionReplayStore: AIChatStore = AIChatStore()
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
-    @Published var evolutionEvidenceSnapshotsByWorkspace: [String: EvolutionEvidenceSnapshotV2] = [:]
-    @Published var evolutionEvidenceLoadingByWorkspace: [String: Bool] = [:]
-    @Published var evolutionEvidenceErrorByWorkspace: [String: String] = [:]
+    @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
+    @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
+    @Published var evidenceErrorByWorkspace: [String: String] = [:]
     @Published var aiChatOneShotHintByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerMessages: [AIChatMessage] = []
@@ -266,9 +267,9 @@ class AppState: ObservableObject {
     /// Evolution：记录某工作空间等待重试的动作（start/resume）。
     var evolutionPendingActionByWorkspace: [String: String] = [:]
     /// Evidence：等待中的重建提示词请求（按 workspace key 聚合）
-    var evolutionEvidencePromptCompletionByWorkspace: [String: (_ prompt: EvolutionEvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
+    var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     /// Evidence：分块读取上下文（按 workspace key，仅串行读取）
-    var evolutionEvidenceReadRequestByWorkspace: [String: EvolutionEvidenceReadRequestState] = [:]
+    var evidenceReadRequestByWorkspace: [String: EvidenceReadRequestState] = [:]
 
     // 远程项目命令任务跟踪（key: remoteTaskId）
     var remoteProjectCommandTasks: [String: BackgroundTask] = [:]

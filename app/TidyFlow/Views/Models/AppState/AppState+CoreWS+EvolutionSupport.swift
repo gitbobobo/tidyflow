@@ -15,26 +15,26 @@ extension AppState {
 
     // MARK: - Evidence
 
-    func requestEvolutionEvidenceSnapshot(project: String, workspace: String) {
+    func requestEvidenceSnapshot(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        evolutionEvidenceLoadingByWorkspace[key] = true
-        evolutionEvidenceErrorByWorkspace[key] = nil
-        wsClient.requestEvoEvidenceSnapshot(project: project, workspace: normalizedWorkspace)
+        evidenceLoadingByWorkspace[key] = true
+        evidenceErrorByWorkspace[key] = nil
+        wsClient.requestEvidenceSnapshot(project: project, workspace: normalizedWorkspace)
     }
 
-    func requestEvolutionEvidenceRebuildPrompt(
+    func requestEvidenceRebuildPrompt(
         project: String,
         workspace: String,
-        completion: @escaping (_ prompt: EvolutionEvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void
+        completion: @escaping (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        evolutionEvidencePromptCompletionByWorkspace[key] = completion
-        wsClient.requestEvoEvidenceRebuildPrompt(project: project, workspace: normalizedWorkspace)
+        evidencePromptCompletionByWorkspace[key] = completion
+        wsClient.requestEvidenceRebuildPrompt(project: project, workspace: normalizedWorkspace)
     }
 
-    func readEvolutionEvidenceItem(
+    func readEvidenceItem(
         project: String,
         workspace: String,
         itemID: String,
@@ -43,12 +43,12 @@ extension AppState {
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        if let inFlight = evolutionEvidenceReadRequestByWorkspace[key],
+        if let inFlight = evidenceReadRequestByWorkspace[key],
            inFlight.itemID == itemID,
            inFlight.autoContinue {
             return
         }
-        evolutionEvidenceReadRequestByWorkspace[key] = EvolutionEvidenceReadRequestState(
+        evidenceReadRequestByWorkspace[key] = EvidenceReadRequestState(
             project: project,
             workspace: normalizedWorkspace,
             itemID: itemID,
@@ -61,7 +61,7 @@ extension AppState {
             fullCompletion: completion,
             pageCompletion: { _, _ in }
         )
-        wsClient.requestEvoReadEvidenceItem(
+        wsClient.requestEvidenceReadItem(
             project: project,
             workspace: normalizedWorkspace,
             itemID: itemID,
@@ -70,23 +70,23 @@ extension AppState {
         )
     }
 
-    func readEvolutionEvidenceItemPage(
+    func readEvidenceItemPage(
         project: String,
         workspace: String,
         itemID: String,
         offset: UInt64 = 0,
         limit: UInt32? = 131_072,
-        completion: @escaping (_ payload: EvolutionEvidenceReadRequestState.PagePayload?, _ errorMessage: String?) -> Void
+        completion: @escaping (_ payload: EvidenceReadRequestState.PagePayload?, _ errorMessage: String?) -> Void
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        if let inFlight = evolutionEvidenceReadRequestByWorkspace[key],
+        if let inFlight = evidenceReadRequestByWorkspace[key],
            inFlight.itemID == itemID,
            !inFlight.autoContinue,
            inFlight.expectedOffset == offset {
             return
         }
-        evolutionEvidenceReadRequestByWorkspace[key] = EvolutionEvidenceReadRequestState(
+        evidenceReadRequestByWorkspace[key] = EvidenceReadRequestState(
             project: project,
             workspace: normalizedWorkspace,
             itemID: itemID,
@@ -99,7 +99,7 @@ extension AppState {
             fullCompletion: { _, _ in },
             pageCompletion: completion
         )
-        wsClient.requestEvoReadEvidenceItem(
+        wsClient.requestEvidenceReadItem(
             project: project,
             workspace: normalizedWorkspace,
             itemID: itemID,
@@ -108,10 +108,10 @@ extension AppState {
         )
     }
 
-    func evidenceSnapshot(project: String, workspace: String) -> EvolutionEvidenceSnapshotV2? {
+    func evidenceSnapshot(project: String, workspace: String) -> EvidenceSnapshotV2? {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        return evolutionEvidenceSnapshotsByWorkspace[key]
+        return evidenceSnapshotsByWorkspace[key]
     }
 
     func consumeAIChatOneShotHint(project: String, workspace: String) -> String? {
