@@ -153,6 +153,8 @@
 		UX100004 /* ProjectCommandEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100014 /* ProjectCommandEditSheet.swift */; };
 		UX100005 /* ProjectCommandsMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UX100015 /* ProjectCommandsMenuView.swift */; };
 /* End PBXBuildFile section */
+		E2E10001 /* EvidenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10101 /* EvidenceRecorder.swift */; };
+		E2E10002 /* TidyFlowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2E10102 /* TidyFlowE2ETests.swift */; };
 		TST10001 /* ChatScrollPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10011 /* ChatScrollPolicyTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -194,6 +196,9 @@
 		MOB00054 /* DisconnectBannerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DisconnectBannerView.swift; sourceTree = "<group>"; };
 		TST10011 /* ChatScrollPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollPolicyTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
+		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
+		E2E10120 /* TidyFlowE2ETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000010 /* TidyFlow-Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TidyFlow-Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000011 /* TidyFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowApp.swift; sourceTree = "<group>"; };
 		A1000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -314,6 +319,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E2E102B0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -431,6 +443,7 @@
 				A100000F /* Products */,
 				3F9CC65A7A1E66F0E34B1056 /* TidyFlow-iOS */,
 				9EA3BB2541DC7D7F23729AD7 /* Frameworks */,
+				E2E10130 /* TidyFlowE2ETests */,
 				TST10030 /* TidyFlowTests */,
 			);
 			sourceTree = "<group>";
@@ -440,8 +453,18 @@
 			children = (
 				A1000010 /* TidyFlow-Debug.app */,
 				TST10020 /* TidyFlowTests.xctest */,
+				E2E10120 /* TidyFlowE2ETests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		E2E10130 /* TidyFlowE2ETests */ = {
+			isa = PBXGroup;
+			children = (
+				E2E10101 /* EvidenceRecorder.swift */,
+				E2E10102 /* TidyFlowE2ETests.swift */,
+			);
+			path = TidyFlowE2ETests;
 			sourceTree = "<group>";
 		};
 		TST10030 /* TidyFlowTests */ = {
@@ -610,6 +633,23 @@
 			productReference = TST10020 /* TidyFlowTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		E2E102A0 /* TidyFlowE2ETests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E2E102C0 /* Build configuration list for PBXNativeTarget "TidyFlowE2ETests" */;
+			buildPhases = (
+				E2E102B1 /* Sources */,
+				E2E102B0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E2E102D0 /* PBXTargetDependency */,
+			);
+			name = TidyFlowE2ETests;
+			productName = TidyFlowE2ETests;
+			productReference = E2E10120 /* TidyFlowE2ETests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -624,6 +664,10 @@
 						CreatedOnToolsVersion = 15.0;
 					};
 					TST100A0 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = A100000A;
+					};
+					E2E102A0 = {
 						CreatedOnToolsVersion = 15.0;
 						TestTargetID = A100000A;
 					};
@@ -649,6 +693,7 @@
 			targets = (
 				A100000A /* TidyFlow */,
 				TST100A0 /* TidyFlowTests */,
+				E2E102A0 /* TidyFlowE2ETests */,
 			);
 		};
 /* End PBXProject section */
@@ -683,7 +728,6 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/../core/target/release/tidyflow-core",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
@@ -829,10 +873,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E2E102B1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E2E10001 /* EvidenceRecorder.swift in Sources */,
+				E2E10002 /* TidyFlowE2ETests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXContainerItemProxy section */
 		TST100E0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000008 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A100000A;
+			remoteInfo = TidyFlow;
+		};
+		E2E102E0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A1000008 /* Project object */;
 			proxyType = 1;
@@ -846,6 +906,11 @@
 			isa = PBXTargetDependency;
 			target = A100000A /* TidyFlow */;
 			targetProxy = TST100E0 /* PBXContainerItemProxy */;
+		};
+		E2E102D0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A100000A /* TidyFlow */;
+			targetProxy = E2E102E0 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1275,6 +1340,44 @@
 			};
 			name = Release;
 		};
+		E2E102C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TidyFlowE2ETests/TidyFlowE2ETests.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.e2e.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = TidyFlow;
+			};
+			name = Debug;
+		};
+		E2E102C2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TidyFlowE2ETests/TidyFlowE2ETests.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.e2e.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = TidyFlow;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1301,6 +1404,15 @@
 			buildConfigurations = (
 				TST100C1 /* Debug */,
 				TST100C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E2E102C0 /* Build configuration list for PBXNativeTarget "TidyFlowE2ETests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E2E102C1 /* Debug */,
+				E2E102C2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
