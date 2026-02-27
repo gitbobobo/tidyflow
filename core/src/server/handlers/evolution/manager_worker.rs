@@ -4,6 +4,10 @@ use tracing::error;
 use super::EvolutionManager;
 use crate::server::context::HandlerContext;
 
+fn is_terminal_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed_exhausted" | "failed_system")
+}
+
 impl EvolutionManager {
     pub(super) async fn spawn_worker(
         &self,
@@ -134,21 +138,21 @@ impl EvolutionManager {
                 }
             }
 
-            let (stop_now, terminal_completed) = {
+            let (stop_now, terminal_reached) = {
                 let state = self.state.lock().await;
                 let stop_now = state
                     .workspaces
                     .get(&key)
                     .map(|w| w.stop_requested)
                     .unwrap_or(true);
-                let terminal_completed = state
+                let terminal_reached = state
                     .workspaces
                     .get(&key)
-                    .map(|w| w.status == "completed")
+                    .map(|w| is_terminal_status(&w.status))
                     .unwrap_or(true);
-                (stop_now, terminal_completed)
+                (stop_now, terminal_reached)
             };
-            if terminal_completed {
+            if terminal_reached {
                 return;
             }
             if stop_now {
@@ -156,5 +160,19 @@ impl EvolutionManager {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_terminal_status;
+
+    #[test]
+    fn terminal_status_should_include_failed_exhausted_and_failed_system() {
+        assert!(is_terminal_status("completed"));
+        assert!(is_terminal_status("failed_exhausted"));
+        assert!(is_terminal_status("failed_system"));
+        assert!(!is_terminal_status("running"));
+        assert!(!is_terminal_status("queued"));
     }
 }
