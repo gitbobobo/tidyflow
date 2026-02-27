@@ -662,6 +662,14 @@ extension AppState {
         guard request.itemID == chunk.itemID else { return }
 
         guard chunk.offset == request.expectedOffset else {
+            // 同一条目的旧分块回包（通常由重入读取触发）直接丢弃，避免误判中断。
+            if chunk.offset < request.expectedOffset {
+                return
+            }
+            // 首块期待偏移为 0；若先收到更大偏移，通常是上一次读取会话的滞后分块。
+            if request.expectedOffset == 0 {
+                return
+            }
             evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
             if request.autoContinue {
                 request.fullCompletion(nil, "证据分块偏移不连续，读取已中断")

@@ -43,6 +43,11 @@ extension AppState {
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        if let inFlight = evolutionEvidenceReadRequestByWorkspace[key],
+           inFlight.itemID == itemID,
+           inFlight.autoContinue {
+            return
+        }
         evolutionEvidenceReadRequestByWorkspace[key] = EvolutionEvidenceReadRequestState(
             project: project,
             workspace: normalizedWorkspace,
@@ -75,6 +80,12 @@ extension AppState {
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        if let inFlight = evolutionEvidenceReadRequestByWorkspace[key],
+           inFlight.itemID == itemID,
+           !inFlight.autoContinue,
+           inFlight.expectedOffset == offset {
+            return
+        }
         evolutionEvidenceReadRequestByWorkspace[key] = EvolutionEvidenceReadRequestState(
             project: project,
             workspace: normalizedWorkspace,

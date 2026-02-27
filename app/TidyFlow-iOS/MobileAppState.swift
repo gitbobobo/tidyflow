@@ -1062,6 +1062,11 @@ final class MobileAppState: ObservableObject {
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        if let inFlight = evolutionEvidenceReadRequestByWorkspace[key],
+           inFlight.itemID == itemID,
+           inFlight.autoContinue {
+            return
+        }
         evolutionEvidenceReadRequestByWorkspace[key] = MobileEvolutionEvidenceReadRequestState(
             project: project,
             workspace: normalizedWorkspace,
@@ -1094,6 +1099,12 @@ final class MobileAppState: ObservableObject {
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        if let inFlight = evolutionEvidenceReadRequestByWorkspace[key],
+           inFlight.itemID == itemID,
+           !inFlight.autoContinue,
+           inFlight.expectedOffset == offset {
+            return
+        }
         evolutionEvidenceReadRequestByWorkspace[key] = MobileEvolutionEvidenceReadRequestState(
             project: project,
             workspace: normalizedWorkspace,
@@ -3095,6 +3106,14 @@ final class MobileAppState: ObservableObject {
             guard request.itemID == ev.itemID else { return }
 
             guard ev.offset == request.expectedOffset else {
+                // 同一条目的旧分块回包（通常由重入读取触发）直接丢弃，避免误判中断。
+                if ev.offset < request.expectedOffset {
+                    return
+                }
+                // 首块期待偏移为 0；若先收到更大偏移，通常是上一次读取会话的滞后分块。
+                if request.expectedOffset == 0 {
+                    return
+                }
                 self.evolutionEvidenceReadRequestByWorkspace.removeValue(forKey: key)
                 if request.autoContinue {
                     request.fullCompletion(nil, "证据分块偏移不连续，读取已中断")
