@@ -12,6 +12,7 @@ enum AIChatTool: String, CaseIterable, Identifiable {
     case opencode
     case codex
     case copilot
+    case kimi
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum AIChatTool: String, CaseIterable, Identifiable {
         case .opencode: return "OpenCode"
         case .codex: return "Codex"
         case .copilot: return "Copilot"
+        case .kimi: return "Kimi Code"
         }
     }
 
@@ -28,6 +30,7 @@ enum AIChatTool: String, CaseIterable, Identifiable {
         case .opencode: return "opencode-icon"
         case .codex: return "codex-icon"
         case .copilot: return "copilot-icon"
+        case .kimi: return "kimi-icon"
         }
     }
 }

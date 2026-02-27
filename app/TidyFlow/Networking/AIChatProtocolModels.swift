@@ -620,6 +620,8 @@ private func parseAIChatTool(_ any: Any?) -> AIChatTool? {
         "codex"
     case "copilot-acp", "github-copilot":
         "copilot"
+    case "kimi-code":
+        "kimi"
     default:
         normalized
     }
@@ -1050,7 +1052,7 @@ struct EvolutionStageChatOpenedV2 {
     let sessionID: String
 
     var aiTool: AIChatTool? {
-        AIChatTool(rawValue: aiToolRaw.lowercased())
+        parseAIChatTool(aiToolRaw)
     }
 
     static func from(json: [String: Any]) -> EvolutionStageChatOpenedV2? {
