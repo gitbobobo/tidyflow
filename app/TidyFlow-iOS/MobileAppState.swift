@@ -126,6 +126,17 @@ final class MobileAppState: ObservableObject {
             return true
         }
     }()
+    private static let uiTestModeEnabled: Bool = {
+        if ProcessInfo.processInfo.arguments.contains("UI_TEST_MODE") {
+            return true
+        }
+        switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
 
     // 连接表单
     @Published var host: String = ""
@@ -332,6 +343,11 @@ final class MobileAppState: ObservableObject {
 
     init() {
         setupWSCallbacks()
+        if Self.uiTestModeEnabled {
+            ConnectionStorage.clear()
+            hasSavedConnection = false
+            return
+        }
         // 恢复已保存的连接信息
         if let saved = ConnectionStorage.load() {
             host = saved.host

@@ -7,27 +7,6 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-build_quality_gate_args() {
-    local has_run_id=0
-    local args=("$@")
-    local arg
-    for arg in "${args[@]}"; do
-        if [ "$arg" = "--run-id" ]; then
-            has_run_id=1
-            break
-        fi
-    done
-
-    if [ $has_run_id -eq 0 ]; then
-        local generated_run_id
-        generated_run_id="$(date -u +%Y%m%d-%H%M%S)"
-        echo "[tidyflow] quality-gate 自动生成 run_id=$generated_run_id" >&2
-        args+=("--run-id" "$generated_run_id")
-    fi
-
-    printf "%s\n" "${args[@]}"
-}
-
 print_usage() {
     cat <<'EOF'
 用法:
@@ -49,8 +28,11 @@ print_usage() {
       - 协议 action 规则同步检查
       - 版本一致性检查
 
+  e2e [--device iphone|ipad|mac|all] [--run-id <run_id>]
+      运行端到端测试，并由测试代码自动产出证据与 evidence.index.json
+
   quality-gate --cycle <cycle_id> [--run-id <run_id>] [--step all|integration|build_macos|build_ios|build|verify] [--dry-run]
-      运行 Evolution 质量门禁链路（integration -> build(macOS) -> build(iOS) -> verify）
+      兼容旧入口，已迁移为 e2e 串行执行（iphone -> ipad -> mac）
 
   build dmg [--skip-core] [--sign] [--identity "..."]
       构建 DMG（透传到 ./scripts/build_dmg.sh）
@@ -86,12 +68,11 @@ case "$cmd" in
         ./scripts/tools/check_protocol_action_sync.sh
         ./scripts/tools/check_version_consistency.sh
         ;;
+    e2e)
+        exec ./scripts/e2e/main.sh "$@"
+        ;;
     quality-gate)
-        quality_gate_args=()
-        while IFS= read -r line; do
-            quality_gate_args+=("$line")
-        done < <(build_quality_gate_args "$@")
-        exec ./scripts/evo-run.sh "${quality_gate_args[@]}"
+        exec ./scripts/e2e/quality-gate.sh "$@"
         ;;
     build)
         sub="${1:-}"

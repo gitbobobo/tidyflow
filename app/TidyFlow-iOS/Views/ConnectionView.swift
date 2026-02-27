@@ -3,6 +3,7 @@ import SwiftUI
 /// 配对连接表单视图
 struct ConnectionView: View {
     @EnvironmentObject var appState: MobileAppState
+    private let isUITestMode = ProcessInfo.processInfo.arguments.contains("UI_TEST_MODE")
 
     var body: some View {
         Form {
@@ -37,26 +38,32 @@ struct ConnectionView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                         .keyboardType(.numbersAndPunctuation)
+                        .accessibilityIdentifier("tf.connection.host")
                 }
                 HStack {
                     Text("端口")
                         .frame(width: 50, alignment: .leading)
                     TextField("47999", text: $appState.port)
                         .keyboardType(.numberPad)
+                        .accessibilityIdentifier("tf.connection.port")
                 }
                 Toggle("HTTPS", isOn: $appState.useHTTPS)
+                    .accessibilityIdentifier("tf.connection.https")
                 HStack {
                     Text("配对码")
                         .frame(width: 50, alignment: .leading)
                     TextField("6 位数字", text: $appState.pairCode)
                         .keyboardType(.numberPad)
+                        .accessibilityIdentifier("tf.connection.pairCode")
                 }
                 HStack {
                     Text("设备名")
                         .frame(width: 50, alignment: .leading)
                     TextField("iPhone", text: $appState.deviceName)
+                        .accessibilityIdentifier("tf.connection.deviceName")
                 }
             }
+            .accessibilityIdentifier("tf.connection.form")
 
             Section {
                 Button {
@@ -73,6 +80,7 @@ struct ConnectionView: View {
                     }
                 }
                 .disabled(appState.connecting)
+                .accessibilityIdentifier("tf.connection.submit")
             }
 
             if !appState.errorMessage.isEmpty {
@@ -80,6 +88,7 @@ struct ConnectionView: View {
                     Text(appState.errorMessage)
                         .foregroundColor(.red)
                         .font(.caption)
+                        .accessibilityIdentifier("tf.connection.errorMessage")
                 }
             }
 
@@ -88,11 +97,16 @@ struct ConnectionView: View {
                     Text(appState.connectionMessage)
                         .foregroundColor(appState.isConnected ? .green : .secondary)
                         .font(.caption)
+                        .accessibilityIdentifier("tf.connection.connectionMessage")
                 }
             }
         }
         .navigationTitle("TidyFlow")
+        .accessibilityIdentifier("tf.connection.page")
         .task {
+            if isUITestMode {
+                return
+            }
             // 启动时自动重连
             if appState.hasSavedConnection && !appState.isConnected {
                 await appState.autoReconnect()

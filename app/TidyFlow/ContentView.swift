@@ -69,6 +69,7 @@ struct ContentView: View {
                 } else {
                     ToolbarItem(placement: .principal) {
                         AppTitleView()
+                            .accessibilityIdentifier("tf.mac.toolbar.title")
                     }
                 }
                 // 设置按钮
@@ -77,6 +78,7 @@ struct ContentView: View {
                         Image(systemName: "gearshape")
                     }
                     .help("toolbar.settings".localized)
+                    .accessibilityIdentifier("tf.mac.toolbar.settings")
                 }
                 // 右侧面板切换按钮
                 ToolbarItem(placement: .primaryAction) {
@@ -88,6 +90,7 @@ struct ContentView: View {
                         Image(systemName: "sidebar.right")
                     }
                     .help(appState.rightSidebarCollapsed ? "toolbar.showInspector".localized : "toolbar.hideInspector".localized)
+                    .accessibilityIdentifier("tf.mac.toolbar.inspectorToggle")
                 }
             }
 
