@@ -1239,6 +1239,8 @@ impl EvolutionManager {
                     entry.stage_sessions.clear();
                     entry.stage_session_history.clear();
                     entry.stage_statuses.clear();
+                    entry.stage_tool_call_counts.clear();
+                    entry.stage_seen_tool_calls.clear();
                     for s in STAGES {
                         entry
                             .stage_statuses
