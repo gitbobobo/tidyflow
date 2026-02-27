@@ -3,16 +3,16 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 
+use axum::extract::ws::WebSocket;
 use chrono::Utc;
 use serde::Deserialize;
 use walkdir::WalkDir;
 
 use crate::server::context::{resolve_workspace, HandlerContext};
 use crate::server::protocol::{
-    EvolutionEvidenceIssueInfo, EvolutionEvidenceItemInfo, EvolutionEvidenceSubsystemInfo,
+    ClientMessage, EvidenceIssueInfo, EvidenceItemInfo, EvidenceSubsystemInfo, ServerMessage,
 };
-
-use super::EvolutionManager;
+use crate::server::ws::send_message;
 
 const EVIDENCE_ROOT_RELATIVE: &str = ".tidyflow/evidence";
 const EVIDENCE_INDEX_RELATIVE: &str = ".tidyflow/evidence/evidence.index.json";
@@ -42,36 +42,36 @@ const DEVICE_TYPE_BASELINE: &[&str] = &[
 ];
 
 #[derive(Debug)]
-pub(super) struct EvidenceSnapshotPayload {
-    pub(super) evidence_root: String,
-    pub(super) index_file: String,
-    pub(super) index_exists: bool,
-    pub(super) detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
-    pub(super) detected_device_types: Vec<String>,
-    pub(super) items: Vec<EvolutionEvidenceItemInfo>,
-    pub(super) issues: Vec<EvolutionEvidenceIssueInfo>,
-    pub(super) updated_at: String,
+struct EvidenceSnapshotPayload {
+    evidence_root: String,
+    index_file: String,
+    index_exists: bool,
+    detected_subsystems: Vec<EvidenceSubsystemInfo>,
+    detected_device_types: Vec<String>,
+    items: Vec<EvidenceItemInfo>,
+    issues: Vec<EvidenceIssueInfo>,
+    updated_at: String,
 }
 
 #[derive(Debug)]
-pub(super) struct EvidenceRebuildPromptPayload {
-    pub(super) prompt: String,
-    pub(super) evidence_root: String,
-    pub(super) index_file: String,
-    pub(super) detected_subsystems: Vec<EvolutionEvidenceSubsystemInfo>,
-    pub(super) detected_device_types: Vec<String>,
-    pub(super) generated_at: String,
+struct EvidenceRebuildPromptPayload {
+    prompt: String,
+    evidence_root: String,
+    index_file: String,
+    detected_subsystems: Vec<EvidenceSubsystemInfo>,
+    detected_device_types: Vec<String>,
+    generated_at: String,
 }
 
 #[derive(Debug)]
-pub(super) struct EvidenceChunkPayload {
-    pub(super) item_id: String,
-    pub(super) offset: u64,
-    pub(super) next_offset: u64,
-    pub(super) eof: bool,
-    pub(super) total_size_bytes: u64,
-    pub(super) mime_type: String,
-    pub(super) content: Vec<u8>,
+struct EvidenceChunkPayload {
+    item_id: String,
+    offset: u64,
+    next_offset: u64,
+    eof: bool,
+    total_size_bytes: u64,
+    mime_type: String,
+    content: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,67 +116,136 @@ struct ValidatedEvidenceItem {
 struct ValidatedEvidenceIndex {
     updated_at: String,
     items: Vec<ValidatedEvidenceItem>,
-    issues: Vec<EvolutionEvidenceIssueInfo>,
+    issues: Vec<EvidenceIssueInfo>,
 }
 
-impl EvolutionManager {
-    pub(super) async fn get_evidence_snapshot(
-        &self,
-        project: &str,
-        workspace: &str,
-        ctx: &HandlerContext,
-    ) -> Result<EvidenceSnapshotPayload, String> {
-        let ws = resolve_workspace(&ctx.app_state, project, workspace)
-            .await
-            .map_err(|e| e.to_string())?;
-        let workspace_root = ws.root_path.clone();
-
-        tokio::task::spawn_blocking(move || build_snapshot_sync(&workspace_root))
-            .await
-            .map_err(|e| format!("build evidence snapshot task failed: {}", e))?
+pub async fn handle_evidence_message(
+    client_msg: &ClientMessage,
+    socket: &mut WebSocket,
+    ctx: &HandlerContext,
+) -> Result<bool, String> {
+    match client_msg {
+        ClientMessage::EvidenceGetSnapshot { project, workspace } => {
+            let payload = get_evidence_snapshot(project, workspace, ctx).await?;
+            send_message(
+                socket,
+                &ServerMessage::EvidenceSnapshot {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    evidence_root: payload.evidence_root,
+                    index_file: payload.index_file,
+                    index_exists: payload.index_exists,
+                    detected_subsystems: payload.detected_subsystems,
+                    detected_device_types: payload.detected_device_types,
+                    items: payload.items,
+                    issues: payload.issues,
+                    updated_at: payload.updated_at,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
+        ClientMessage::EvidenceGetRebuildPrompt { project, workspace } => {
+            let payload = get_evidence_rebuild_prompt(project, workspace, ctx).await?;
+            send_message(
+                socket,
+                &ServerMessage::EvidenceRebuildPrompt {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    prompt: payload.prompt,
+                    evidence_root: payload.evidence_root,
+                    index_file: payload.index_file,
+                    detected_subsystems: payload.detected_subsystems,
+                    detected_device_types: payload.detected_device_types,
+                    generated_at: payload.generated_at,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
+        ClientMessage::EvidenceReadItem {
+            project,
+            workspace,
+            item_id,
+            offset,
+            limit,
+        } => {
+            let payload =
+                read_evidence_item_chunk(project, workspace, item_id, *offset, *limit, ctx).await?;
+            send_message(
+                socket,
+                &ServerMessage::EvidenceItemChunk {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    item_id: payload.item_id,
+                    offset: payload.offset,
+                    next_offset: payload.next_offset,
+                    eof: payload.eof,
+                    total_size_bytes: payload.total_size_bytes,
+                    mime_type: payload.mime_type,
+                    content: payload.content,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
+}
 
-    pub(super) async fn get_evidence_rebuild_prompt(
-        &self,
-        project: &str,
-        workspace: &str,
-        ctx: &HandlerContext,
-    ) -> Result<EvidenceRebuildPromptPayload, String> {
-        let ws = resolve_workspace(&ctx.app_state, project, workspace)
-            .await
-            .map_err(|e| e.to_string())?;
-        let workspace_root = ws.root_path.clone();
-        let project_name = project.to_string();
-        let workspace_name = workspace.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            build_rebuild_prompt_sync(&workspace_root, &project_name, &workspace_name)
-        })
+async fn get_evidence_snapshot(
+    project: &str,
+    workspace: &str,
+    ctx: &HandlerContext,
+) -> Result<EvidenceSnapshotPayload, String> {
+    let ws = resolve_workspace(&ctx.app_state, project, workspace)
         .await
-        .map_err(|e| format!("build evidence rebuild prompt task failed: {}", e))?
-    }
+        .map_err(|e| e.to_string())?;
+    let workspace_root = ws.root_path.clone();
 
-    pub(super) async fn read_evidence_item_chunk(
-        &self,
-        project: &str,
-        workspace: &str,
-        item_id: &str,
-        offset: u64,
-        limit: Option<u32>,
-        ctx: &HandlerContext,
-    ) -> Result<EvidenceChunkPayload, String> {
-        let ws = resolve_workspace(&ctx.app_state, project, workspace)
-            .await
-            .map_err(|e| e.to_string())?;
-        let workspace_root = ws.root_path.clone();
-        let item_id = item_id.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            read_evidence_item_chunk_sync(&workspace_root, &item_id, offset, limit)
-        })
+    tokio::task::spawn_blocking(move || build_snapshot_sync(&workspace_root))
         .await
-        .map_err(|e| format!("read evidence item chunk task failed: {}", e))?
-    }
+        .map_err(|e| format!("build evidence snapshot task failed: {}", e))?
+}
+
+async fn get_evidence_rebuild_prompt(
+    project: &str,
+    workspace: &str,
+    ctx: &HandlerContext,
+) -> Result<EvidenceRebuildPromptPayload, String> {
+    let ws = resolve_workspace(&ctx.app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_string())?;
+    let workspace_root = ws.root_path.clone();
+    let project_name = project.to_string();
+    let workspace_name = workspace.to_string();
+
+    tokio::task::spawn_blocking(move || {
+        build_rebuild_prompt_sync(&workspace_root, &project_name, &workspace_name)
+    })
+    .await
+    .map_err(|e| format!("build evidence rebuild prompt task failed: {}", e))?
+}
+
+async fn read_evidence_item_chunk(
+    project: &str,
+    workspace: &str,
+    item_id: &str,
+    offset: u64,
+    limit: Option<u32>,
+    ctx: &HandlerContext,
+) -> Result<EvidenceChunkPayload, String> {
+    let ws = resolve_workspace(&ctx.app_state, project, workspace)
+        .await
+        .map_err(|e| e.to_string())?;
+    let workspace_root = ws.root_path.clone();
+    let item_id = item_id.to_string();
+
+    tokio::task::spawn_blocking(move || {
+        read_evidence_item_chunk_sync(&workspace_root, &item_id, offset, limit)
+    })
+    .await
+    .map_err(|e| format!("read evidence item chunk task failed: {}", e))?
 }
 
 fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload, String> {
@@ -185,8 +254,8 @@ fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload,
 
     let detected_subsystems = detect_subsystems(workspace_root);
     let mut detected_device_types = detect_device_types(workspace_root, &evidence_root);
-    let mut issues: Vec<EvolutionEvidenceIssueInfo> = Vec::new();
-    let mut items: Vec<EvolutionEvidenceItemInfo> = Vec::new();
+    let mut issues: Vec<EvidenceIssueInfo> = Vec::new();
+    let mut items: Vec<EvidenceItemInfo> = Vec::new();
     let updated_at: String;
     let index_exists = index_file.exists();
 
@@ -206,7 +275,7 @@ fn build_snapshot_sync(workspace_root: &Path) -> Result<EvidenceSnapshotPayload,
                         ));
                     }
                     detected_device_types.push(item.device_type.clone());
-                    items.push(EvolutionEvidenceItemInfo {
+                    items.push(EvidenceItemInfo {
                         item_id: item.item_id,
                         device_type: item.device_type,
                         evidence_type: item.evidence_type,
@@ -304,6 +373,7 @@ fn build_rebuild_prompt_sync(
 - evidence_root 下第一层目录必须是 device_type，所有 device_type 必须同级。
 - 禁止创建 `custom/<device_type>/...`、`wrapper/<device_type>/...` 这类包裹目录，所有 device_type 必须直接落在 evidence_root 同级目录。
 - 设备类型基线：iphone、ipad、apple-tv、apple-watch、vision-pro、mac、android-phone、android-pad、android-tv、android-wear、ohos-phone、ohos-pad、ohos-tv、web、web-mobile、linux、windows、server。
+- 设备类型固定基线（默认全部覆盖，除非用户明确删减）。
 - 每个 device_type 都必须有独立的 e2e 入口与证据子目录（示例：`<device_type>/e2e/...`）。
 - 若扫描到基线之外的新设备类型，必须新增同级目录与对应 e2e 计划；禁止把多个设备类型合并到同一目录。
 
@@ -572,9 +642,9 @@ fn normalize_relative_path(path: &str) -> Result<String, String> {
     Ok(pathbuf_to_slash_string(&normalized))
 }
 
-fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInfo> {
+fn detect_subsystems(workspace_root: &Path) -> Vec<EvidenceSubsystemInfo> {
     let mut seen: HashSet<(String, String)> = HashSet::new();
-    let mut result: Vec<EvolutionEvidenceSubsystemInfo> = Vec::new();
+    let mut result: Vec<EvidenceSubsystemInfo> = Vec::new();
 
     for entry in WalkDir::new(workspace_root)
         .max_depth(3)
@@ -607,7 +677,7 @@ fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInf
         };
         if let Some(kind) = kind {
             if seen.insert((kind.to_string(), rel_path.clone())) {
-                result.push(EvolutionEvidenceSubsystemInfo {
+                result.push(EvidenceSubsystemInfo {
                     id: subsystem_id(kind, &rel_path),
                     kind: kind.to_string(),
                     path: rel_path,
@@ -636,7 +706,7 @@ fn detect_subsystems(workspace_root: &Path) -> Vec<EvolutionEvidenceSubsystemInf
         let rel_path = relative_path_string(workspace_root, entry.path());
         let kind = "xcode_project";
         if seen.insert((kind.to_string(), rel_path.clone())) {
-            result.push(EvolutionEvidenceSubsystemInfo {
+            result.push(EvidenceSubsystemInfo {
                 id: subsystem_id(kind, &rel_path),
                 kind: kind.to_string(),
                 path: rel_path,
@@ -766,7 +836,7 @@ fn detect_device_types(workspace_root: &Path, evidence_root: &Path) -> Vec<Strin
     detected
 }
 
-fn sort_evidence_items(items: &mut [EvolutionEvidenceItemInfo]) {
+fn sort_evidence_items(items: &mut [EvidenceItemInfo]) {
     items.sort_by(|a, b| {
         (a.device_type.as_str(), a.order, a.item_id.as_str()).cmp(&(
             b.device_type.as_str(),
@@ -853,11 +923,8 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
 
-fn issue_warning(
-    code: impl Into<String>,
-    message: impl Into<String>,
-) -> EvolutionEvidenceIssueInfo {
-    EvolutionEvidenceIssueInfo {
+fn issue_warning(code: impl Into<String>, message: impl Into<String>) -> EvidenceIssueInfo {
+    EvidenceIssueInfo {
         code: code.into(),
         level: "warning".to_string(),
         message: message.into(),
