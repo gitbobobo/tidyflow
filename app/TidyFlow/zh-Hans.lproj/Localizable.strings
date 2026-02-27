@@ -350,6 +350,12 @@
 "evolution.page.action.startManual" = "手动启动";
 "evolution.page.action.stop" = "停止";
 "evolution.page.action.resume" = "恢复";
+"evolution.page.action.previewHandoff" = "Handoff";
+"evolution.page.handoff.title" = "Handoff 文档";
+"evolution.page.handoff.empty" = "暂无 Handoff 文档";
+"evolution.page.handoff.loading" = "加载中…";
+"evolution.page.handoff.noCycle" = "当前无活跃循环";
+"evolution.page.handoff.refresh" = "刷新";
 "evolution.page.agentList.section" = "代理列表";
 "evolution.page.agentList.empty" = "暂无代理配置";
 "evolution.page.agentType.section" = "代理类型";

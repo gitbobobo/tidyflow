@@ -348,6 +348,12 @@
 "evolution.page.action.startManual" = "Start";
 "evolution.page.action.stop" = "Stop";
 "evolution.page.action.resume" = "Resume";
+"evolution.page.action.previewHandoff" = "Handoff";
+"evolution.page.handoff.title" = "Handoff Document";
+"evolution.page.handoff.empty" = "No handoff document yet";
+"evolution.page.handoff.loading" = "Loading…";
+"evolution.page.handoff.noCycle" = "No active cycle";
+"evolution.page.handoff.refresh" = "Refresh";
 "evolution.page.agentList.section" = "Agents";
 "evolution.page.agentList.empty" = "No agent configuration";
 "evolution.page.agentType.section" = "Agent Types";

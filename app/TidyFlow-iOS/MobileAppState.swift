@@ -210,6 +210,10 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionReplayError: String?
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
+    @Published var evolutionHandoffContent: String?
+    @Published var evolutionHandoffLoading: Bool = false
+    @Published var evolutionHandoffError: String?
+    private var pendingHandoffReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
@@ -710,6 +714,19 @@ final class MobileAppState: ObservableObject {
         explorerPreviewContent = ""
         explorerPreviewError = nil
         pendingExplorerPreviewRequest = (project, workspace, path)
+        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+    }
+
+    func requestEvolutionHandoff(project: String, workspace: String, cycleID: String) {
+        guard isConnected else {
+            evolutionHandoffError = "连接已断开"
+            return
+        }
+        let path = ".tidyflow/evolution/\(cycleID)/handoff.md"
+        evolutionHandoffContent = nil
+        evolutionHandoffLoading = true
+        evolutionHandoffError = nil
+        pendingHandoffReadPath = path
         wsClient.requestFileRead(project: project, workspace: workspace, path: path)
     }
 
@@ -2538,6 +2555,26 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onFileReadResult = { [weak self] result in
             guard let self else { return }
+
+            // Handoff 文档预览分流
+            if let pendingPath = self.pendingHandoffReadPath, pendingPath == result.path {
+                self.pendingHandoffReadPath = nil
+                self.evolutionHandoffLoading = false
+                let bytes = Data(result.content)
+                if let text = String(data: bytes, encoding: .utf8) {
+                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.evolutionHandoffError = "evolution.page.handoff.empty".localized
+                        self.evolutionHandoffContent = nil
+                    } else {
+                        self.evolutionHandoffContent = text
+                    }
+                } else {
+                    self.evolutionHandoffError = "evolution.page.handoff.empty".localized
+                    self.evolutionHandoffContent = nil
+                }
+                return
+            }
+
             guard let pending = self.pendingExplorerPreviewRequest else { return }
             guard pending.project == result.project,
                   pending.workspace == result.workspace,
@@ -2857,6 +2894,11 @@ final class MobileAppState: ObservableObject {
                 self.explorerPreviewLoading = false
                 self.explorerPreviewError = message
                 self.explorerPreviewContent = ""
+            }
+            if self.pendingHandoffReadPath != nil {
+                self.pendingHandoffReadPath = nil
+                self.evolutionHandoffLoading = false
+                self.evolutionHandoffError = message
             }
             if !self.aiActiveProject.isEmpty, !self.aiActiveWorkspace.isEmpty {
                 let key = self.aiContextKey(project: self.aiActiveProject, workspace: self.aiActiveWorkspace)

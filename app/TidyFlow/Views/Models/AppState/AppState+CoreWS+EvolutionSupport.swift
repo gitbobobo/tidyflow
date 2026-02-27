@@ -13,6 +13,17 @@ extension AppState {
         wsClient.requestEvoGetAgentProfile(project: project, workspace: normalizedWorkspace)
     }
 
+    // MARK: - Handoff 文档预览
+
+    func requestEvolutionHandoff(project: String, workspace: String, cycleID: String) {
+        let path = ".tidyflow/evolution/\(cycleID)/handoff.md"
+        evolutionHandoffContent = nil
+        evolutionHandoffLoading = true
+        evolutionHandoffError = nil
+        pendingHandoffReadPath = path
+        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+    }
+
     // MARK: - Evidence
 
     func requestEvidenceSnapshot(project: String, workspace: String) {

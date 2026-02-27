@@ -209,6 +209,10 @@ class AppState: ObservableObject {
     @Published var evolutionReplayStore: AIChatStore = AIChatStore()
     @Published var evolutionBlockingRequired: EvolutionBlockingRequiredV2?
     @Published var evolutionBlockers: [EvolutionBlockerItemV2] = []
+    @Published var evolutionHandoffContent: String?
+    @Published var evolutionHandoffLoading: Bool = false
+    @Published var evolutionHandoffError: String?
+    var pendingHandoffReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]

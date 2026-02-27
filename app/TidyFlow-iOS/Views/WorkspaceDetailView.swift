@@ -1238,6 +1238,7 @@ struct MobileEvolutionView: View {
     @State private var pendingProfileSaveDate: Date?
     @State private var hasPendingUserProfileEdit: Bool = false
     @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
+    @State private var isHandoffSheetPresented: Bool = false
 
     private struct EvolutionBlockerDraft {
         var selected: Bool
@@ -1338,6 +1339,16 @@ struct MobileEvolutionView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
+
+                Button {
+                    if let item {
+                        appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: item.cycleID)
+                        isHandoffSheetPresented = true
+                    }
+                } label: {
+                    Label("evolution.page.action.previewHandoff".localized, systemImage: "doc.text")
+                }
+                .disabled(item == nil)
             }
 
             Section("evolution.page.agentType.description.section".localized) {
@@ -1537,6 +1548,9 @@ struct MobileEvolutionView: View {
         }
         .navigationTitle("evolution.page.title".localized)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isHandoffSheetPresented) {
+            mobileHandoffSheet
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("common.refresh".localized) {
@@ -1563,6 +1577,69 @@ struct MobileEvolutionView: View {
             guard connected else { return }
             appState.refreshEvolution(project: project, workspace: workspace)
             loadProfiles()
+        }
+    }
+
+    private var mobileHandoffSheet: some View {
+        NavigationStack {
+            Group {
+                if appState.evolutionHandoffLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("evolution.page.handoff.loading".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = appState.evolutionHandoffError {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text(error)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let content = appState.evolutionHandoffContent {
+                    ScrollView {
+                        Text(LocalizedStringKey(content))
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text("evolution.page.handoff.empty".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle("evolution.page.handoff.title".localized)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if let item {
+                            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: item.cycleID)
+                        }
+                    } label: {
+                        Label("evolution.page.handoff.refresh".localized, systemImage: "arrow.clockwise")
+                    }
+                    .disabled(item == nil)
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("common.close".localized) {
+                        isHandoffSheetPresented = false
+                    }
+                }
+            }
         }
     }
 

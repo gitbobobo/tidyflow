@@ -772,5 +772,12 @@ extension AppState {
                 fileIndexCache[ws] = cache
             }
         }
+
+        // Handoff 请求失败时清除加载状态
+        if pendingHandoffReadPath != nil {
+            pendingHandoffReadPath = nil
+            evolutionHandoffLoading = false
+            evolutionHandoffError = errorMsg
+        }
     }
 }
