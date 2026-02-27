@@ -660,6 +660,12 @@ struct EvidenceTabView: View {
     @State private var itemImage: NSImage?
     @State private var itemByteCount: Int = 0
     @State private var actionMessage: String?
+    @State private var screenshotThumbnails: [String: NSImage] = [:]
+    @State private var screenshotThumbnailLoadingIDs: Set<String> = []
+    @State private var screenshotThumbnailLoadFailedIDs: Set<String> = []
+    @State private var screenshotThumbnailPendingIDs: [String] = []
+    @State private var screenshotThumbnailActiveID: String?
+    @State private var screenshotThumbnailRequestSequence: UInt64 = 0
 
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
@@ -728,12 +734,14 @@ struct EvidenceTabView: View {
             selectedScreenshotID = nil
             selectedLogID = nil
             clearItemPreview()
+            clearScreenshotThumbnailCache()
             refreshEvidence()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             selectedScreenshotID = nil
             selectedLogID = nil
             clearItemPreview()
+            clearScreenshotThumbnailCache()
             refreshEvidence()
         }
         .onChange(of: appState.connectionState) { _, state in
@@ -742,6 +750,19 @@ struct EvidenceTabView: View {
         }
         .onChange(of: snapshot?.updatedAt) { _, _ in
             syncSelectionIfNeeded()
+            pruneScreenshotThumbnailCache()
+            processNextScreenshotThumbnailLoadIfNeeded()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            stopScreenshotThumbnailPrefetch()
+            processNextScreenshotThumbnailLoadIfNeeded()
+        }
+        .onChange(of: selectedScreenshotID) { _, newValue in
+            if newValue == nil {
+                processNextScreenshotThumbnailLoadIfNeeded()
+            } else {
+                stopScreenshotThumbnailPrefetch()
+            }
         }
     }
 
@@ -842,24 +863,33 @@ struct EvidenceTabView: View {
         }
     }
     
+    @ViewBuilder
     private var mainContent: some View {
-        HStack(spacing: 0) {
-            // 左侧列表/网格区域
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
-                        deviceSection(deviceType: deviceType, items: items(for: deviceType))
-                    }
-                }
-                .padding(16)
-            }
-            .frame(minWidth: 340, maxWidth: 480)
-            
-            Divider()
-            
-            // 右侧详情区域
-            detailPane
+        if currentSelectedItem == nil {
+            evidenceListPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            HStack(spacing: 0) {
+                evidenceListPane
+                    .frame(minWidth: 340, maxWidth: 480)
+
+                Divider()
+
+                // 右侧详情区域
+                detailPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private var evidenceListPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
+                    deviceSection(deviceType: deviceType, items: items(for: deviceType))
+                }
+            }
+            .padding(16)
         }
     }
     
@@ -904,7 +934,9 @@ struct EvidenceTabView: View {
     /// 截图缩略图卡片
     private func screenshotThumbnail(item: EvolutionEvidenceItemInfoV2) -> some View {
         Button {
-            selectedScreenshotID = item.itemID
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedScreenshotID = item.itemID
+            }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 // 缩略图区域
@@ -912,10 +944,23 @@ struct EvidenceTabView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color(NSColor.controlBackgroundColor))
                         .aspectRatio(16/9, contentMode: .fit)
-                    
-                    Image(systemName: "photo")
-                        .font(.system(size: 24))
-                        .foregroundColor(.secondary.opacity(0.5))
+
+                    if let thumbnail = screenshotThumbnails[item.itemID] {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipShape(.rect(cornerRadius: 6))
+                    } else {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        if screenshotThumbnailLoadingIDs.contains(item.itemID) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .offset(y: 20)
+                        }
+                    }
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -924,6 +969,7 @@ struct EvidenceTabView: View {
                             lineWidth: 2
                         )
                 )
+                .clipShape(.rect(cornerRadius: 6))
                 
                 // 标题
                 Text(item.title)
@@ -938,6 +984,9 @@ struct EvidenceTabView: View {
             }
         }
         .buttonStyle(.plain)
+        .onAppear {
+            enqueueScreenshotThumbnailLoad(for: item)
+        }
     }
     
     /// 日志列表布局
@@ -1112,7 +1161,7 @@ struct EvidenceTabView: View {
         if let id = selectedID {
             return currentTabItems.first { $0.itemID == id }
         }
-        return currentTabItems.first
+        return nil
     }
     
     /// 详情内容
@@ -1204,18 +1253,18 @@ struct EvidenceTabView: View {
 
     private func syncSelectionIfNeeded() {
         guard let snapshot else { return }
-        let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
-        if let id = currentID,
-           snapshot.items.contains(where: { $0.itemID == id }) {
-            return
+        var shouldClearPreview = false
+        if let screenshotID = selectedScreenshotID,
+           !snapshot.items.contains(where: { $0.itemID == screenshotID }) {
+            selectedScreenshotID = nil
+            shouldClearPreview = shouldClearPreview || selectedTab == .screenshot
         }
-        // 自动选中第一个
-        if let first = currentTabItems.first {
-            if selectedTab == .screenshot {
-                selectedScreenshotID = first.itemID
-            } else {
-                selectedLogID = first.itemID
-            }
+        if let logID = selectedLogID,
+           !snapshot.items.contains(where: { $0.itemID == logID }) {
+            selectedLogID = nil
+            shouldClearPreview = shouldClearPreview || selectedTab == .log
+        }
+        if shouldClearPreview {
             clearItemPreview()
         }
     }
@@ -1229,6 +1278,114 @@ struct EvidenceTabView: View {
         itemTextHasMore = false
         itemImage = nil
         itemByteCount = 0
+    }
+
+    private func clearScreenshotThumbnailCache() {
+        stopScreenshotThumbnailPrefetch()
+        screenshotThumbnails.removeAll()
+        screenshotThumbnailLoadFailedIDs.removeAll()
+    }
+
+    private func stopScreenshotThumbnailPrefetch() {
+        screenshotThumbnailPendingIDs.removeAll()
+        screenshotThumbnailActiveID = nil
+        screenshotThumbnailLoadingIDs.removeAll()
+        screenshotThumbnailRequestSequence &+= 1
+    }
+
+    private func pruneScreenshotThumbnailCache() {
+        guard let snapshot else {
+            clearScreenshotThumbnailCache()
+            return
+        }
+        let validIDs = Set(
+            snapshot.items.compactMap { item -> String? in
+                if item.evidenceType == "screenshot" || item.mimeType.hasPrefix("image/") {
+                    return item.itemID
+                }
+                return nil
+            }
+        )
+        screenshotThumbnails = screenshotThumbnails.filter { validIDs.contains($0.key) }
+        screenshotThumbnailLoadFailedIDs = screenshotThumbnailLoadFailedIDs.intersection(validIDs)
+        screenshotThumbnailPendingIDs.removeAll { !validIDs.contains($0) }
+        if let activeID = screenshotThumbnailActiveID, !validIDs.contains(activeID) {
+            screenshotThumbnailActiveID = nil
+            screenshotThumbnailLoadingIDs.remove(activeID)
+        }
+    }
+
+    private var canPrefetchScreenshotThumbnails: Bool {
+        selectedTab == .screenshot && selectedScreenshotID == nil
+    }
+
+    private func enqueueScreenshotThumbnailLoad(for item: EvolutionEvidenceItemInfoV2) {
+        guard canPrefetchScreenshotThumbnails else { return }
+        guard screenshotThumbnails[item.itemID] == nil else { return }
+        guard !screenshotThumbnailLoadingIDs.contains(item.itemID) else { return }
+        guard !screenshotThumbnailLoadFailedIDs.contains(item.itemID) else { return }
+        guard !screenshotThumbnailPendingIDs.contains(item.itemID) else { return }
+        guard item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" else { return }
+        screenshotThumbnailPendingIDs.append(item.itemID)
+        processNextScreenshotThumbnailLoadIfNeeded()
+    }
+
+    private func processNextScreenshotThumbnailLoadIfNeeded() {
+        guard canPrefetchScreenshotThumbnails else { return }
+        guard let workspace, !workspace.isEmpty else { return }
+        guard screenshotThumbnailActiveID == nil else { return }
+
+        while !screenshotThumbnailPendingIDs.isEmpty {
+            let itemID = screenshotThumbnailPendingIDs.removeFirst()
+            guard screenshotThumbnails[itemID] == nil else { continue }
+            guard !screenshotThumbnailLoadFailedIDs.contains(itemID) else { continue }
+            guard let item = currentTabItems.first(where: { $0.itemID == itemID }) else { continue }
+            guard item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" else { continue }
+
+            screenshotThumbnailActiveID = itemID
+            screenshotThumbnailLoadingIDs.insert(itemID)
+            screenshotThumbnailRequestSequence &+= 1
+            let requestSequence = screenshotThumbnailRequestSequence
+
+            appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: itemID) { payload, _ in
+                DispatchQueue.main.async {
+                    finalizeScreenshotThumbnailRequest(
+                        itemID: itemID,
+                        requestSequence: requestSequence,
+                        payload: payload
+                    )
+                }
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                finalizeScreenshotThumbnailRequest(
+                    itemID: itemID,
+                    requestSequence: requestSequence,
+                    payload: nil
+                )
+            }
+            return
+        }
+    }
+
+    private func finalizeScreenshotThumbnailRequest(
+        itemID: String,
+        requestSequence: UInt64,
+        payload: (mimeType: String, content: [UInt8])?
+    ) {
+        guard screenshotThumbnailActiveID == itemID else { return }
+        guard screenshotThumbnailRequestSequence == requestSequence else { return }
+
+        screenshotThumbnailLoadingIDs.remove(itemID)
+        screenshotThumbnailActiveID = nil
+
+        if let payload, let thumbnail = NSImage(data: Data(payload.content)) {
+            screenshotThumbnails[itemID] = thumbnail
+        } else {
+            screenshotThumbnailLoadFailedIDs.insert(itemID)
+        }
+
+        processNextScreenshotThumbnailLoadIfNeeded()
     }
 
     private func refreshEvidence() {
