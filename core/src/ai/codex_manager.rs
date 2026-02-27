@@ -10,6 +10,52 @@ use tracing::{debug, info, warn};
 
 const REQUEST_TIMEOUT_SECS: u64 = 120;
 
+#[derive(Debug, Clone, Default)]
+pub struct AcpAgentCapabilities {
+    pub load_session: bool,
+    pub raw: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpAuthMethod {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AcpInitializationState {
+    pub negotiated_protocol_version: Option<u64>,
+    pub agent_capabilities: AcpAgentCapabilities,
+    pub auth_methods: Vec<AcpAuthMethod>,
+    pub authenticated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonRpcError {
+    pub code: i64,
+    pub message: String,
+    pub data: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppServerRequestError {
+    Rpc(JsonRpcError),
+    Transport(String),
+    MalformedResponse(String),
+}
+
+impl AppServerRequestError {
+    pub fn to_user_string(&self) -> String {
+        match self {
+            Self::Rpc(error) => {
+                format!("App-server error (code {}): {}", error.code, error.message)
+            }
+            Self::Transport(message) | Self::MalformedResponse(message) => message.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CodexNotification {
     pub method: String,
@@ -27,7 +73,7 @@ pub struct CodexServerRequest {
 pub struct CodexAppServerManager {
     process: Arc<Mutex<Option<Child>>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, AppServerRequestError>>>>>,
     notifications_tx: broadcast::Sender<CodexNotification>,
     requests_tx: broadcast::Sender<CodexServerRequest>,
     next_id: Arc<Mutex<u64>>,
@@ -37,6 +83,7 @@ pub struct CodexAppServerManager {
     command_args: Vec<String>,
     display_name: String,
     initialize_protocol_version: Option<u64>,
+    acp_initialization_state: Arc<Mutex<AcpInitializationState>>,
 }
 
 impl CodexAppServerManager {
@@ -88,6 +135,7 @@ impl CodexAppServerManager {
             command_args,
             display_name: display_name.into(),
             initialize_protocol_version,
+            acp_initialization_state: Arc::new(Mutex::new(AcpInitializationState::default())),
         }
     }
 
@@ -97,6 +145,24 @@ impl CodexAppServerManager {
 
     pub fn subscribe_requests(&self) -> broadcast::Receiver<CodexServerRequest> {
         self.requests_tx.subscribe()
+    }
+
+    pub fn is_acp_mode(&self) -> bool {
+        self.initialize_protocol_version.is_some()
+    }
+
+    pub async fn acp_initialization_state(&self) -> Option<AcpInitializationState> {
+        if !self.is_acp_mode() {
+            return None;
+        }
+        Some(self.acp_initialization_state.lock().await.clone())
+    }
+
+    pub async fn set_acp_authenticated(&self, authenticated: bool) {
+        if !self.is_acp_mode() {
+            return;
+        }
+        self.acp_initialization_state.lock().await.authenticated = authenticated;
     }
 
     pub async fn ensure_server_running(&self) -> Result<(), String> {
@@ -156,6 +222,8 @@ impl CodexAppServerManager {
         *process_lock = Some(child);
         drop(process_lock);
 
+        self.reset_acp_initialization_state().await;
+
         self.spawn_stdout_reader(stdout);
         self.spawn_stderr_reader(stderr);
 
@@ -178,15 +246,32 @@ impl CodexAppServerManager {
             let _ = child.wait().await;
         }
         *self.stdin.lock().await = None;
+        self.reset_acp_initialization_state().await;
         Ok(())
     }
 
     pub async fn send_request(&self, method: &str, params: Option<Value>) -> Result<Value, String> {
-        self.ensure_server_running().await?;
-        self.send_request_raw(method, params).await
+        self.send_request_with_error(method, params)
+            .await
+            .map_err(|e| e.to_user_string())
     }
 
-    async fn send_request_raw(&self, method: &str, params: Option<Value>) -> Result<Value, String> {
+    pub async fn send_request_with_error(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, AppServerRequestError> {
+        self.ensure_server_running()
+            .await
+            .map_err(AppServerRequestError::Transport)?;
+        self.send_request_raw_with_error(method, params).await
+    }
+
+    async fn send_request_raw_with_error(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, AppServerRequestError> {
         let id = {
             let mut next = self.next_id.lock().await;
             let id = *next;
@@ -214,18 +299,21 @@ impl CodexAppServerManager {
 
         if let Err(e) = self.write_json_line(&payload).await {
             self.pending.lock().await.remove(&id_key);
-            return Err(e);
+            return Err(AppServerRequestError::Transport(e));
         }
 
         match timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS), rx).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(format!(
+            Ok(Err(_)) => Err(AppServerRequestError::Transport(format!(
                 "{} request channel dropped: {}",
                 self.display_name, method
-            )),
+            ))),
             Err(_) => {
                 self.pending.lock().await.remove(&id_key);
-                Err(format!("{} request timeout: {}", self.display_name, method))
+                Err(AppServerRequestError::Transport(format!(
+                    "{} request timeout: {}",
+                    self.display_name, method
+                )))
             }
         }
     }
@@ -296,7 +384,10 @@ impl CodexAppServerManager {
             *started.lock().await = false;
             let mut map = pending.lock().await;
             for (_, tx) in map.drain() {
-                let _ = tx.send(Err(format!("{} stdout closed", display_name)));
+                let _ = tx.send(Err(AppServerRequestError::Transport(format!(
+                    "{} stdout closed",
+                    display_name
+                ))));
             }
         });
     }
@@ -314,7 +405,9 @@ impl CodexAppServerManager {
 
     async fn handle_incoming_value(
         value: Value,
-        pending: &Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>,
+        pending: &Arc<
+            Mutex<HashMap<String, oneshot::Sender<Result<Value, AppServerRequestError>>>>,
+        >,
         notifications_tx: &broadcast::Sender<CodexNotification>,
         requests_tx: &broadcast::Sender<CodexServerRequest>,
     ) {
@@ -350,33 +443,64 @@ impl CodexAppServerManager {
                     return;
                 }
                 if let Some(error) = obj.get("error") {
-                    let message = error
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("unknown error")
-                        .to_string();
-                    let _ = tx.send(Err(format!("App-server error: {}", message)));
+                    if let Some(parsed_error) = Self::parse_rpc_error(error) {
+                        let _ = tx.send(Err(AppServerRequestError::Rpc(parsed_error)));
+                    } else {
+                        let _ = tx.send(Err(AppServerRequestError::MalformedResponse(
+                            "Malformed JSON-RPC error object".to_string(),
+                        )));
+                    }
                     return;
                 }
-                let _ = tx.send(Err("Malformed JSON-RPC response".to_string()));
+                let _ = tx.send(Err(AppServerRequestError::MalformedResponse(
+                    "Malformed JSON-RPC response".to_string(),
+                )));
             }
         }
     }
 
     async fn initialize_connection(&self) -> Result<(), String> {
-        let mut params = serde_json::json!({
-            "clientInfo": {
-                "name": "tidyflow",
-                "version": env!("CARGO_PKG_VERSION")
-            },
-            "capabilities": {
-                "experimentalApi": true
-            }
-        });
         if let Some(version) = self.initialize_protocol_version {
-            params["protocolVersion"] = serde_json::json!(version);
+            let result = self
+                .send_request_raw_with_error(
+                    "initialize",
+                    Some(Self::build_acp_initialize_params(version)),
+                )
+                .await
+                .map_err(|e| e.to_user_string())?;
+            let state = Self::parse_acp_initialize_result(&result, version)?;
+            if let Some(raw) = state.agent_capabilities.raw.as_ref() {
+                debug!(
+                    "{} ACP agentCapabilities detected: loadSession={}, raw={}",
+                    self.display_name, state.agent_capabilities.load_session, raw
+                );
+            } else {
+                debug!(
+                    "{} ACP agentCapabilities missing; all optional capabilities treated as unsupported",
+                    self.display_name
+                );
+            }
+            if !state.auth_methods.is_empty() {
+                debug!(
+                    "{} ACP auth methods discovered: {:?}",
+                    self.display_name,
+                    state
+                        .auth_methods
+                        .iter()
+                        .map(|m| m.id.clone())
+                        .collect::<Vec<_>>()
+                );
+            }
+            *self.acp_initialization_state.lock().await = state;
+        } else {
+            let _ = self
+                .send_request_raw_with_error(
+                    "initialize",
+                    Some(Self::build_legacy_initialize_params()),
+                )
+                .await
+                .map_err(|e| e.to_user_string())?;
         }
-        let _ = self.send_request_raw("initialize", Some(params)).await?;
         self.send_notification_raw("initialized", None).await
     }
 
@@ -421,8 +545,150 @@ impl CodexAppServerManager {
     async fn reject_all_pending(&self, reason: &str) {
         let mut pending = self.pending.lock().await;
         for (_, tx) in pending.drain() {
-            let _ = tx.send(Err(reason.to_string()));
+            let _ = tx.send(Err(AppServerRequestError::Transport(reason.to_string())));
         }
+    }
+
+    async fn reset_acp_initialization_state(&self) {
+        if !self.is_acp_mode() {
+            return;
+        }
+        *self.acp_initialization_state.lock().await = AcpInitializationState::default();
+    }
+
+    fn parse_rpc_error(error: &Value) -> Option<JsonRpcError> {
+        let code = error.get("code")?.as_i64()?;
+        let message = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error")
+            .to_string();
+        let data = error.get("data").cloned();
+        Some(JsonRpcError {
+            code,
+            message,
+            data,
+        })
+    }
+
+    fn build_legacy_initialize_params() -> Value {
+        serde_json::json!({
+            "clientInfo": {
+                "name": "tidyflow",
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "capabilities": {
+                "experimentalApi": true
+            }
+        })
+    }
+
+    fn build_acp_initialize_params(protocol_version: u64) -> Value {
+        serde_json::json!({
+            "protocolVersion": protocol_version,
+            "clientCapabilities": {
+                "fs": {
+                    "readTextFile": false,
+                    "writeTextFile": false
+                },
+                "terminal": false
+            },
+            "clientInfo": {
+                "name": "tidyflow",
+                "title": "TidyFlow",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        })
+    }
+
+    fn parse_acp_initialize_result(
+        result: &Value,
+        expected_protocol_version: u64,
+    ) -> Result<AcpInitializationState, String> {
+        let protocol_version = result
+            .get("protocolVersion")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| "ACP initialize response missing numeric protocolVersion".to_string())?;
+        if protocol_version != expected_protocol_version {
+            return Err(format!(
+                "ACP protocol version mismatch: client supports {}, server returned {}",
+                expected_protocol_version, protocol_version
+            ));
+        }
+
+        Ok(AcpInitializationState {
+            negotiated_protocol_version: Some(protocol_version),
+            agent_capabilities: Self::parse_agent_capabilities(result),
+            auth_methods: Self::parse_auth_methods(result),
+            authenticated: false,
+        })
+    }
+
+    fn parse_agent_capabilities(result: &Value) -> AcpAgentCapabilities {
+        let raw = result.get("agentCapabilities").cloned();
+        let load_session = raw
+            .as_ref()
+            .and_then(Self::read_load_session_capability)
+            .unwrap_or(false);
+        AcpAgentCapabilities { load_session, raw }
+    }
+
+    fn read_load_session_capability(capabilities: &Value) -> Option<bool> {
+        capabilities
+            .get("loadSession")
+            .and_then(|v| v.as_bool())
+            .or_else(|| capabilities.get("load_session").and_then(|v| v.as_bool()))
+            .or_else(|| {
+                capabilities
+                    .get("session")
+                    .and_then(|v| v.get("loadSession"))
+                    .and_then(|v| v.as_bool())
+            })
+            .or_else(|| {
+                capabilities
+                    .get("session")
+                    .and_then(|v| v.get("load_session"))
+                    .and_then(|v| v.as_bool())
+            })
+            .or_else(|| {
+                capabilities
+                    .get("session")
+                    .and_then(|v| v.get("load"))
+                    .and_then(|v| v.as_bool())
+            })
+    }
+
+    fn parse_auth_methods(result: &Value) -> Vec<AcpAuthMethod> {
+        let Some(methods) = result.get("authMethods").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+
+        methods
+            .iter()
+            .filter_map(|method| {
+                let id = method
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())?
+                    .to_string();
+                let name = method
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let description = method
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                Some(AcpAuthMethod {
+                    id,
+                    name,
+                    description,
+                })
+            })
+            .collect()
     }
 
     fn request_id_key(id: &Value) -> String {
@@ -459,5 +725,118 @@ impl CodexAppServerManager {
         extra.dedup();
         env.insert("PATH".to_string(), extra.join(":"));
         env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppServerRequestError, CodexAppServerManager};
+    use serde_json::json;
+
+    #[test]
+    fn acp_initialize_payload_should_match_schema_fields() {
+        let payload = CodexAppServerManager::build_acp_initialize_params(1);
+        assert_eq!(
+            payload.get("protocolVersion").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert!(payload.get("clientCapabilities").is_some());
+        assert!(payload.get("clientInfo").is_some());
+        assert!(payload.get("capabilities").is_none());
+        assert!(
+            payload
+                .get("clientCapabilities")
+                .and_then(|v| v.get("fs"))
+                .and_then(|v| v.get("readTextFile"))
+                .and_then(|v| v.as_bool())
+                == Some(false)
+        );
+        assert!(
+            payload
+                .get("clientCapabilities")
+                .and_then(|v| v.get("fs"))
+                .and_then(|v| v.get("writeTextFile"))
+                .and_then(|v| v.as_bool())
+                == Some(false)
+        );
+        assert!(
+            payload
+                .get("clientCapabilities")
+                .and_then(|v| v.get("terminal"))
+                .and_then(|v| v.as_bool())
+                == Some(false)
+        );
+    }
+
+    #[test]
+    fn legacy_initialize_payload_should_keep_existing_contract() {
+        let payload = CodexAppServerManager::build_legacy_initialize_params();
+        assert!(payload.get("clientInfo").is_some());
+        assert_eq!(
+            payload
+                .get("capabilities")
+                .and_then(|v| v.get("experimentalApi"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn parse_acp_initialize_response_should_extract_capabilities_and_auth_methods() {
+        let response = json!({
+            "protocolVersion": 1,
+            "agentCapabilities": {
+                "loadSession": true,
+                "session": {
+                    "resume": false
+                }
+            },
+            "authMethods": [
+                {
+                    "id": "oauth",
+                    "name": "OAuth",
+                    "description": "Sign in with browser"
+                },
+                {
+                    "id": "device-code"
+                }
+            ]
+        });
+        let state = CodexAppServerManager::parse_acp_initialize_result(&response, 1)
+            .expect("parse initialize response should succeed");
+        assert_eq!(state.negotiated_protocol_version, Some(1));
+        assert!(state.agent_capabilities.load_session);
+        assert_eq!(state.auth_methods.len(), 2);
+        assert_eq!(state.auth_methods[0].id, "oauth");
+        assert_eq!(state.auth_methods[1].id, "device-code");
+    }
+
+    #[test]
+    fn parse_acp_initialize_response_should_fail_for_unsupported_version() {
+        let response = json!({
+            "protocolVersion": 2
+        });
+        let err = CodexAppServerManager::parse_acp_initialize_result(&response, 1)
+            .expect_err("version mismatch should fail");
+        assert!(err.contains("mismatch"));
+    }
+
+    #[test]
+    fn parse_rpc_error_should_keep_auth_required_code() {
+        let error = json!({
+            "code": -32000,
+            "message": "Authentication required",
+            "data": {
+                "hint": "please authenticate"
+            }
+        });
+        let parsed =
+            CodexAppServerManager::parse_rpc_error(&error).expect("rpc error should parse");
+        assert_eq!(parsed.code, -32000);
+        assert_eq!(parsed.message, "Authentication required");
+        assert_eq!(
+            AppServerRequestError::Rpc(parsed).to_user_string(),
+            "App-server error (code -32000): Authentication required"
+        );
     }
 }

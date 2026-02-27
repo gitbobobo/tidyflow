@@ -1,9 +1,70 @@
-use super::codex_manager::{CodexAppServerManager, CodexNotification, CodexServerRequest};
+use super::codex_manager::{
+    AcpInitializationState, AppServerRequestError, CodexAppServerManager, CodexNotification,
+    CodexServerRequest,
+};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
+
+const AUTH_REQUIRED_CODE: i64 = -32000;
+
+#[async_trait]
+trait AcpTransport: Send + Sync {
+    async fn ensure_server_running(&self) -> Result<(), String>;
+    async fn send_request_with_error(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, AppServerRequestError>;
+    async fn send_notification(&self, method: &str, params: Option<Value>) -> Result<(), String>;
+    async fn send_response(&self, id: Value, result: Value) -> Result<(), String>;
+    fn subscribe_notifications(&self) -> broadcast::Receiver<CodexNotification>;
+    fn subscribe_requests(&self) -> broadcast::Receiver<CodexServerRequest>;
+    async fn acp_initialization_state(&self) -> Option<AcpInitializationState>;
+    async fn set_acp_authenticated(&self, authenticated: bool);
+}
+
+#[async_trait]
+impl AcpTransport for CodexAppServerManager {
+    async fn ensure_server_running(&self) -> Result<(), String> {
+        CodexAppServerManager::ensure_server_running(self).await
+    }
+
+    async fn send_request_with_error(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, AppServerRequestError> {
+        CodexAppServerManager::send_request_with_error(self, method, params).await
+    }
+
+    async fn send_notification(&self, method: &str, params: Option<Value>) -> Result<(), String> {
+        CodexAppServerManager::send_notification(self, method, params).await
+    }
+
+    async fn send_response(&self, id: Value, result: Value) -> Result<(), String> {
+        CodexAppServerManager::send_response(self, id, result).await
+    }
+
+    fn subscribe_notifications(&self) -> broadcast::Receiver<CodexNotification> {
+        CodexAppServerManager::subscribe_notifications(self)
+    }
+
+    fn subscribe_requests(&self) -> broadcast::Receiver<CodexServerRequest> {
+        CodexAppServerManager::subscribe_requests(self)
+    }
+
+    async fn acp_initialization_state(&self) -> Option<AcpInitializationState> {
+        CodexAppServerManager::acp_initialization_state(self).await
+    }
+
+    async fn set_acp_authenticated(&self, authenticated: bool) {
+        CodexAppServerManager::set_acp_authenticated(self, authenticated).await;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AcpSessionSummary {
@@ -37,16 +98,106 @@ pub struct AcpSessionMetadata {
 
 #[derive(Clone)]
 pub struct AcpClient {
-    manager: Arc<CodexAppServerManager>,
+    transport: Arc<dyn AcpTransport>,
 }
 
 impl AcpClient {
     pub fn new(manager: Arc<CodexAppServerManager>) -> Self {
-        Self { manager }
+        Self { transport: manager }
+    }
+
+    #[cfg(test)]
+    fn new_with_transport(transport: Arc<dyn AcpTransport>) -> Self {
+        Self { transport }
     }
 
     pub async fn ensure_started(&self) -> Result<(), String> {
-        self.manager.ensure_server_running().await
+        self.transport.ensure_server_running().await
+    }
+
+    pub async fn initialization_state(&self) -> Option<AcpInitializationState> {
+        self.transport.acp_initialization_state().await
+    }
+
+    pub async fn supports_load_session(&self) -> bool {
+        self.initialization_state()
+            .await
+            .map(|state| state.agent_capabilities.load_session)
+            .unwrap_or(false)
+    }
+
+    pub async fn authenticate(&self, method_id: &str) -> Result<(), String> {
+        let method_id = method_id.trim();
+        if method_id.is_empty() {
+            return Err("authenticate requires non-empty methodId".to_string());
+        }
+        self.transport.set_acp_authenticated(false).await;
+        self.transport
+            .send_request_with_error(
+                "authenticate",
+                Some(serde_json::json!({
+                    "methodId": method_id
+                })),
+            )
+            .await
+            .map_err(|e| e.to_user_string())?;
+        self.transport.set_acp_authenticated(true).await;
+        Ok(())
+    }
+
+    async fn send_request_with_auth_retry(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, String> {
+        let first = self
+            .transport
+            .send_request_with_error(method, params.clone())
+            .await;
+        match first {
+            Ok(result) => Ok(result),
+            Err(error) if Self::is_auth_required_error(&error) => {
+                self.try_authenticate_with_server_methods().await?;
+                let retry = self.transport.send_request_with_error(method, params).await;
+                match retry {
+                    Ok(result) => Ok(result),
+                    Err(retry_error) if Self::is_auth_required_error(&retry_error) => {
+                        Err("ACP 请求在认证后仍返回 auth_required，已停止重试以避免循环"
+                            .to_string())
+                    }
+                    Err(retry_error) => Err(retry_error.to_user_string()),
+                }
+            }
+            Err(error) => Err(error.to_user_string()),
+        }
+    }
+
+    async fn try_authenticate_with_server_methods(&self) -> Result<(), String> {
+        let state = self
+            .transport
+            .acp_initialization_state()
+            .await
+            .ok_or_else(|| "ACP 服务要求认证，但当前连接不是 ACP 模式".to_string())?;
+        if state.auth_methods.is_empty() {
+            return Err("ACP 服务要求认证，但 initialize 响应未提供 authMethods".to_string());
+        }
+
+        let mut failures = Vec::new();
+        for method in state.auth_methods {
+            match self.authenticate(&method.id).await {
+                Ok(()) => return Ok(()),
+                Err(err) => failures.push(format!("{}: {}", method.id, err)),
+            }
+        }
+
+        Err(format!(
+            "ACP 认证失败：所有认证方法均不可用（{}）",
+            failures.join("; ")
+        ))
+    }
+
+    fn is_auth_required_error(error: &AppServerRequestError) -> bool {
+        matches!(error, AppServerRequestError::Rpc(rpc_error) if rpc_error.code == AUTH_REQUIRED_CODE)
     }
 
     pub async fn session_new(
@@ -54,8 +205,7 @@ impl AcpClient {
         directory: &str,
     ) -> Result<(String, AcpSessionMetadata), String> {
         let result = self
-            .manager
-            .send_request(
+            .send_request_with_auth_retry(
                 "session/new",
                 Some(serde_json::json!({
                     "cwd": directory,
@@ -88,8 +238,7 @@ impl AcpClient {
         session_id: &str,
     ) -> Result<Value, String> {
         let result = self
-            .manager
-            .send_request(
+            .send_request_with_auth_retry(
                 "session/load",
                 Some(serde_json::json!({
                     "sessionId": session_id,
@@ -110,8 +259,7 @@ impl AcpClient {
             _ => serde_json::json!({}),
         };
         let result = self
-            .manager
-            .send_request("session/list", Some(params))
+            .send_request_with_auth_retry("session/list", Some(params))
             .await?;
 
         let sessions = result
@@ -146,21 +294,20 @@ impl AcpClient {
         if let Some(mode_id) = mode {
             params["mode"] = Value::String(mode_id);
         }
-        self.manager
-            .send_request("session/prompt", Some(params))
+        self.send_request_with_auth_retry("session/prompt", Some(params))
             .await
     }
 
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<CodexNotification> {
-        self.manager.subscribe_notifications()
+        self.transport.subscribe_notifications()
     }
 
     pub fn subscribe_requests(&self) -> broadcast::Receiver<CodexServerRequest> {
-        self.manager.subscribe_requests()
+        self.transport.subscribe_requests()
     }
 
     pub async fn session_cancel(&self, session_id: &str) -> Result<(), String> {
-        self.manager
+        self.transport
             .send_notification(
                 "session/cancel",
                 Some(serde_json::json!({
@@ -182,7 +329,7 @@ impl AcpClient {
                 "optionId": option_id
             }
         });
-        self.manager.send_response(request_id, result).await
+        self.transport.send_response(request_id, result).await
     }
 
     /// 拒绝权限请求
@@ -195,7 +342,7 @@ impl AcpClient {
                 "outcome": "cancelled"
             }
         });
-        self.manager.send_response(request_id, result).await
+        self.transport.send_response(request_id, result).await
     }
 
     fn parse_session_summary(value: Value) -> Option<AcpSessionSummary> {
@@ -745,8 +892,107 @@ impl AcpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::AcpClient;
-    use serde_json::json;
+    use super::{AcpClient, AcpTransport};
+    use crate::ai::codex_manager::{
+        AcpAuthMethod, AcpInitializationState, AppServerRequestError, CodexNotification,
+        CodexServerRequest, JsonRpcError,
+    };
+    use async_trait::async_trait;
+    use serde_json::{json, Value};
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use tokio::sync::{broadcast, Mutex};
+
+    struct MockTransport {
+        responses: Mutex<VecDeque<Result<Value, AppServerRequestError>>>,
+        requests: Mutex<Vec<(String, Option<Value>)>>,
+        init_state: Mutex<Option<AcpInitializationState>>,
+        notifications_tx: broadcast::Sender<CodexNotification>,
+        requests_tx: broadcast::Sender<CodexServerRequest>,
+    }
+
+    impl MockTransport {
+        fn new(
+            responses: Vec<Result<Value, AppServerRequestError>>,
+            init_state: Option<AcpInitializationState>,
+        ) -> Self {
+            let (notifications_tx, _) = broadcast::channel(16);
+            let (requests_tx, _) = broadcast::channel(16);
+            Self {
+                responses: Mutex::new(VecDeque::from(responses)),
+                requests: Mutex::new(Vec::new()),
+                init_state: Mutex::new(init_state),
+                notifications_tx,
+                requests_tx,
+            }
+        }
+
+        async fn request_methods(&self) -> Vec<String> {
+            self.requests
+                .lock()
+                .await
+                .iter()
+                .map(|(method, _)| method.clone())
+                .collect()
+        }
+
+        async fn state_snapshot(&self) -> Option<AcpInitializationState> {
+            self.init_state.lock().await.clone()
+        }
+    }
+
+    #[async_trait]
+    impl AcpTransport for MockTransport {
+        async fn ensure_server_running(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_request_with_error(
+            &self,
+            method: &str,
+            params: Option<Value>,
+        ) -> Result<Value, AppServerRequestError> {
+            self.requests
+                .lock()
+                .await
+                .push((method.to_string(), params.clone()));
+            self.responses
+                .lock()
+                .await
+                .pop_front()
+                .unwrap_or_else(|| Ok(json!({})))
+        }
+
+        async fn send_notification(
+            &self,
+            _method: &str,
+            _params: Option<Value>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_response(&self, _id: Value, _result: Value) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn subscribe_notifications(&self) -> broadcast::Receiver<CodexNotification> {
+            self.notifications_tx.subscribe()
+        }
+
+        fn subscribe_requests(&self) -> broadcast::Receiver<CodexServerRequest> {
+            self.requests_tx.subscribe()
+        }
+
+        async fn acp_initialization_state(&self) -> Option<AcpInitializationState> {
+            self.init_state.lock().await.clone()
+        }
+
+        async fn set_acp_authenticated(&self, authenticated: bool) {
+            if let Some(state) = self.init_state.lock().await.as_mut() {
+                state.authenticated = authenticated;
+            }
+        }
+    }
 
     #[test]
     fn parse_session_summary_should_accept_file_url_and_epoch_millis() {
@@ -784,5 +1030,110 @@ mod tests {
         let millis = AcpClient::parse_timestamp_millis(&json!(1_706_000_000i64))
             .expect("timestamp should parse");
         assert_eq!(millis, 1_706_000_000_000i64);
+    }
+
+    #[tokio::test]
+    async fn auth_required_should_authenticate_then_retry_original_request_once() {
+        let state = AcpInitializationState {
+            negotiated_protocol_version: Some(1),
+            auth_methods: vec![AcpAuthMethod {
+                id: "oauth".to_string(),
+                name: None,
+                description: None,
+            }],
+            ..Default::default()
+        };
+        let transport = Arc::new(MockTransport::new(
+            vec![
+                Err(AppServerRequestError::Rpc(JsonRpcError {
+                    code: -32000,
+                    message: "Authentication required".to_string(),
+                    data: None,
+                })),
+                Ok(json!({"ok": true})),
+                Ok(json!({"sessionId": "session-1"})),
+            ],
+            Some(state),
+        ));
+        let client = AcpClient::new_with_transport(transport.clone());
+
+        let (session_id, _) = client
+            .session_new("/tmp/workspace")
+            .await
+            .expect("session/new should succeed after authentication");
+        assert_eq!(session_id, "session-1");
+        assert_eq!(
+            transport.request_methods().await,
+            vec!["session/new", "authenticate", "session/new"]
+        );
+        assert!(transport
+            .state_snapshot()
+            .await
+            .map(|state| state.authenticated)
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn auth_required_after_retry_should_fail_without_infinite_loop() {
+        let state = AcpInitializationState {
+            negotiated_protocol_version: Some(1),
+            auth_methods: vec![AcpAuthMethod {
+                id: "oauth".to_string(),
+                name: None,
+                description: None,
+            }],
+            ..Default::default()
+        };
+        let transport = Arc::new(MockTransport::new(
+            vec![
+                Err(AppServerRequestError::Rpc(JsonRpcError {
+                    code: -32000,
+                    message: "Authentication required".to_string(),
+                    data: None,
+                })),
+                Ok(json!({"ok": true})),
+                Err(AppServerRequestError::Rpc(JsonRpcError {
+                    code: -32000,
+                    message: "Authentication required".to_string(),
+                    data: None,
+                })),
+            ],
+            Some(state),
+        ));
+        let client = AcpClient::new_with_transport(transport.clone());
+
+        let err = client
+            .session_new("/tmp/workspace")
+            .await
+            .expect_err("second auth_required should stop retry loop");
+        assert!(err.contains("停止重试"));
+        assert_eq!(
+            transport.request_methods().await,
+            vec!["session/new", "authenticate", "session/new"]
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_required_without_auth_methods_should_return_diagnostic_error() {
+        let state = AcpInitializationState {
+            negotiated_protocol_version: Some(1),
+            auth_methods: Vec::new(),
+            ..Default::default()
+        };
+        let transport = Arc::new(MockTransport::new(
+            vec![Err(AppServerRequestError::Rpc(JsonRpcError {
+                code: -32000,
+                message: "Authentication required".to_string(),
+                data: None,
+            }))],
+            Some(state),
+        ));
+        let client = AcpClient::new_with_transport(transport);
+
+        let err = client
+            .session_new("/tmp/workspace")
+            .await
+            .expect_err("missing auth methods should fail");
+        assert!(err.contains("authMethods"));
     }
 }
