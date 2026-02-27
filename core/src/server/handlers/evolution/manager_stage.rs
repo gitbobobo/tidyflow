@@ -12,7 +12,7 @@ use crate::server::handlers::ai::{
     ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
     normalize_part_for_wire, resolve_directory,
 };
-use crate::server::handlers::git::branch_commit::run_ai_commit_internal;
+use crate::server::handlers::git::branch_commit::spawn_git_ai_commit_task;
 use crate::server::protocol::ServerMessage;
 
 use super::profile::profile_for_stage;
@@ -581,27 +581,42 @@ impl EvolutionManager {
     }
 
     async fn run_auto_commit_once(
+        project: String,
+        workspace: String,
         workspace_root: std::path::PathBuf,
         ai_agent: String,
+        ctx: &HandlerContext,
     ) -> Result<(), String> {
-        let result = timeout(
-            Duration::from_secs(600),
-            tokio::task::spawn_blocking(move || {
-                run_ai_commit_internal(&workspace_root, &ai_agent, None)
-            }),
+        let rx = spawn_git_ai_commit_task(
+            project,
+            workspace,
+            workspace_root,
+            Some(ai_agent),
+            "AI 提交",
+            ctx,
         )
         .await;
-
-        match result {
-            Ok(Ok(Ok(_output))) => Ok(()),
-            Ok(Ok(Err(err))) => Err(err),
-            Ok(Err(err)) => Err(format!("AI commit task failed: {}", err)),
-            Err(_) => Err("AI agent timed out after 600 seconds".to_string()),
+        match rx.await {
+            Ok(crate::server::protocol::ServerMessage::GitAICommitResult {
+                success,
+                message,
+                ..
+            }) => {
+                if success {
+                    Ok(())
+                } else {
+                    Err(message)
+                }
+            }
+            Ok(_) => Err("unexpected message type from AI commit task".to_string()),
+            Err(_) => Err("AI commit task channel closed unexpectedly".to_string()),
         }
     }
 
     async fn run_auto_commit_after_round(
         &self,
+        project: &str,
+        workspace: &str,
         workspace_root: &str,
         ctx: &HandlerContext,
     ) -> Result<(), String> {
@@ -618,9 +633,12 @@ impl EvolutionManager {
             AUTO_COMMIT_MAX_ATTEMPTS,
             Duration::from_secs(AUTO_COMMIT_RETRY_DELAY_SECS),
             move |_attempt| {
+                let project = project.to_string();
+                let workspace = workspace.to_string();
                 let root = root.clone();
                 let ai_agent = ai_agent.clone();
-                async move { Self::run_auto_commit_once(root, ai_agent).await }
+                let ctx = ctx.clone();
+                async move { Self::run_auto_commit_once(project, workspace, root, ai_agent, &ctx).await }
             },
         )
         .await
@@ -1001,9 +1019,11 @@ impl EvolutionManager {
             }
         }
         let mut emit_judge: Option<(String, String, String, String)> = None;
-        let mut stage_changed: Option<(String, String, String, String)> = None;
+        let mut stage_changed: Option<(String, String, String, String, String)> = None;
+        let mut post_auto_commit_stage_changed: Option<(String, String, String, String, String)> =
+            None;
         let mut auto_next_cycle = false;
-        let mut auto_commit_workspace_root: Option<String> = None;
+        let mut auto_commit_ctx: Option<(String, String, String, String, bool)> = None;
         let mut auto_loop_gate: Option<(String, String, String, String)> = None;
 
         {
@@ -1068,20 +1088,26 @@ impl EvolutionManager {
                         };
                     }
                     if should_auto_commit_after_report(&entry.status) {
-                        auto_commit_workspace_root = Some(entry.workspace_root.clone());
-                    }
-                    let should_start_next_round = should_start_next_round(
-                        &entry.status,
-                        entry.global_loop_round,
-                        entry.loop_round_limit,
-                    );
-                    if should_start_next_round {
-                        auto_loop_gate = Some((
+                        let should_start_next_round = should_start_next_round(
+                            &entry.status,
+                            entry.global_loop_round,
+                            entry.loop_round_limit,
+                        );
+                        auto_commit_ctx = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
                             entry.workspace_root.clone(),
                             entry.cycle_id.clone(),
+                            should_start_next_round,
                         ));
+                        if should_start_next_round {
+                            auto_loop_gate = Some((
+                                entry.project.clone(),
+                                entry.workspace.clone(),
+                                entry.workspace_root.clone(),
+                                entry.cycle_id.clone(),
+                            ));
+                        }
                     }
                 }
                 _ => {}
@@ -1093,6 +1119,7 @@ impl EvolutionManager {
                     entry.project.clone(),
                     entry.workspace.clone(),
                     entry.cycle_id.clone(),
+                    previous,
                     next_stage,
                 ));
             }
@@ -1130,8 +1157,57 @@ impl EvolutionManager {
             }
         }
 
-        if let Some(workspace_root) = auto_commit_workspace_root {
-            if let Err(err) = self.run_auto_commit_after_round(&workspace_root, ctx).await {
+        if let Some((project, workspace, workspace_root, cycle_id, should_start_next_round)) =
+            auto_commit_ctx
+        {
+            {
+                let mut state = self.state.lock().await;
+                let Some(entry) = state.workspaces.get_mut(key) else {
+                    return false;
+                };
+                entry.current_stage = "auto_commit".to_string();
+                entry
+                    .stage_statuses
+                    .insert("auto_commit".to_string(), "running".to_string());
+            }
+            self.persist_cycle_file(key).await.ok();
+            self.broadcast(
+                ctx,
+                ServerMessage::EvoStageChanged {
+                    event_id: Uuid::new_v4().to_string(),
+                    event_seq: self.next_seq(key).await,
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    cycle_id: cycle_id.clone(),
+                    ts: Utc::now().to_rfc3339(),
+                    source: "orchestrator".to_string(),
+                    from_stage: "report".to_string(),
+                    to_stage: "auto_commit".to_string(),
+                    verify_iteration: self
+                        .state
+                        .lock()
+                        .await
+                        .workspaces
+                        .get(key)
+                        .map(|v| v.verify_iteration)
+                        .unwrap_or(0),
+                },
+            )
+            .await;
+            self.broadcast_cycle_update(key, ctx, "orchestrator").await;
+
+            if let Err(err) = self
+                .run_auto_commit_after_round(&project, &workspace, &workspace_root, ctx)
+                .await
+            {
+                {
+                    let mut state = self.state.lock().await;
+                    if let Some(entry) = state.workspaces.get_mut(key) {
+                        entry
+                            .stage_statuses
+                            .insert("auto_commit".to_string(), "failed".to_string());
+                    }
+                }
                 self.mark_failed_with_code(
                     key,
                     "evo_auto_commit_failed",
@@ -1147,30 +1223,45 @@ impl EvolutionManager {
                 let Some(entry) = state.workspaces.get_mut(key) else {
                     return false;
                 };
-                entry.global_loop_round += 1;
-                entry.verify_iteration = 0;
-                entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
-                entry.created_at = Utc::now().to_rfc3339();
-                entry.current_stage = "direction".to_string();
-                entry.status = "queued".to_string();
-                entry.last_judge_result = None;
-                entry.terminal_reason_code = None;
-                entry.llm_defined_acceptance_criteria.clear();
-                entry.stage_sessions.clear();
-                entry.stage_session_history.clear();
-                entry.stage_statuses.clear();
-                for s in STAGES {
-                    entry
-                        .stage_statuses
-                        .insert(s.to_string(), "pending".to_string());
+                entry
+                    .stage_statuses
+                    .insert("auto_commit".to_string(), "done".to_string());
+                if should_start_next_round {
+                    entry.global_loop_round += 1;
+                    entry.verify_iteration = 0;
+                    entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
+                    entry.created_at = Utc::now().to_rfc3339();
+                    entry.current_stage = "direction".to_string();
+                    entry.status = "queued".to_string();
+                    entry.last_judge_result = None;
+                    entry.terminal_reason_code = None;
+                    entry.llm_defined_acceptance_criteria.clear();
+                    entry.stage_sessions.clear();
+                    entry.stage_session_history.clear();
+                    entry.stage_statuses.clear();
+                    for s in STAGES {
+                        entry
+                            .stage_statuses
+                            .insert(s.to_string(), "pending".to_string());
+                    }
+                    auto_next_cycle = true;
+                    post_auto_commit_stage_changed = Some((
+                        entry.project.clone(),
+                        entry.workspace.clone(),
+                        entry.cycle_id.clone(),
+                        "auto_commit".to_string(),
+                        entry.current_stage.clone(),
+                    ));
+                } else {
+                    entry.current_stage = "report".to_string();
+                    post_auto_commit_stage_changed = Some((
+                        entry.project.clone(),
+                        entry.workspace.clone(),
+                        entry.cycle_id.clone(),
+                        "auto_commit".to_string(),
+                        "report".to_string(),
+                    ));
                 }
-                auto_next_cycle = true;
-                stage_changed = Some((
-                    entry.project.clone(),
-                    entry.workspace.clone(),
-                    entry.cycle_id.clone(),
-                    entry.current_stage.clone(),
-                ));
             }
         }
 
@@ -1201,7 +1292,7 @@ impl EvolutionManager {
             .await;
         }
 
-        if let Some((project, workspace, cycle_id, to_stage)) = stage_changed {
+        if let Some((project, workspace, cycle_id, from_stage, to_stage)) = stage_changed {
             self.broadcast(
                 ctx,
                 ServerMessage::EvoStageChanged {
@@ -1212,7 +1303,35 @@ impl EvolutionManager {
                     cycle_id,
                     ts: Utc::now().to_rfc3339(),
                     source: "orchestrator".to_string(),
-                    from_stage: stage.to_string(),
+                    from_stage,
+                    to_stage,
+                    verify_iteration: self
+                        .state
+                        .lock()
+                        .await
+                        .workspaces
+                        .get(key)
+                        .map(|v| v.verify_iteration)
+                        .unwrap_or(0),
+                },
+            )
+            .await;
+        }
+
+        if let Some((project, workspace, cycle_id, from_stage, to_stage)) =
+            post_auto_commit_stage_changed
+        {
+            self.broadcast(
+                ctx,
+                ServerMessage::EvoStageChanged {
+                    event_id: Uuid::new_v4().to_string(),
+                    event_seq: self.next_seq(key).await,
+                    project,
+                    workspace,
+                    cycle_id,
+                    ts: Utc::now().to_rfc3339(),
+                    source: "orchestrator".to_string(),
+                    from_stage,
                     to_stage,
                     verify_iteration: self
                         .state
@@ -1459,6 +1578,14 @@ mod tests {
         assert!(
             !should_start_next_round("failed_exhausted", 1, 3),
             "失败轮不应自动开始下一轮"
+        );
+    }
+
+    #[test]
+    fn report_completed_exceeded_round_should_not_start_next_round() {
+        assert!(
+            !should_start_next_round("completed", 4, 3),
+            "已超过上限时不应继续下一轮"
         );
     }
 

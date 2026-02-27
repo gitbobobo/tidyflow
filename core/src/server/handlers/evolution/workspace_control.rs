@@ -15,6 +15,10 @@ use super::{
     STAGES,
 };
 
+fn initial_global_loop_round() -> u32 {
+    1
+}
+
 impl EvolutionManager {
     pub(super) async fn start_workspace(
         &self,
@@ -76,12 +80,7 @@ impl EvolutionManager {
                     return Err(format!("evo_workspace_locked: {}", key));
                 }
             }
-            let prev_round = state
-                .workspaces
-                .get(&key)
-                .map(|v| v.global_loop_round)
-                .unwrap_or(0);
-            let round = prev_round + 1;
+            let round = initial_global_loop_round();
             let now_rfc3339 = Utc::now().to_rfc3339();
             state.workspaces.insert(
                 key.clone(),
@@ -347,5 +346,15 @@ impl EvolutionManager {
             },
             workspace_items,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::initial_global_loop_round;
+
+    #[test]
+    fn start_round_should_reset_to_one() {
+        assert_eq!(initial_global_loop_round(), 1);
     }
 }

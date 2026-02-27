@@ -8,6 +8,11 @@ fn is_terminal_status(status: &str) -> bool {
     matches!(status, "completed" | "failed_exhausted" | "failed_system")
 }
 
+fn is_round_limit_exceeded(global_loop_round: u32, loop_round_limit: u32) -> bool {
+    let normalized_limit = loop_round_limit.max(1);
+    global_loop_round > normalized_limit
+}
+
 impl EvolutionManager {
     pub(super) async fn spawn_worker(
         &self,
@@ -72,24 +77,52 @@ impl EvolutionManager {
                 Err(_) => return,
             };
 
-            let (project, workspace, stage, cycle_id, round) = {
+            let (project, workspace, stage, cycle_id, round, round_limit, round_exceeded) = {
                 let mut state = self.state.lock().await;
                 let Some(entry) = state.workspaces.get_mut(&key) else {
                     drop(permit);
                     return;
                 };
-                entry.status = "running".to_string();
-                if preferred_round > 0 && entry.global_loop_round < preferred_round {
-                    entry.global_loop_round = preferred_round;
+                if is_round_limit_exceeded(entry.global_loop_round, entry.loop_round_limit) {
+                    (
+                        entry.project.clone(),
+                        entry.workspace.clone(),
+                        entry.current_stage.clone(),
+                        entry.cycle_id.clone(),
+                        entry.global_loop_round,
+                        entry.loop_round_limit,
+                        true,
+                    )
+                } else {
+                    entry.status = "running".to_string();
+                    if preferred_round > 0 && entry.global_loop_round < preferred_round {
+                        entry.global_loop_round = preferred_round;
+                    }
+                    (
+                        entry.project.clone(),
+                        entry.workspace.clone(),
+                        entry.current_stage.clone(),
+                        entry.cycle_id.clone(),
+                        entry.global_loop_round,
+                        entry.loop_round_limit,
+                        false,
+                    )
                 }
-                (
-                    entry.project.clone(),
-                    entry.workspace.clone(),
-                    entry.current_stage.clone(),
-                    entry.cycle_id.clone(),
-                    entry.global_loop_round,
-                )
             };
+            if round_exceeded {
+                drop(permit);
+                self.mark_failed_with_code(
+                    &key,
+                    "evo_round_limit_exceeded",
+                    &format!(
+                        "global_loop_round exceeded loop_round_limit: round={}, limit={}, project={}, workspace={}",
+                        round, round_limit, project, workspace
+                    ),
+                    &ctx,
+                )
+                .await;
+                return;
+            }
 
             self.broadcast_scheduler(&ctx).await;
             self.broadcast_cycle_update(&key, &ctx, "orchestrator")
@@ -165,7 +198,7 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::is_terminal_status;
+    use super::{is_round_limit_exceeded, is_terminal_status};
 
     #[test]
     fn terminal_status_should_include_failed_exhausted_and_failed_system() {
@@ -174,5 +207,12 @@ mod tests {
         assert!(is_terminal_status("failed_system"));
         assert!(!is_terminal_status("running"));
         assert!(!is_terminal_status("queued"));
+    }
+
+    #[test]
+    fn round_limit_guard_should_reject_exceeded_round() {
+        assert!(!is_round_limit_exceeded(1, 1));
+        assert!(!is_round_limit_exceeded(1, 3));
+        assert!(is_round_limit_exceeded(2, 1));
     }
 }

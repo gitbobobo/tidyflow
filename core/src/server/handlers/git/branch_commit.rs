@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
+use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
 use crate::server::context::{
@@ -307,18 +308,117 @@ pub async fn handle_git_ai_commit(
         }
     };
 
-    let root = ws_ctx.root_path;
-    let ai_agent_type = ai_agent.unwrap_or_else(|| "cursor".to_string());
+    let _ = spawn_git_ai_commit_task(
+        project,
+        workspace,
+        ws_ctx.root_path,
+        ai_agent,
+        "AI 提交",
+        ctx,
+    )
+    .await;
+    Ok(true)
+}
 
-    // 通过 cmd_output_tx 异步回传结果，不阻塞 WS 主循环
-    let cmd_output_tx = ctx.cmd_output_tx.clone();
-    let task_broadcast_tx = ctx.task_broadcast_tx.clone();
-    let origin_conn_id = ctx.conn_meta.conn_id.clone();
+async fn run_git_ai_commit_once(
+    project: String,
+    workspace: String,
+    workspace_root: std::path::PathBuf,
+    ai_agent: String,
+    pid_holder: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+) -> ServerMessage {
+    let root_clone = workspace_root;
+    let agent_clone = ai_agent;
+    let pid_for_blocking = pid_holder;
+
+    let result = tokio::time::timeout(
+        AI_AGENT_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            run_ai_commit_internal(&root_clone, &agent_clone, Some(&pid_for_blocking))
+        }),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(Ok(ai_commit_result))) => {
+            info!(
+                "AI commit succeeded: project={}, workspace={}, commits={}",
+                project,
+                workspace,
+                ai_commit_result.commits.len()
+            );
+            ServerMessage::GitAICommitResult {
+                project,
+                workspace,
+                success: true,
+                message: ai_commit_result.message,
+                commits: ai_commit_result.commits,
+            }
+        }
+        Ok(Ok(Err(e))) => {
+            warn!(
+                "AI commit failed: project={}, workspace={}, error={}",
+                project, workspace, e
+            );
+            ServerMessage::GitAICommitResult {
+                project,
+                workspace,
+                success: false,
+                message: e,
+                commits: vec![],
+            }
+        }
+        Ok(Err(e)) => {
+            error!("AI commit task panicked: {}", e);
+            ServerMessage::GitAICommitResult {
+                project,
+                workspace,
+                success: false,
+                message: format!("AI commit task failed: {}", e),
+                commits: vec![],
+            }
+        }
+        Err(_) => {
+            error!(
+                "AI commit timed out after {}s: project={}, workspace={}",
+                AI_AGENT_TIMEOUT.as_secs(),
+                project,
+                workspace
+            );
+            ServerMessage::GitAICommitResult {
+                project,
+                workspace,
+                success: false,
+                message: format!(
+                    "AI agent timed out after {} seconds",
+                    AI_AGENT_TIMEOUT.as_secs()
+                ),
+                commits: vec![],
+            }
+        }
+    }
+}
+
+/// 统一的 AI 提交任务入口（用户 Git 智能提交与 Evolution 自动提交复用）。
+pub(crate) async fn spawn_git_ai_commit_task(
+    project: String,
+    workspace: String,
+    workspace_root: std::path::PathBuf,
+    ai_agent: Option<String>,
+    task_title: &str,
+    ctx: &HandlerContext,
+) -> oneshot::Receiver<ServerMessage> {
+    let ai_agent_type = ai_agent.unwrap_or_else(|| "cursor".to_string());
 
     info!(
         "AI commit started: project={}, workspace={}, agent={}",
         project, workspace, ai_agent_type
     );
+
+    let cmd_output_tx = ctx.cmd_output_tx.clone();
+    let task_broadcast_tx = ctx.task_broadcast_tx.clone();
+    let origin_conn_id = ctx.conn_meta.conn_id.clone();
+    let task_history = ctx.task_history.clone();
 
     let running_ai_tasks = ctx.running_ai_tasks.clone();
     let task_id = uuid::Uuid::new_v4().to_string();
@@ -327,95 +427,30 @@ pub async fn handle_git_ai_commit(
     let child_pid_clone = child_pid.clone();
     let task_id_clone = task_id.clone();
     let running_ai_tasks_cleanup = running_ai_tasks.clone();
-    let project_for_registry = project.clone();
-    let workspace_for_registry = workspace.clone();
-    let task_history = ctx.task_history.clone();
-    let task_id_for_history = task_id.clone();
+    let project_for_task = project.clone();
+    let workspace_for_task = workspace.clone();
+    let ai_agent_for_task = ai_agent_type.clone();
+
+    let (result_tx, result_rx) = oneshot::channel::<ServerMessage>();
 
     let join_handle = tokio::spawn(async move {
-        let root_clone = root.clone();
-        let agent_clone = ai_agent_type.clone();
-        let pid_for_blocking = child_pid_clone.clone();
-
-        // 带超时执行 AI 代理
-        let result = tokio::time::timeout(
-            AI_AGENT_TIMEOUT,
-            tokio::task::spawn_blocking(move || {
-                run_ai_commit_internal(&root_clone, &agent_clone, Some(&pid_for_blocking))
-            }),
+        let msg = run_git_ai_commit_once(
+            project_for_task,
+            workspace_for_task,
+            workspace_root,
+            ai_agent_for_task,
+            child_pid_clone,
         )
         .await;
 
-        let msg = match result {
-            Ok(Ok(Ok(ai_commit_result))) => {
-                info!(
-                    "AI commit succeeded: project={}, workspace={}, commits={}",
-                    project,
-                    workspace,
-                    ai_commit_result.commits.len()
-                );
-                ServerMessage::GitAICommitResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    success: true,
-                    message: ai_commit_result.message,
-                    commits: ai_commit_result.commits,
-                }
-            }
-            Ok(Ok(Err(e))) => {
-                warn!(
-                    "AI commit failed: project={}, workspace={}, error={}",
-                    project, workspace, e
-                );
-                ServerMessage::GitAICommitResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    success: false,
-                    message: e,
-                    commits: vec![],
-                }
-            }
-            Ok(Err(e)) => {
-                error!("AI commit task panicked: {}", e);
-                ServerMessage::GitAICommitResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    success: false,
-                    message: format!("AI commit task failed: {}", e),
-                    commits: vec![],
-                }
-            }
-            Err(_) => {
-                error!(
-                    "AI commit timed out after {}s: project={}, workspace={}",
-                    AI_AGENT_TIMEOUT.as_secs(),
-                    project,
-                    workspace
-                );
-                ServerMessage::GitAICommitResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    success: false,
-                    message: format!(
-                        "AI agent timed out after {} seconds",
-                        AI_AGENT_TIMEOUT.as_secs()
-                    ),
-                    commits: vec![],
-                }
-            }
-        };
-
-        // 发送给发起者
         if let Err(e) = cmd_output_tx.send(msg.clone()).await {
             error!("Failed to send AI commit result to WS: {}", e);
         }
-        // 广播给其他连接
         let _ = crate::server::context::send_task_broadcast_message(
             &task_broadcast_tx,
             &origin_conn_id,
             msg.clone(),
         );
-        // 更新任务历史
         if let ServerMessage::GitAICommitResult {
             success,
             ref message,
@@ -425,33 +460,31 @@ pub async fn handle_git_ai_commit(
             let status = if success { "completed" } else { "failed" };
             update_task_history(&task_history, &task_id_clone, status, Some(message.clone())).await;
         }
-        // 从注册表移除
+        let _ = result_tx.send(msg.clone());
         running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
     });
 
-    // 注册到 AI 任务注册表
     running_ai_tasks.lock().await.insert(
         task_id.clone(),
         RunningAITaskEntry {
             task_id: task_id.clone(),
-            project: project_for_registry.clone(),
-            workspace: workspace_for_registry.clone(),
+            project: project.clone(),
+            workspace: workspace.clone(),
             operation_type: "ai_commit".to_string(),
             child_pid,
             join_handle,
         },
     );
 
-    // 写入任务历史
     push_task_history(
         &ctx.task_history,
         TaskHistoryEntry {
-            task_id: task_id_for_history,
-            project: project_for_registry,
-            workspace: workspace_for_registry,
+            task_id,
+            project,
+            workspace,
             task_type: "ai_commit".to_string(),
             command_id: None,
-            title: "AI 提交".to_string(),
+            title: task_title.to_string(),
             status: "running".to_string(),
             message: None,
             started_at: chrono::Utc::now().timestamp_millis(),
@@ -460,7 +493,7 @@ pub async fn handle_git_ai_commit(
     )
     .await;
 
-    Ok(true)
+    result_rx
 }
 
 /// 内部函数：执行 AI 智能提交逻辑（委托式：AI 代理执行 git 操作，我们解析结果）

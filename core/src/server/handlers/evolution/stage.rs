@@ -8,11 +8,22 @@ use crate::server::protocol::EvolutionAgentInfo;
 
 use super::STAGES;
 
+fn runtime_extra_stages(stage_statuses: &HashMap<String, String>) -> Vec<String> {
+    let mut stages: Vec<String> = stage_statuses
+        .keys()
+        .filter(|stage| !STAGES.contains(&stage.as_str()))
+        .cloned()
+        .collect();
+    stages.sort();
+    stages
+}
+
 pub(super) fn build_agents(
     stage_statuses: &HashMap<String, String>,
     stage_tool_call_counts: &HashMap<String, u32>,
 ) -> Vec<EvolutionAgentInfo> {
-    let mut agents = Vec::with_capacity(STAGES.len());
+    let extra_stages = runtime_extra_stages(stage_statuses);
+    let mut agents = Vec::with_capacity(STAGES.len() + extra_stages.len());
 
     for stage in STAGES {
         let status = stage_statuses
@@ -29,19 +40,37 @@ pub(super) fn build_agents(
             latest_message: None,
         });
     }
+
+    for stage in extra_stages {
+        let status = stage_statuses
+            .get(&stage)
+            .cloned()
+            .unwrap_or_else(|| "pending".to_string());
+        let tool_call_count = *stage_tool_call_counts.get(&stage).unwrap_or(&0);
+        agents.push(EvolutionAgentInfo {
+            stage: stage.clone(),
+            agent: agent_name(&stage).to_string(),
+            status,
+            tool_call_count,
+            latest_message: None,
+        });
+    }
+
     agents
 }
 
 pub(super) fn active_agents(stage_statuses: &HashMap<String, String>) -> Vec<String> {
-    STAGES
-        .iter()
+    let mut stages: Vec<String> = STAGES.iter().map(|stage| stage.to_string()).collect();
+    stages.extend(runtime_extra_stages(stage_statuses));
+    stages
+        .into_iter()
         .filter_map(|stage| {
             let status = stage_statuses
-                .get(*stage)
+                .get(&stage)
                 .map(|v| v.as_str())
                 .unwrap_or("pending");
             if status == "running" {
-                Some(agent_name(stage).to_string())
+                Some(agent_name(&stage).to_string())
             } else {
                 None
             }
@@ -57,6 +86,7 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
         "verify" => "VerifyAgent",
         "judge" => "JudgeAgent",
         "report" => "ReportAgent",
+        "auto_commit" => "AutoCommitAgent",
         _ => "UnknownAgent",
     }
 }
@@ -119,5 +149,30 @@ mod tests {
         assert_eq!(next_stage("unknown"), None);
         assert_eq!(next_stage("bootstrap"), None);
         assert_eq!(next_stage(""), None);
+    }
+
+    #[test]
+    fn build_agents_should_include_runtime_extra_stage() {
+        let mut statuses: HashMap<String, String> = HashMap::new();
+        statuses.insert("auto_commit".to_string(), "running".to_string());
+        let counts: HashMap<String, u32> = HashMap::new();
+
+        let agents = build_agents(&statuses, &counts);
+        assert!(
+            agents.iter().any(|agent| agent.stage == "auto_commit"),
+            "运行时额外阶段应出现在 agents 列表中"
+        );
+    }
+
+    #[test]
+    fn active_agents_should_include_runtime_extra_stage() {
+        let mut statuses: HashMap<String, String> = HashMap::new();
+        statuses.insert("auto_commit".to_string(), "running".to_string());
+
+        let active = active_agents(&statuses);
+        assert!(
+            active.contains(&"AutoCommitAgent".to_string()),
+            "运行中的 auto_commit 应出现在 active_agents 中"
+        );
     }
 }
