@@ -952,3 +952,21 @@ pub async fn handle_cancel_ai_task(
 
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::build_ai_commit_prompt;
+
+    #[test]
+    fn ai_commit_prompt_should_require_git_add_and_git_commit() {
+        let prompt = build_ai_commit_prompt();
+        assert!(
+            prompt.contains("git add"),
+            "AI 提交提示词必须包含 git add 约束"
+        );
+        assert!(
+            prompt.contains("git commit"),
+            "AI 提交提示词必须包含 git commit 约束"
+        );
+    }
+}
