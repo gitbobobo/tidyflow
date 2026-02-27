@@ -1,3 +1,4 @@
+use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::session_status::AiSessionStatus;
 use super::{
     AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
@@ -23,6 +24,7 @@ struct ClaudeSessionRecord {
     claude_session_id: Option<String>,
     selection_hint: AiSessionSelectionHint,
     messages: Vec<AiMessage>,
+    context_usage: Option<AiSessionContextUsage>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +304,7 @@ impl AiAgent for ClaudeCodeAgent {
             claude_session_id: None,
             selection_hint: AiSessionSelectionHint::default(),
             messages: Vec::new(),
+            context_usage: None,
         };
         self.sessions.lock().await.insert(id.clone(), record);
         Ok(AiSession {
@@ -407,6 +410,7 @@ impl AiAgent for ClaudeCodeAgent {
             let mut parsed_claude_session_id = resume_session_id.clone();
             let mut tool_states: HashMap<String, ClaudeToolState> = HashMap::new();
             let mut terminated_with_error = false;
+            let mut last_usage_json: Option<Value> = None;
 
             let mut command = Command::new("claude");
             let mut args = vec![
@@ -690,6 +694,10 @@ impl AiAgent for ClaudeCodeAgent {
                                             .unwrap_or("")
                                             .to_lowercase();
                                         if event_type == "result" {
+                                            // 提取 usage 信息用于 context usage 上报
+                                            if let Some(usage) = value.get("usage") {
+                                                last_usage_json = Some(usage.clone());
+                                            }
                                             if let Some(snapshot) = value.get("result").and_then(|v| v.as_str()) {
                                                 if let Some(delta) =
                                                     ClaudeCodeAgent::emit_snapshot_delta(&mut assistant_text, snapshot)
@@ -811,6 +819,14 @@ impl AiAgent for ClaudeCodeAgent {
                     record.claude_session_id = Some(real_session_id);
                 }
                 record.selection_hint = history_hint.clone();
+                // 更新 context usage
+                if let Some(usage_json) = last_usage_json {
+                    if let Some(percent) = extract_context_remaining_percent(&usage_json) {
+                        record.context_usage = Some(AiSessionContextUsage {
+                            context_remaining_percent: Some(percent),
+                        });
+                    }
+                }
                 if !assistant_parts.is_empty() {
                     record.messages.push(AiMessage {
                         id: assistant_message_id,
@@ -940,6 +956,19 @@ impl AiAgent for ClaudeCodeAgent {
         }
     }
 
+    async fn get_session_context_usage(
+        &self,
+        _directory: &str,
+        session_id: &str,
+    ) -> Result<Option<AiSessionContextUsage>, String> {
+        Ok(self
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .and_then(|r| r.context_usage.clone()))
+    }
+
     async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {
         Ok(vec![AiProviderInfo {
             id: "anthropic".to_string(),
@@ -952,14 +981,26 @@ impl AiAgent for ClaudeCodeAgent {
                     supports_image_input: true,
                 },
                 AiModelInfo {
+                    id: "claude-sonnet-4".to_string(),
+                    name: "Claude Sonnet 4".to_string(),
+                    provider_id: "anthropic".to_string(),
+                    supports_image_input: true,
+                },
+                AiModelInfo {
                     id: "claude-sonnet-4-5".to_string(),
                     name: "Claude Sonnet 4.5".to_string(),
                     provider_id: "anthropic".to_string(),
                     supports_image_input: true,
                 },
                 AiModelInfo {
-                    id: "claude-opus-4-1".to_string(),
-                    name: "Claude Opus 4.1".to_string(),
+                    id: "claude-opus-4".to_string(),
+                    name: "Claude Opus 4".to_string(),
+                    provider_id: "anthropic".to_string(),
+                    supports_image_input: true,
+                },
+                AiModelInfo {
+                    id: "claude-haiku-3-5".to_string(),
+                    name: "Claude Haiku 3.5".to_string(),
                     provider_id: "anthropic".to_string(),
                     supports_image_input: true,
                 },

@@ -8,15 +8,15 @@ use tracing::{info, trace, warn};
 use super::SharedAIState;
 use crate::ai::session_status::AiSessionStatus;
 use crate::ai::{
-    AiAgent, AiSessionSelectionHint, CodexAppServerAgent, CodexAppServerManager, CopilotAcpAgent,
-    KimiAcpAgent, OpenCodeAgent, OpenCodeManager,
+    AiAgent, AiSessionSelectionHint, ClaudeCodeAgent, CodexAppServerAgent, CodexAppServerManager,
+    CopilotAcpAgent, KimiAcpAgent, OpenCodeAgent, OpenCodeManager,
 };
 use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::ServerMessage;
 
 pub(crate) const IDLE_DISPOSE_TTL_MS: i64 = 15 * 60 * 1000;
 pub(crate) const MAINTENANCE_INTERVAL_SECS: u64 = 60;
-pub(crate) const PRELOAD_AI_TOOLS: [&str; 4] = ["opencode", "codex", "copilot", "kimi"];
+pub(crate) const PRELOAD_AI_TOOLS: [&str; 5] = ["opencode", "codex", "copilot", "kimi", "claude_code"];
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
@@ -158,6 +158,7 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             );
             Ok(Arc::new(KimiAcpAgent::new_kimi(Arc::new(manager))))
         }
+        "claude_code" => Ok(Arc::new(ClaudeCodeAgent::new())),
         other => Err(format!("Unsupported AI tool: {}", other)),
     }
 }
@@ -165,8 +166,9 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
 pub(crate) fn normalize_ai_tool(tool: &str) -> Result<String, String> {
     let normalized = tool.trim().to_lowercase();
     match normalized.as_str() {
-        "opencode" | "codex" | "copilot" | "kimi" => Ok(normalized),
+        "opencode" | "codex" | "copilot" | "kimi" | "claude_code" => Ok(normalized),
         "kimi-code" => Ok("kimi".to_string()),
+        "claude-code" | "claudecode" => Ok("claude_code".to_string()),
         _ => Err(format!("Unsupported AI tool: {}", tool)),
     }
 }
