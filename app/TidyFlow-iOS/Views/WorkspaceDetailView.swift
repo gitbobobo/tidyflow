@@ -658,7 +658,7 @@ struct MobileEvidenceView: View {
                         systemImage: selectedTab == .screenshot ? "photo" : "doc.text"
                     )
                 }
-            } else if let snapshot {
+            } else if snapshot != nil {
                 // 按设备类型分组展示
                 ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
                     deviceSection(deviceType: deviceType, items: items(for: deviceType))
@@ -724,7 +724,6 @@ struct MobileEvidenceView: View {
     private func screenshotThumbnail(item: EvolutionEvidenceItemInfoV2) -> some View {
         Button {
             selectedScreenshotID = item.itemID
-            loadItem(item)
             showingDetailSheet = true
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -757,7 +756,6 @@ struct MobileEvidenceView: View {
     private func logRow(item: EvolutionEvidenceItemInfoV2) -> some View {
         Button {
             selectedLogID = item.itemID
-            loadItem(item)
             showingDetailSheet = true
         } label: {
             HStack(spacing: 12) {
@@ -1007,6 +1005,8 @@ struct MobileEvidenceView: View {
         if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
             appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
                 DispatchQueue.main.async {
+                    let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
+                    guard currentID == item.itemID else { return }
                     itemLoading = false
                     if let payload {
                         itemByteCount = payload.content.count
@@ -1047,10 +1047,10 @@ struct MobileEvidenceView: View {
             limit: 131_072
         ) { payload, errorMessage in
             DispatchQueue.main.async {
-                itemLoading = false
-                itemPaging = false
                 let currentID = self.selectedTab == .screenshot ? self.selectedScreenshotID : self.selectedLogID
                 guard currentID == item.itemID else { return }
+                itemLoading = false
+                itemPaging = false
                 if let payload {
                     itemByteCount = Int(payload.totalSizeBytes)
                     let text = String(data: Data(payload.content), encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)

@@ -905,7 +905,6 @@ struct EvidenceTabView: View {
     private func screenshotThumbnail(item: EvolutionEvidenceItemInfoV2) -> some View {
         Button {
             selectedScreenshotID = item.itemID
-            loadItem(item)
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 // 缩略图区域
@@ -962,7 +961,6 @@ struct EvidenceTabView: View {
     private func logRow(item: EvolutionEvidenceItemInfoV2) -> some View {
         Button {
             selectedLogID = item.itemID
-            loadItem(item)
         } label: {
             HStack(spacing: 12) {
                 // 序号
@@ -1219,7 +1217,6 @@ struct EvidenceTabView: View {
                 selectedLogID = first.itemID
             }
             clearItemPreview()
-            loadItem(first)
         }
     }
 
@@ -1278,6 +1275,8 @@ struct EvidenceTabView: View {
         if item.mimeType.hasPrefix("image/") || item.evidenceType == "screenshot" {
             appState.readEvolutionEvidenceItem(project: project, workspace: workspace, itemID: item.itemID) { payload, errorMessage in
                 DispatchQueue.main.async {
+                    let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
+                    guard currentID == item.itemID else { return }
                     itemLoading = false
                     if let payload {
                         let data = Data(payload.content)
@@ -1320,10 +1319,10 @@ struct EvidenceTabView: View {
             limit: 131_072
         ) { payload, errorMessage in
             DispatchQueue.main.async {
-                itemLoading = false
-                itemPaging = false
                 let currentID = self.selectedTab == .screenshot ? self.selectedScreenshotID : self.selectedLogID
                 guard currentID == item.itemID else { return }
+                itemLoading = false
+                itemPaging = false
                 if let payload {
                     itemByteCount = Int(payload.totalSizeBytes)
                     let text = String(data: Data(payload.content), encoding: .utf8) ?? String(decoding: payload.content, as: UTF8.self)
