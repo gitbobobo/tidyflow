@@ -92,6 +92,7 @@ struct AIAgentSection: View {
             evolutionToolRow(profile: profile)
             evolutionModeRow(profile: profile)
             evolutionModelRow(profile: profile)
+            evolutionThoughtLevelRow(profile: profile)
         } header: {
             Text(stageDisplayName(profile.wrappedValue.stage))
         } footer: {
@@ -110,6 +111,7 @@ struct AIAgentSection: View {
                     profile.wrappedValue.mode = ""
                     profile.wrappedValue.providerID = ""
                     profile.wrappedValue.modelID = ""
+                    profile.wrappedValue.configOptions = [:]
                     persistEvolutionProfiles()
                 }
             )) {
@@ -195,6 +197,39 @@ struct AIAgentSection: View {
         }
     }
 
+    private func evolutionThoughtLevelRow(profile: Binding<EvolutionEditableProfile>) -> some View {
+        let options = thoughtLevelOptions(for: profile.wrappedValue.aiTool)
+        let selected = selectedThoughtLevel(for: profile.wrappedValue)
+
+        return LabeledContent("思考强度") {
+            Menu {
+                Button("默认") {
+                    if let optionID = thoughtLevelOptionID(for: profile.wrappedValue.aiTool) {
+                        profile.wrappedValue.configOptions.removeValue(forKey: optionID)
+                        persistEvolutionProfiles()
+                    }
+                }
+                if options.isEmpty {
+                    Text("未提供 thought_level 选项")
+                } else {
+                    ForEach(options, id: \.self) { option in
+                        Button(option) {
+                            if let optionID = thoughtLevelOptionID(for: profile.wrappedValue.aiTool) {
+                                profile.wrappedValue.configOptions[optionID] = option
+                                persistEvolutionProfiles()
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(selected ?? "默认")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
     private func stageDisplayName(_ stage: String) -> String {
         switch stage.lowercased() {
         case "direction": return "Direction"
@@ -234,6 +269,31 @@ struct AIAgentSection: View {
             }
         }
         return profile.modelID
+    }
+
+    private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
+        appState.aiSessionConfigOptions(for: tool).first(where: {
+            let category = ($0.category ?? $0.optionID).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return category == "thought_level"
+        })?.optionID
+    }
+
+    private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
+        appState.thoughtLevelOptions(for: tool)
+    }
+
+    private func selectedThoughtLevel(for profile: EvolutionEditableProfile) -> String? {
+        guard let optionID = thoughtLevelOptionID(for: profile.aiTool) else { return nil }
+        let raw = profile.configOptions[optionID]
+        if let text = raw as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let number = raw as? NSNumber {
+            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
     }
 
     private func persistEvolutionProfiles() {

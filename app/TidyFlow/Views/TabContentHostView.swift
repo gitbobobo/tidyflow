@@ -1506,6 +1506,37 @@ struct EvolutionEditableProfile: Identifiable, Equatable {
     var mode: String
     var providerID: String
     var modelID: String
+    var configOptions: [String: Any]
+
+    init(
+        id: String,
+        stage: String,
+        aiTool: AIChatTool,
+        mode: String,
+        providerID: String,
+        modelID: String,
+        configOptions: [String: Any] = [:]
+    ) {
+        self.id = id
+        self.stage = stage
+        self.aiTool = aiTool
+        self.mode = mode
+        self.providerID = providerID
+        self.modelID = modelID
+        self.configOptions = configOptions
+    }
+
+    static func == (lhs: EvolutionEditableProfile, rhs: EvolutionEditableProfile) -> Bool {
+        guard lhs.id == rhs.id,
+              lhs.stage == rhs.stage,
+              lhs.aiTool == rhs.aiTool,
+              lhs.mode == rhs.mode,
+              lhs.providerID == rhs.providerID,
+              lhs.modelID == rhs.modelID else {
+            return false
+        }
+        return NSDictionary(dictionary: lhs.configOptions).isEqual(NSDictionary(dictionary: rhs.configOptions))
+    }
 }
 
 struct EvolutionTabView: View {
@@ -2116,7 +2147,8 @@ struct EvolutionTabView: View {
                     stage: item.stage,
                     aiTool: item.aiTool,
                     mode: item.mode.isEmpty ? nil : item.mode,
-                    model: model
+                    model: model,
+                    configOptions: item.configOptions
                 )
             }
             return defaults.isEmpty ? AppState.defaultEvolutionProfiles() : defaults
@@ -2479,7 +2511,8 @@ struct EvolutionTabView: View {
                 stage: item.stage,
                 aiTool: item.aiTool,
                 mode: item.mode.isEmpty ? nil : item.mode,
-                model: model
+                model: model,
+                configOptions: item.configOptions
             )
         }
         appState.startEvolution(

@@ -461,6 +461,8 @@ struct AITabView: View {
             contextRemainingPercent: contextRemainingPercent,
             agents: appState.aiAgents,
             selectedAgent: $appState.aiSelectedAgent,
+            thoughtLevelOptions: appState.thoughtLevelOptions(for: appState.aiChatTool),
+            selectedThoughtLevel: $appState.aiSelectedThoughtLevel,
             isLoadingModels: appState.isAILoadingModels,
             isLoadingAgents: appState.isAILoadingAgents,
             autocomplete: autocomplete,
@@ -655,6 +657,12 @@ struct AITabView: View {
         appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
         appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
         appState.wsClient.requestAISlashCommands(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
+        appState.wsClient.requestAISessionConfigOptions(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: aiTool,
+            sessionId: appState.aiStore(for: aiTool).currentSessionId
+        )
     }
 
     private func loadSession(_ session: AISessionInfo) {
@@ -691,6 +699,12 @@ struct AITabView: View {
                 aiTool: session.aiTool,
                 sessionId: session.id
             )
+            appState.wsClient.requestAISessionConfigOptions(
+                projectName: session.projectName,
+                workspaceName: session.workspaceName,
+                aiTool: session.aiTool,
+                sessionId: session.id
+            )
             appState.wsClient.requestAISessionSubscribe(
                 project: session.projectName,
                 workspace: session.workspaceName,
@@ -706,6 +720,12 @@ struct AITabView: View {
         }
 
         appState.wsClient.requestAISessionStatus(
+            projectName: session.projectName,
+            workspaceName: session.workspaceName,
+            aiTool: session.aiTool,
+            sessionId: session.id
+        )
+        appState.wsClient.requestAISessionConfigOptions(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
             aiTool: session.aiTool,
@@ -828,6 +848,12 @@ struct AITabView: View {
             sessionId: sessionId,
             limit: 200
         )
+        appState.wsClient.requestAISessionConfigOptions(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: targetTool,
+            sessionId: sessionId
+        )
     }
 
     private func sendPendingRequest(
@@ -839,6 +865,7 @@ struct AITabView: View {
     ) {
         switch kind {
         case let .message(text, imageParts, model, agent, fileRefs):
+            let configOverrides = appState.aiConfigOverrides(for: aiTool)
             appState.wsClient.requestAIChatSend(
                 projectName: projectName,
                 workspaceName: workspaceName,
@@ -848,9 +875,11 @@ struct AITabView: View {
                 fileRefs: fileRefs,
                 imageParts: imageParts,
                 model: model,
-                agent: agent
+                agent: agent,
+                configOverrides: configOverrides
             )
         case let .command(command, arguments, imageParts, model, agent, fileRefs):
+            let configOverrides = appState.aiConfigOverrides(for: aiTool)
             appState.wsClient.requestAIChatCommand(
                 projectName: projectName,
                 workspaceName: workspaceName,
@@ -861,7 +890,8 @@ struct AITabView: View {
                 fileRefs: fileRefs,
                 imageParts: imageParts,
                 model: model,
-                agent: agent
+                agent: agent,
+                configOverrides: configOverrides
             )
         }
     }
@@ -893,10 +923,12 @@ struct AITabView: View {
         model: [String: String]?,
         agent: String?
     ) -> AISessionSelectionHint {
-        AISessionSelectionHint(
+        let configOptions = appState.aiConfigOverrides(for: appState.aiChatTool)
+        return AISessionSelectionHint(
             agent: agent,
             modelProviderID: model?["provider_id"],
-            modelID: model?["model_id"]
+            modelID: model?["model_id"],
+            configOptions: configOptions
         )
     }
 
@@ -982,6 +1014,7 @@ struct AITabView: View {
         }
         let agentName = appState.aiSelectedAgent
         let aiTool = appState.aiChatTool
+        let configOverrides = appState.aiConfigOverrides(for: aiTool)
 
         // 历史 question 回答以普通消息发送，保持与手动输入一致的流式状态管理。
         aiChatStore.beginAwaitingUserEcho()
@@ -997,7 +1030,8 @@ struct AITabView: View {
                 fileRefs: nil,
                 imageParts: nil,
                 model: model,
-                agent: agentName
+                agent: agentName,
+                configOverrides: configOverrides
             )
             return
         }
@@ -1115,6 +1149,7 @@ struct AITabView: View {
         // Agent 选择
         let agentName = appState.aiSelectedAgent
         let aiTool = appState.aiChatTool
+        let configOverrides = appState.aiConfigOverrides(for: aiTool)
 
         autocomplete.reset()
         if slashCommand == nil {
@@ -1143,7 +1178,8 @@ struct AITabView: View {
                     fileRefs: fileRefsParam,
                     imageParts: imageParts,
                     model: model,
-                    agent: agentName
+                    agent: agentName,
+                    configOverrides: configOverrides
                 )
             } else {
                 appState.wsClient.requestAIChatSend(
@@ -1155,7 +1191,8 @@ struct AITabView: View {
                     fileRefs: fileRefsParam,
                     imageParts: imageParts,
                     model: model,
-                    agent: agentName
+                    agent: agentName,
+                    configOverrides: configOverrides
                 )
             }
         } else {
@@ -1293,6 +1330,7 @@ struct AITabView: View {
             appState.aiSelectedAgent = agentInfo.name
             appState.applyAgentDefaultModel(agentInfo)
         }
+        let configOverrides = appState.aiConfigOverrides(for: aiTool)
 
         autocomplete.reset()
         aiChatStore.beginAwaitingUserEcho()
@@ -1314,7 +1352,8 @@ struct AITabView: View {
                 fileRefs: nil,
                 imageParts: nil,
                 model: model,
-                agent: agentName
+                agent: agentName,
+                configOverrides: configOverrides
             )
             return
         }

@@ -48,6 +48,7 @@ struct EvolutionDefaultConfigSection: View {
                         profile.wrappedValue.mode = ""
                         profile.wrappedValue.providerID = ""
                         profile.wrappedValue.modelID = ""
+                        profile.wrappedValue.configOptions = [:]
                         persist()
                     }
                 )) {
@@ -126,6 +127,35 @@ struct EvolutionDefaultConfigSection: View {
                 }
                 .menuStyle(.borderlessButton)
             }
+
+            LabeledContent("思考强度") {
+                Menu {
+                    Button("默认") {
+                        if let optionID = thoughtLevelOptionID(for: profile.wrappedValue.aiTool) {
+                            profile.wrappedValue.configOptions.removeValue(forKey: optionID)
+                            persist()
+                        }
+                    }
+                    let options = thoughtLevelOptions(for: profile.wrappedValue.aiTool)
+                    if options.isEmpty {
+                        Text("未提供 thought_level 选项")
+                    } else {
+                        ForEach(options, id: \.self) { option in
+                            Button(option) {
+                                if let optionID = thoughtLevelOptionID(for: profile.wrappedValue.aiTool) {
+                                    profile.wrappedValue.configOptions[optionID] = option
+                                    persist()
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(selectedThoughtLevel(for: profile.wrappedValue) ?? "默认")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .menuStyle(.borderlessButton)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -171,6 +201,31 @@ struct EvolutionDefaultConfigSection: View {
             }
         }
         return profile.modelID
+    }
+
+    private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
+        appState.aiSessionConfigOptions(for: tool).first(where: {
+            let category = ($0.category ?? $0.optionID).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return category == "thought_level"
+        })?.optionID
+    }
+
+    private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
+        appState.thoughtLevelOptions(for: tool)
+    }
+
+    private func selectedThoughtLevel(for profile: EvolutionEditableProfile) -> String? {
+        guard let optionID = thoughtLevelOptionID(for: profile.aiTool) else { return nil }
+        let raw = profile.configOptions[optionID]
+        if let text = raw as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let number = raw as? NSNumber {
+            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
     }
 
     private func persist() {

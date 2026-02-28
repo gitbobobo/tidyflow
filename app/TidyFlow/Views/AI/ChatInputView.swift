@@ -25,6 +25,8 @@ struct ChatInputView: View {
     var contextRemainingPercent: Double?
     var agents: [AIAgentInfo]
     @Binding var selectedAgent: String?
+    var thoughtLevelOptions: [String] = []
+    @Binding var selectedThoughtLevel: String?
     var isLoadingModels: Bool = false
     var isLoadingAgents: Bool = false
 
@@ -167,10 +169,11 @@ struct ChatInputView: View {
 
     @ViewBuilder
     private var iOSSelectorRow: some View {
-        if isLoadingAgents || isLoadingModels || !agents.isEmpty || !providers.isEmpty {
+        if isLoadingAgents || isLoadingModels || !agents.isEmpty || !providers.isEmpty || !normalizedThoughtLevelOptions.isEmpty {
             HStack(spacing: 8) {
                 agentButton
                 modelButton
+                thoughtLevelButton
                 contextRemainingRing
                 Spacer(minLength: 0)
             }
@@ -594,6 +597,7 @@ struct ChatInputView: View {
             // 左侧：Agent 切换 + 模型选择
             agentButton
             modelButton
+            thoughtLevelButton
             contextRemainingRing
 
             Spacer()
@@ -710,6 +714,42 @@ struct ChatInputView: View {
         }
     }
 
+    private var thoughtLevelButton: some View {
+        Group {
+            if !normalizedThoughtLevelOptions.isEmpty {
+                Menu {
+                    Button("默认") {
+                        selectedThoughtLevel = nil
+                    }
+                    ForEach(normalizedThoughtLevelOptions, id: \.self) { option in
+                        Button(option) {
+                            selectedThoughtLevel = option
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "brain")
+                            .font(.system(size: 11))
+                        Text(selectedThoughtLevelDisplayName)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8))
+                    }
+                    .frame(maxWidth: selectorLabelMaxWidth, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(6)
+                    .foregroundStyle(dropdownPrimaryTextColor)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+    }
+
     /// 仅保留有模型的提供商，避免展示空菜单。
     private var availableModelProviders: [AIProviderInfo] {
         providers.filter { !$0.models.isEmpty }
@@ -723,6 +763,26 @@ struct ChatInputView: View {
             }
         }
         return sel.modelID
+    }
+
+    private var normalizedThoughtLevelOptions: [String] {
+        var seen: Set<String> = []
+        var values: [String] = []
+        for item in thoughtLevelOptions {
+            let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            guard seen.insert(trimmed).inserted else { continue }
+            values.append(trimmed)
+        }
+        return values
+    }
+
+    private var selectedThoughtLevelDisplayName: String {
+        let trimmed = selectedThoughtLevel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return "思考"
     }
 
     private var loadingPlaceholder: some View {
@@ -1119,6 +1179,8 @@ struct ChatInputView: View {
             contextRemainingPercent: nil,
             agents: [],
             selectedAgent: .constant(nil),
+            thoughtLevelOptions: [],
+            selectedThoughtLevel: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
             onInputContextChange: nil,
@@ -1136,6 +1198,8 @@ struct ChatInputView: View {
             contextRemainingPercent: nil,
             agents: [],
             selectedAgent: .constant(nil),
+            thoughtLevelOptions: [],
+            selectedThoughtLevel: .constant(nil),
             autocomplete: nil,
             onSelectAutocomplete: nil,
             onInputContextChange: nil,
