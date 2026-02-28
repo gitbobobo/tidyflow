@@ -103,10 +103,32 @@ pub struct AiPart {
     pub tool_name: Option<String>,
     /// tool 调用 ID（若为 tool）
     pub tool_call_id: Option<String>,
+    /// tool kind（ACP tool-calls，若为 tool）
+    pub tool_kind: Option<String>,
+    /// tool 标题（ACP tool-calls，若为 tool）
+    pub tool_title: Option<String>,
+    /// tool 原始输入（ACP tool-calls，若为 tool）
+    pub tool_raw_input: Option<serde_json::Value>,
+    /// tool 原始输出（ACP tool-calls，若为 tool）
+    pub tool_raw_output: Option<serde_json::Value>,
+    /// tool 定位信息（ACP tool-calls，若为 tool）
+    pub tool_locations: Option<Vec<AiToolCallLocation>>,
     /// tool 的状态/state（JSON 透传）
     pub tool_state: Option<serde_json::Value>,
     /// tool part 上的 metadata（JSON 透传）
     pub tool_part_metadata: Option<serde_json::Value>,
+}
+
+/// ACP tool-calls 中的定位信息
+#[derive(Debug, Clone)]
+pub struct AiToolCallLocation {
+    pub uri: Option<String>,
+    pub path: Option<String>,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub end_line: Option<u32>,
+    pub end_column: Option<u32>,
+    pub label: Option<String>,
 }
 
 impl AiPart {

@@ -83,11 +83,44 @@ pub struct PartInfo {
     /// OpenCode tool callID（若为 tool）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// ACP tool-calls kind（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_kind: Option<String>,
+    /// ACP tool-calls title（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_title: Option<String>,
+    /// ACP tool-calls rawInput（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_raw_input: Option<serde_json::Value>,
+    /// ACP tool-calls rawOutput（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_raw_output: Option<serde_json::Value>,
+    /// ACP tool-calls locations（若为 tool）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_locations: Option<Vec<ToolCallLocationInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_state: Option<serde_json::Value>,
     /// OpenCode tool part metadata（若为 tool）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_part_metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallLocationInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// AI 历史消息（对齐 OpenCode message）

@@ -856,6 +856,24 @@ pub(crate) fn normalize_part_for_wire(
         source: part.source,
         tool_name,
         tool_call_id: part.tool_call_id,
+        tool_kind: part.tool_kind,
+        tool_title: part.tool_title,
+        tool_raw_input: part.tool_raw_input,
+        tool_raw_output: part.tool_raw_output,
+        tool_locations: part.tool_locations.map(|items| {
+            items
+                .into_iter()
+                .map(|item| crate::server::protocol::ai::ToolCallLocationInfo {
+                    uri: item.uri,
+                    path: item.path,
+                    line: item.line,
+                    column: item.column,
+                    end_line: item.end_line,
+                    end_column: item.end_column,
+                    label: item.label,
+                })
+                .collect::<Vec<_>>()
+        }),
         tool_state,
         tool_part_metadata: part.tool_part_metadata,
     }
@@ -1047,6 +1065,11 @@ mod tests {
                 })),
                 tool_name: None,
                 tool_call_id: None,
+                tool_kind: None,
+                tool_title: None,
+                tool_raw_input: None,
+                tool_raw_output: None,
+                tool_locations: None,
                 tool_state: None,
                 tool_part_metadata: None,
             }],

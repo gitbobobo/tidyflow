@@ -563,6 +563,41 @@ impl AcpClient {
             .await
     }
 
+    /// ACP follow-along：创建终端句柄
+    pub async fn terminal_create(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Result<String, String> {
+        let result = self
+            .send_request_with_auth_retry(
+                "terminal/create",
+                Some(serde_json::json!({
+                    "sessionId": session_id,
+                    "toolCallId": tool_call_id
+                })),
+            )
+            .await?;
+        result
+            .get("terminalId")
+            .or_else(|| result.get("id"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string())
+            .ok_or_else(|| "terminal/create response missing terminalId".to_string())
+    }
+
+    /// ACP follow-along：释放终端句柄
+    pub async fn terminal_release(&self, terminal_id: &str) -> Result<(), String> {
+        self.send_request_with_auth_retry(
+            "terminal/release",
+            Some(serde_json::json!({
+                "terminalId": terminal_id
+            })),
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// 回复权限请求（包括 question 工具）
     pub async fn respond_to_permission_request(
         &self,
@@ -1749,6 +1784,79 @@ mod tests {
                 .and_then(|v| v.get("id"))
                 .and_then(|v| v.as_str()),
             Some("high")
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_create_should_send_session_and_tool_call_id() {
+        let transport = Arc::new(MockTransport::new(
+            vec![Ok(json!({
+                "terminalId": "term-1"
+            }))],
+            None,
+        ));
+        let client = AcpClient::new_with_transport(transport.clone());
+        let terminal_id = client
+            .terminal_create("session-1", "call-1")
+            .await
+            .expect("terminal/create should succeed");
+        assert_eq!(terminal_id, "term-1");
+
+        let params = transport
+            .first_request_params("terminal/create")
+            .await
+            .expect("terminal/create params should exist");
+        assert_eq!(
+            params.get("sessionId").and_then(|v| v.as_str()),
+            Some("session-1")
+        );
+        assert_eq!(
+            params.get("toolCallId").and_then(|v| v.as_str()),
+            Some("call-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_create_should_accept_id_alias_in_response() {
+        let transport = Arc::new(MockTransport::new(
+            vec![Ok(json!({ "id": "term-2" }))],
+            None,
+        ));
+        let client = AcpClient::new_with_transport(transport);
+        let terminal_id = client
+            .terminal_create("session-2", "call-2")
+            .await
+            .expect("terminal/create should accept id fallback");
+        assert_eq!(terminal_id, "term-2");
+    }
+
+    #[tokio::test]
+    async fn terminal_create_should_fail_when_response_missing_terminal_id() {
+        let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
+        let client = AcpClient::new_with_transport(transport);
+        let err = client
+            .terminal_create("session-3", "call-3")
+            .await
+            .expect_err("terminal/create should fail when terminal id missing");
+        assert!(err.contains("terminalId"));
+    }
+
+    #[tokio::test]
+    async fn terminal_release_should_send_terminal_id() {
+        let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
+        let client = AcpClient::new_with_transport(transport.clone());
+        client
+            .terminal_release("term-9")
+            .await
+            .expect("terminal/release should succeed");
+
+        let params = transport
+            .first_request_params("terminal/release")
+            .await
+            .expect("terminal/release params should exist");
+        assert_eq!(
+            params.get("terminalId").and_then(|v| v.as_str()),
+            Some("term-9")
         );
     }
 
