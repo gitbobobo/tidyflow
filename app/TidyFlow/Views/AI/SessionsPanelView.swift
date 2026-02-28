@@ -100,29 +100,29 @@ struct SessionsPanelView: View {
         .onAppear {
             // 默认显示当前聊天工具的会话
             appState.sessionPanelFilterTool = appState.aiChatTool
-            // 面板首次出现时主动拉取会话列表
-            requestSessionLists()
+            // 面板首次出现时只拉取当前选中工具的会话列表
+            requestSessionList(for: appState.aiChatTool)
+        }
+        .onChange(of: appState.sessionPanelFilterTool) { _, newTool in
+            // 切换筛选工具时按需拉取该工具的会话列表
+            requestSessionList(for: newTool)
         }
         .onChange(of: appState.currentGlobalWorkspaceKey) { _, _ in
-            // 工作空间切换时主动拉取会话列表
-            // （AITabView 未挂载时其 onChange 不会触发 loadSessions，此处兜底）
-            requestSessionLists()
+            // 工作空间切换时拉取当前选中工具的会话列表
+            requestSessionList(for: appState.sessionPanelFilterTool)
         }
     }
 
-    /// 向服务端请求所有 AI 工具的会话列表
-    private func requestSessionLists() {
+    /// 向服务端请求指定 AI 工具的会话列表
+    private func requestSessionList(for tool: AIChatTool) {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
               appState.connectionState == .connected else { return }
-        let projectName = appState.selectedProjectName
-        for tool in AIChatTool.allCases {
-            appState.wsClient.requestAISessionList(
-                projectName: projectName,
-                workspaceName: ws,
-                aiTool: tool,
-                limit: 50
-            )
-        }
+        appState.wsClient.requestAISessionList(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: tool,
+            limit: 50
+        )
     }
 }
 
