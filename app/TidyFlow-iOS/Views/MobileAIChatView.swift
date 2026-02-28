@@ -104,76 +104,14 @@ struct MobileAIChatView: View {
             #endif
         }
         .sheet(isPresented: $showSessionList) {
-            NavigationStack {
-                List(appState.aiMergedSessions) { session in
-                    Button(action: {
-                        loadSession(session)
-                        showSessionList = false
-                    }) {
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(session.displayTitle)
-                                    .font(.headline)
-                                    .lineLimit(2)
-                                HStack(spacing: 6) {
-                                    Image(session.aiTool.iconAssetName)
-                                        .resizable()
-                                        .renderingMode(.original)
-                                        .scaledToFit()
-                                        .frame(width: 12, height: 12)
-                                    Text("·")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                    Text(session.formattedDate)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            Spacer()
-                            if session.id == appState.aiCurrentSessionId && session.aiTool == appState.aiChatTool {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            appState.deleteAISession(session)
-                        } label: {
-                            Label("删除", systemImage: "trash")
-                        }
-                    }
-                }
-                .navigationTitle("会话")
-                #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-                #endif
-                .toolbar {
-                    #if os(iOS)
-                    ToolbarItem(placement: .navigationBarLeading) {
-                         Button(action: { showSessionList = false }) {
-                             Image(systemName: "xmark")
-                         }
-                     }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(action: createNewSession) {
-                            Image(systemName: "plus")
-                        }
-                    }
-                    #else
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(action: { showSessionList = false }) {
-                            Image(systemName: "xmark")
-                        }
-                    }
-                    ToolbarItem(placement: .automatic) {
-                        Button(action: createNewSession) {
-                            Image(systemName: "plus")
-                        }
-                    }
-                    #endif
-                }
-            }
+            MobileSessionListSheet(
+                showSessionList: $showSessionList,
+                onLoadSession: { session in
+                    loadSession(session)
+                },
+                onCreateNewSession: createNewSession
+            )
+            .environmentObject(appState)
         }
         .sheet(item: $presentedSubAgentSession, onDismiss: {
             appState.clearSubAgentSessionViewer()
