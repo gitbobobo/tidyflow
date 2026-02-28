@@ -399,6 +399,7 @@ impl CodexAppServerAgent {
                         None
                     } else {
                         Some(AiQuestionOption {
+                            option_id: None,
                             label: normalized.to_string(),
                             description: String::new(),
                         })
@@ -414,7 +415,13 @@ impl CodexAppServerAgent {
                         &["/description", "/hint", "/detail"],
                     )
                     .unwrap_or_default();
-                    Some(AiQuestionOption { label, description })
+                    let option_id =
+                        Self::first_string_by_pointers(option, &["/optionId", "/option_id", "/id"]);
+                    Some(AiQuestionOption {
+                        option_id,
+                        label,
+                        description,
+                    })
                 }
                 _ => None,
             })
@@ -1334,14 +1341,17 @@ impl CodexAppServerAgent {
                 header: "Codex Approval".to_string(),
                 options: vec![
                     AiQuestionOption {
+                        option_id: None,
                         label: "accept".to_string(),
                         description: "允许本次执行".to_string(),
                     },
                     AiQuestionOption {
+                        option_id: None,
                         label: "decline".to_string(),
                         description: "拒绝本次执行".to_string(),
                     },
                     AiQuestionOption {
+                        option_id: None,
                         label: "cancel".to_string(),
                         description: "拒绝并中断本轮".to_string(),
                     },
@@ -1371,14 +1381,17 @@ impl CodexAppServerAgent {
                 header: "Codex Approval".to_string(),
                 options: vec![
                     AiQuestionOption {
+                        option_id: None,
                         label: "accept".to_string(),
                         description: "允许本次修改".to_string(),
                     },
                     AiQuestionOption {
+                        option_id: None,
                         label: "decline".to_string(),
                         description: "拒绝本次修改".to_string(),
                     },
                     AiQuestionOption {
+                        option_id: None,
                         label: "cancel".to_string(),
                         description: "拒绝并中断本轮".to_string(),
                     },

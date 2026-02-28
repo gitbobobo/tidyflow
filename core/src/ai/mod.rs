@@ -122,6 +122,7 @@ impl AiPart {
 /// Question 选项
 #[derive(Debug, Clone)]
 pub struct AiQuestionOption {
+    pub option_id: Option<String>,
     pub label: String,
     pub description: String,
 }

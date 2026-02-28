@@ -1924,6 +1924,11 @@ fn map_opencode_hub_stream(
                                                             .unwrap_or("")
                                                             .to_string();
                                                         Some(crate::ai::AiQuestionOption {
+                                                            option_id: o
+                                                                .get("option_id")
+                                                                .or_else(|| o.get("optionId"))
+                                                                .and_then(|v| v.as_str())
+                                                                .map(|v| v.to_string()),
                                                             label,
                                                             description,
                                                         })

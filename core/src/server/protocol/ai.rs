@@ -183,6 +183,8 @@ pub struct SlashCommandInfo {
 /// Question 选项
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionOptionInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub option_id: Option<String>,
     pub label: String,
     pub description: String,
 }
