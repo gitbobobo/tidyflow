@@ -7,12 +7,15 @@ use super::{
     AiSession, AiSessionSelectionHint, AiSlashCommand,
 };
 use async_trait::async_trait;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use chrono::Utc;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::{Duration, Instant, MissedTickBehavior};
+use tokio::time::Duration;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, warn};
 use url::Url;
@@ -49,6 +52,7 @@ impl AcpBackendProfile {
 #[derive(Debug, Clone)]
 struct PendingPermission {
     request_id: Value,
+    session_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -69,8 +73,6 @@ pub struct AcpAgent {
 }
 
 impl AcpAgent {
-    const REQUEST_DONE_GRACE_MS: u64 = 700;
-    const STREAM_IDLE_DONE_TIMEOUT_SECS: u64 = 20;
     const SESSION_LOAD_TIMEOUT_SECS: u64 = 4;
 
     pub fn new(manager: Arc<CodexAppServerManager>, profile: AcpBackendProfile) -> Self {
@@ -548,28 +550,123 @@ impl AcpAgent {
         }
     }
 
-    fn compose_message(
+    fn strip_file_ref_location_suffix(file_ref: &str) -> String {
+        let trimmed = file_ref.trim();
+        if let Some((head, tail)) = trimmed.rsplit_once(':') {
+            if tail.chars().all(|ch| ch.is_ascii_digit()) {
+                if let Some((head2, tail2)) = head.rsplit_once(':') {
+                    if tail2.chars().all(|ch| ch.is_ascii_digit()) {
+                        return head2.to_string();
+                    }
+                }
+                return head.to_string();
+            }
+        }
+        trimmed.to_string()
+    }
+
+    fn resolve_resource_link(directory: &str, file_ref: &str) -> Option<(String, String)> {
+        let normalized_ref = Self::strip_file_ref_location_suffix(file_ref);
+        if normalized_ref.trim().is_empty() {
+            return None;
+        }
+
+        if let Ok(url) = Url::parse(&normalized_ref) {
+            if !url.scheme().eq_ignore_ascii_case("file") {
+                return None;
+            }
+            let path = url.to_file_path().ok()?;
+            let uri = Url::from_file_path(&path).ok()?.to_string();
+            let name = path
+                .file_name()
+                .map(|v| v.to_string_lossy().to_string())
+                .unwrap_or_else(|| normalized_ref.clone());
+            return Some((uri, name));
+        }
+
+        let input_path = Path::new(&normalized_ref);
+        let resolved = if input_path.is_absolute() {
+            input_path.to_path_buf()
+        } else {
+            PathBuf::from(directory).join(input_path)
+        };
+
+        let uri = Url::from_file_path(&resolved).ok()?.to_string();
+        let name = resolved
+            .file_name()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_else(|| normalized_ref.clone());
+        Some((uri, name))
+    }
+
+    fn compose_prompt_parts(
+        directory: &str,
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
-    ) -> String {
-        let mut chunks = vec![message.to_string()];
+        supports_image: bool,
+        supports_resource_link: bool,
+    ) -> Vec<Value> {
+        let mut prompt_parts = Vec::<Value>::new();
+        let mut fallback_blocks = Vec::<String>::new();
+        let mut text_body = message.to_string();
+
         if let Some(files) = file_refs {
             if !files.is_empty() {
-                chunks.push(format!("文件引用：\n{}", files.join("\n")));
+                if supports_resource_link {
+                    let mut unresolved = Vec::<String>::new();
+                    for file_ref in files {
+                        if let Some((uri, name)) = Self::resolve_resource_link(directory, &file_ref)
+                        {
+                            prompt_parts.push(AcpClient::build_prompt_resource_link_part(uri, name));
+                        } else {
+                            unresolved.push(file_ref);
+                        }
+                    }
+                    if !unresolved.is_empty() {
+                        fallback_blocks.push(format!("文件引用（无法解析为 resource_link）：\n{}", unresolved.join("\n")));
+                    }
+                } else {
+                    fallback_blocks.push(format!("文件引用：\n{}", files.join("\n")));
+                }
             }
         }
+
         if let Some(images) = image_parts {
             if !images.is_empty() {
-                let names = images
-                    .iter()
-                    .map(|img| format!("{} ({})", img.filename, img.mime))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                chunks.push(format!("图片附件：\n{}", names));
+                if supports_image {
+                    for img in images {
+                        let mime = img.mime.trim().to_lowercase();
+                        let mime = if mime.is_empty() {
+                            "application/octet-stream".to_string()
+                        } else {
+                            mime
+                        };
+                        let data_url = format!("data:{};base64,{}", mime, BASE64.encode(&img.data));
+                        prompt_parts.push(AcpClient::build_prompt_image_part(mime, data_url));
+                    }
+                } else {
+                    let names = images
+                        .iter()
+                        .map(|img| format!("{} ({})", img.filename, img.mime))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    fallback_blocks.push(format!("图片附件：\n{}", names));
+                }
             }
         }
-        chunks.join("\n\n")
+
+        if !fallback_blocks.is_empty() {
+            if !text_body.trim().is_empty() {
+                text_body.push_str("\n\n");
+            }
+            text_body.push_str(&fallback_blocks.join("\n\n"));
+        }
+
+        if !text_body.trim().is_empty() || prompt_parts.is_empty() {
+            prompt_parts.insert(0, AcpClient::build_prompt_text_part(text_body));
+        }
+        prompt_parts
     }
 
     fn is_session_not_found(err: &str) -> bool {
@@ -766,6 +863,67 @@ impl AcpAgent {
         content == "error" || content == "failed"
     }
 
+    fn parse_prompt_stop_reason(result: &Value) -> Result<String, String> {
+        let stop_reason = result
+            .get("stopReason")
+            .or_else(|| result.get("stop_reason"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "ACP session/prompt result missing string stopReason".to_string())?;
+        const ALLOWED: &[&str] = &[
+            "end_turn",
+            "max_tokens",
+            "stop_sequence",
+            "tool_use",
+            "cancelled",
+            "error",
+        ];
+        if !ALLOWED.iter().any(|allowed| allowed == &stop_reason.as_str()) {
+            return Err(format!(
+                "ACP session/prompt returned unsupported stopReason: {}",
+                stop_reason
+            ));
+        }
+        Ok(stop_reason)
+    }
+
+    async fn reject_pending_permissions_for_session(
+        pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
+        client: &AcpClient,
+        session_id: &str,
+    ) {
+        let pending = {
+            let mut guard = pending_permissions.lock().await;
+            let keys = guard
+                .iter()
+                .filter_map(|(key, value)| {
+                    if value.session_id == session_id {
+                        Some(key.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut drained = Vec::new();
+            for key in keys {
+                if let Some(item) = guard.remove(&key) {
+                    drained.push(item);
+                }
+            }
+            drained
+        };
+
+        for item in pending {
+            if let Err(err) = client.reject_permission_request(item.request_id).await {
+                warn!(
+                    "ACP reject pending permission failed: session_id={}, error={}",
+                    session_id, err
+                );
+            }
+        }
+    }
+
     fn select_sessions_for_directory(
         page: Vec<AcpSessionSummary>,
         expected_directory: &str,
@@ -898,8 +1056,8 @@ impl AcpAgent {
                     let Some((part_type, should_emit)) =
                         Self::map_update_to_output(&session_update)
                     else {
-                        debug!(
-                            "{}: unknown sessionUpdate type in history: {}",
+                        warn!(
+                            "{}: unknown sessionUpdate type in history, ignore: {}",
                             self.profile.tool_id, session_update
                         );
                         continue;
@@ -968,11 +1126,19 @@ impl AiAgent for AcpAgent {
         let metadata = self.metadata_for_directory(directory).await;
         let mode_id = Self::resolve_mode_id(&metadata, agent.as_deref());
         let model_id = model.map(|m| m.model_id);
-        let composed = Self::compose_message(message, file_refs, image_parts);
-        let prompt = vec![serde_json::json!({
-            "type": "text",
-            "text": composed
-        })];
+        if !self.client.supports_content_type("text").await {
+            return Err("ACP 服务端 promptCapabilities 不支持 text，无法发送消息".to_string());
+        }
+        let supports_image = self.client.supports_content_type("image").await;
+        let supports_resource_link = self.client.supports_content_type("resource_link").await;
+        let prompt = Self::compose_prompt_parts(
+            directory,
+            message,
+            file_refs,
+            image_parts,
+            supports_image,
+            supports_resource_link,
+        );
 
         let (tx, rx) = mpsc::unbounded_channel::<Result<AiEvent, String>>();
         let mut notifications = self.client.subscribe_notifications();
@@ -1013,6 +1179,12 @@ impl AiAgent for AcpAgent {
         tokio::spawn(async move {
             let mut buffered_assistant_reasoning = String::new();
             let mut buffered_assistant_text = String::new();
+            let mut assistant_opened = false;
+            let mut tool_part_ids = HashMap::<String, String>::new();
+            let mut request_completed = false;
+            let mut terminal_seen = false;
+            let mut stop_reason: Option<String> = None;
+            let mut done_emitted = false;
 
             let request_fut = async {
                 match client
@@ -1039,47 +1211,43 @@ impl AiAgent for AcpAgent {
                 }
             };
             tokio::pin!(request_fut);
-
-            let mut assistant_opened = false;
-            let mut request_completed = false;
-            let mut last_activity_at = Instant::now();
-            let mut idle_tick = tokio::time::interval(Duration::from_millis(200));
-            idle_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
+                if done_emitted {
+                    break;
+                }
+                if request_completed && terminal_seen && !done_emitted {
+                    let Some(reason) = stop_reason.clone() else {
+                        let _ = tx.send(Err(
+                            "ACP request completed but stopReason is unavailable".to_string(),
+                        ));
+                        break;
+                    };
+                    let _ = tx.send(Ok(AiEvent::Done {
+                        stop_reason: Some(reason),
+                    }));
+                    done_emitted = true;
+                    continue;
+                }
+
                 tokio::select! {
                     request_result = &mut request_fut, if !request_completed => {
                         match request_result {
-                            Ok(_) => {
+                            Ok(result) => {
+                                let parsed_stop_reason = match Self::parse_prompt_stop_reason(&result) {
+                                    Ok(stop_reason) => stop_reason,
+                                    Err(err) => {
+                                        let _ = tx.send(Err(err));
+                                        break;
+                                    }
+                                };
                                 request_completed = true;
-                                if !assistant_opened {
-                                    let _ = tx.send(Ok(AiEvent::Done));
-                                    break;
-                                }
+                                terminal_seen = true;
+                                stop_reason = Some(parsed_stop_reason);
                             }
                             Err(err) => {
                                 let _ = tx.send(Err(err));
                                 break;
                             }
-                        }
-                    }
-                    _ = idle_tick.tick() => {
-                        if !assistant_opened {
-                            continue;
-                        }
-                        let idle_for = last_activity_at.elapsed();
-                        if request_completed && idle_for >= Duration::from_millis(Self::REQUEST_DONE_GRACE_MS) {
-                            let _ = tx.send(Ok(AiEvent::Done));
-                            break;
-                        }
-                        if idle_for >= Duration::from_secs(Self::STREAM_IDLE_DONE_TIMEOUT_SECS) {
-                            warn!(
-                                "{} stream idle fallback triggered: session_id={}, idle_secs={}",
-                                tool_id,
-                                session_id,
-                                idle_for.as_secs()
-                            );
-                            let _ = tx.send(Ok(AiEvent::Done));
-                            break;
                         }
                     }
                     recv = notifications.recv() => {
@@ -1097,7 +1265,6 @@ impl AiAgent for AcpAgent {
                         }
                         let Some(update) = params.get("update") else { continue };
                         let Some((session_update, content_type, text)) = Self::extract_update(update) else { continue };
-                        last_activity_at = Instant::now();
 
                         if Self::is_error_update(&session_update, &content_type) {
                             let err_msg = if text.is_empty() {
@@ -1110,13 +1277,231 @@ impl AiAgent for AcpAgent {
                         }
 
                         if Self::is_terminal_update(&session_update, &content_type) {
-                            let _ = tx.send(Ok(AiEvent::Done));
-                            break;
+                            terminal_seen = true;
+                            continue;
+                        }
+
+                        if let Some(content) = update.get("content").and_then(|v| v.as_object()) {
+                            match content_type.as_str() {
+                                "tool_call" => {
+                                    if !assistant_opened {
+                                        assistant_opened = true;
+                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            role: "assistant".to_string(),
+                                            selection_hint: None,
+                                        }));
+                                    }
+                                    let tool_call_id = content
+                                        .get("toolCallId")
+                                        .or_else(|| content.get("tool_call_id"))
+                                        .or_else(|| content.get("id"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let part_id = if tool_call_id.is_empty() {
+                                        format!("{}-tool-{}", assistant_message_id, Uuid::new_v4())
+                                    } else {
+                                        tool_part_ids
+                                            .entry(tool_call_id.clone())
+                                            .or_insert_with(|| format!("{}-tool-{}", assistant_message_id, tool_call_id.replace(':', "_")))
+                                            .clone()
+                                    };
+                                    let tool_name = content
+                                        .get("toolName")
+                                        .or_else(|| content.get("tool_name"))
+                                        .or_else(|| content.get("name"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let status = content
+                                        .get("status")
+                                        .or_else(|| content.get("state"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("running")
+                                        .to_string();
+                                    let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                        message_id: assistant_message_id.clone(),
+                                        part: AiPart {
+                                            id: part_id,
+                                            part_type: "tool".to_string(),
+                                            tool_name: Some(tool_name),
+                                            tool_call_id: if tool_call_id.is_empty() {
+                                                None
+                                            } else {
+                                                Some(tool_call_id)
+                                            },
+                                            tool_state: Some(serde_json::json!({ "status": status })),
+                                            tool_part_metadata: Some(Value::Object(content.clone())),
+                                            ..Default::default()
+                                        },
+                                    }));
+                                    continue;
+                                }
+                                "tool_call_update" => {
+                                    if !assistant_opened {
+                                        assistant_opened = true;
+                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            role: "assistant".to_string(),
+                                            selection_hint: None,
+                                        }));
+                                    }
+                                    let tool_call_id = content
+                                        .get("toolCallId")
+                                        .or_else(|| content.get("tool_call_id"))
+                                        .or_else(|| content.get("id"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let part_id = if tool_call_id.is_empty() {
+                                        format!("{}-tool-{}", assistant_message_id, Uuid::new_v4())
+                                    } else {
+                                        tool_part_ids
+                                            .entry(tool_call_id.clone())
+                                            .or_insert_with(|| format!("{}-tool-{}", assistant_message_id, tool_call_id.replace(':', "_")))
+                                            .clone()
+                                    };
+                                    if let Some(status) = content
+                                        .get("status")
+                                        .or_else(|| content.get("state"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            part: AiPart {
+                                                id: part_id.clone(),
+                                                part_type: "tool".to_string(),
+                                                tool_name: content
+                                                    .get("toolName")
+                                                    .or_else(|| content.get("tool_name"))
+                                                    .or_else(|| content.get("name"))
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|v| v.to_string()),
+                                                tool_call_id: if tool_call_id.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(tool_call_id.clone())
+                                                },
+                                                tool_state: Some(serde_json::json!({ "status": status })),
+                                                tool_part_metadata: Some(Value::Object(content.clone())),
+                                                ..Default::default()
+                                            },
+                                        }));
+                                    }
+                                    if let Some(progress) = content
+                                        .get("progress")
+                                        .or_else(|| content.get("message"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        if !progress.is_empty() {
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                message_id: assistant_message_id.clone(),
+                                                part_id: part_id.clone(),
+                                                part_type: "tool".to_string(),
+                                                field: "progress".to_string(),
+                                                delta: progress.to_string(),
+                                            }));
+                                        }
+                                    }
+                                    if let Some(output) = content
+                                        .get("output")
+                                        .or_else(|| content.get("text"))
+                                        .or_else(|| content.get("delta"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        if !output.is_empty() {
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                message_id: assistant_message_id.clone(),
+                                                part_id: part_id.clone(),
+                                                part_type: "tool".to_string(),
+                                                field: "output".to_string(),
+                                                delta: output.to_string(),
+                                            }));
+                                        }
+                                    }
+                                    continue;
+                                }
+                                "image" => {
+                                    if !assistant_opened {
+                                        assistant_opened = true;
+                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            role: "assistant".to_string(),
+                                            selection_hint: None,
+                                        }));
+                                    }
+                                    let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                        message_id: assistant_message_id.clone(),
+                                        part: AiPart {
+                                            id: format!("{}-file-{}", assistant_message_id, Uuid::new_v4()),
+                                            part_type: "file".to_string(),
+                                            mime: content
+                                                .get("mimeType")
+                                                .or_else(|| content.get("mime"))
+                                                .and_then(|v| v.as_str())
+                                                .map(|v| v.to_string()),
+                                            filename: content
+                                                .get("filename")
+                                                .or_else(|| content.get("name"))
+                                                .and_then(|v| v.as_str())
+                                                .map(|v| v.to_string()),
+                                            url: content
+                                                .get("url")
+                                                .and_then(|v| v.as_str())
+                                                .map(|v| v.to_string()),
+                                            ..Default::default()
+                                        },
+                                    }));
+                                    continue;
+                                }
+                                "resource_link" | "resource" => {
+                                    if !assistant_opened {
+                                        assistant_opened = true;
+                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            role: "assistant".to_string(),
+                                            selection_hint: None,
+                                        }));
+                                    }
+                                    let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                        message_id: assistant_message_id.clone(),
+                                        part: AiPart {
+                                            id: format!("{}-file-{}", assistant_message_id, Uuid::new_v4()),
+                                            part_type: "file".to_string(),
+                                            filename: content
+                                                .get("resource")
+                                                .and_then(|v| v.get("name"))
+                                                .or_else(|| content.get("name"))
+                                                .and_then(|v| v.as_str())
+                                                .map(|v| v.to_string()),
+                                            url: content
+                                                .get("resource")
+                                                .and_then(|v| v.get("uri"))
+                                                .or_else(|| content.get("uri"))
+                                                .and_then(|v| v.as_str())
+                                                .map(|v| v.to_string()),
+                                            ..Default::default()
+                                        },
+                                    }));
+                                    continue;
+                                }
+                                "text" | "reasoning" => {
+                                    // 继续走下方的通用 chunk 增量路径
+                                }
+                                _ => {
+                                    warn!(
+                                        "{}: unknown ACP content type in stream, ignore: {}",
+                                        tool_id, content_type
+                                    );
+                                    continue;
+                                }
+                            }
                         }
 
                         let Some((part_type, should_emit)) = Self::map_update_to_output(&session_update) else {
-                            debug!(
-                                "{}: unknown sessionUpdate type in stream: {}",
+                            warn!(
+                                "{}: unknown sessionUpdate type in stream, ignore: {}",
                                 tool_id, session_update
                             );
                             continue;
@@ -1129,7 +1514,6 @@ impl AiAgent for AcpAgent {
                         } else if part_type == "text" {
                             buffered_assistant_text.push_str(&text);
                         }
-
                         if !assistant_opened {
                             assistant_opened = true;
                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
@@ -1138,7 +1522,6 @@ impl AiAgent for AcpAgent {
                                 selection_hint: None,
                             }));
                         }
-
                         let part_id = format!("{}-{}", assistant_message_id, part_type);
                         let _ = tx.send(Ok(AiEvent::PartDelta {
                             message_id: assistant_message_id.clone(),
@@ -1162,12 +1545,16 @@ impl AiAgent for AcpAgent {
                             let request_key = question_request.id.clone();
                             pending_permissions.lock().await.insert(request_key.clone(), PendingPermission {
                                 request_id: req.id.clone(),
+                                session_id: session_id.clone(),
                             });
                             let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question_request }));
                         }
                     }
                 }
             }
+
+            Self::reject_pending_permissions_for_session(&pending_permissions, &client, &session_id)
+                .await;
 
             if let Some(cached_assistant) = Self::build_cached_assistant_message(
                 assistant_message_id.clone(),
@@ -1352,7 +1739,14 @@ impl AiAgent for AcpAgent {
 
     async fn abort_session(&self, _directory: &str, _session_id: &str) -> Result<(), String> {
         self.client.ensure_started().await?;
-        self.client.session_cancel(_session_id).await
+        self.client.session_cancel(_session_id).await?;
+        Self::reject_pending_permissions_for_session(
+            &self.pending_permissions,
+            &self.client,
+            _session_id,
+        )
+        .await;
+        Ok(())
     }
 
     async fn dispose_instance(&self, _directory: &str) -> Result<(), String> {
@@ -1495,7 +1889,8 @@ impl AiAgent for AcpAgent {
 #[cfg(test)]
 mod tests {
     use super::{AcpAgent, AcpBackendProfile, AcpSessionSummary};
-    use crate::ai::AiSession;
+    use crate::ai::{AiImagePart, AiSession};
+    use serde_json::json;
 
     #[test]
     fn map_update_to_output_should_follow_acp_mapping_contract() {
@@ -1521,6 +1916,83 @@ mod tests {
         assert!(AcpAgent::is_terminal_update("foo_completed", ""));
         assert!(AcpAgent::is_terminal_update("", "done"));
         assert!(!AcpAgent::is_terminal_update("agent_message_chunk", ""));
+    }
+
+    #[test]
+    fn compose_prompt_parts_should_build_native_contents_when_supported() {
+        let parts = AcpAgent::compose_prompt_parts(
+            "/tmp/workspace",
+            "请分析这些内容",
+            Some(vec![
+                "/tmp/workspace/src/main.rs:12:5".to_string(),
+                "docs/spec.md".to_string(),
+            ]),
+            Some(vec![AiImagePart {
+                filename: "diagram.png".to_string(),
+                mime: "image/png".to_string(),
+                data: vec![1, 2, 3, 4],
+            }]),
+            true,
+            true,
+        );
+
+        assert_eq!(
+            parts[0].get("type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            parts[0].get("text").and_then(|v| v.as_str()),
+            Some("请分析这些内容")
+        );
+
+        let image_count = parts
+            .iter()
+            .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("image"))
+            .count();
+        let resource_count = parts
+            .iter()
+            .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("resource_link"))
+            .count();
+        assert_eq!(image_count, 1);
+        assert_eq!(resource_count, 2);
+    }
+
+    #[test]
+    fn compose_prompt_parts_should_fallback_to_text_when_capability_missing() {
+        let parts = AcpAgent::compose_prompt_parts(
+            "/tmp/workspace",
+            "原始问题",
+            Some(vec!["docs/spec.md".to_string()]),
+            Some(vec![AiImagePart {
+                filename: "diagram.png".to_string(),
+                mime: "image/png".to_string(),
+                data: vec![9, 9, 9],
+            }]),
+            false,
+            false,
+        );
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0].get("type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        let text = parts[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(text.contains("原始问题"));
+        assert!(text.contains("文件引用："));
+        assert!(text.contains("图片附件："));
+    }
+
+    #[test]
+    fn parse_prompt_stop_reason_should_validate_contract() {
+        assert_eq!(
+            AcpAgent::parse_prompt_stop_reason(&json!({ "stopReason": "end_turn" }))
+                .expect("end_turn should be accepted"),
+            "end_turn"
+        );
+        assert!(AcpAgent::parse_prompt_stop_reason(&json!({})).is_err());
+        assert!(AcpAgent::parse_prompt_stop_reason(&json!({ "stopReason": "custom_reason" }))
+            .is_err());
     }
 
     #[test]

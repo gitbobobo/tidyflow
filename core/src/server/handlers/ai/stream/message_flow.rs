@@ -350,32 +350,19 @@ pub(crate) async fn handle_ai_chat_send(
             }
         };
 
+        let mut abort_forwarded = false;
         loop {
             tokio::select! {
-                _ = abort_rx.recv() => {
-                    info!("AIChatSend: abort signal received, session_id={}", session_id);
-                    if let Err(e) = agent.abort_session(&directory, &session_id).await {
-                        warn!(
-                            "AIChatSend: abort_session failed, project={}, workspace={}, session_id={}, error={}",
-                            project_name, workspace_name, session_id, e
-                        );
+                abort_signal = abort_rx.recv(), if !abort_forwarded => {
+                    if abort_signal.is_none() {
+                        continue;
                     }
-                    let _ = emit_server_message_with_state(
-                        &output_tx,
-                        task_broadcast_tx,
-                        origin_conn_id,
-                        ServerMessage::AIChatDone {
-                            project_name: project_name.clone(),
-                            workspace_name: workspace_name.clone(),
-                            ai_tool: ai_tool.clone(),
-                            session_id: session_id.clone(),
-                            selection_hint: None,
-                        },
-                        &mut emit_state,
-                    )
-                    .await;
-                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
-                    break;
+                    abort_forwarded = true;
+                    info!(
+                        "AIChatSend: abort signal received, session_id={}, waiting adapter terminal event",
+                        session_id
+                    );
+                    continue;
                 }
                 event = stream.next() => {
                     match event {
@@ -531,7 +518,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     .await;
                                     false
                                 }
-                                AiEvent::Done => {
+                                AiEvent::Done { stop_reason } => {
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                                     let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                         &agent,
@@ -552,6 +539,7 @@ pub(crate) async fn handle_ai_chat_send(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             selection_hint,
+                                            stop_reason,
                                         },
                                         &mut emit_state,
                                     )
@@ -610,6 +598,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                     selection_hint,
+                                    stop_reason: None,
                                 },
                                 &mut emit_state,
                             )
@@ -815,32 +804,19 @@ pub(crate) async fn handle_ai_chat_command(
             }
         };
 
+        let mut abort_forwarded = false;
         loop {
             tokio::select! {
-                _ = abort_rx.recv() => {
-                    info!("AIChatCommand: abort signal received, session_id={}", session_id);
-                    if let Err(e) = agent.abort_session(&directory, &session_id).await {
-                        warn!(
-                            "AIChatCommand: abort_session failed, project={}, workspace={}, session_id={}, error={}",
-                            project_name, workspace_name, session_id, e
-                        );
+                abort_signal = abort_rx.recv(), if !abort_forwarded => {
+                    if abort_signal.is_none() {
+                        continue;
                     }
-                    let _ = emit_server_message_with_state(
-                        &output_tx,
-                        task_broadcast_tx,
-                        origin_conn_id,
-                        ServerMessage::AIChatDone {
-                            project_name: project_name.clone(),
-                            workspace_name: workspace_name.clone(),
-                            ai_tool: ai_tool.clone(),
-                            session_id: session_id.clone(),
-                            selection_hint: None,
-                        },
-                        &mut emit_state,
-                    )
-                    .await;
-                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
-                    break;
+                    abort_forwarded = true;
+                    info!(
+                        "AIChatCommand: abort signal received, session_id={}, waiting adapter terminal event",
+                        session_id
+                    );
+                    continue;
                 }
                 event = stream.next() => {
                     match event {
@@ -936,7 +912,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     .await;
                                     false
                                 }
-                                AiEvent::Done => {
+                                AiEvent::Done { stop_reason } => {
                                     status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
                                     let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                         &agent,
@@ -957,6 +933,7 @@ pub(crate) async fn handle_ai_chat_command(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             selection_hint,
+                                            stop_reason,
                                         },
                                         &mut emit_state,
                                     )
@@ -1010,6 +987,7 @@ pub(crate) async fn handle_ai_chat_command(
                                     ai_tool: ai_tool.clone(),
                                     session_id: session_id.clone(),
                                     selection_hint,
+                                    stop_reason: None,
                                 },
                                 &mut emit_state,
                             )

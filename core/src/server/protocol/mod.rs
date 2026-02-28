@@ -1199,6 +1199,8 @@ pub enum ServerMessage {
         session_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         selection_hint: Option<ai::SessionSelectionHint>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
     },
     #[serde(rename = "ai_chat_error")]
     AIChatErrorV2 {

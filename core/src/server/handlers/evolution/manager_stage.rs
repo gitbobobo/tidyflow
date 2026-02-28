@@ -678,7 +678,7 @@ impl EvolutionManager {
             let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
             match next {
                 Ok(Some(Ok(event))) => match event {
-                    crate::ai::AiEvent::Done => {
+                    crate::ai::AiEvent::Done { stop_reason } => {
                         let adapter_hint =
                             match agent.session_selection_hint(directory, session_id).await {
                                 Ok(Some(adapter_hint)) => adapter_hint,
@@ -720,6 +720,7 @@ impl EvolutionManager {
                                 ai_tool: ai_tool.to_string(),
                                 session_id: session_id.to_string(),
                                 selection_hint,
+                                stop_reason,
                             },
                         )
                         .await;

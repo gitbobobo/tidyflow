@@ -954,6 +954,7 @@ mod tests {
             ai_tool: "codex".to_string(),
             session_id: "session-done".to_string(),
             selection_hint: None,
+            stop_reason: None,
         };
 
         assert!(should_broadcast_stream_message(&msg, 0));
