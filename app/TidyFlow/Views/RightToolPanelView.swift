@@ -17,11 +17,11 @@ struct CapsuleSegmentedControl: View {
 
     var body: some View {
         GeometryReader { geo in
-            let segmentW = max(0, geo.size.width) / 3
+            let segmentW = max(0, geo.size.width) / 4
             let fullH = max(24, geo.size.height - 4)
 
             HStack(spacing: 0) {
-                ForEach([RightTool.explorer, .search, .git], id: \.self) { tool in
+                ForEach([RightTool.explorer, .search, .git, .sessions], id: \.self) { tool in
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             selection = tool
@@ -58,6 +58,7 @@ struct CapsuleSegmentedControl: View {
         case .explorer: return "folder"
         case .search: return "magnifyingglass"
         case .git: return "arrow.triangle.branch"
+        case .sessions: return "bubble.left.and.bubble.right"
         }
     }
 
@@ -66,6 +67,7 @@ struct CapsuleSegmentedControl: View {
         case .explorer: return "rightPanel.files".localized
         case .search: return "rightPanel.search".localized
         case .git: return "Git"
+        case .sessions: return "rightPanel.sessions".localized
         }
     }
 }
@@ -93,6 +95,9 @@ struct InspectorContentView: View {
                     SearchPlaceholderView()
                 case .git:
                     NativeGitPanelView()
+                        .environmentObject(appState)
+                case .sessions:
+                    SessionsPanelView()
                         .environmentObject(appState)
                 case .none:
                     NoToolSelectedView()

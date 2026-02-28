@@ -13,7 +13,6 @@ struct AITabView: View {
 
     @State private var inputText: String = ""
     @State private var imageAttachments: [ImageAttachment] = []
-    @State private var showSessionList = true
     /// 记录上一次所在的工作空间 key，用于切换时保存快照
     @State private var previousSnapshotKey: String?
     /// 自动补全状态
@@ -50,16 +49,7 @@ struct AITabView: View {
     }
 
     var body: some View {
-        Group {
-            if showSessionList {
-                HSplitView {
-                    sessionListPane
-                    mainPane
-                }
-            } else {
-                mainPane
-            }
-        }
+        mainPane
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         #if os(macOS)
         .background(Color(NSColor.windowBackgroundColor))
@@ -142,6 +132,18 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, _ in
             // user echo 到达时不再需要清空输入——已在发送时立即清空。
+        }
+        .onChange(of: appState.sessionPanelAction) { _, action in
+            guard let action else { return }
+            appState.sessionPanelAction = nil
+            switch action {
+            case .loadSession(let session):
+                loadSession(session)
+            case .deleteSession(let session):
+                deleteSession(session)
+            case .createNewSession:
+                createNewSession()
+            }
         }
         .onReceive(aiChatStore.$messages) { messages in
             observeCodexPlanProposal(messages)
@@ -238,30 +240,6 @@ struct AITabView: View {
         pendingSendRequest == nil
     }
 
-    private var sessionListPane: some View {
-        SessionListView(
-            sessions: appState.aiMergedSessions,
-            currentSessionId: Binding(
-                get: { appState.aiStore(for: appState.aiChatTool).currentSessionId },
-                set: { appState.aiStore(for: appState.aiChatTool).setCurrentSessionId($0) }
-            ),
-            currentTool: appState.aiChatTool,
-            sessionStatusFor: { session in
-                appState.aiSessionStatus(for: session)
-            },
-            onSelect: { session in
-                loadSession(session)
-            },
-            onDelete: { session in
-                deleteSession(session)
-            },
-            onCreateNew: {
-                createNewSession()
-            }
-        )
-        .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
-    }
-
     private var mainPane: some View {
         VStack(spacing: 0) {
             toolbar
@@ -326,16 +304,6 @@ struct AITabView: View {
 
     private var toolbar: some View {
         HStack {
-            Button(action: {
-                withAnimation {
-                    showSessionList.toggle()
-                }
-            }) {
-                Image(systemName: "sidebar.left")
-                    .help("Toggle Session List")
-            }
-            .buttonStyle(.plain)
-
             Text("AI Assistant")
                 .font(.headline)
                 .foregroundColor(.secondary)
@@ -398,7 +366,9 @@ struct AITabView: View {
         let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionId.isEmpty else { return }
 
-        if let matched = appState.aiMergedSessions.first(where: { $0.id == trimmedSessionId }) {
+        if let matched = AIChatTool.allCases.lazy
+            .flatMap({ self.appState.aiSessionsForTool($0) })
+            .first(where: { $0.id == trimmedSessionId }) {
             appState.openSubAgentSessionViewer(
                 project: matched.projectName,
                 workspace: matched.workspaceName,
