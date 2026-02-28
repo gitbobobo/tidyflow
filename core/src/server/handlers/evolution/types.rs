@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::server::protocol::{EvolutionSchedulerInfo, EvolutionStageProfileInfo, EvolutionWorkspaceItem};
+use crate::server::protocol::{
+    EvolutionSchedulerInfo, EvolutionStageProfileInfo, EvolutionWorkspaceItem,
+};
 
 pub(super) struct EvolutionState {
     pub(super) activation_state: String,

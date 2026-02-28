@@ -1,5 +1,6 @@
 use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::session_status::AiSessionStatus;
+use super::shared::path_norm::normalize_directory as shared_normalize_directory;
 use super::{
     AiAgent, AiAgentInfo, AiAudioPart, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSessionSelectionHint, AiSlashCommand,
@@ -82,7 +83,7 @@ impl ClaudeCodeAgent {
     }
 
     fn normalize_directory(directory: &str) -> String {
-        directory.trim_end_matches('/').to_string()
+        shared_normalize_directory(directory)
     }
 
     fn runtime_key(directory: &str, session_id: &str) -> String {

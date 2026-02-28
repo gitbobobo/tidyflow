@@ -134,11 +134,13 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
         .ok_or_else(|| "plan.execution.json 缺少 verification_plan.checks".to_string())?;
     let mut check_ids = HashSet::new();
     for (idx, check) in checks.iter().enumerate() {
-        let check_id = id_from_value(check, &["id"]).ok_or_else(|| {
-            format!("verification_plan.checks[{}] 缺少有效 id", idx)
-        })?;
+        let check_id = id_from_value(check, &["id"])
+            .ok_or_else(|| format!("verification_plan.checks[{}] 缺少有效 id", idx))?;
         if !check_ids.insert(check_id.clone()) {
-            return Err(format!("verification_plan.checks 存在重复 id: {}", check_id));
+            return Err(format!(
+                "verification_plan.checks 存在重复 id: {}",
+                check_id
+            ));
         }
     }
     if check_ids.is_empty() {
@@ -205,17 +207,16 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
                     idx, check_id
                 ));
             }
-            check_to_agents
-                .entry(check_id)
-                .or_default()
-                .insert(agent);
+            check_to_agents.entry(check_id).or_default().insert(agent);
         }
     }
 
     let acceptance_mapping = value
         .pointer("/verification_plan/acceptance_mapping")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string())?;
+        .ok_or_else(|| {
+            "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
+        })?;
 
     let mut criteria_to_checks: HashMap<String, Vec<String>> = HashMap::new();
     for (idx, item) in acceptance_mapping.iter().enumerate() {
@@ -282,7 +283,10 @@ fn is_criteria_failure_status(status: &str) -> bool {
 }
 
 fn is_carryover_failure_status(status: &str) -> bool {
-    matches!(status.trim().to_ascii_lowercase().as_str(), "missing" | "blocked")
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "missing" | "blocked"
+    )
 }
 
 fn parse_judge_result_text(value: &str) -> Option<bool> {
@@ -388,9 +392,13 @@ impl EvolutionManager {
 
     fn implement_result_file_for_stage(stage: &str) -> Option<&'static str> {
         match stage {
-            "implement_general" => Some(Self::implement_result_file_for_lane(ImplementLane::General)),
+            "implement_general" => {
+                Some(Self::implement_result_file_for_lane(ImplementLane::General))
+            }
             "implement_visual" => Some(Self::implement_result_file_for_lane(ImplementLane::Visual)),
-            "implement_advanced" => Some(Self::implement_result_file_for_lane(ImplementLane::Advanced)),
+            "implement_advanced" => Some(Self::implement_result_file_for_lane(
+                ImplementLane::Advanced,
+            )),
             _ => None,
         }
     }
@@ -400,15 +408,17 @@ impl EvolutionManager {
     ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
         let mut all_backlog: Vec<serde_json::Value> = Vec::new();
         let mut all_coverage: Vec<serde_json::Value> = Vec::new();
-        for lane in [ImplementLane::General, ImplementLane::Visual, ImplementLane::Advanced] {
+        for lane in [
+            ImplementLane::General,
+            ImplementLane::Visual,
+            ImplementLane::Advanced,
+        ] {
             let file_name = Self::implement_result_file_for_lane(lane);
             let value = read_json_file(cycle_dir, file_name)?;
             let backlog = value
                 .pointer("/failure_backlog")
                 .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    format!("{} 缺少 failure_backlog（重实现轮必须提供）", file_name)
-                })?;
+                .ok_or_else(|| format!("{} 缺少 failure_backlog（重实现轮必须提供）", file_name))?;
             let coverage = value
                 .pointer("/backlog_coverage")
                 .and_then(|v| v.as_array())
@@ -809,7 +819,10 @@ impl EvolutionManager {
                 }
             }
         }
-        if let Some(items) = judge.pointer("/criteria_judgement").and_then(|v| v.as_array()) {
+        if let Some(items) = judge
+            .pointer("/criteria_judgement")
+            .and_then(|v| v.as_array())
+        {
             for item in items {
                 let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
                     continue;
@@ -921,7 +934,10 @@ impl EvolutionManager {
         let failed_agents = match Self::map_failed_agents_from_results(cycle_dir, &tables) {
             Ok(value) => value,
             Err(err) => {
-                warn!("failed to map reimplementation categories, fallback to general: {}", err);
+                warn!(
+                    "failed to map reimplementation categories, fallback to general: {}",
+                    err
+                );
                 None
             }
         };
@@ -989,12 +1005,21 @@ impl EvolutionManager {
         verify_iteration: u32,
         selected_lanes: &[ImplementLane],
     ) -> Result<(), String> {
-        for lane in [ImplementLane::General, ImplementLane::Visual, ImplementLane::Advanced] {
+        for lane in [
+            ImplementLane::General,
+            ImplementLane::Visual,
+            ImplementLane::Advanced,
+        ] {
             if selected_lanes.iter().any(|item| *item == lane) {
                 continue;
             }
             let stage = Self::stage_for_lane(lane);
-            Self::persist_empty_implement_result_file(cycle_dir, stage, verify_iteration, "skipped")?;
+            Self::persist_empty_implement_result_file(
+                cycle_dir,
+                stage,
+                verify_iteration,
+                "skipped",
+            )?;
         }
         Ok(())
     }
@@ -1016,7 +1041,8 @@ impl EvolutionManager {
 
         let title = format!("Evolution {} {}", stage, cycle_id);
         let session = agent.create_session(&directory, &title).await?;
-        self.set_stage_session(key, stage, &ai_tool, &session.id).await;
+        self.set_stage_session(key, stage, &ai_tool, &session.id)
+            .await;
         self.persist_chat_map(key).await.ok();
         self.persist_stage_file(key, stage, "running", None, None)
             .await
@@ -1281,7 +1307,10 @@ impl EvolutionManager {
     }
 
     fn supports_validation_reminder(stage: &str) -> bool {
-        matches!(stage, "implement_visual" | "implement_advanced" | "verify" | "judge")
+        matches!(
+            stage,
+            "implement_visual" | "implement_advanced" | "verify" | "judge"
+        )
     }
 
     fn should_retry_validation_with_reminder(stage: &str, err: &str) -> bool {
@@ -1644,7 +1673,12 @@ impl EvolutionManager {
                 self.persist_stage_file(key, stage, "skipped", None, None)
                     .await
                     .ok();
-                Self::persist_empty_implement_result_file(&cycle_dir, stage, verify_iteration, "skipped")?;
+                Self::persist_empty_implement_result_file(
+                    &cycle_dir,
+                    stage,
+                    verify_iteration,
+                    "skipped",
+                )?;
                 self.persist_cycle_file(key).await.ok();
                 self.broadcast_cycle_update(key, ctx, "orchestrator").await;
                 return Ok(false);
@@ -1793,7 +1827,12 @@ impl EvolutionManager {
         if let Some(file_name) = Self::implement_result_file_for_stage(stage) {
             let path = cycle_dir.join(file_name);
             if !path.exists() {
-                Self::persist_empty_implement_result_file(&cycle_dir, stage, verify_iteration, "done")?;
+                Self::persist_empty_implement_result_file(
+                    &cycle_dir,
+                    stage,
+                    verify_iteration,
+                    "done",
+                )?;
             }
         }
 
@@ -1875,7 +1914,9 @@ impl EvolutionManager {
                 "implement_general" => {
                     let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
                         .ok()
-                        .and_then(|dir| Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok())
+                        .and_then(|dir| {
+                            Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
+                        })
                         .unwrap_or_else(|| vec![ImplementLane::General, ImplementLane::Visual]);
                     let has_visual = lanes.iter().any(|lane| *lane == ImplementLane::Visual);
                     let has_advanced = lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
@@ -1885,17 +1926,23 @@ impl EvolutionManager {
                         entry
                             .stage_statuses
                             .insert("implement_visual".to_string(), "skipped".to_string());
-                        entry.stage_tool_call_counts.insert("implement_visual".to_string(), 0);
+                        entry
+                            .stage_tool_call_counts
+                            .insert("implement_visual".to_string(), 0);
                         next_stage = "implement_advanced".to_string();
                     } else {
                         entry
                             .stage_statuses
                             .insert("implement_visual".to_string(), "skipped".to_string());
-                        entry.stage_tool_call_counts.insert("implement_visual".to_string(), 0);
+                        entry
+                            .stage_tool_call_counts
+                            .insert("implement_visual".to_string(), 0);
                         entry
                             .stage_statuses
                             .insert("implement_advanced".to_string(), "skipped".to_string());
-                        entry.stage_tool_call_counts.insert("implement_advanced".to_string(), 0);
+                        entry
+                            .stage_tool_call_counts
+                            .insert("implement_advanced".to_string(), 0);
                         next_stage = "verify".to_string();
                     }
                 }
@@ -1903,7 +1950,9 @@ impl EvolutionManager {
                     entry
                         .stage_statuses
                         .insert("implement_advanced".to_string(), "skipped".to_string());
-                    entry.stage_tool_call_counts.insert("implement_advanced".to_string(), 0);
+                    entry
+                        .stage_tool_call_counts
+                        .insert("implement_advanced".to_string(), 0);
                     next_stage = "verify".to_string();
                 }
                 "implement_advanced" => next_stage = "verify".to_string(),
@@ -1922,16 +1971,25 @@ impl EvolutionManager {
                     } else if entry.verify_iteration + 1 < entry.verify_iteration_limit {
                         entry.terminal_reason_code = None;
                         entry.verify_iteration += 1;
-                        for stage_name in
-                            ["implement_general", "implement_visual", "implement_advanced", "verify", "judge"]
-                        {
+                        for stage_name in [
+                            "implement_general",
+                            "implement_visual",
+                            "implement_advanced",
+                            "verify",
+                            "judge",
+                        ] {
                             entry
                                 .stage_statuses
                                 .insert(stage_name.to_string(), "pending".to_string());
-                            entry.stage_tool_call_counts.insert(stage_name.to_string(), 0);
+                            entry
+                                .stage_tool_call_counts
+                                .insert(stage_name.to_string(), 0);
                         }
                         let lanes = match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
-                            Ok(cycle_dir) => match Self::resolve_implement_lanes(&cycle_dir, entry.verify_iteration) {
+                            Ok(cycle_dir) => match Self::resolve_implement_lanes(
+                                &cycle_dir,
+                                entry.verify_iteration,
+                            ) {
                                 Ok(value) => value,
                                 Err(err) => {
                                     warn!(
@@ -1947,9 +2005,7 @@ impl EvolutionManager {
                             Err(err) => {
                                 warn!(
                                     "resolve cycle dir failed (project={}, workspace={}): {}",
-                                    entry.project,
-                                    entry.workspace,
-                                    err
+                                    entry.project, entry.workspace, err
                                 );
                                 vec![ImplementLane::General]
                             }
@@ -1960,10 +2016,11 @@ impl EvolutionManager {
                             entry.cycle_id.clone(),
                             "fail".to_string(),
                         ));
-                        let has_general_or_visual = lanes
-                            .iter()
-                            .any(|lane| matches!(lane, ImplementLane::General | ImplementLane::Visual));
-                        let has_advanced = lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
+                        let has_general_or_visual = lanes.iter().any(|lane| {
+                            matches!(lane, ImplementLane::General | ImplementLane::Visual)
+                        });
+                        let has_advanced =
+                            lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
                         if has_general_or_visual {
                             next_stage = "implement_general".to_string();
                         } else if has_advanced {
@@ -2868,7 +2925,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_general",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
@@ -2907,7 +2964,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_visual",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
@@ -2946,7 +3003,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_visual",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
@@ -2985,7 +3042,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_visual",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         write_json(
@@ -3037,7 +3094,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_visual",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         write_json(
@@ -3089,7 +3146,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_visual",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         write_json(
@@ -3141,7 +3198,7 @@ mod tests {
                     "rollback": "git restore",
                     "implementation_agent": "implement_visual",
                     "linked_check_ids": ["v-2"]
-                })
+                }),
             ]),
         );
         write_json(

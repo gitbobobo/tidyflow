@@ -129,7 +129,8 @@ mod tests {
         params.fixed_port = Some(48111);
         params.app_language = Some("zh-Hans".to_string());
         params.remote_access_enabled = Some(true);
-        params.workspace_shortcuts
+        params
+            .workspace_shortcuts
             .insert("1".to_string(), "demo/default".to_string());
 
         save_client_settings(&app_state, params).await;

@@ -9,7 +9,8 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
-use super::client::{BusEvent, GlobalBusEventEnvelope, OpenCodeClient};
+use super::opencode::http_client::OpenCodeClient;
+use super::opencode::protocol::{BusEvent, GlobalBusEventEnvelope};
 use super::OpenCodeManager;
 
 /// 广播给上层的事件（包含 directory + payload）

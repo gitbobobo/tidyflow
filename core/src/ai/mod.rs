@@ -3,10 +3,12 @@
 //! 定义通用的 AiAgent trait 和事件类型，
 //! 不同 AI 后端（OpenCode、Claude CLI 等）实现此 trait。
 
+pub mod acp;
 pub mod acp_adapter;
 pub mod acp_client;
 pub mod claude_adapter;
 pub mod client;
+pub mod codex;
 pub mod codex_adapter;
 pub mod codex_client;
 pub mod codex_manager;
@@ -16,7 +18,9 @@ pub mod copilot_client;
 pub mod event_hub;
 pub mod kimi_adapter;
 pub mod manager;
+pub mod opencode;
 pub mod session_status;
+pub mod shared;
 
 pub use claude_adapter::ClaudeCodeAgent;
 pub use client::OpenCodeAgent;
