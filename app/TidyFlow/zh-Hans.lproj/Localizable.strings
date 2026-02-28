@@ -235,6 +235,7 @@
 "rightPanel.globalSearch" = "全局搜索";
 "rightPanel.noTool" = "未选择工具";
 "rightPanel.noTool.hint" = "请从上方选择一个工具";
+"rightPanel.sessions" = "会话";
 
 /* 连接状态 */
 "connection.connected" = "已连接";

@@ -233,6 +233,7 @@
 "rightPanel.globalSearch" = "Global Search";
 "rightPanel.noTool" = "No Tool Selected";
 "rightPanel.noTool.hint" = "Select a tool from above";
+"rightPanel.sessions" = "Sessions";
 
 /* Connection Status */
 "connection.connected" = "Connected";
