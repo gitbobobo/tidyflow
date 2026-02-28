@@ -178,10 +178,24 @@ class AppState: ObservableObject {
     @Published var aiSessions: [AISessionInfo] = [] {
         didSet {
             aiSessionsByTool[aiChatTool] = aiSessions
-            refreshMergedAISessions()
         }
     }
-    @Published var aiMergedSessions: [AISessionInfo] = []
+
+    /// 右侧面板会话列表当前筛选的 AI 工具
+    @Published var sessionPanelFilterTool: AIChatTool = .opencode
+
+    /// 右侧面板会话操作（由 SessionsPanelView 发起，AITabView 响应）
+    enum SessionPanelAction: Equatable {
+        case loadSession(AISessionInfo)
+        case deleteSession(AISessionInfo)
+        case createNewSession
+    }
+    @Published var sessionPanelAction: SessionPanelAction?
+
+    /// 获取指定工具的会话列表
+    func aiSessionsForTool(_ tool: AIChatTool) -> [AISessionInfo] {
+        aiSessionsByTool[tool] ?? []
+    }
 
     // AI Provider / Model / Agent 状态（当前工具上下文）
     @Published var aiProviders: [AIProviderInfo] = [] {
@@ -512,7 +526,6 @@ class AppState: ObservableObject {
             aiToolBadges[tool] = AIToolBadgeState()
             aiSessionStatusesByTool[tool] = [:]
         }
-        refreshMergedAISessions()
     }
 
     func aiStore(for tool: AIChatTool) -> AIChatStore {
@@ -550,8 +563,6 @@ class AppState: ObservableObject {
         aiSessionsByTool[tool] = sortedSessions
         if aiChatTool == tool {
             aiSessions = sortedSessions
-        } else {
-            refreshMergedAISessions()
         }
     }
 
@@ -1722,47 +1733,6 @@ class AppState: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .filter { $0.isLetter || $0.isNumber }
-    }
-
-    private func refreshMergedAISessions() {
-        aiMergedSessions = mergeAISessionsByUpdatedAt(aiSessionsByTool)
-    }
-
-    /// 按工具桶做 k-way merge，避免每次全量 flatMap + sort。
-    private func mergeAISessionsByUpdatedAt(
-        _ buckets: [AIChatTool: [AISessionInfo]]
-    ) -> [AISessionInfo] {
-        var indices: [AIChatTool: Int] = [:]
-        var merged: [AISessionInfo] = []
-        merged.reserveCapacity(buckets.values.reduce(0) { $0 + $1.count })
-
-        while true {
-            var bestTool: AIChatTool?
-            var bestSession: AISessionInfo?
-
-            for tool in AIChatTool.allCases {
-                let idx = indices[tool] ?? 0
-                guard let sessions = buckets[tool], idx < sessions.count else { continue }
-                let candidate = sessions[idx]
-                if let currentBest = bestSession {
-                    if candidate.updatedAt > currentBest.updatedAt {
-                        bestSession = candidate
-                        bestTool = tool
-                    }
-                } else {
-                    bestSession = candidate
-                    bestTool = tool
-                }
-            }
-
-            guard let chosenTool = bestTool, let chosenSession = bestSession else {
-                break
-            }
-            merged.append(chosenSession)
-            indices[chosenTool] = (indices[chosenTool] ?? 0) + 1
-        }
-
-        return merged
     }
 
 }

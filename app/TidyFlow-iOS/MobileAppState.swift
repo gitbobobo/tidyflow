@@ -187,12 +187,10 @@ final class MobileAppState: ObservableObject {
     @Published var aiSessions: [AISessionInfo] = [] {
         didSet {
             aiSessionsByTool[aiChatTool] = aiSessions
-            refreshMergedAISessions()
         }
     }
     /// AI 会话状态缓存（按工具分桶；key: "project::workspace::sessionId"）
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
-    @Published var aiMergedSessions: [AISessionInfo] = []
     @Published var aiProviders: [AIProviderInfo] = []
     @Published var aiSelectedModel: AIModelSelection? {
         didSet {
@@ -3044,9 +3042,12 @@ final class MobileAppState: ObservableObject {
         aiSessionsByTool[tool] = sortedSessions
         if aiChatTool == tool {
             aiSessions = sortedSessions
-        } else {
-            refreshMergedAISessions()
         }
+    }
+
+    /// 获取指定工具的会话列表
+    func aiSessionsForTool(_ tool: AIChatTool) -> [AISessionInfo] {
+        aiSessionsByTool[tool] ?? []
     }
 
     private func aiSessionStatusKey(projectName: String, workspaceName: String, sessionId: String) -> String {
@@ -3078,47 +3079,6 @@ final class MobileAppState: ObservableObject {
             contextRemainingPercent: contextRemainingPercent
         )
         aiSessionStatusesByTool[aiTool] = dict
-    }
-
-    private func refreshMergedAISessions() {
-        aiMergedSessions = mergeAISessionsByUpdatedAt(aiSessionsByTool)
-    }
-
-    /// 按工具桶做 k-way merge，避免每次全量 flatMap + sort。
-    private func mergeAISessionsByUpdatedAt(
-        _ buckets: [AIChatTool: [AISessionInfo]]
-    ) -> [AISessionInfo] {
-        var indices: [AIChatTool: Int] = [:]
-        var merged: [AISessionInfo] = []
-        merged.reserveCapacity(buckets.values.reduce(0) { $0 + $1.count })
-
-        while true {
-            var bestTool: AIChatTool?
-            var bestSession: AISessionInfo?
-
-            for tool in AIChatTool.allCases {
-                let idx = indices[tool] ?? 0
-                guard let sessions = buckets[tool], idx < sessions.count else { continue }
-                let candidate = sessions[idx]
-                if let currentBest = bestSession {
-                    if candidate.updatedAt > currentBest.updatedAt {
-                        bestSession = candidate
-                        bestTool = tool
-                    }
-                } else {
-                    bestSession = candidate
-                    bestTool = tool
-                }
-            }
-
-            guard let chosenTool = bestTool, let chosenSession = bestSession else {
-                break
-            }
-            merged.append(chosenSession)
-            indices[chosenTool] = (indices[chosenTool] ?? 0) + 1
-        }
-
-        return merged
     }
 
     // MARK: - 终端视图绑定

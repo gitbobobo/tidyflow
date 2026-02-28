@@ -7,6 +7,7 @@ enum RightTool: String, CaseIterable {
     case explorer
     case search
     case git
+    case sessions
 }
 
 // MARK: - 外部编辑器（侧边栏与工具栏共用）

@@ -622,7 +622,7 @@ struct AIChatMessage: Identifiable {
     }
 }
 
-struct AISessionInfo: Identifiable {
+struct AISessionInfo: Identifiable, Equatable {
     let projectName: String
     let workspaceName: String
     let aiTool: AIChatTool
