@@ -385,6 +385,9 @@
 "evolution.stage.direction" = "方向";
 "evolution.stage.plan" = "计划";
 "evolution.stage.implement" = "实现";
+"evolution.stage.implementGeneral" = "通用实现";
+"evolution.stage.implementVisual" = "视觉实现";
+"evolution.stage.implementAdvanced" = "高级实现";
 "evolution.stage.verify" = "验证";
 "evolution.stage.judge" = "裁决";
 "evolution.stage.report" = "报告";
@@ -399,3 +402,4 @@
 "evolution.status.completed" = "已完成";
 "evolution.status.failed" = "失败";
 "evolution.status.notStarted" = "未启动";
+"evolution.status.skipped" = "已跳过";

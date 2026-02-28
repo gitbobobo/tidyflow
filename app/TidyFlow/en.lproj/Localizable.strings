@@ -383,6 +383,9 @@
 "evolution.stage.direction" = "Direction";
 "evolution.stage.plan" = "Plan";
 "evolution.stage.implement" = "Implement";
+"evolution.stage.implementGeneral" = "Implement General";
+"evolution.stage.implementVisual" = "Implement Visual";
+"evolution.stage.implementAdvanced" = "Implement Advanced";
 "evolution.stage.verify" = "Verify";
 "evolution.stage.judge" = "Judge";
 "evolution.stage.report" = "Report";
@@ -397,3 +400,4 @@
 "evolution.status.completed" = "Completed";
 "evolution.status.failed" = "Failed";
 "evolution.status.notStarted" = "Not Started";
+"evolution.status.skipped" = "Skipped";
