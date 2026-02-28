@@ -360,13 +360,15 @@ struct AIChatErrorV2 {
 }
 
 struct AIQuestionOptionInfo {
+    let optionID: String?
     let label: String
     let description: String
 
     static func from(json: [String: Any]) -> AIQuestionOptionInfo? {
         guard let label = json["label"] as? String else { return nil }
+        let optionID = parseOptionalString(json["option_id"]) ?? parseOptionalString(json["optionId"])
         let description = json["description"] as? String ?? ""
-        return AIQuestionOptionInfo(label: label, description: description)
+        return AIQuestionOptionInfo(optionID: optionID, label: label, description: description)
     }
 }
 
@@ -413,6 +415,35 @@ struct AIQuestionRequestInfo {
             toolMessageId: toolMessageId,
             toolCallId: toolCallId
         )
+    }
+
+    /// 将 UI 展示答案映射为协议答案：优先 optionID，自定义答案保持原值。
+    func protocolAnswers(from displayAnswers: [[String]]) -> [[String]] {
+        displayAnswers.enumerated().map { index, group in
+            guard index < questions.count else { return group }
+            let options = questions[index].options
+            guard !options.isEmpty else { return group }
+
+            return group.map { answer in
+                let token = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !token.isEmpty else { return answer }
+
+                if let direct = options.first(where: { option in
+                    guard let optionID = option.optionID else { return false }
+                    return optionID == token || optionID.caseInsensitiveCompare(token) == .orderedSame
+                })?.optionID {
+                    return direct
+                }
+
+                if let matchedByLabel = options.first(where: {
+                    $0.label.caseInsensitiveCompare(token) == .orderedSame
+                })?.optionID {
+                    return matchedByLabel
+                }
+
+                return answer
+            }
+        }
     }
 }
 

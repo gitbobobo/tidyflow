@@ -97,4 +97,58 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(part?.source?["protocol"] as? String, "agent-plan")
         XCTAssertEqual(part?.source?["revision"] as? Int, 2)
     }
+
+    func testAIQuestionOptionParsesOptionIDSnakeAndCamel() {
+        let snake = AIQuestionOptionInfo.from(json: [
+            "option_id": "code",
+            "label": "开始实现",
+            "description": "切换到实现模式"
+        ])
+        XCTAssertEqual(snake?.optionID, "code")
+        XCTAssertEqual(snake?.label, "开始实现")
+
+        let camel = AIQuestionOptionInfo.from(json: [
+            "optionId": "ask",
+            "label": "继续规划"
+        ])
+        XCTAssertEqual(camel?.optionID, "ask")
+        XCTAssertEqual(camel?.label, "继续规划")
+    }
+
+    func testAIQuestionRequestMapsDisplayAnswersToProtocolAnswers() {
+        let request = AIQuestionRequestInfo(
+            id: "req-1",
+            sessionId: "s1",
+            questions: [
+                AIQuestionInfo(
+                    question: "是否开始实现？",
+                    header: "模式",
+                    options: [
+                        AIQuestionOptionInfo(optionID: "code", label: "开始实现", description: ""),
+                        AIQuestionOptionInfo(optionID: "ask", label: "继续规划", description: ""),
+                    ],
+                    multiple: false,
+                    custom: false
+                ),
+                AIQuestionInfo(
+                    question: "补充说明",
+                    header: "备注",
+                    options: [],
+                    multiple: false,
+                    custom: true
+                ),
+            ],
+            toolMessageId: nil,
+            toolCallId: nil
+        )
+
+        let protocolAnswers = request.protocolAnswers(from: [
+            ["开始实现"],
+            ["保留当前计划并补测试"],
+        ])
+
+        XCTAssertEqual(protocolAnswers.count, 2)
+        XCTAssertEqual(protocolAnswers[0], ["code"])
+        XCTAssertEqual(protocolAnswers[1], ["保留当前计划并补测试"])
+    }
 }
