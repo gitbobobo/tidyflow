@@ -1406,6 +1406,7 @@ impl OpenCodeAgent {
                 agent,
                 model_provider_id,
                 model_id,
+                config_options: None,
             })
         }
     }

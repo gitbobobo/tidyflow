@@ -5,6 +5,7 @@ use super::codex_manager::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -89,12 +90,39 @@ pub struct AcpModeInfo {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AcpConfigOptionChoice {
+    pub value: Value,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpConfigOptionGroup {
+    pub label: String,
+    pub options: Vec<AcpConfigOptionChoice>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpConfigOptionInfo {
+    pub option_id: String,
+    pub category: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub current_value: Option<Value>,
+    pub options: Vec<AcpConfigOptionChoice>,
+    pub option_groups: Vec<AcpConfigOptionGroup>,
+    pub raw: Option<Value>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AcpSessionMetadata {
     pub models: Vec<AcpModelInfo>,
     pub current_model_id: Option<String>,
     pub modes: Vec<AcpModeInfo>,
     pub current_mode_id: Option<String>,
+    pub config_options: Vec<AcpConfigOptionInfo>,
+    pub config_values: HashMap<String, Value>,
 }
 
 #[derive(Clone)]
@@ -124,6 +152,13 @@ impl AcpClient {
         self.initialization_state()
             .await
             .map(|state| state.agent_capabilities.load_session)
+            .unwrap_or(false)
+    }
+
+    pub async fn supports_set_config_option(&self) -> bool {
+        self.initialization_state()
+            .await
+            .map(|state| state.agent_capabilities.set_config_option)
             .unwrap_or(false)
     }
 
@@ -349,6 +384,28 @@ impl AcpClient {
             Some(serde_json::json!({
                 "sessionId": session_id,
                 "modeId": mode_id
+            })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn session_set_config_option(
+        &self,
+        session_id: &str,
+        option_id: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        let option_id = option_id.trim();
+        if option_id.is_empty() {
+            return Err("session/set_config_option requires non-empty option_id".to_string());
+        }
+        self.send_request_with_auth_retry(
+            "session/set_config_option",
+            Some(serde_json::json!({
+                "sessionId": session_id,
+                "optionId": option_id,
+                "value": value
             })),
         )
         .await
@@ -754,6 +811,268 @@ impl AcpClient {
         Some(current)
     }
 
+    fn find_object_by_keys(value: &Value, keys: &[&str]) -> Option<serde_json::Map<String, Value>> {
+        let target = keys
+            .iter()
+            .map(|key| Self::canonical_meta_key(key))
+            .collect::<Vec<_>>();
+        let mut stack = vec![value];
+        let mut visited = 0usize;
+        const MAX_VISITS: usize = 400;
+
+        while let Some(node) = stack.pop() {
+            if visited >= MAX_VISITS {
+                break;
+            }
+            visited += 1;
+            match node {
+                Value::Object(map) => {
+                    for (k, v) in map {
+                        let canonical = Self::canonical_meta_key(k);
+                        if target.iter().any(|key| key == &canonical) {
+                            if let Some(found) = v.as_object() {
+                                return Some(found.clone());
+                            }
+                        }
+                        if matches!(v, Value::Object(_) | Value::Array(_)) {
+                            stack.push(v);
+                        }
+                    }
+                }
+                Value::Array(arr) => {
+                    for item in arr {
+                        if matches!(item, Value::Object(_) | Value::Array(_)) {
+                            stack.push(item);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn parse_config_option_choice(value: &Value) -> Option<AcpConfigOptionChoice> {
+        let obj = value.as_object()?;
+        let choice_value = obj
+            .get("value")
+            .or_else(|| obj.get("id"))
+            .or_else(|| obj.get("optionId"))
+            .or_else(|| obj.get("option_id"))
+            .cloned()?;
+        let label = obj
+            .get("label")
+            .and_then(|v| v.as_str())
+            .or_else(|| obj.get("name").and_then(|v| v.as_str()))
+            .or_else(|| choice_value.as_str())
+            .unwrap_or("option")
+            .to_string();
+        let description = obj
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        Some(AcpConfigOptionChoice {
+            value: choice_value,
+            label,
+            description,
+        })
+    }
+
+    fn parse_config_option_option_groups(
+        value: Option<&Value>,
+    ) -> (Vec<AcpConfigOptionChoice>, Vec<AcpConfigOptionGroup>) {
+        let mut options = Vec::new();
+        let mut option_groups = Vec::new();
+        let Some(items) = value.and_then(|v| v.as_array()) else {
+            return (options, option_groups);
+        };
+
+        for item in items {
+            if let Some(obj) = item.as_object() {
+                let grouped = obj
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .or_else(|| obj.get("choices").and_then(|v| v.as_array()))
+                    .or_else(|| obj.get("items").and_then(|v| v.as_array()));
+                if let Some(group_items) = grouped {
+                    let group_options = group_items
+                        .iter()
+                        .filter_map(Self::parse_config_option_choice)
+                        .collect::<Vec<_>>();
+                    if !group_options.is_empty() {
+                        let label = obj
+                            .get("label")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| obj.get("name").and_then(|v| v.as_str()))
+                            .or_else(|| obj.get("groupLabel").and_then(|v| v.as_str()))
+                            .or_else(|| obj.get("group_label").and_then(|v| v.as_str()))
+                            .unwrap_or("group")
+                            .to_string();
+                        option_groups.push(AcpConfigOptionGroup {
+                            label,
+                            options: group_options,
+                        });
+                    }
+                    continue;
+                }
+            }
+
+            if let Some(choice) = Self::parse_config_option_choice(item) {
+                options.push(choice);
+            }
+        }
+
+        (options, option_groups)
+    }
+
+    fn parse_config_option_info(value: Value) -> Option<AcpConfigOptionInfo> {
+        let obj = value.as_object()?;
+        let option_id = obj
+            .get("optionId")
+            .and_then(|v| v.as_str())
+            .or_else(|| obj.get("option_id").and_then(|v| v.as_str()))
+            .or_else(|| obj.get("id").and_then(|v| v.as_str()))
+            .or_else(|| obj.get("key").and_then(|v| v.as_str()))
+            .or_else(|| obj.get("name").and_then(|v| v.as_str()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+        let category = obj
+            .get("category")
+            .and_then(|v| v.as_str())
+            .or_else(|| obj.get("kind").and_then(|v| v.as_str()))
+            .or_else(|| obj.get("group").and_then(|v| v.as_str()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .or_else(|| obj.get("label").and_then(|v| v.as_str()))
+            .or_else(|| obj.get("title").and_then(|v| v.as_str()))
+            .unwrap_or(&option_id)
+            .to_string();
+        let description = obj
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let current_value = obj
+            .get("currentValue")
+            .or_else(|| obj.get("current_value"))
+            .or_else(|| obj.get("value"))
+            .or_else(|| obj.get("selectedValue"))
+            .or_else(|| obj.get("selected_value"))
+            .cloned()
+            .filter(|v| !v.is_null());
+        let (options, option_groups) = Self::parse_config_option_option_groups(
+            obj.get("options")
+                .or_else(|| obj.get("choices"))
+                .or_else(|| obj.get("values")),
+        );
+        Some(AcpConfigOptionInfo {
+            option_id,
+            category,
+            name,
+            description,
+            current_value,
+            options,
+            option_groups,
+            raw: Some(Value::Object(obj.clone())),
+        })
+    }
+
+    fn parse_config_options(value: &Value) -> Vec<AcpConfigOptionInfo> {
+        let mut rows = Vec::<Value>::new();
+        for key in [
+            "sessionConfigOptions",
+            "session_config_options",
+            "configOptions",
+            "config_options",
+            "options",
+        ] {
+            let found = Self::rows_from_key(value, key);
+            if !found.is_empty() {
+                rows = found;
+                break;
+            }
+        }
+
+        if rows.is_empty() {
+            if let Some(found) = Self::find_object_by_keys(
+                value,
+                &[
+                    "sessionConfigOptions",
+                    "session_config_options",
+                    "configOptions",
+                    "config_options",
+                ],
+            ) {
+                rows = found.into_values().collect::<Vec<_>>();
+            }
+        }
+
+        let mut options = rows
+            .into_iter()
+            .filter_map(Self::parse_config_option_info)
+            .collect::<Vec<_>>();
+        options.sort_by(|a, b| a.option_id.cmp(&b.option_id));
+        options
+    }
+
+    fn parse_config_values(value: &Value) -> HashMap<String, Value> {
+        let mut out = HashMap::<String, Value>::new();
+        for key in [
+            "sessionConfig",
+            "session_config",
+            "configValues",
+            "config_values",
+            "selectedConfigOptions",
+            "selected_config_options",
+            "currentConfigOptions",
+            "current_config_options",
+            "config",
+        ] {
+            let Some(found) = Self::find_object_by_keys(value, &[key]) else {
+                continue;
+            };
+            for (option_id, option_value) in found {
+                if option_id.trim().is_empty() || option_value.is_null() {
+                    continue;
+                }
+                out.insert(option_id, option_value);
+            }
+        }
+        out
+    }
+
+    fn normalize_config_category(category: Option<&str>, option_id: &str) -> String {
+        let from_category = category
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty());
+        if let Some(category) = from_category {
+            return category;
+        }
+        option_id.trim().to_lowercase()
+    }
+
+    fn extract_config_value_as_id(value: &Value) -> Option<String> {
+        if let Some(raw) = value.as_str() {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+        let obj = value.as_object()?;
+        obj.get("id")
+            .or_else(|| obj.get("modeId"))
+            .or_else(|| obj.get("mode_id"))
+            .or_else(|| obj.get("modelId"))
+            .or_else(|| obj.get("model_id"))
+            .or_else(|| obj.get("value"))
+            .and_then(Self::json_value_to_trimmed_string)
+    }
+
     fn parse_session_metadata(value: &Value) -> AcpSessionMetadata {
         let models_root = value.get("models").unwrap_or(value);
         let modes_root = value.get("modes").unwrap_or(value);
@@ -943,8 +1262,53 @@ impl AcpClient {
             &modes,
         );
 
+        let config_options = Self::parse_config_options(value);
+        let mut config_values = Self::parse_config_values(value);
+        for option in &config_options {
+            if let Some(current_value) = option.current_value.clone() {
+                config_values.insert(option.option_id.clone(), current_value);
+            }
+        }
+
+        let current_mode_id = if current_mode_id.is_some() {
+            current_mode_id
+        } else {
+            let from_config = config_options.iter().find_map(|option| {
+                let category =
+                    Self::normalize_config_category(option.category.as_deref(), &option.option_id);
+                if category != "mode" {
+                    return None;
+                }
+                let value = option
+                    .current_value
+                    .as_ref()
+                    .or_else(|| config_values.get(&option.option_id))?;
+                Self::extract_config_value_as_id(value)
+            });
+            Self::normalize_current_mode_id(from_config, &modes)
+        };
+
+        let current_model_id = if current_model_id.is_some() {
+            current_model_id
+        } else {
+            let from_config = config_options.iter().find_map(|option| {
+                let category =
+                    Self::normalize_config_category(option.category.as_deref(), &option.option_id);
+                if category != "model" {
+                    return None;
+                }
+                let value = option
+                    .current_value
+                    .as_ref()
+                    .or_else(|| config_values.get(&option.option_id))?;
+                Self::extract_config_value_as_id(value)
+            });
+            Self::normalize_current_model_id(from_config, &models)
+        };
+
         if models.is_empty()
             && modes.is_empty()
+            && config_options.is_empty()
             && current_model_id.is_none()
             && current_mode_id.is_none()
         {
@@ -963,9 +1327,10 @@ impl AcpClient {
             );
         } else {
             debug!(
-                "ACP session metadata parsed: models_count={}, modes_count={}, current_model_id={:?}, current_mode_id={:?}",
+                "ACP session metadata parsed: models_count={}, modes_count={}, config_options_count={}, current_model_id={:?}, current_mode_id={:?}",
                 models.len(),
                 modes.len(),
+                config_options.len(),
                 current_model_id,
                 current_mode_id
             );
@@ -976,6 +1341,8 @@ impl AcpClient {
             current_model_id,
             modes,
             current_mode_id,
+            config_options,
+            config_values,
         }
     }
 }
@@ -1215,6 +1582,94 @@ mod tests {
             Some("session-1")
         );
         assert_eq!(params.get("modeId").and_then(|v| v.as_str()), Some("code"));
+    }
+
+    #[tokio::test]
+    async fn session_set_config_option_should_send_option_id_and_value() {
+        let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
+        let client = AcpClient::new_with_transport(transport.clone());
+        client
+            .session_set_config_option(
+                "session-1",
+                "thought_level",
+                json!({
+                    "id": "high"
+                }),
+            )
+            .await
+            .expect("session/set_config_option should succeed");
+
+        let params = transport
+            .first_request_params("session/set_config_option")
+            .await
+            .expect("session/set_config_option params should exist");
+        assert_eq!(
+            params.get("sessionId").and_then(|v| v.as_str()),
+            Some("session-1")
+        );
+        assert_eq!(
+            params.get("optionId").and_then(|v| v.as_str()),
+            Some("thought_level")
+        );
+        assert_eq!(
+            params
+                .get("value")
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn parse_session_metadata_should_parse_grouped_config_options() {
+        let payload = json!({
+            "configOptions": [
+                {
+                    "optionId": "mode",
+                    "category": "mode",
+                    "name": "模式",
+                    "currentValue": "code",
+                    "options": [
+                        {
+                            "label": "常用",
+                            "options": [
+                                {
+                                    "value": "code",
+                                    "label": "代码"
+                                },
+                                {
+                                    "value": {
+                                        "id": "plan"
+                                    },
+                                    "label": "规划"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "selectedConfigOptions": {
+                "mode": "code"
+            }
+        });
+
+        let metadata = AcpClient::parse_session_metadata(&payload);
+        assert_eq!(metadata.config_options.len(), 1);
+        let mode = &metadata.config_options[0];
+        assert_eq!(mode.option_id, "mode");
+        assert_eq!(mode.category.as_deref(), Some("mode"));
+        assert_eq!(mode.current_value, Some(json!("code")));
+        assert_eq!(mode.option_groups.len(), 1);
+        assert_eq!(mode.option_groups[0].label, "常用");
+        assert_eq!(mode.option_groups[0].options.len(), 2);
+        assert_eq!(
+            mode.option_groups[0].options[1]
+                .value
+                .get("id")
+                .and_then(|v| v.as_str()),
+            Some("plan")
+        );
+        assert_eq!(metadata.config_values.get("mode"), Some(&json!("code")));
     }
 
     #[tokio::test]

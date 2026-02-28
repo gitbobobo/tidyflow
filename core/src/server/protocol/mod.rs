@@ -473,6 +473,8 @@ pub enum ClientMessage {
         model: Option<ai::ModelSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
     },
     #[serde(rename = "ai_chat_command")]
     AIChatCommand {
@@ -490,6 +492,8 @@ pub enum ClientMessage {
         model: Option<ai::ModelSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
     },
     #[serde(rename = "ai_chat_abort")]
     AIChatAbort {
@@ -581,6 +585,23 @@ pub enum ClientMessage {
         project_name: String,
         workspace_name: String,
         ai_tool: String,
+    },
+    #[serde(rename = "ai_session_config_options")]
+    AISessionConfigOptions {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+    #[serde(rename = "ai_session_set_config_option")]
+    AISessionSetConfigOption {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        option_id: String,
+        value: serde_json::Value,
     },
 
     // vNext: Evolution 自主进化
@@ -1291,6 +1312,15 @@ pub enum ServerMessage {
         ai_tool: String,
         commands: Vec<ai::SlashCommandInfo>,
     },
+    #[serde(rename = "ai_session_config_options")]
+    AISessionConfigOptions {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        options: Vec<ai::SessionConfigOptionInfo>,
+    },
     #[serde(rename = "ai_session_subscribe_ack")]
     AISessionSubscribeAck {
         session_id: String,
@@ -1645,6 +1675,8 @@ pub struct EvolutionStageProfileInfo {
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ai::ModelSelection>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub config_options: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl EvolutionStageProfileInfo {

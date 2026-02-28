@@ -28,6 +28,7 @@ pub use kimi_adapter::KimiAcpAgent;
 pub use manager::OpenCodeManager;
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
@@ -62,6 +63,12 @@ pub enum AiEvent {
     QuestionCleared {
         session_id: String,
         request_id: String,
+    },
+    /// 会话配置项更新（ACP session config options）
+    SessionConfigOptionsUpdated {
+        session_id: String,
+        options: Vec<AiSessionConfigOption>,
+        selection_hint: Option<AiSessionSelectionHint>,
     },
     /// 流结束（可携带协议 stop_reason）
     Done { stop_reason: Option<String> },
@@ -182,6 +189,37 @@ pub struct AiModelSelection {
     pub model_id: String,
 }
 
+/// 会话配置项值（对应 ACP config option value）
+pub type AiSessionConfigValue = serde_json::Value;
+
+/// 会话配置项候选值
+#[derive(Debug, Clone)]
+pub struct AiSessionConfigOptionChoice {
+    pub value: AiSessionConfigValue,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+/// 会话配置项分组候选值（grouped select）
+#[derive(Debug, Clone)]
+pub struct AiSessionConfigOptionChoiceGroup {
+    pub label: String,
+    pub options: Vec<AiSessionConfigOptionChoice>,
+}
+
+/// 会话配置项元数据
+#[derive(Debug, Clone)]
+pub struct AiSessionConfigOption {
+    pub option_id: String,
+    pub category: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub current_value: Option<AiSessionConfigValue>,
+    pub options: Vec<AiSessionConfigOptionChoice>,
+    pub option_groups: Vec<AiSessionConfigOptionChoiceGroup>,
+    pub raw: Option<serde_json::Value>,
+}
+
 /// 会话最近一次使用的输入选择提示（用于历史会话加载后恢复输入框）
 #[derive(Debug, Clone, Default)]
 pub struct AiSessionSelectionHint {
@@ -191,6 +229,8 @@ pub struct AiSessionSelectionHint {
     pub model_provider_id: Option<String>,
     /// 对应前端 model 选择
     pub model_id: Option<String>,
+    /// 对应 ACP configOptions 当前值（key 为 option_id）
+    pub config_options: Option<HashMap<String, AiSessionConfigValue>>,
 }
 
 /// AI Provider 信息（通用模型）
@@ -268,6 +308,30 @@ pub trait AiAgent: Send + Sync {
         agent: Option<String>,
     ) -> Result<AiEventStream, String>;
 
+    /// 发送消息（支持会话配置项覆盖）
+    async fn send_message_with_config(
+        &self,
+        directory: &str,
+        session_id: &str,
+        message: &str,
+        file_refs: Option<Vec<String>>,
+        image_parts: Option<Vec<AiImagePart>>,
+        model: Option<AiModelSelection>,
+        agent: Option<String>,
+        _config_overrides: Option<HashMap<String, AiSessionConfigValue>>,
+    ) -> Result<AiEventStream, String> {
+        self.send_message(
+            directory,
+            session_id,
+            message,
+            file_refs,
+            image_parts,
+            model,
+            agent,
+        )
+        .await
+    }
+
     /// 发送斜杠命令（默认回退为普通文本消息）
     async fn send_command(
         &self,
@@ -297,6 +361,26 @@ pub trait AiAgent: Send + Sync {
             agent,
         )
         .await
+    }
+
+    /// 列出会话配置项（ACP config options）
+    async fn list_session_config_options(
+        &self,
+        _directory: &str,
+        _session_id: Option<&str>,
+    ) -> Result<Vec<AiSessionConfigOption>, String> {
+        Ok(vec![])
+    }
+
+    /// 设置单个会话配置项
+    async fn set_session_config_option(
+        &self,
+        _directory: &str,
+        _session_id: &str,
+        _option_id: &str,
+        _value: AiSessionConfigValue,
+    ) -> Result<(), String> {
+        Err("Session config option is not supported by current AI backend".to_string())
     }
 
     /// 列出会话

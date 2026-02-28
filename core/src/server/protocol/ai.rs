@@ -5,6 +5,7 @@
 //! - AI Chat 采用结构化 message/part 事件流，避免“最后一条气泡拼字符串”导致的串台与收敛问题。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// AI 会话状态信息（用于协议传输）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +115,43 @@ pub struct SessionSelectionHint {
     pub model_provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_options: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// 会话配置项候选值
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfigOptionChoice {
+    pub value: serde_json::Value,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// 会话配置项候选值分组
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfigOptionGroup {
+    pub label: String,
+    pub options: Vec<SessionConfigOptionChoice>,
+}
+
+/// 会话配置项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfigOptionInfo {
+    pub option_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_value: Option<serde_json::Value>,
+    #[serde(default)]
+    pub options: Vec<SessionConfigOptionChoice>,
+    #[serde(default)]
+    pub option_groups: Vec<SessionConfigOptionGroup>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<serde_json::Value>,
 }
 
 /// AI Provider 信息（模型列表按 provider 分组）
