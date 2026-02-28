@@ -247,6 +247,9 @@ final class TidyFlowE2ETests: XCTestCase {
     }
 
     private func skipUnlessMac() throws {
+        #if os(iOS)
+        throw XCTSkip("iOS 模拟器不执行 mac 工具栏 AC")
+        #endif
         if recorder.deviceType != "mac" {
             throw XCTSkip("\(recorder.deviceType) 设备不执行 mac 工具栏 AC")
         }

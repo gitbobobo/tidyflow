@@ -55,6 +55,39 @@
 - Git 能力（状态、diff、stage/unstage、commit、branch、rebase、merge、log、show）
 - 客户端设置同步与文件系统监听
 
+## AI 会话配置选项（ACP `session-config-options`）
+
+- 客户端请求 action：
+  - `ai_session_config_options`：拉取当前工具/会话可用的配置项列表。
+  - `ai_session_set_config_option`：按 `option_id` 设置单个会话配置项。
+- 服务端结果/事件 action：
+  - `ai_session_config_options`：结果与事件复用同一个 action，`payload.options` 为配置项列表。
+- AI 发送请求字段：
+  - `ai_chat_send`、`ai_chat_command` 新增可选 `config_overrides`（`option_id -> value`），用于“仅本次发送”覆盖。
+- 会话选择提示字段：
+  - `selection_hint` 新增 `config_options`，用于恢复 `mode/model/thought_level` 等配置状态。
+
+## 双栈兼容策略（锁定）
+
+- 优先级固定为：
+  - `configOptions + session/set_config_option`
+  - `session/set_mode + prompt.mode`（旧协议回退）
+  - `prompt.model`（更旧回退）
+- 兼容保留字段：
+  - `agent/mode`、`model` 继续保留，不做破坏性移除。
+- `session/update` token 兼容：
+  - 同时接受 `config_option_update` 与 `config_options_update`。
+- 非 ACP 工具：
+  - 可忽略 `config_overrides`，保持原行为不变。
+
+## UI 首版约束
+
+- 首版界面只展示三类 category：
+  - `mode`
+  - `model`
+  - `thought_level`
+- 其他 category 不直接展示，但会在 Core/App 里保存并透传。
+
 ## 调试建议
 
 - 先确认双方都使用 `MessagePack`，避免把 JSON 文本发到 v3 通道。

@@ -151,4 +151,122 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(protocolAnswers[0], ["code"])
         XCTAssertEqual(protocolAnswers[1], ["保留当前计划并补测试"])
     }
+
+    func testAISessionConfigOptionsParsesGroupedOptions() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "s1",
+            "options": [
+                [
+                    "option_id": "mode",
+                    "category": "mode",
+                    "name": "模式",
+                    "current_value": "code",
+                    "options": [
+                        [
+                            "value": "code",
+                            "label": "代码"
+                        ]
+                    ],
+                    "option_groups": [
+                        [
+                            "label": "高级",
+                            "options": [
+                                [
+                                    "value": [
+                                        "id": "plan"
+                                    ],
+                                    "label": "规划"
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        let result = AISessionConfigOptionsResult.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.aiTool, .codex)
+        XCTAssertEqual(result?.sessionId, "s1")
+        XCTAssertEqual(result?.options.count, 1)
+
+        let option = result?.options.first
+        XCTAssertEqual(option?.optionID, "mode")
+        XCTAssertEqual(option?.category, "mode")
+        XCTAssertEqual(option?.currentValue as? String, "code")
+        XCTAssertEqual(option?.options.count, 1)
+        XCTAssertEqual(option?.optionGroups.count, 1)
+        XCTAssertEqual(option?.optionGroups.first?.label, "高级")
+        let groupedValue = option?.optionGroups.first?.options.first?.value as? [String: Any]
+        XCTAssertEqual(groupedValue?["id"] as? String, "plan")
+    }
+
+    func testAIChatDoneParsesSelectionHintConfigOptions() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "s2",
+            "selection_hint": [
+                "agent": "code",
+                "config_options": [
+                    "mode": "code",
+                    "thought_level": "high",
+                    "model": [
+                        "provider_id": "openai",
+                        "model_id": "gpt-5"
+                    ],
+                    "tags": ["fast", "safe"]
+                ]
+            ]
+        ]
+
+        let result = AIChatDoneV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.selectionHint?.agent, "code")
+        let configOptions = result?.selectionHint?.configOptions
+        XCTAssertEqual(configOptions?["mode"] as? String, "code")
+        XCTAssertEqual(configOptions?["thought_level"] as? String, "high")
+        let model = configOptions?["model"] as? [String: Any]
+        XCTAssertEqual(model?["provider_id"] as? String, "openai")
+        XCTAssertEqual(model?["model_id"] as? String, "gpt-5")
+        let tags = configOptions?["tags"] as? [String]
+        XCTAssertEqual(tags, ["fast", "safe"])
+    }
+
+    func testEvolutionStageProfileInfoParsesAndSerializesConfigOptions() {
+        let json: [String: Any] = [
+            "stage": "direction",
+            "ai_tool": "codex",
+            "mode": "code",
+            "model": [
+                "provider_id": "openai",
+                "model_id": "gpt-5"
+            ],
+            "config_options": [
+                "thought_level": "high",
+                "custom_group": [
+                    "id": "advanced",
+                    "enabled": true
+                ]
+            ]
+        ]
+
+        let profile = EvolutionStageProfileInfoV2.from(json: json)
+        XCTAssertNotNil(profile)
+        XCTAssertEqual(profile?.stage, "direction")
+        XCTAssertEqual(profile?.configOptions["thought_level"] as? String, "high")
+        let nested = profile?.configOptions["custom_group"] as? [String: Any]
+        XCTAssertEqual(nested?["id"] as? String, "advanced")
+        XCTAssertEqual(nested?["enabled"] as? Bool, true)
+
+        let encoded = profile?.toJSON()
+        let encodedConfig = encoded?["config_options"] as? [String: Any]
+        XCTAssertEqual(encodedConfig?["thought_level"] as? String, "high")
+        let encodedNested = encodedConfig?["custom_group"] as? [String: Any]
+        XCTAssertEqual(encodedNested?["id"] as? String, "advanced")
+    }
 }
