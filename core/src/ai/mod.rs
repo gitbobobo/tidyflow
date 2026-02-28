@@ -63,8 +63,8 @@ pub enum AiEvent {
         session_id: String,
         request_id: String,
     },
-    /// 流结束
-    Done,
+    /// 流结束（可携带协议 stop_reason）
+    Done { stop_reason: Option<String> },
 }
 
 /// AI Part（通用模型，直接对应 OpenCode 的 part）

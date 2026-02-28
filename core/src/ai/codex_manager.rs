@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -16,6 +16,12 @@ pub struct AcpAgentCapabilities {
     pub raw: Option<Value>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AcpPromptCapabilities {
+    pub content_types: HashSet<String>,
+    pub raw: Option<Value>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpAuthMethod {
     pub id: String,
@@ -27,6 +33,7 @@ pub struct AcpAuthMethod {
 pub struct AcpInitializationState {
     pub negotiated_protocol_version: Option<u64>,
     pub agent_capabilities: AcpAgentCapabilities,
+    pub prompt_capabilities: AcpPromptCapabilities,
     pub auth_methods: Vec<AcpAuthMethod>,
     pub authenticated: bool,
 }
@@ -619,6 +626,7 @@ impl CodexAppServerManager {
         Ok(AcpInitializationState {
             negotiated_protocol_version: Some(protocol_version),
             agent_capabilities: Self::parse_agent_capabilities(result),
+            prompt_capabilities: Self::parse_prompt_capabilities(result),
             auth_methods: Self::parse_auth_methods(result),
             authenticated: false,
         })
@@ -631,6 +639,31 @@ impl CodexAppServerManager {
             .and_then(Self::read_load_session_capability)
             .unwrap_or(false);
         AcpAgentCapabilities { load_session, raw }
+    }
+
+    fn parse_prompt_capabilities(result: &Value) -> AcpPromptCapabilities {
+        let raw = result.get("promptCapabilities").cloned();
+        let mut content_types = HashSet::new();
+        if let Some(capabilities) = raw.as_ref() {
+            let items = capabilities
+                .get("contentTypes")
+                .and_then(|v| v.as_array())
+                .or_else(|| capabilities.get("content_types").and_then(|v| v.as_array()));
+            if let Some(items) = items {
+                for item in items {
+                    if let Some(content_type) = item.as_str() {
+                        let normalized = content_type.trim().to_lowercase();
+                        if !normalized.is_empty() {
+                            content_types.insert(normalized);
+                        }
+                    }
+                }
+            }
+        }
+        if content_types.is_empty() {
+            content_types.insert("text".to_string());
+        }
+        AcpPromptCapabilities { content_types, raw }
     }
 
     fn read_load_session_capability(capabilities: &Value) -> Option<bool> {
@@ -791,6 +824,9 @@ mod tests {
                     "resume": false
                 }
             },
+            "promptCapabilities": {
+                "contentTypes": ["text", "image", "resource_link"]
+            },
             "authMethods": [
                 {
                     "id": "oauth",
@@ -806,9 +842,28 @@ mod tests {
             .expect("parse initialize response should succeed");
         assert_eq!(state.negotiated_protocol_version, Some(1));
         assert!(state.agent_capabilities.load_session);
+        assert!(state.prompt_capabilities.content_types.contains("text"));
+        assert!(state.prompt_capabilities.content_types.contains("image"));
+        assert!(
+            state
+                .prompt_capabilities
+                .content_types
+                .contains("resource_link")
+        );
         assert_eq!(state.auth_methods.len(), 2);
         assert_eq!(state.auth_methods[0].id, "oauth");
         assert_eq!(state.auth_methods[1].id, "device-code");
+    }
+
+    #[test]
+    fn parse_acp_initialize_response_should_default_prompt_content_type_to_text() {
+        let response = json!({
+            "protocolVersion": 1
+        });
+        let state = CodexAppServerManager::parse_acp_initialize_result(&response, 1)
+            .expect("parse initialize response should succeed");
+        assert_eq!(state.prompt_capabilities.content_types.len(), 1);
+        assert!(state.prompt_capabilities.content_types.contains("text"));
     }
 
     #[test]

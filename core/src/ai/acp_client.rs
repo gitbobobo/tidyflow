@@ -127,6 +127,48 @@ impl AcpClient {
             .unwrap_or(false)
     }
 
+    pub async fn supports_content_type(&self, content_type: &str) -> bool {
+        let normalized = content_type.trim().to_lowercase();
+        if normalized.is_empty() {
+            return false;
+        }
+        self.initialization_state()
+            .await
+            .map(|state| {
+                if state.prompt_capabilities.content_types.is_empty() {
+                    normalized == "text"
+                } else {
+                    state.prompt_capabilities.content_types.contains(&normalized)
+                }
+            })
+            .unwrap_or_else(|| normalized == "text")
+    }
+
+    pub fn build_prompt_text_part(text: String) -> Value {
+        serde_json::json!({
+            "type": "text",
+            "text": text
+        })
+    }
+
+    pub fn build_prompt_image_part(mime_type: String, data_url: String) -> Value {
+        serde_json::json!({
+            "type": "image",
+            "mimeType": mime_type,
+            "url": data_url
+        })
+    }
+
+    pub fn build_prompt_resource_link_part(uri: String, name: String) -> Value {
+        serde_json::json!({
+            "type": "resource_link",
+            "resource": {
+                "uri": uri,
+                "name": name
+            }
+        })
+    }
+
     pub async fn authenticate(&self, method_id: &str) -> Result<(), String> {
         let method_id = method_id.trim();
         if method_id.is_empty() {
@@ -935,7 +977,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use serde_json::{json, Value};
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
     use std::sync::Arc;
     use tokio::sync::{broadcast, Mutex};
 
@@ -1246,5 +1288,38 @@ mod tests {
             .await
             .expect_err("missing auth methods should fail");
         assert!(err.contains("authMethods"));
+    }
+
+    #[tokio::test]
+    async fn supports_content_type_should_follow_prompt_capabilities() {
+        let mut state = AcpInitializationState {
+            negotiated_protocol_version: Some(1),
+            ..Default::default()
+        };
+        state.prompt_capabilities.content_types = HashSet::from([
+            "text".to_string(),
+            "image".to_string(),
+            "resource_link".to_string(),
+        ]);
+        let transport = Arc::new(MockTransport::new(vec![], Some(state)));
+        let client = AcpClient::new_with_transport(transport);
+
+        assert!(client.supports_content_type("text").await);
+        assert!(client.supports_content_type("image").await);
+        assert!(client.supports_content_type("resource_link").await);
+        assert!(!client.supports_content_type("audio").await);
+    }
+
+    #[tokio::test]
+    async fn supports_content_type_should_default_to_text_when_missing_capabilities() {
+        let state = AcpInitializationState {
+            negotiated_protocol_version: Some(1),
+            ..Default::default()
+        };
+        let transport = Arc::new(MockTransport::new(vec![], Some(state)));
+        let client = AcpClient::new_with_transport(transport);
+
+        assert!(client.supports_content_type("text").await);
+        assert!(!client.supports_content_type("image").await);
     }
 }
