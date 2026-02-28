@@ -166,7 +166,9 @@ struct EvolutionDefaultConfigSection: View {
         switch stage.lowercased() {
         case "direction": return "Direction"
         case "plan":      return "Plan"
-        case "implement": return "Implement"
+        case "implement_general": return "Implement General"
+        case "implement_visual": return "Implement Visual"
+        case "implement_advanced": return "Implement Advanced"
         case "verify":    return "Verify"
         case "judge":     return "Judge"
         case "report":    return "Report"
