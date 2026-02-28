@@ -11,6 +11,11 @@ struct ToolCardView: View {
     let name: String
     let state: [String: Any]?
     let callID: String?
+    let toolKind: String?
+    let toolTitle: String?
+    let toolRawInput: Any?
+    let toolRawOutput: Any?
+    let toolLocations: [AIChatToolCallLocation]?
     let partMetadata: [String: Any]?
     let pendingQuestion: AIQuestionRequestInfo?
     let onQuestionReply: (([[String]]) -> Void)?
@@ -22,6 +27,11 @@ struct ToolCardView: View {
         name: String,
         state: [String: Any]?,
         callID: String?,
+        toolKind: String? = nil,
+        toolTitle: String? = nil,
+        toolRawInput: Any? = nil,
+        toolRawOutput: Any? = nil,
+        toolLocations: [AIChatToolCallLocation]? = nil,
         partMetadata: [String: Any]?,
         pendingQuestion: AIQuestionRequestInfo? = nil,
         onQuestionReply: (([[String]]) -> Void)? = nil,
@@ -32,6 +42,11 @@ struct ToolCardView: View {
         self.name = name
         self.state = state
         self.callID = callID
+        self.toolKind = toolKind
+        self.toolTitle = toolTitle
+        self.toolRawInput = toolRawInput
+        self.toolRawOutput = toolRawOutput
+        self.toolLocations = toolLocations
         self.partMetadata = partMetadata
         self.pendingQuestion = pendingQuestion
         self.onQuestionReply = onQuestionReply
@@ -98,6 +113,19 @@ struct ToolCardView: View {
             normalizedToolID,
             callID ?? "",
             stableRenderHash(state),
+            stableRenderHash(toolRawInput),
+            stableRenderHash(toolRawOutput),
+            stableRenderHash(toolLocations?.map { location in
+                [
+                    "uri": location.uri as Any,
+                    "path": location.path as Any,
+                    "line": location.line as Any,
+                    "column": location.column as Any,
+                    "endLine": location.endLine as Any,
+                    "endColumn": location.endColumn as Any,
+                    "label": location.label as Any,
+                ]
+            }),
             stableRenderHash(partMetadata),
             pendingQuestion?.id ?? ""
         ].joined(separator: "|")
@@ -134,6 +162,14 @@ struct ToolCardView: View {
         guard let invocation else { return normalizedToolID }
         if isSubAgentResultCard(invocation: invocation) {
             return "subagent_result"
+        }
+        if normalizedToolID == "unknown" || normalizedToolID.isEmpty {
+            if let kind = stringValue(invocation.metadata?["kind"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+               !kind.isEmpty {
+                return kind
+            }
         }
         return normalizedToolID
     }
@@ -228,7 +264,7 @@ struct ToolCardView: View {
     }
 
     private func buildRenderModel() -> CachedRenderModel {
-        let invocation = AIToolInvocationState.from(state: state)
+        let invocation = AIToolInvocationState.from(state: mergedStateForRender())
         let resolvedToolID = resolvedToolID(for: invocation)
         let headerDiffStats: (added: Int, removed: Int)? = {
             guard ["edit", "write", "apply_patch", "multiedit"].contains(normalizedToolID),
@@ -282,6 +318,62 @@ struct ToolCardView: View {
             presentation: presentation,
             headerDiffStats: headerDiffStats
         )
+    }
+
+    private func mergedStateForRender() -> [String: Any]? {
+        var merged = state ?? [:]
+
+        if let toolTitle, !toolTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           merged["title"] == nil {
+            merged["title"] = toolTitle
+        }
+        if let toolRawInput {
+            if merged["input"] == nil {
+                if let inputDict = toolRawInput as? [String: Any] {
+                    merged["input"] = inputDict
+                } else {
+                    merged["input"] = ["raw_input": toolRawInput]
+                }
+            }
+        }
+        if let toolRawOutput {
+            if merged["raw"] == nil {
+                merged["raw"] = jsonText(toolRawOutput) ?? String(describing: toolRawOutput)
+            }
+            if merged["output"] == nil,
+               let text = stringValue(toolRawOutput) {
+                merged["output"] = text
+            }
+        }
+        if let toolKind, !toolKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            var metadata = merged["metadata"] as? [String: Any] ?? [:]
+            if metadata["kind"] == nil {
+                metadata["kind"] = toolKind
+            }
+            merged["metadata"] = metadata
+        }
+        if let locations = toolLocations, !locations.isEmpty {
+            var metadata = merged["metadata"] as? [String: Any] ?? [:]
+            if metadata["locations"] == nil {
+                metadata["locations"] = locations.map { location in
+                    [
+                        "uri": location.uri as Any,
+                        "path": location.path as Any,
+                        "line": location.line as Any,
+                        "column": location.column as Any,
+                        "endLine": location.endLine as Any,
+                        "endColumn": location.endColumn as Any,
+                        "label": location.label as Any,
+                    ]
+                }
+            }
+            merged["metadata"] = metadata
+        }
+
+        if merged.isEmpty {
+            return nil
+        }
+        return merged
     }
 
     private func clampSectionsIfNeeded(_ sections: [AIToolSection]) -> [AIToolSection] {
@@ -592,6 +684,12 @@ struct ToolCardView: View {
             return buildQuestionSections(invocation)
         case "task", "skill", "plan_enter", "plan_exit", "batch":
             return buildTaskSections(invocation)
+        case "markdown", "md":
+            return buildMarkdownSections(invocation)
+        case "diff":
+            return buildDiffSections(invocation)
+        case "terminal":
+            return buildTerminalSections(invocation)
         case "contextcompaction", "context_compaction":
             return buildContextCompactionSections(invocation)
         default:
@@ -743,7 +841,65 @@ struct ToolCardView: View {
         if let error = invocation.error, !error.isEmpty {
             sections.append(AIToolSection(id: "task-error", title: "error", content: error, isCode: false))
         }
+        if let locations = toolLocationsSection(invocation, idPrefix: "task") {
+            sections.append(locations)
+        }
 
+        return sections
+    }
+
+    private func buildMarkdownSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+        if let output = invocation.output, !output.isEmpty {
+            sections.append(AIToolSection(id: "markdown-output", title: "markdown", content: output, isCode: false))
+        } else if let raw = invocation.raw, !raw.isEmpty {
+            sections.append(AIToolSection(id: "markdown-raw", title: "raw", content: raw, isCode: true))
+        }
+        if let locations = toolLocationsSection(invocation, idPrefix: "markdown") {
+            sections.append(locations)
+        }
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "markdown-error", title: "error", content: error, isCode: false))
+        }
+        return sections
+    }
+
+    private func buildDiffSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+        if let output = invocation.output, !output.isEmpty {
+            sections.append(AIToolSection(id: "edit-diff", title: "diff", content: output, isCode: true))
+        } else if let raw = invocation.raw, !raw.isEmpty {
+            sections.append(AIToolSection(id: "diff-raw", title: "raw", content: raw, isCode: true))
+        }
+        if let locations = toolLocationsSection(invocation, idPrefix: "diff") {
+            sections.append(locations)
+        }
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "diff-error", title: "error", content: error, isCode: false))
+        }
+        return sections
+    }
+
+    private func buildTerminalSections(_ invocation: AIToolInvocationState) -> [AIToolSection] {
+        var sections: [AIToolSection] = []
+        if !invocation.input.isEmpty {
+            sections.append(section(id: "terminal-input", title: "input", any: invocation.input))
+        }
+        if let progress = toolProgressSection(invocation, idPrefix: "terminal") {
+            sections.append(progress)
+        }
+        if let output = invocation.output, !output.isEmpty {
+            sections.append(AIToolSection(id: "terminal-output", title: "output", content: output, isCode: true))
+        }
+        if let raw = invocation.raw, !raw.isEmpty {
+            sections.append(AIToolSection(id: "terminal-raw", title: "raw", content: raw, isCode: true))
+        }
+        if let locations = toolLocationsSection(invocation, idPrefix: "terminal") {
+            sections.append(locations)
+        }
+        if let error = invocation.error, !error.isEmpty {
+            sections.append(AIToolSection(id: "terminal-error", title: "error", content: error, isCode: false))
+        }
         return sections
     }
 
@@ -824,6 +980,9 @@ struct ToolCardView: View {
         if let error = invocation.error, !error.isEmpty {
             sections.append(AIToolSection(id: "generic-error", title: "error", content: error, isCode: false))
         }
+        if let locations = toolLocationsSection(invocation, idPrefix: "generic") {
+            sections.append(locations)
+        }
 
         if let attachments = invocation.attachments, !attachments.isEmpty {
             sections.append(section(id: "generic-attachments", title: "attachments", any: attachments))
@@ -846,6 +1005,44 @@ struct ToolCardView: View {
             id: "\(idPrefix)-progress",
             title: "progress",
             content: text,
+            isCode: false
+        )
+    }
+
+    private func toolLocationsSection(_ invocation: AIToolInvocationState, idPrefix: String) -> AIToolSection? {
+        guard let metadata = invocation.metadata else { return nil }
+        let rows = metadata["locations"] as? [[String: Any]] ?? []
+        guard !rows.isEmpty else { return nil }
+        let lines = rows.enumerated().compactMap { index, row -> String? in
+            let path = stringValue(row["path"]) ?? stringValue(row["uri"]) ?? ""
+            let label = stringValue(row["label"]) ?? ""
+            let line = stringValue(row["line"]) ?? ""
+            let column = stringValue(row["column"]) ?? ""
+            let endLine = stringValue(row["endLine"]) ?? stringValue(row["end_line"]) ?? ""
+            let endColumn = stringValue(row["endColumn"]) ?? stringValue(row["end_column"]) ?? ""
+            var chunks: [String] = []
+            if !path.isEmpty { chunks.append(path) }
+            if !label.isEmpty { chunks.append(label) }
+            var range = ""
+            if !line.isEmpty {
+                range = line
+                if !column.isEmpty { range += ":\(column)" }
+                if !endLine.isEmpty {
+                    range += "-\(endLine)"
+                    if !endColumn.isEmpty { range += ":\(endColumn)" }
+                }
+            }
+            if !range.isEmpty { chunks.append(range) }
+            if chunks.isEmpty {
+                return nil
+            }
+            return "\(index + 1). \(chunks.joined(separator: " @ "))"
+        }
+        guard !lines.isEmpty else { return nil }
+        return AIToolSection(
+            id: "\(idPrefix)-locations",
+            title: "locations",
+            content: lines.joined(separator: "\n"),
             isCode: false
         )
     }
@@ -2101,6 +2298,15 @@ struct ToolCardView: View {
         #endif
     }
 }
+
+#if DEBUG
+extension ToolCardView {
+    /// 测试钩子：暴露最终展示数据，验证不同 kind 的 section 组装是否符合预期。
+    func debugPresentationForTests() -> AIToolPresentation {
+        presentation
+    }
+}
+#endif
 
 private struct ToolDiagnosticItem: Identifiable {
     let id: String

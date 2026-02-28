@@ -56,6 +56,16 @@ enum AIChatPartKind: String {
     case compaction
 }
 
+struct AIChatToolCallLocation: Equatable {
+    var uri: String?
+    var path: String?
+    var line: Int?
+    var column: Int?
+    var endLine: Int?
+    var endColumn: Int?
+    var label: String?
+}
+
 struct AIChatPart: Identifiable {
     let id: String
     var kind: AIChatPartKind
@@ -69,7 +79,77 @@ struct AIChatPart: Identifiable {
     var toolName: String?
     var toolState: [String: Any]?
     var toolCallId: String? = nil
+    var toolKind: String? = nil
+    var toolTitle: String? = nil
+    var toolRawInput: Any? = nil
+    var toolRawOutput: Any? = nil
+    var toolLocations: [AIChatToolCallLocation]? = nil
     var toolPartMetadata: [String: Any]? = nil
+}
+
+enum AIChatPartNormalization {
+    private static func mapToolLocations(
+        _ locations: [AIProtocolToolCallLocationInfo]?
+    ) -> [AIChatToolCallLocation]? {
+        locations?.map { item in
+            AIChatToolCallLocation(
+                uri: item.uri,
+                path: item.path,
+                line: item.line,
+                column: item.column,
+                endLine: item.endLine,
+                endColumn: item.endColumn,
+                label: item.label
+            )
+        }
+    }
+
+    static func normalizedKind(from partType: String) -> AIChatPartKind {
+        AIChatPartKind(rawValue: partType) ?? .text
+    }
+
+    static func apply(protocolPart: AIProtocolPartInfo, to part: inout AIChatPart) {
+        part.kind = normalizedKind(from: protocolPart.partType)
+        part.text = protocolPart.text
+        part.mime = protocolPart.mime
+        part.filename = protocolPart.filename
+        part.url = protocolPart.url
+        part.synthetic = protocolPart.synthetic
+        part.ignored = protocolPart.ignored
+        part.source = protocolPart.source
+        part.toolName = protocolPart.toolName
+        part.toolState = protocolPart.toolState
+        part.toolCallId = protocolPart.toolCallId
+        part.toolKind = protocolPart.toolKind
+        part.toolTitle = protocolPart.toolTitle
+        part.toolRawInput = protocolPart.toolRawInput
+        part.toolRawOutput = protocolPart.toolRawOutput
+        part.toolLocations = mapToolLocations(protocolPart.toolLocations)
+        part.toolPartMetadata = protocolPart.toolPartMetadata
+    }
+
+    static func makeChatPart(from protocolPart: AIProtocolPartInfo) -> AIChatPart {
+        AIChatPart(
+            id: protocolPart.id,
+            kind: normalizedKind(from: protocolPart.partType),
+            text: protocolPart.text,
+            mime: protocolPart.mime,
+            filename: protocolPart.filename,
+            url: protocolPart.url,
+            synthetic: protocolPart.synthetic,
+            ignored: protocolPart.ignored,
+            source: protocolPart.source,
+            toolName: protocolPart.toolName,
+            toolState: protocolPart.toolState,
+            toolCallId: protocolPart.toolCallId,
+            toolKind: protocolPart.toolKind,
+            toolTitle: protocolPart.toolTitle,
+            toolRawInput: protocolPart.toolRawInput,
+            toolRawOutput: protocolPart.toolRawOutput,
+            toolLocations: mapToolLocations(protocolPart.toolLocations),
+            toolPartMetadata: protocolPart.toolPartMetadata
+        )
+    }
 }
 
 enum AIPlanImplementationQuestion {
@@ -387,7 +467,13 @@ enum AIQuestionLocalCompletion {
     private static func questionPartIsInteractive(_ part: AIChatPart) -> Bool {
         let rawStatus = (part.toolState?["status"] as? String) ?? ""
         let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return status.isEmpty || status == "pending" || status == "running" || status == "unknown"
+        return status.isEmpty
+            || status == "pending"
+            || status == "running"
+            || status == "unknown"
+            || status == "awaiting_input"
+            || status == "requires_input"
+            || status == "in_progress"
     }
 }
 
@@ -424,7 +510,8 @@ struct AIToolInvocationState {
     static func from(state: [String: Any]?) -> AIToolInvocationState? {
         guard let state else { return nil }
         let statusRaw = (state["status"] as? String ?? "").lowercased()
-        let status = AIToolStatus(rawValue: statusRaw) ?? .unknown
+        let statusToken = normalizeStatus(statusRaw)
+        let status = AIToolStatus(rawValue: statusToken) ?? .unknown
         let input = state["input"] as? [String: Any] ?? [:]
         let raw = state["raw"] as? String
         let title = state["title"] as? String
@@ -446,6 +533,23 @@ struct AIToolInvocationState {
             timeEnd: Self.parseDouble(time["end"]),
             attachments: attachments
         )
+    }
+
+    private static func normalizeStatus(_ raw: String) -> String {
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if token == "in_progress" || token == "inprogress" || token.contains("progress") {
+            return "running"
+        }
+        if token == "done" || token == "success" || token == "succeeded" {
+            return "completed"
+        }
+        if token == "failed" || token == "rejected" || token == "cancelled" || token == "canceled" {
+            return "error"
+        }
+        if token == "awaiting_input" || token == "requires_input" {
+            return "running"
+        }
+        return token
     }
 
     var durationMs: Double? {
@@ -1401,22 +1505,12 @@ final class AIChatStore: ObservableObject {
     private func upsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: part.id)
-        let kind = AIChatPartKind(rawValue: part.partType) ?? .text
 
         if let existing = partIndexByPartId[part.id], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
-            messages[msgIdx].parts[existing.partIdx].kind = kind
-            messages[msgIdx].parts[existing.partIdx].text = part.text
-            messages[msgIdx].parts[existing.partIdx].mime = part.mime
-            messages[msgIdx].parts[existing.partIdx].filename = part.filename
-            messages[msgIdx].parts[existing.partIdx].url = part.url
-            messages[msgIdx].parts[existing.partIdx].synthetic = part.synthetic
-            messages[msgIdx].parts[existing.partIdx].ignored = part.ignored
-            messages[msgIdx].parts[existing.partIdx].source = part.source
-            messages[msgIdx].parts[existing.partIdx].toolName = part.toolName
-            messages[msgIdx].parts[existing.partIdx].toolState = part.toolState
-            messages[msgIdx].parts[existing.partIdx].toolCallId = part.toolCallId
-            messages[msgIdx].parts[existing.partIdx].toolPartMetadata = part.toolPartMetadata
+            var existingPart = messages[msgIdx].parts[existing.partIdx]
+            AIChatPartNormalization.apply(protocolPart: part, to: &existingPart)
+            messages[msgIdx].parts[existing.partIdx] = existingPart
             if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
                 markUserEchoReceived(messageId: messageId)
             }
@@ -1424,21 +1518,7 @@ final class AIChatStore: ObservableObject {
         }
 
         partIndexByPartId.removeValue(forKey: part.id)
-        let p = AIChatPart(
-            id: part.id,
-            kind: kind,
-            text: part.text,
-            mime: part.mime,
-            filename: part.filename,
-            url: part.url,
-            synthetic: part.synthetic,
-            ignored: part.ignored,
-            source: part.source,
-            toolName: part.toolName,
-            toolState: part.toolState,
-            toolCallId: part.toolCallId,
-            toolPartMetadata: part.toolPartMetadata
-        )
+        let p = AIChatPartNormalization.makeChatPart(from: part)
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1
         partIndexByPartId[part.id] = (msgIdx, partIdx)

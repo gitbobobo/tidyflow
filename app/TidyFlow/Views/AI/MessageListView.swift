@@ -666,6 +666,11 @@ private struct MessageBubble: View, Equatable {
                 name: part.toolName ?? "unknown",
                 state: part.toolState,
                 callID: part.toolCallId,
+                toolKind: part.toolKind,
+                toolTitle: part.toolTitle,
+                toolRawInput: part.toolRawInput,
+                toolRawOutput: part.toolRawOutput,
+                toolLocations: part.toolLocations,
                 partMetadata: part.toolPartMetadata,
                 pendingQuestion: pendingQuestion,
                 onQuestionReply: pendingQuestion == nil ? nil : { answers in
