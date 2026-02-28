@@ -459,6 +459,7 @@ pub(crate) async fn handle_ai_chat_send(
                                                             .options
                                                             .into_iter()
                                                             .map(|opt| crate::server::protocol::ai::QuestionOptionInfo {
+                                                                option_id: opt.option_id,
                                                                 label: opt.label,
                                                                 description: opt.description,
                                                             })
