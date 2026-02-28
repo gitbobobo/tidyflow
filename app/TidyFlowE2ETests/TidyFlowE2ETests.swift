@@ -7,7 +7,8 @@ final class TidyFlowE2ETests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments.append("UI_TEST_MODE")
+        app.launchArguments.append("-ApplePersistenceIgnoreState")
+        app.launchArguments.append("YES")
         app.launchEnvironment["UI_TEST_MODE"] = "1"
         app.launchEnvironment["TF_DEVICE_TYPE"] = recorder.deviceType
         app.launchEnvironment["TF_E2E_RUN_ID"] = recorder.runID
@@ -198,15 +199,24 @@ final class TidyFlowE2ETests: XCTestCase {
         app.launch()
         app.activate()
 
-        // mac 端会等待 Core 初始化完成后再展示窗口，因此用较长超时等待主窗口和工具栏控件。
-        let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 180), "主窗口在 180 秒内未出现，可能 Core 初始化未完成")
+        let startupLoading = app.descendants(matching: .any).matching(identifier: "tf.mac.startup.loading").firstMatch
+        let startupFailed = app.descendants(matching: .any).matching(identifier: "tf.mac.startup.failed").firstMatch
 
         let settingsButton = app.descendants(matching: .any).matching(identifier: "tf.mac.toolbar.settings").firstMatch
         let inspectorButton = app.descendants(matching: .any).matching(identifier: "tf.mac.toolbar.inspectorToggle").firstMatch
 
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 30), "设置按钮未出现")
-        XCTAssertTrue(inspectorButton.waitForExistence(timeout: 30), "检查器切换按钮未出现")
+        // 启动阶段应先出现加载页；若启动失败页出现则直接报错并暴露问题信息。
+        let loadingAppeared = startupLoading.waitForExistence(timeout: 30)
+        if !loadingAppeared {
+            XCTAssertFalse(startupFailed.exists, "启动阶段进入失败页，未能进入加载态")
+        }
+
+        // 启动页结束后，工具栏控件应在较长超时内可见并可交互。
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 180), "设置按钮未在 180 秒内出现")
+        XCTAssertTrue(inspectorButton.waitForExistence(timeout: 180), "检查器切换按钮未在 180 秒内出现")
+        if loadingAppeared {
+            XCTAssertTrue(waitUntilNotExists(startupLoading, timeout: 180), "加载态未在 180 秒内消失")
+        }
         XCTAssertTrue(waitUntilEnabled(settingsButton, timeout: 30), "设置按钮在 30 秒内仍不可交互")
         XCTAssertTrue(waitUntilEnabled(inspectorButton, timeout: 30), "检查器切换按钮在 30 秒内仍不可交互")
 
@@ -220,18 +230,20 @@ final class TidyFlowE2ETests: XCTestCase {
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
-            title: "Core 初始化完成后主窗口工具栏控件可交互",
-            description: "执行动作：启动 mac 应用并等待窗口出现后点击检查器切换按钮；关键观察：设置按钮与检查器按钮均出现且处于可交互状态；证据用途：证明 AC-UI-TOOLBAR-READY 在 Core 就绪后成立，排除启动期工具栏不可用问题。",
+            title: "启动加载态结束后主窗口工具栏控件可交互",
+            description: "执行动作：启动 mac 应用，先确认加载态出现，再等待加载态结束并点击检查器切换按钮；关键观察：设置按钮与检查器按钮均出现且处于可交互状态；证据用途：证明 AC-UI-TOOLBAR-READY 在启动门禁流程下成立。",
             screenshot: XCUIScreen.main.screenshot()
         )
         try recorder.recordLog(
             scenario: scenario,
             subsystem: subsystem,
-            title: "窗口展示时序与工具栏交互断言通过",
-            description: "执行动作：应用启动后等待主窗口与工具栏按钮可交互，再执行检查器开关点击；关键观察：窗口在超时内出现且按钮持续可交互；证据用途：证明窗口展示遵循 Core 初始化完成后的可操作状态。",
+            title: "加载页时序与工具栏交互断言通过",
+            description: "执行动作：应用启动后确认加载态出现，再等待其退出并验证工具栏按钮可交互；关键观察：窗口即时出现、加载态按预期退出、按钮持续可交互；证据用途：证明新启动流程与工具栏交互兼容。",
             body: """
             launch_to_window_ready_seconds=\(windowReadyLatency)
-            mainWindow.exists=\(mainWindow.exists)
+            startupLoading.appeared=\(loadingAppeared)
+            startupLoading.exists=\(startupLoading.exists)
+            startupFailed.exists=\(startupFailed.exists)
             settings.exists=\(settingsButton.exists)
             settings.enabled=\(settingsButton.isEnabled)
             inspector.exists=\(inspectorButton.exists)
@@ -261,6 +273,14 @@ final class TidyFlowE2ETests: XCTestCase {
             evaluatedWith: element
         )
         return XCTWaiter.wait(for: [enabled], timeout: timeout) == .completed
+    }
+
+    private func waitUntilNotExists(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let disappeared = expectation(
+            for: NSPredicate(format: "exists == false"),
+            evaluatedWith: element
+        )
+        return XCTWaiter.wait(for: [disappeared], timeout: timeout) == .completed
     }
 
     private func waitForFirstExistingElement(candidates: [XCUIElement], timeout: TimeInterval) -> XCUIElement? {
