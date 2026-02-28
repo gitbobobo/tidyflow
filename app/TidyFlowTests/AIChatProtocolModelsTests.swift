@@ -353,4 +353,266 @@ final class AIChatProtocolModelsTests: XCTestCase {
         let encodedNested = encodedConfig?["custom_group"] as? [String: Any]
         XCTAssertEqual(encodedNested?["id"] as? String, "advanced")
     }
+
+    func testAIProtocolPartInfoParsesToolCallExtendedFields() {
+        let json: [String: Any] = [
+            "id": "tool-1",
+            "part_type": "tool",
+            "tool_name": "bash",
+            "tool_call_id": "call-1",
+            "tool_kind": "terminal",
+            "tool_title": "执行测试",
+            "tool_raw_input": [
+                "command": "npm test"
+            ],
+            "tool_raw_output": [
+                "type": "terminal",
+                "output": "running"
+            ],
+            "tool_locations": [
+                [
+                    "path": "src/main.ts",
+                    "line": 12,
+                    "column": 4,
+                    "endLine": 12,
+                    "endColumn": 22,
+                    "label": "诊断"
+                ]
+            ],
+            "tool_state": [
+                "status": "in_progress"
+            ]
+        ]
+
+        let part = AIProtocolPartInfo.from(json: json)
+        XCTAssertNotNil(part)
+        XCTAssertEqual(part?.toolKind, "terminal")
+        XCTAssertEqual(part?.toolTitle, "执行测试")
+        XCTAssertEqual((part?.toolRawInput as? [String: Any])?["command"] as? String, "npm test")
+        XCTAssertEqual((part?.toolRawOutput as? [String: Any])?["type"] as? String, "terminal")
+        XCTAssertEqual(part?.toolLocations?.count, 1)
+        XCTAssertEqual(part?.toolLocations?.first?.path, "src/main.ts")
+        XCTAssertEqual(part?.toolLocations?.first?.endLine, 12)
+    }
+
+    func testAIToolInvocationStateNormalizesACPStatuses() {
+        let running = AIToolInvocationState.from(state: ["status": "in_progress"])
+        XCTAssertEqual(running?.status, .running)
+
+        let completed = AIToolInvocationState.from(state: ["status": "done"])
+        XCTAssertEqual(completed?.status, .completed)
+
+        let failed = AIToolInvocationState.from(state: ["status": "failed"])
+        XCTAssertEqual(failed?.status, .error)
+
+        let awaitingInput = AIToolInvocationState.from(state: ["status": "requires_input"])
+        XCTAssertEqual(awaitingInput?.status, .running)
+    }
+
+    func testAIQuestionLocalCompletionFallbackSkipsFailedAndSelectsInProgress() {
+        var messages = [
+            AIChatMessage(
+                messageId: "m1",
+                role: .assistant,
+                parts: [
+                    AIChatPart(
+                        id: "p-running",
+                        kind: .tool,
+                        text: nil,
+                        toolName: "question",
+                        toolState: ["status": "in_progress"]
+                    )
+                ],
+                isStreaming: false
+            ),
+            AIChatMessage(
+                messageId: "m2",
+                role: .assistant,
+                parts: [
+                    AIChatPart(
+                        id: "p-failed",
+                        kind: .tool,
+                        text: nil,
+                        toolName: "question",
+                        toolState: ["status": "failed"]
+                    )
+                ],
+                isStreaming: false
+            )
+        ]
+
+        let request = AIQuestionRequestInfo(
+            id: "req-fallback",
+            sessionId: "s1",
+            questions: [],
+            toolMessageId: nil,
+            toolCallId: nil
+        )
+
+        let updated = AIQuestionLocalCompletion.apply(
+            to: &messages,
+            requestId: "req-fallback",
+            mappedKey: nil,
+            request: request,
+            answers: [["继续执行"]],
+            allowFallback: true
+        )
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(messages[0].parts[0].toolState?["status"] as? String, "completed")
+        XCTAssertEqual(messages[1].parts[0].toolState?["status"] as? String, "failed")
+    }
+
+    func testAIChatPartNormalizationKeepsFieldsConsistent() {
+        let proto = AIProtocolPartInfo(
+            id: "tool-x",
+            partType: "tool",
+            text: "delta",
+            mime: "text/plain",
+            filename: "a.txt",
+            url: "file:///a.txt",
+            synthetic: true,
+            ignored: false,
+            source: ["vendor": "acp"],
+            toolName: "edit",
+            toolCallId: "call-x",
+            toolKind: "diff",
+            toolTitle: "补丁",
+            toolRawInput: ["path": "a.txt"],
+            toolRawOutput: ["diff": "+x"],
+            toolLocations: [
+                AIProtocolToolCallLocationInfo(
+                    uri: nil,
+                    path: "a.txt",
+                    line: 3,
+                    column: 1,
+                    endLine: 4,
+                    endColumn: 2,
+                    label: "hunk"
+                )
+            ],
+            toolState: ["status": "running"],
+            toolPartMetadata: ["trace_id": "t1"]
+        )
+
+        let part = AIChatPartNormalization.makeChatPart(from: proto)
+        XCTAssertEqual(part.kind, .tool)
+        XCTAssertEqual(part.toolKind, "diff")
+        XCTAssertEqual(part.toolTitle, "补丁")
+        XCTAssertEqual((part.toolRawInput as? [String: Any])?["path"] as? String, "a.txt")
+        XCTAssertEqual((part.toolRawOutput as? [String: Any])?["diff"] as? String, "+x")
+        XCTAssertEqual(part.toolLocations?.first?.path, "a.txt")
+        XCTAssertEqual(part.toolLocations?.first?.endColumn, 2)
+        XCTAssertEqual(part.source?["vendor"] as? String, "acp")
+    }
+
+    func testToolCardViewBuildsMarkdownDiffTerminalAndLocationsSections() {
+        let markdownView = ToolCardView(
+            name: "markdown",
+            state: [
+                "status": "running",
+                "output": "# 标题",
+                "metadata": [
+                    "locations": [
+                        ["path": "doc.md", "line": 1]
+                    ]
+                ]
+            ],
+            callID: "c1",
+            partMetadata: nil
+        )
+        let markdownSections = markdownView.debugPresentationForTests().sections.map(\.id)
+        XCTAssertTrue(markdownSections.contains("markdown-output"))
+        XCTAssertTrue(markdownSections.contains("markdown-locations"))
+
+        let diffView = ToolCardView(
+            name: "diff",
+            state: [
+                "status": "running",
+                "output": "@@ -1 +1 @@\n-old\n+new"
+            ],
+            callID: "c2",
+            partMetadata: nil
+        )
+        let diffSections = diffView.debugPresentationForTests().sections.map(\.id)
+        XCTAssertTrue(diffSections.contains("edit-diff"))
+
+        let terminalView = ToolCardView(
+            name: "terminal",
+            state: [
+                "status": "running",
+                "output": "npm test\nok",
+                "metadata": [
+                    "progress_lines": ["50%"]
+                ]
+            ],
+            callID: "c3",
+            partMetadata: nil
+        )
+        let terminalSections = terminalView.debugPresentationForTests().sections.map(\.id)
+        XCTAssertTrue(terminalSections.contains("terminal-output"))
+        XCTAssertTrue(terminalSections.contains("terminal-progress"))
+    }
+
+    func testAISessionMessagesToChatMessagesMapsToolCallExtendedFields() {
+        let payload = AISessionMessagesV2(
+            projectName: "tidyflow",
+            workspaceName: "default",
+            aiTool: .codex,
+            sessionId: "s-tool",
+            messages: [
+                AIProtocolMessageInfo(
+                    id: "m-tool",
+                    role: "assistant",
+                    createdAt: nil,
+                    agent: nil,
+                    modelProviderID: nil,
+                    modelID: nil,
+                    parts: [
+                        AIProtocolPartInfo(
+                            id: "p-tool",
+                            partType: "tool",
+                            text: nil,
+                            mime: nil,
+                            filename: nil,
+                            url: nil,
+                            synthetic: nil,
+                            ignored: nil,
+                            source: nil,
+                            toolName: "bash",
+                            toolCallId: "call-2",
+                            toolKind: "terminal",
+                            toolTitle: "运行命令",
+                            toolRawInput: ["command": "ls"],
+                            toolRawOutput: ["output": "ok"],
+                            toolLocations: [
+                                AIProtocolToolCallLocationInfo(
+                                    uri: "file:///tmp/a",
+                                    path: nil,
+                                    line: 9,
+                                    column: 3,
+                                    endLine: nil,
+                                    endColumn: nil,
+                                    label: "ref"
+                                )
+                            ],
+                            toolState: ["status": "running"],
+                            toolPartMetadata: nil
+                        )
+                    ]
+                )
+            ],
+            selectionHint: nil
+        )
+
+        let mapped = payload.toChatMessages()
+        XCTAssertEqual(mapped.count, 1)
+        XCTAssertEqual(mapped.first?.parts.count, 1)
+        let part = mapped.first?.parts.first
+        XCTAssertEqual(part?.toolKind, "terminal")
+        XCTAssertEqual(part?.toolTitle, "运行命令")
+        XCTAssertEqual((part?.toolRawInput as? [String: Any])?["command"] as? String, "ls")
+        XCTAssertEqual(part?.toolLocations?.first?.uri, "file:///tmp/a")
+        XCTAssertEqual(part?.toolLocations?.first?.line, 9)
+    }
 }
