@@ -49,6 +49,90 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(result?.agents.first?.name, "default")
     }
 
+    func testAIProtocolSlashCommandParsesInputHintAndDefaults() {
+        let nested = AIProtocolSlashCommand.from(json: [
+            "name": "build",
+            "description": "构建项目",
+            "action": "agent",
+            "input": [
+                "hint": "--release"
+            ]
+        ])
+        XCTAssertNotNil(nested)
+        XCTAssertEqual(nested?.name, "build")
+        XCTAssertEqual(nested?.description, "构建项目")
+        XCTAssertEqual(nested?.action, "agent")
+        XCTAssertEqual(nested?.inputHint, "--release")
+
+        let fallback = AIProtocolSlashCommand.from(json: [
+            "name": "test",
+            "hint": "--unit"
+        ])
+        XCTAssertNotNil(fallback)
+        XCTAssertEqual(fallback?.description, "")
+        XCTAssertEqual(fallback?.action, "client")
+        XCTAssertEqual(fallback?.inputHint, "--unit")
+    }
+
+    func testAISlashCommandsResultParsesOptionalSessionIDAndDefaultFields() {
+        let withoutSession: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "commands": [
+                [
+                    "name": "new"
+                ]
+            ]
+        ]
+        let resultWithoutSession = AISlashCommandsResult.from(json: withoutSession)
+        XCTAssertNotNil(resultWithoutSession)
+        XCTAssertNil(resultWithoutSession?.sessionID)
+        XCTAssertEqual(resultWithoutSession?.commands.count, 1)
+        XCTAssertEqual(resultWithoutSession?.commands.first?.name, "new")
+        XCTAssertEqual(resultWithoutSession?.commands.first?.description, "")
+        XCTAssertEqual(resultWithoutSession?.commands.first?.action, "client")
+
+        let withSession: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "session-1",
+            "commands": []
+        ]
+        let resultWithSession = AISlashCommandsResult.from(json: withSession)
+        XCTAssertNotNil(resultWithSession)
+        XCTAssertEqual(resultWithSession?.sessionID, "session-1")
+    }
+
+    func testAISlashCommandsUpdateResultParsesAndRequiresSessionID() {
+        let valid: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "session-2",
+            "commands": [
+                [
+                    "name": "build",
+                    "input_hint": "--release"
+                ]
+            ]
+        ]
+        let parsed = AISlashCommandsUpdateResult.from(json: valid)
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed?.sessionID, "session-2")
+        XCTAssertEqual(parsed?.commands.first?.name, "build")
+        XCTAssertEqual(parsed?.commands.first?.inputHint, "--release")
+
+        let missingSession: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "commands": []
+        ]
+        XCTAssertNil(AISlashCommandsUpdateResult.from(json: missingSession))
+    }
+
     func testAIChatDoneParsesOptionalStopReason() {
         let json: [String: Any] = [
             "project_name": "tidyflow",
