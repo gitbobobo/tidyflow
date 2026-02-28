@@ -1718,11 +1718,24 @@ struct AISessionSelectionHint: Equatable {
     let agent: String?
     let modelProviderID: String?
     let modelID: String?
+    let configOptions: [String: Any]?
 
     var isEmpty: Bool {
         let agentEmpty = agent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
         let modelEmpty = modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-        return agentEmpty && modelEmpty
+        let configEmpty = configOptions?.isEmpty ?? true
+        return agentEmpty && modelEmpty && configEmpty
+    }
+
+    static func == (lhs: AISessionSelectionHint, rhs: AISessionSelectionHint) -> Bool {
+        guard lhs.agent == rhs.agent,
+              lhs.modelProviderID == rhs.modelProviderID,
+              lhs.modelID == rhs.modelID else {
+            return false
+        }
+        let left = NSDictionary(dictionary: lhs.configOptions ?? [:])
+        let right = NSDictionary(dictionary: rhs.configOptions ?? [:])
+        return left.isEqual(right)
     }
 }
 

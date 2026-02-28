@@ -7,6 +7,9 @@ extension AppState {
         if let agent = hint.agent { dict["agent"] = agent }
         if let provider = hint.modelProviderID { dict["model_provider_id"] = provider }
         if let model = hint.modelID { dict["model_id"] = model }
+        if let configOptions = hint.configOptions, !configOptions.isEmpty {
+            dict["config_options"] = configOptions
+        }
         return dict.isEmpty ? nil : dict
     }
 
@@ -77,10 +80,17 @@ extension AppState {
     ) -> AISessionSelectionHint? {
         if primary == nil { return fallback }
         if fallback == nil { return primary }
+        var mergedConfigOptions: [String: Any] = fallback?.configOptions ?? [:]
+        if let primaryConfig = primary?.configOptions {
+            for (optionID, value) in primaryConfig {
+                mergedConfigOptions[optionID] = value
+            }
+        }
         let merged = AISessionSelectionHint(
             agent: primary?.agent ?? fallback?.agent,
             modelProviderID: primary?.modelProviderID ?? fallback?.modelProviderID,
-            modelID: primary?.modelID ?? fallback?.modelID
+            modelID: primary?.modelID ?? fallback?.modelID,
+            configOptions: mergedConfigOptions.isEmpty ? nil : mergedConfigOptions
         )
         return merged.isEmpty ? nil : merged
     }
@@ -116,6 +126,12 @@ extension AppState {
         )
         upsertAISession(session, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        )
     }
 
     func handleAISessionList(_ ev: AISessionListV2) {
@@ -182,6 +198,12 @@ extension AppState {
             sessionId: ev.sessionId,
             for: ev.aiTool,
             trigger: "session_messages"
+        )
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
         )
         TFLog.app.info(
             "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
@@ -418,6 +440,12 @@ extension AppState {
             aiTool: ev.aiTool,
             kind: .providerList
         )
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: aiStore(for: ev.aiTool).currentSessionId
+        )
         retryPendingAISessionSelectionHint(for: ev.aiTool)
     }
 
@@ -457,6 +485,24 @@ extension AppState {
             setAISelectedAgent(firstAgent?.name, for: ev.aiTool)
             applyAgentDefaultModel(firstAgent, for: ev.aiTool)
         }
+        wsClient.requestAISessionConfigOptions(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: aiStore(for: ev.aiTool).currentSessionId
+        )
+        retryPendingAISessionSelectionHint(for: ev.aiTool)
+    }
+
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {
+        let matchesSelectedContext = selectedProjectName == ev.projectName &&
+            selectedWorkspaceKey == ev.workspaceName
+        let matchesBootstrapContext: Bool = {
+            guard let pending = aiSelectorBootstrapContextByTool[ev.aiTool] else { return false }
+            return pending.project == ev.projectName && pending.workspace == ev.workspaceName
+        }()
+        guard matchesSelectedContext || matchesBootstrapContext else { return }
+        setAISessionConfigOptions(ev.options, for: ev.aiTool)
         retryPendingAISessionSelectionHint(for: ev.aiTool)
     }
 

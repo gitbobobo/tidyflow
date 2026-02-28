@@ -180,16 +180,31 @@ class AppState: ObservableObject {
         didSet { aiProvidersByTool[aiChatTool] = aiProviders }
     }
     @Published var aiSelectedModel: AIModelSelection? {
-        didSet { aiSelectedModelByTool[aiChatTool] = aiSelectedModel }
+        didSet {
+            aiSelectedModelByTool[aiChatTool] = aiSelectedModel
+            syncModelConfigOptionForCurrentTool()
+        }
     }
     @Published var aiAgents: [AIAgentInfo] = [] {
         didSet { aiAgentsByTool[aiChatTool] = aiAgents }
     }
     @Published var aiSelectedAgent: String? {
-        didSet { aiSelectedAgentByTool[aiChatTool] = aiSelectedAgent }
+        didSet {
+            aiSelectedAgentByTool[aiChatTool] = aiSelectedAgent
+            syncModeConfigOptionForCurrentTool()
+        }
     }
     @Published var aiSlashCommands: [AISlashCommandInfo] = [] {
         didSet { aiSlashCommandsByTool[aiChatTool] = aiSlashCommands }
+    }
+    @Published var aiSessionConfigOptions: [AIProtocolSessionConfigOptionInfo] = [] {
+        didSet { aiSessionConfigOptionsByTool[aiChatTool] = aiSessionConfigOptions }
+    }
+    @Published var aiSelectedThoughtLevel: String? {
+        didSet {
+            aiSelectedThoughtLevelByTool[aiChatTool] = aiSelectedThoughtLevel
+            syncThoughtLevelConfigOptionForCurrentTool()
+        }
     }
     @Published var isAILoadingModels: Bool = false
     @Published var isAILoadingAgents: Bool = false
@@ -230,6 +245,10 @@ class AppState: ObservableObject {
     private var aiAgentsByTool: [AIChatTool: [AIAgentInfo]] = [:]
     private var aiSelectedAgentByTool: [AIChatTool: String?] = [:]
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
+    private var aiSessionConfigOptionsByTool: [AIChatTool: [AIProtocolSessionConfigOptionInfo]] = [:]
+    /// 当前工具已选择的配置项值（option_id -> value），用于 send 时透传 config_overrides。
+    private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
+    private var aiSelectedThoughtLevelByTool: [AIChatTool: String?] = [:]
     enum AISelectorResourceKind {
         case providerList
         case agentList
@@ -461,6 +480,9 @@ class AppState: ObservableObject {
             aiAgentsByTool[tool] = []
             aiSelectedAgentByTool[tool] = nil
             aiSlashCommandsByTool[tool] = []
+            aiSessionConfigOptionsByTool[tool] = []
+            aiSelectedConfigOptionsByTool[tool] = [:]
+            aiSelectedThoughtLevelByTool[tool] = nil
             aiPendingSessionSelectionHintsByTool[tool] = [:]
             aiToolBadges[tool] = AIToolBadgeState()
             aiSessionStatusesByTool[tool] = [:]
@@ -489,6 +511,8 @@ class AppState: ObservableObject {
         aiAgents = aiAgentsByTool[tool] ?? []
         aiSelectedAgent = aiSelectedAgentByTool[tool] ?? nil
         aiSlashCommands = aiSlashCommandsByTool[tool] ?? []
+        aiSessionConfigOptions = aiSessionConfigOptionsByTool[tool] ?? []
+        aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[tool] ?? nil
 
         clearUnreadBadge(for: tool)
     }
@@ -625,6 +649,12 @@ class AppState: ObservableObject {
                 workspaceName: context.workspace,
                 aiTool: tool
             )
+            wsClient.requestAISessionConfigOptions(
+                projectName: context.project,
+                workspaceName: context.workspace,
+                aiTool: tool,
+                sessionId: aiStore(for: tool).currentSessionId
+            )
         }
         return true
     }
@@ -700,6 +730,14 @@ class AppState: ObservableObject {
         if aiChatTool == tool {
             aiSelectedAgent = name
         }
+        if let optionID = optionIDForCategory("mode", in: aiSessionConfigOptions(for: tool)) {
+            let normalized = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let normalized, !normalized.isEmpty {
+                updateConfigOptionValue(optionID: optionID, value: normalized, for: tool)
+            } else {
+                updateConfigOptionValue(optionID: optionID, value: nil, for: tool)
+            }
+        }
     }
 
     func selectedAgent(for tool: AIChatTool) -> String? {
@@ -723,6 +761,275 @@ class AppState: ObservableObject {
         if aiChatTool == tool {
             aiSelectedModel = model
         }
+        if let optionID = optionIDForCategory("model", in: aiSessionConfigOptions(for: tool)) {
+            if let model {
+                updateConfigOptionValue(optionID: optionID, value: modelConfigValue(from: model), for: tool)
+            } else {
+                updateConfigOptionValue(optionID: optionID, value: nil, for: tool)
+            }
+        }
+    }
+
+    func aiSessionConfigOptions(for tool: AIChatTool) -> [AIProtocolSessionConfigOptionInfo] {
+        aiSessionConfigOptionsByTool[tool] ?? []
+    }
+
+    func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
+        guard let option = aiSessionConfigOptions(for: tool).first(where: {
+            normalizedConfigCategory($0.category, optionID: $0.optionID) == "thought_level"
+        }) else {
+            return []
+        }
+        var seen: Set<String> = []
+        var values: [String] = []
+        for choice in option.options {
+            if let value = configValueAsString(choice.value), seen.insert(value).inserted {
+                values.append(value)
+            }
+        }
+        for group in option.optionGroups {
+            for choice in group.options {
+                if let value = configValueAsString(choice.value), seen.insert(value).inserted {
+                    values.append(value)
+                }
+            }
+        }
+        return values
+    }
+
+    func setAISessionConfigOptions(_ options: [AIProtocolSessionConfigOptionInfo], for tool: AIChatTool) {
+        aiSessionConfigOptionsByTool[tool] = options
+        var selected = aiSelectedConfigOptionsByTool[tool] ?? [:]
+        var validOptionIDs: Set<String> = []
+        for option in options {
+            validOptionIDs.insert(option.optionID)
+            if let current = option.currentValue {
+                selected[option.optionID] = current
+            } else if selected[option.optionID] == nil {
+                if let first = option.options.first {
+                    selected[option.optionID] = first.value
+                } else if let firstGroup = option.optionGroups.first,
+                          let first = firstGroup.options.first {
+                    selected[option.optionID] = first.value
+                }
+            }
+        }
+        if let modeOptionID = optionIDForCategory("mode", in: options),
+           let selectedAgent = selectedAgent(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !selectedAgent.isEmpty {
+            selected[modeOptionID] = selectedAgent
+        }
+        if let modelOptionID = optionIDForCategory("model", in: options),
+           let selectedModel = selectedModel(for: tool) {
+            selected[modelOptionID] = modelConfigValue(from: selectedModel)
+        }
+        if let thoughtOptionID = optionIDForCategory("thought_level", in: options),
+           let thoughtLevel = selectedThoughtLevel(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !thoughtLevel.isEmpty {
+            selected[thoughtOptionID] = thoughtLevel
+        }
+        selected = selected.filter { validOptionIDs.contains($0.key) }
+        aiSelectedConfigOptionsByTool[tool] = selected
+        refreshThoughtLevelFromConfig(for: tool)
+        if aiChatTool == tool {
+            aiSessionConfigOptions = options
+        } else {
+            objectWillChange.send()
+        }
+    }
+
+    func selectedThoughtLevel(for tool: AIChatTool) -> String? {
+        aiSelectedThoughtLevelByTool[tool] ?? nil
+    }
+
+    func setAISelectedThoughtLevel(
+        _ value: String?,
+        for tool: AIChatTool,
+        syncConfigOption: Bool = true
+    ) {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalValue = (normalized?.isEmpty == true) ? nil : normalized
+        aiSelectedThoughtLevelByTool[tool] = finalValue
+        if aiChatTool == tool {
+            aiSelectedThoughtLevel = finalValue
+        } else {
+            objectWillChange.send()
+        }
+        guard syncConfigOption,
+              let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptions(for: tool)) else {
+            return
+        }
+        if let finalValue {
+            updateConfigOptionValue(optionID: optionID, value: finalValue, for: tool)
+        } else {
+            updateConfigOptionValue(optionID: optionID, value: nil, for: tool)
+        }
+    }
+
+    func aiConfigOverrides(for tool: AIChatTool) -> [String: Any]? {
+        let options = aiSessionConfigOptions(for: tool)
+        guard !options.isEmpty else { return nil }
+        var overrides = aiSelectedConfigOptionsByTool[tool] ?? [:]
+
+        if let modeOptionID = optionIDForCategory("mode", in: options),
+           let selectedAgent = selectedAgent(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !selectedAgent.isEmpty {
+            overrides[modeOptionID] = selectedAgent
+        }
+        if let modelOptionID = optionIDForCategory("model", in: options),
+           let selectedModel = selectedModel(for: tool) {
+            overrides[modelOptionID] = modelConfigValue(from: selectedModel)
+        }
+        if let thoughtOptionID = optionIDForCategory("thought_level", in: options),
+           let thoughtLevel = selectedThoughtLevel(for: tool)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !thoughtLevel.isEmpty {
+            overrides[thoughtOptionID] = thoughtLevel
+        }
+        return overrides.isEmpty ? nil : overrides
+    }
+
+    func applyConfigOptionsHint(_ configOptions: [String: Any], for tool: AIChatTool) {
+        guard !configOptions.isEmpty else { return }
+        var selected = aiSelectedConfigOptionsByTool[tool] ?? [:]
+        for (optionID, value) in configOptions {
+            selected[optionID] = value
+        }
+        aiSelectedConfigOptionsByTool[tool] = selected
+
+        // 优先按 category 同步输入栏状态，mode/model 仍保留旧字段回退。
+        for option in aiSessionConfigOptions(for: tool) {
+            guard let rawValue = selected[option.optionID] else { continue }
+            let category = normalizedConfigCategory(option.category, optionID: option.optionID)
+            if category == "mode",
+               let rawMode = configValueAsString(rawValue),
+               let resolvedAgent = resolveAIAgentName(rawMode, for: tool) {
+                setAISelectedAgent(resolvedAgent, for: tool)
+            } else if category == "model" {
+                let providerHint = configValueAsProviderHint(rawValue)
+                if let rawModel = configValueAsModelID(rawValue),
+                   let resolvedModel = resolveAIModelSelection(
+                       modelID: rawModel,
+                       providerHint: providerHint,
+                       for: tool
+                   ) {
+                    setAISelectedModel(resolvedModel, for: tool)
+                }
+            } else if category == "thought_level" {
+                setAISelectedThoughtLevel(configValueAsString(rawValue), for: tool, syncConfigOption: false)
+            }
+        }
+        refreshThoughtLevelFromConfig(for: tool)
+    }
+
+    private func updateConfigOptionValue(optionID: String, value: Any?, for tool: AIChatTool) {
+        var selected = aiSelectedConfigOptionsByTool[tool] ?? [:]
+        if let value {
+            selected[optionID] = value
+        } else {
+            selected.removeValue(forKey: optionID)
+        }
+        aiSelectedConfigOptionsByTool[tool] = selected
+    }
+
+    private func refreshThoughtLevelFromConfig(for tool: AIChatTool) {
+        let options = aiSessionConfigOptions(for: tool)
+        guard let option = options.first(where: {
+            normalizedConfigCategory($0.category, optionID: $0.optionID) == "thought_level"
+        }) else {
+            setAISelectedThoughtLevel(nil, for: tool, syncConfigOption: false)
+            return
+        }
+        let selected = aiSelectedConfigOptionsByTool[tool] ?? [:]
+        let value = selected[option.optionID] ?? option.currentValue
+        setAISelectedThoughtLevel(configValueAsString(value), for: tool, syncConfigOption: false)
+    }
+
+    private func optionIDForCategory(_ category: String, in options: [AIProtocolSessionConfigOptionInfo]) -> String? {
+        options.first(where: {
+            normalizedConfigCategory($0.category, optionID: $0.optionID) == category
+        })?.optionID
+    }
+
+    private func normalizedConfigCategory(_ category: String?, optionID: String) -> String {
+        let trimmedCategory = category?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if !trimmedCategory.isEmpty {
+            return trimmedCategory
+        }
+        return optionID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func modelConfigValue(from model: AIModelSelection) -> String {
+        "\(model.providerID)/\(model.modelID)"
+    }
+
+    private func configValueAsString(_ value: Any?) -> String? {
+        switch value {
+        case let text as String:
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let number as NSNumber:
+            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let dict as [String: Any]:
+            if let nested = dict["id"] ?? dict["value"] ?? dict["mode_id"] ?? dict["modeId"] {
+                return configValueAsString(nested)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private func configValueAsModelID(_ value: Any?) -> String? {
+        if let text = configValueAsString(value) {
+            if let slash = text.firstIndex(of: "/") {
+                let suffix = String(text[text.index(after: slash)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !suffix.isEmpty {
+                    return suffix
+                }
+            }
+            return text
+        }
+        if let dict = value as? [String: Any] {
+            return configValueAsString(dict["model_id"] ?? dict["modelId"] ?? dict["id"] ?? dict["value"])
+        }
+        return nil
+    }
+
+    private func configValueAsProviderHint(_ value: Any?) -> String? {
+        if let dict = value as? [String: Any] {
+            return configValueAsString(dict["provider_id"] ?? dict["providerId"] ?? dict["model_provider_id"] ?? dict["modelProviderId"])
+        }
+        return nil
+    }
+
+    private func syncModeConfigOptionForCurrentTool() {
+        guard let optionID = optionIDForCategory("mode", in: aiSessionConfigOptions(for: aiChatTool)) else { return }
+        let normalized = aiSelectedAgent?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalized, !normalized.isEmpty {
+            updateConfigOptionValue(optionID: optionID, value: normalized, for: aiChatTool)
+        } else {
+            updateConfigOptionValue(optionID: optionID, value: nil, for: aiChatTool)
+        }
+    }
+
+    private func syncModelConfigOptionForCurrentTool() {
+        guard let optionID = optionIDForCategory("model", in: aiSessionConfigOptions(for: aiChatTool)) else { return }
+        if let model = aiSelectedModel {
+            updateConfigOptionValue(optionID: optionID, value: modelConfigValue(from: model), for: aiChatTool)
+        } else {
+            updateConfigOptionValue(optionID: optionID, value: nil, for: aiChatTool)
+        }
+    }
+
+    private func syncThoughtLevelConfigOptionForCurrentTool() {
+        guard let optionID = optionIDForCategory("thought_level", in: aiSessionConfigOptions(for: aiChatTool)) else { return }
+        let normalized = aiSelectedThoughtLevel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalized, !normalized.isEmpty {
+            updateConfigOptionValue(optionID: optionID, value: normalized, for: aiChatTool)
+        } else {
+            updateConfigOptionValue(optionID: optionID, value: nil, for: aiChatTool)
+        }
     }
 
     private func aiSelectionHintDict(_ hint: AISessionSelectionHint?) -> [String: Any]? {
@@ -731,6 +1038,9 @@ class AppState: ObservableObject {
         if let agent = hint.agent { dict["agent"] = agent }
         if let provider = hint.modelProviderID { dict["model_provider_id"] = provider }
         if let model = hint.modelID { dict["model_id"] = model }
+        if let configOptions = hint.configOptions, !configOptions.isEmpty {
+            dict["config_options"] = configOptions
+        }
         return dict.isEmpty ? nil : dict
     }
 
@@ -992,7 +1302,53 @@ class AppState: ObservableObject {
         var unresolvedAgent = hint.agent
         var unresolvedProvider = hint.modelProviderID
         var unresolvedModel = hint.modelID
+        var unresolvedConfigOptions: [String: Any] = [:]
         var resolvedAgentInfo: AIAgentInfo?
+
+        if let configOptions = hint.configOptions, !configOptions.isEmpty {
+            applyConfigOptionsHint(configOptions, for: tool)
+            let optionsByID = Dictionary(uniqueKeysWithValues: aiSessionConfigOptions(for: tool).map { ($0.optionID, $0) })
+            for (optionID, value) in configOptions {
+                let category = normalizedConfigCategory(optionsByID[optionID]?.category, optionID: optionID)
+                if category == "mode" {
+                    if let rawMode = configValueAsString(value),
+                       let resolvedAgent = resolveAIAgentName(rawMode, for: tool) {
+                        setAISelectedAgent(resolvedAgent, for: tool)
+                        resolvedAgentInfo = aiAgents(for: tool).first(where: { $0.name == resolvedAgent })
+                        unresolvedAgent = nil
+                    } else if let rawMode = configValueAsString(value) {
+                        unresolvedAgent = rawMode
+                        unresolvedConfigOptions[optionID] = value
+                    }
+                    continue
+                }
+                if category == "model" {
+                    let providerHint = configValueAsProviderHint(value)
+                    if let rawModel = configValueAsModelID(value),
+                       let resolvedModel = resolveAIModelSelection(
+                           modelID: rawModel,
+                           providerHint: providerHint,
+                           for: tool
+                       ) {
+                        setAISelectedModel(resolvedModel, for: tool)
+                        unresolvedProvider = nil
+                        unresolvedModel = nil
+                    } else {
+                        if let providerHint {
+                            unresolvedProvider = providerHint
+                        }
+                        if let rawModel = configValueAsModelID(value) {
+                            unresolvedModel = rawModel
+                        }
+                        unresolvedConfigOptions[optionID] = value
+                    }
+                    continue
+                }
+                if category == "thought_level" {
+                    setAISelectedThoughtLevel(configValueAsString(value), for: tool, syncConfigOption: false)
+                }
+            }
+        }
 
         if let rawAgent = hint.agent, let resolvedAgent = resolveAIAgentName(rawAgent, for: tool) {
             setAISelectedAgent(resolvedAgent, for: tool)
@@ -1019,7 +1375,8 @@ class AppState: ObservableObject {
         let unresolved = AISessionSelectionHint(
             agent: unresolvedAgent,
             modelProviderID: unresolvedProvider,
-            modelID: unresolvedModel
+            modelID: unresolvedModel,
+            configOptions: unresolvedConfigOptions.isEmpty ? nil : unresolvedConfigOptions
         )
         return unresolved.isEmpty ? nil : unresolved
     }
@@ -1157,7 +1514,8 @@ class AppState: ObservableObject {
             let hint = AISessionSelectionHint(
                 agent: message.agent,
                 modelProviderID: message.modelProviderID,
-                modelID: message.modelID
+                modelID: message.modelID,
+                configOptions: nil
             )
             if !hint.isEmpty {
                 return hint
@@ -1167,7 +1525,8 @@ class AppState: ObservableObject {
             let hint = AISessionSelectionHint(
                 agent: message.agent,
                 modelProviderID: message.modelProviderID,
-                modelID: message.modelID
+                modelID: message.modelID,
+                configOptions: nil
             )
             if !hint.isEmpty {
                 return hint
@@ -1244,7 +1603,8 @@ class AppState: ObservableObject {
         let hint = AISessionSelectionHint(
             agent: resolvedAgent,
             modelProviderID: resolvedProvider,
-            modelID: resolvedModel
+            modelID: resolvedModel,
+            configOptions: nil
         )
         return hint.isEmpty ? nil : hint
     }

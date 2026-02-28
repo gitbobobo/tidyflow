@@ -287,7 +287,7 @@ extension AppState {
 
     static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
         ["direction", "plan", "implement", "verify", "judge", "report"].map {
-            EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil)
+            EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil, configOptions: [:])
         }
     }
 
@@ -305,7 +305,8 @@ extension AppState {
                 stage: stage,
                 aiTool: profile.aiTool,
                 mode: profile.mode,
-                model: profile.model
+                model: profile.model,
+                configOptions: profile.configOptions
             )
         }
 
@@ -425,6 +426,7 @@ extension AppState {
                 return false
             }
             if profile.model != nil { return false }
+            if !profile.configOptions.isEmpty { return false }
         }
         return true
     }
