@@ -855,6 +855,7 @@ extension WSClient {
         message: String,
         fileRefs: [String]? = nil,
         imageParts: [[String: Any]]? = nil,
+        audioParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
         agent: String? = nil,
         configOverrides: [String: Any]? = nil
@@ -872,6 +873,9 @@ extension WSClient {
         }
         if let imageParts, !imageParts.isEmpty {
             msg["image_parts"] = imageParts
+        }
+        if let audioParts, !audioParts.isEmpty {
+            msg["audio_parts"] = audioParts
         }
         if let model {
             msg["model"] = model
@@ -895,6 +899,7 @@ extension WSClient {
         arguments: String,
         fileRefs: [String]? = nil,
         imageParts: [[String: Any]]? = nil,
+        audioParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
         agent: String? = nil,
         configOverrides: [String: Any]? = nil
@@ -913,6 +918,9 @@ extension WSClient {
         }
         if let imageParts, !imageParts.isEmpty {
             msg["image_parts"] = imageParts
+        }
+        if let audioParts, !audioParts.isEmpty {
+            msg["audio_parts"] = audioParts
         }
         if let model {
             msg["model"] = model
