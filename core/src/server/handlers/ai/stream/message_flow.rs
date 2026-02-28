@@ -183,6 +183,7 @@ pub(crate) async fn handle_ai_chat_send(
         image_parts,
         model,
         agent_name,
+        config_overrides,
         ai_tool,
     ) = match msg {
         ClientMessage::AIChatSend {
@@ -195,6 +196,7 @@ pub(crate) async fn handle_ai_chat_send(
             image_parts,
             model,
             agent,
+            config_overrides,
         } => (
             project_name.clone(),
             workspace_name.clone(),
@@ -204,6 +206,7 @@ pub(crate) async fn handle_ai_chat_send(
             image_parts.clone(),
             model.clone(),
             agent.clone(),
+            config_overrides.clone(),
             ai_tool.clone(),
         ),
         _ => return Ok(false),
@@ -310,7 +313,7 @@ pub(crate) async fn handle_ai_chat_send(
             ai_session_subscriber_conn_ids(&ai_state_cloned, &abort_key, origin_conn_id).await;
         emit_state.set_broadcast_targets(target_conn_ids);
         let mut stream = match agent
-            .send_message(
+            .send_message_with_config(
                 &directory,
                 &session_id,
                 &message,
@@ -318,6 +321,7 @@ pub(crate) async fn handle_ai_chat_send(
                 ai_image_parts,
                 ai_model,
                 agent_name.clone(),
+                config_overrides.clone(),
             )
             .await
         {
@@ -389,6 +393,7 @@ pub(crate) async fn handle_ai_chat_send(
                                                     agent: hint.agent,
                                                     model_provider_id: hint.model_provider_id,
                                                     model_id: hint.model_id,
+                                                    config_options: hint.config_options,
                                                 }
                                             }),
                                         },
@@ -488,6 +493,61 @@ pub(crate) async fn handle_ai_chat_send(
                                             ai_tool: ai_tool.clone(),
                                             session_id: session_id.clone(),
                                             request_id,
+                                        },
+                                        &mut emit_state,
+                                    )
+                                    .await;
+                                    true
+                                }
+                                AiEvent::SessionConfigOptionsUpdated {
+                                    options,
+                                    ..
+                                } => {
+                                    let _ = emit_server_message_with_state(
+                                        &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
+                                        ServerMessage::AISessionConfigOptions {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
+                                            session_id: Some(session_id.clone()),
+                                            options: options
+                                                .into_iter()
+                                                .map(|option| crate::server::protocol::ai::SessionConfigOptionInfo {
+                                                    option_id: option.option_id,
+                                                    category: option.category,
+                                                    name: option.name,
+                                                    description: option.description,
+                                                    current_value: option.current_value,
+                                                    options: option
+                                                        .options
+                                                        .into_iter()
+                                                        .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+                                                            value: choice.value,
+                                                            label: choice.label,
+                                                            description: choice.description,
+                                                        })
+                                                        .collect::<Vec<_>>(),
+                                                    option_groups: option
+                                                        .option_groups
+                                                        .into_iter()
+                                                        .map(|group| crate::server::protocol::ai::SessionConfigOptionGroup {
+                                                            label: group.label,
+                                                            options: group
+                                                                .options
+                                                                .into_iter()
+                                                                .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+                                                                    value: choice.value,
+                                                                    label: choice.label,
+                                                                    description: choice.description,
+                                                                })
+                                                                .collect::<Vec<_>>(),
+                                                        })
+                                                        .collect::<Vec<_>>(),
+                                                    raw: option.raw,
+                                                })
+                                                .collect::<Vec<_>>(),
                                         },
                                         &mut emit_state,
                                     )
@@ -635,6 +695,7 @@ pub(crate) async fn handle_ai_chat_command(
         image_parts,
         model,
         agent_name,
+        config_overrides,
         ai_tool,
     ) = match msg {
         ClientMessage::AIChatCommand {
@@ -648,6 +709,7 @@ pub(crate) async fn handle_ai_chat_command(
             image_parts,
             model,
             agent,
+            config_overrides,
         } => (
             project_name.clone(),
             workspace_name.clone(),
@@ -658,6 +720,7 @@ pub(crate) async fn handle_ai_chat_command(
             image_parts.clone(),
             model.clone(),
             agent.clone(),
+            config_overrides.clone(),
             ai_tool.clone(),
         ),
         _ => return Ok(false),
@@ -763,16 +826,21 @@ pub(crate) async fn handle_ai_chat_command(
         let target_conn_ids =
             ai_session_subscriber_conn_ids(&ai_state_cloned, &abort_key, origin_conn_id).await;
         emit_state.set_broadcast_targets(target_conn_ids);
+        let command_message = if arguments.trim().is_empty() {
+            format!("/{}", command.trim())
+        } else {
+            format!("/{} {}", command.trim(), arguments.trim())
+        };
         let mut stream = match agent
-            .send_command(
+            .send_message_with_config(
                 &directory,
                 &session_id,
-                &command,
-                &arguments,
+                &command_message,
                 file_refs.clone(),
                 ai_image_parts,
                 ai_model,
                 agent_name.clone(),
+                config_overrides.clone(),
             )
             .await
         {
@@ -844,6 +912,7 @@ pub(crate) async fn handle_ai_chat_command(
                                                     agent: hint.agent,
                                                     model_provider_id: hint.model_provider_id,
                                                     model_id: hint.model_id,
+                                                    config_options: hint.config_options,
                                                 }
                                             }),
                                         },
@@ -892,6 +961,58 @@ pub(crate) async fn handle_ai_chat_command(
                                     true
                                 }
                                 AiEvent::QuestionAsked { .. } | AiEvent::QuestionCleared { .. } => true,
+                                AiEvent::SessionConfigOptionsUpdated { options, .. } => {
+                                    let _ = emit_server_message_with_state(
+                                        &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
+                                        ServerMessage::AISessionConfigOptions {
+                                            project_name: project_name.clone(),
+                                            workspace_name: workspace_name.clone(),
+                                            ai_tool: ai_tool.clone(),
+                                            session_id: Some(session_id.clone()),
+                                            options: options
+                                                .into_iter()
+                                                .map(|option| crate::server::protocol::ai::SessionConfigOptionInfo {
+                                                    option_id: option.option_id,
+                                                    category: option.category,
+                                                    name: option.name,
+                                                    description: option.description,
+                                                    current_value: option.current_value,
+                                                    options: option
+                                                        .options
+                                                        .into_iter()
+                                                        .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+                                                            value: choice.value,
+                                                            label: choice.label,
+                                                            description: choice.description,
+                                                        })
+                                                        .collect::<Vec<_>>(),
+                                                    option_groups: option
+                                                        .option_groups
+                                                        .into_iter()
+                                                        .map(|group| crate::server::protocol::ai::SessionConfigOptionGroup {
+                                                            label: group.label,
+                                                            options: group
+                                                                .options
+                                                                .into_iter()
+                                                                .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+                                                                    value: choice.value,
+                                                                    label: choice.label,
+                                                                    description: choice.description,
+                                                                })
+                                                                .collect::<Vec<_>>(),
+                                                        })
+                                                        .collect::<Vec<_>>(),
+                                                    raw: option.raw,
+                                                })
+                                                .collect::<Vec<_>>(),
+                                        },
+                                        &mut emit_state,
+                                    )
+                                    .await;
+                                    true
+                                }
                                 AiEvent::Error { message } => {
                                     status_store_cloned.set_status_with_meta(
                                         status_meta_cloned.clone(),

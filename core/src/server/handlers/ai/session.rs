@@ -9,6 +9,47 @@ use crate::server::ws::send_message;
 use super::utils::*;
 use super::SharedAIState;
 
+fn map_session_config_options(
+    options: Vec<crate::ai::AiSessionConfigOption>,
+) -> Vec<crate::server::protocol::ai::SessionConfigOptionInfo> {
+    options
+        .into_iter()
+        .map(|option| crate::server::protocol::ai::SessionConfigOptionInfo {
+            option_id: option.option_id,
+            category: option.category,
+            name: option.name,
+            description: option.description,
+            current_value: option.current_value,
+            options: option
+                .options
+                .into_iter()
+                .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+                    value: choice.value,
+                    label: choice.label,
+                    description: choice.description,
+                })
+                .collect::<Vec<_>>(),
+            option_groups: option
+                .option_groups
+                .into_iter()
+                .map(|group| crate::server::protocol::ai::SessionConfigOptionGroup {
+                    label: group.label,
+                    options: group
+                        .options
+                        .into_iter()
+                        .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+                            value: choice.value,
+                            label: choice.label,
+                            description: choice.description,
+                        })
+                        .collect::<Vec<_>>(),
+                })
+                .collect::<Vec<_>>(),
+            raw: option.raw,
+        })
+        .collect::<Vec<_>>()
+}
+
 pub(super) async fn handle_ai_session_list(
     msg: &ClientMessage,
     socket: &mut WebSocket,
@@ -295,6 +336,98 @@ pub(super) async fn handle_ai_session_delete(
 
     let _ = agent.delete_session(&directory, session_id).await;
 
+    Ok(true)
+}
+
+pub(super) async fn handle_ai_session_config_options(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionConfigOptions {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
+    }
+
+    let options = agent
+        .list_session_config_options(&directory, session_id.as_deref())
+        .await?;
+    send_message(
+        socket,
+        &ServerMessage::AISessionConfigOptions {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            ai_tool,
+            session_id: session_id.clone(),
+            options: map_session_config_options(options),
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
+pub(super) async fn handle_ai_session_set_config_option(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionSetConfigOption {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        option_id,
+        value,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+
+    {
+        let mut ai = ai_state.lock().await;
+        let dir_key = tool_directory_key(&ai_tool, &directory);
+        ai.directory_last_used_ms.insert(dir_key, now_ms());
+    }
+
+    agent
+        .set_session_config_option(&directory, session_id, option_id, value.clone())
+        .await?;
+    let options = agent
+        .list_session_config_options(&directory, Some(session_id.as_str()))
+        .await
+        .unwrap_or_default();
+    send_message(
+        socket,
+        &ServerMessage::AISessionConfigOptions {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            ai_tool,
+            session_id: Some(session_id.clone()),
+            options: map_session_config_options(options),
+        },
+    )
+    .await?;
     Ok(true)
 }
 

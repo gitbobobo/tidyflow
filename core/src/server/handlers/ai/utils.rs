@@ -421,6 +421,57 @@ pub(crate) fn find_scalar_by_keys(value: &serde_json::Value, keys: &[&str]) -> O
     None
 }
 
+pub(crate) fn find_object_by_keys(
+    value: &serde_json::Value,
+    keys: &[&str],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let target = keys
+        .iter()
+        .map(|key| canonical_meta_key(key))
+        .collect::<Vec<_>>();
+    let mut stack = vec![value];
+    let mut visited = 0usize;
+    const MAX_VISITS: usize = 400;
+
+    while let Some(node) = stack.pop() {
+        if visited >= MAX_VISITS {
+            break;
+        }
+        visited += 1;
+        match node {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    let canonical = canonical_meta_key(k);
+                    if target.iter().any(|key| key == &canonical) {
+                        if let Some(found) = v.as_object() {
+                            return Some(found.clone());
+                        }
+                    }
+                    if matches!(
+                        v,
+                        serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                    ) {
+                        stack.push(v);
+                    }
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    if matches!(
+                        item,
+                        serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                    ) {
+                        stack.push(item);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 pub(crate) fn normalize_agent_hint(raw: &str) -> Option<String> {
     let normalized = raw.trim().to_lowercase();
     if normalized.is_empty() {
@@ -480,6 +531,22 @@ pub(crate) fn infer_hint_from_json(value: &serde_json::Value) -> AiSessionSelect
         "model",
     ];
     hint.model_id = normalize_optional_token(find_scalar_by_keys(value, &model_keys));
+    hint.config_options = find_object_by_keys(
+        value,
+        &[
+            "config_options",
+            "configOptions",
+            "session_config_options",
+            "sessionConfigOptions",
+        ],
+    )
+    .and_then(|items| {
+        let map = items
+            .into_iter()
+            .filter(|(k, _)| !k.trim().is_empty())
+            .collect::<HashMap<_, _>>();
+        if map.is_empty() { None } else { Some(map) }
+    });
 
     hint
 }
@@ -500,14 +567,46 @@ pub(crate) fn merge_session_selection_hint(
         .model_id
         .or(fallback.model_id)
         .and_then(|v| normalize_optional_token(Some(v)));
+    let config_options = match (preferred.config_options, fallback.config_options) {
+        (Some(mut preferred_map), Some(fallback_map)) => {
+            for (key, value) in fallback_map {
+                preferred_map.entry(key).or_insert(value);
+            }
+            if preferred_map.is_empty() {
+                None
+            } else {
+                Some(preferred_map)
+            }
+        }
+        (Some(preferred_map), None) => {
+            if preferred_map.is_empty() {
+                None
+            } else {
+                Some(preferred_map)
+            }
+        }
+        (None, Some(fallback_map)) => {
+            if fallback_map.is_empty() {
+                None
+            } else {
+                Some(fallback_map)
+            }
+        }
+        (None, None) => None,
+    };
 
-    if agent.is_none() && model_provider_id.is_none() && model_id.is_none() {
+    if agent.is_none()
+        && model_provider_id.is_none()
+        && model_id.is_none()
+        && config_options.is_none()
+    {
         None
     } else {
         Some(crate::server::protocol::ai::SessionSelectionHint {
             agent,
             model_provider_id,
             model_id,
+            config_options,
         })
     }
 }

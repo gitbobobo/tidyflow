@@ -81,6 +81,8 @@ pub(crate) async fn handle_session_routes(
         session::handle_ai_session_messages(client_msg, socket, app_state, ai_state),
         session::handle_ai_session_delete(client_msg, app_state, ai_state),
         session::handle_ai_session_status(client_msg, socket, app_state, ai_state),
+        session::handle_ai_session_config_options(client_msg, socket, app_state, ai_state),
+        session::handle_ai_session_set_config_option(client_msg, socket, app_state, ai_state),
         session::handle_ai_provider_list(client_msg, socket, app_state, ai_state),
         session::handle_ai_agent_list(client_msg, socket, app_state, ai_state),
         session::handle_ai_slash_commands(client_msg, socket, app_state, ai_state),
@@ -137,6 +139,8 @@ mod tests {
             push_and_return(trace.clone(), "session_messages", false),
             push_and_return(trace.clone(), "session_delete", false),
             push_and_return(trace.clone(), "session_status", false),
+            push_and_return(trace.clone(), "session_config_options", false),
+            push_and_return(trace.clone(), "session_set_config_option", false),
             push_and_return(trace.clone(), "provider_list", true),
             push_and_return(trace.clone(), "agent_list", true),
             push_and_return(trace.clone(), "slash_commands", true),
@@ -173,6 +177,8 @@ mod tests {
                 "session_messages",
                 "session_delete",
                 "session_status",
+                "session_config_options",
+                "session_set_config_option",
                 "provider_list"
             ]
         );
