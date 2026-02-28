@@ -1222,6 +1222,7 @@ private struct EvolutionProfileDraft: Identifiable {
     var mode: String
     var providerID: String
     var modelID: String
+    var configOptions: [String: Any]
 }
 
 struct MobileEvolutionView: View {
@@ -1408,6 +1409,7 @@ struct MobileEvolutionView: View {
                             guard profile.aiTool != newValue else { return }
                             hasPendingUserProfileEdit = true
                             profile.aiTool = newValue
+                            profile.configOptions = [:]
                             sanitizeProfileSelection(profileID: profile.id)
                             autoSaveProfilesIfNeeded()
                         }
@@ -1519,6 +1521,36 @@ struct MobileEvolutionView: View {
                                 }
                             } label: {
                                 Text(selectedModelDisplayName(for: profile))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        LabeledContent("思考强度") {
+                            Menu {
+                                Button("默认") {
+                                    hasPendingUserProfileEdit = true
+                                    if let optionID = thoughtLevelOptionID(for: profile.aiTool) {
+                                        profile.configOptions.removeValue(forKey: optionID)
+                                    }
+                                    autoSaveProfilesIfNeeded()
+                                }
+                                let options = thoughtLevelOptions(for: profile.aiTool)
+                                if options.isEmpty {
+                                    Text("未提供 thought_level 选项")
+                                } else {
+                                    ForEach(options, id: \.self) { option in
+                                        Button(option) {
+                                            hasPendingUserProfileEdit = true
+                                            if let optionID = thoughtLevelOptionID(for: profile.aiTool) {
+                                                profile.configOptions[optionID] = option
+                                            }
+                                            autoSaveProfilesIfNeeded()
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Text(selectedThoughtLevel(for: profile) ?? "默认")
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
@@ -1652,7 +1684,8 @@ struct MobileEvolutionView: View {
                 aiTool: profile.aiTool,
                 mode: profile.mode ?? "",
                 providerID: profile.model?.providerID ?? "",
-                modelID: profile.model?.modelID ?? ""
+                modelID: profile.model?.modelID ?? "",
+                configOptions: profile.configOptions
             )
         }
         let incomingSignature = profileSignature(loadedProfiles)
@@ -1819,6 +1852,33 @@ struct MobileEvolutionView: View {
         return profile.modelID
     }
 
+    private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
+        appState.aiSessionConfigOptions(for: tool).first(where: {
+            let category = ($0.category ?? $0.optionID)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return category == "thought_level"
+        })?.optionID
+    }
+
+    private func thoughtLevelOptions(for tool: AIChatTool) -> [String] {
+        appState.thoughtLevelOptions(for: tool)
+    }
+
+    private func selectedThoughtLevel(for profile: EvolutionProfileDraft) -> String? {
+        guard let optionID = thoughtLevelOptionID(for: profile.aiTool) else { return nil }
+        let raw = profile.configOptions[optionID]
+        if let text = raw as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let number = raw as? NSNumber {
+            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
     private func sanitizeProfileSelection(profileID: String) {
         guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
         var profile = profiles[index]
@@ -1860,11 +1920,14 @@ struct MobileEvolutionView: View {
                 return EvolutionModelSelectionV2(providerID: profile.providerID, modelID: profile.modelID)
             }()
 
+            let configOptions = profile.configOptions
+
             return EvolutionStageProfileInfoV2(
                 stage: profile.stage,
                 aiTool: profile.aiTool,
                 mode: mode,
-                model: model
+                model: model,
+                configOptions: configOptions
             )
         }
     }
@@ -1912,10 +1975,21 @@ struct MobileEvolutionView: View {
                     $0.aiTool.rawValue,
                     $0.mode,
                     $0.providerID,
-                    $0.modelID
+                    $0.modelID,
+                    configOptionsSignature($0.configOptions)
                 ].joined(separator: "::")
             }
             .joined(separator: "||")
+    }
+
+    private func configOptionsSignature(_ configOptions: [String: Any]) -> String {
+        guard !configOptions.isEmpty else { return "" }
+        guard JSONSerialization.isValidJSONObject(configOptions),
+              let data = try? JSONSerialization.data(withJSONObject: configOptions, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "\(NSDictionary(dictionary: configOptions))"
+        }
+        return text
     }
 
     private func startEvolution() {

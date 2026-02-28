@@ -338,6 +338,8 @@ struct MobileAIChatView: View {
                 contextRemainingPercent: contextRemainingPercent,
                 agents: appState.aiAgents,
                 selectedAgent: $appState.aiSelectedAgent,
+                thoughtLevelOptions: appState.thoughtLevelOptions(),
+                selectedThoughtLevel: $appState.aiSelectedThoughtLevel,
                 isLoadingModels: appState.isAILoadingModels,
                 isLoadingAgents: appState.isAILoadingAgents,
                 autocomplete: nil,
