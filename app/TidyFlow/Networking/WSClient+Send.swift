@@ -856,7 +856,8 @@ extension WSClient {
         fileRefs: [String]? = nil,
         imageParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
-        agent: String? = nil
+        agent: String? = nil,
+        configOverrides: [String: Any]? = nil
     ) {
         var msg: [String: Any] = [
             "type": "ai_chat_send",
@@ -878,6 +879,9 @@ extension WSClient {
         if let agent {
             msg["agent"] = agent
         }
+        if let configOverrides, !configOverrides.isEmpty {
+            msg["config_overrides"] = configOverrides
+        }
         send(msg)
     }
 
@@ -892,7 +896,8 @@ extension WSClient {
         fileRefs: [String]? = nil,
         imageParts: [[String: Any]]? = nil,
         model: [String: String]? = nil,
-        agent: String? = nil
+        agent: String? = nil,
+        configOverrides: [String: Any]? = nil
     ) {
         var msg: [String: Any] = [
             "type": "ai_chat_command",
@@ -914,6 +919,9 @@ extension WSClient {
         }
         if let agent {
             msg["agent"] = agent
+        }
+        if let configOverrides, !configOverrides.isEmpty {
+            msg["config_overrides"] = configOverrides
         }
         send(msg)
     }
@@ -1069,6 +1077,45 @@ extension WSClient {
             "project_name": projectName,
             "workspace_name": workspaceName,
             "ai_tool": aiTool.rawValue
+        ])
+    }
+
+    /// 获取会话配置选项（ACP session-config-options）
+    func requestAISessionConfigOptions(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String? = nil
+    ) {
+        var msg: [String: Any] = [
+            "type": "ai_session_config_options",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue
+        ]
+        if let sessionId, !sessionId.isEmpty {
+            msg["session_id"] = sessionId
+        }
+        send(msg)
+    }
+
+    /// 设置会话配置选项（ACP session/set_config_option）
+    func requestAISessionSetConfigOption(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        optionID: String,
+        value: Any
+    ) {
+        send([
+            "type": "ai_session_set_config_option",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
+            "session_id": sessionId,
+            "option_id": optionID,
+            "value": value
         ])
     }
 

@@ -149,6 +149,15 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_session_config_options":
+            if let ev = AISessionConfigOptionsResult.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAISessionConfigOptions(ev)
+                } else {
+                    onAISessionConfigOptions?(ev)
+                }
+            }
+            return true
         case "ai_session_subscribe_ack":
             if let handler = aiMessageHandler {
                 handler.handleAISessionSubscribeAck()

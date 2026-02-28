@@ -138,6 +138,94 @@ struct AISessionStatusUpdateV2 {
     }
 }
 
+struct AIProtocolSessionConfigOptionChoice {
+    let value: Any
+    let label: String
+    let description: String?
+
+    static func from(json: [String: Any]) -> AIProtocolSessionConfigOptionChoice? {
+        guard let rawValue = normalizeProtocolJSONValue(json["value"]) else { return nil }
+        let label = parseOptionalString(json["label"]) ?? "\(rawValue)"
+        guard !label.isEmpty else { return nil }
+        let description = parseOptionalString(json["description"])
+        return AIProtocolSessionConfigOptionChoice(
+            value: rawValue,
+            label: label,
+            description: description
+        )
+    }
+}
+
+struct AIProtocolSessionConfigOptionGroup {
+    let label: String
+    let options: [AIProtocolSessionConfigOptionChoice]
+
+    static func from(json: [String: Any]) -> AIProtocolSessionConfigOptionGroup? {
+        guard let label = parseOptionalString(json["label"]) else { return nil }
+        let options = parseArrayOfDictionaries(json["options"])
+            .compactMap { AIProtocolSessionConfigOptionChoice.from(json: $0) }
+        return AIProtocolSessionConfigOptionGroup(label: label, options: options)
+    }
+}
+
+struct AIProtocolSessionConfigOptionInfo {
+    let optionID: String
+    let category: String?
+    let name: String
+    let description: String?
+    let currentValue: Any?
+    let options: [AIProtocolSessionConfigOptionChoice]
+    let optionGroups: [AIProtocolSessionConfigOptionGroup]
+    let raw: [String: Any]?
+
+    static func from(json: [String: Any]) -> AIProtocolSessionConfigOptionInfo? {
+        guard let optionID = parseOptionalString(json["option_id"] ?? json["optionId"]),
+              let name = parseOptionalString(json["name"]) else { return nil }
+        let category = parseOptionalString(json["category"])
+        let description = parseOptionalString(json["description"])
+        let currentValue = normalizeProtocolJSONValue(json["current_value"] ?? json["currentValue"])
+        let options = parseArrayOfDictionaries(json["options"])
+            .compactMap { AIProtocolSessionConfigOptionChoice.from(json: $0) }
+        let optionGroups = parseArrayOfDictionaries(json["option_groups"] ?? json["optionGroups"])
+            .compactMap { AIProtocolSessionConfigOptionGroup.from(json: $0) }
+        let raw = parseConfigOptionsMap(json["raw"])
+        return AIProtocolSessionConfigOptionInfo(
+            optionID: optionID,
+            category: category,
+            name: name,
+            description: description,
+            currentValue: currentValue,
+            options: options,
+            optionGroups: optionGroups,
+            raw: raw
+        )
+    }
+}
+
+struct AISessionConfigOptionsResult {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String?
+    let options: [AIProtocolSessionConfigOptionInfo]
+
+    static func from(json: [String: Any]) -> AISessionConfigOptionsResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
+        let sessionId = parseOptionalString(json["session_id"])
+        let options = parseArrayOfDictionaries(json["options"])
+            .compactMap { AIProtocolSessionConfigOptionInfo.from(json: $0) }
+        return AISessionConfigOptionsResult(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            options: options
+        )
+    }
+}
+
 struct AIProtocolSessionInfo {
     let projectName: String
     let workspaceName: String
@@ -596,13 +684,51 @@ private extension AISessionSelectionHint {
         let agent = parseOptionalString(json["agent"])?.lowercased()
         let modelProviderID = parseOptionalString(json["model_provider_id"])
         let modelID = parseOptionalString(json["model_id"])
+        let configOptions = parseConfigOptionsMap(
+            json["config_options"]
+                ?? json["configOptions"]
+                ?? json["session_config_options"]
+                ?? json["sessionConfigOptions"]
+        )
         let hint = AISessionSelectionHint(
             agent: agent,
             modelProviderID: modelProviderID,
-            modelID: modelID
+            modelID: modelID,
+            configOptions: configOptions
         )
         return hint.isEmpty ? nil : hint
     }
+}
+
+private func parseConfigOptionsMap(_ any: Any?) -> [String: Any]? {
+    guard let dict = parseDictionary(any) else { return nil }
+    var normalized: [String: Any] = [:]
+    normalized.reserveCapacity(dict.count)
+    for (key, value) in dict {
+        if let normalizedValue = normalizeProtocolJSONValue(value) {
+            normalized[key] = normalizedValue
+        }
+    }
+    return normalized.isEmpty ? nil : normalized
+}
+
+private func normalizeProtocolJSONValue(_ any: Any?) -> Any? {
+    guard let any else { return nil }
+    if any is NSNull {
+        return NSNull()
+    }
+    if let dict = parseDictionary(any) {
+        var mapped: [String: Any] = [:]
+        mapped.reserveCapacity(dict.count)
+        for (key, value) in dict {
+            mapped[key] = normalizeProtocolJSONValue(value) ?? NSNull()
+        }
+        return mapped
+    }
+    if let array = any as? [Any] {
+        return array.map { normalizeProtocolJSONValue($0) ?? NSNull() }
+    }
+    return any
 }
 
 private func parseInt64(_ any: Any?) -> Int64 {
@@ -942,6 +1068,21 @@ struct EvolutionStageProfileInfoV2 {
     let aiTool: AIChatTool
     let mode: String?
     let model: EvolutionModelSelectionV2?
+    let configOptions: [String: Any]
+
+    init(
+        stage: String,
+        aiTool: AIChatTool,
+        mode: String?,
+        model: EvolutionModelSelectionV2?,
+        configOptions: [String: Any] = [:]
+    ) {
+        self.stage = stage
+        self.aiTool = aiTool
+        self.mode = mode
+        self.model = model
+        self.configOptions = configOptions
+    }
 
     static func from(json: [String: Any]) -> EvolutionStageProfileInfoV2? {
         guard let stage = parseOptionalString(json["stage"])
@@ -958,7 +1099,14 @@ struct EvolutionStageProfileInfoV2 {
         let model = parseDictionary(json["model"]).flatMap { EvolutionModelSelectionV2.from(json: $0) }
             ?? EvolutionModelSelectionV2.from(json: json)
             ?? parseOptionalString(json["model"]).flatMap { EvolutionModelSelectionV2.from(rawModel: $0, providerHint: providerHint) }
-        return EvolutionStageProfileInfoV2(stage: stage, aiTool: aiTool, mode: mode, model: model)
+        let configOptions = parseConfigOptionsMap(json["config_options"] ?? json["configOptions"]) ?? [:]
+        return EvolutionStageProfileInfoV2(
+            stage: stage,
+            aiTool: aiTool,
+            mode: mode,
+            model: model,
+            configOptions: configOptions
+        )
     }
 
     func toJSON() -> [String: Any] {
@@ -972,6 +1120,9 @@ struct EvolutionStageProfileInfoV2 {
                 "provider_id": model.providerID,
                 "model_id": model.modelID
             ]
+        }
+        if !configOptions.isEmpty {
+            json["config_options"] = configOptions
         }
         return json
     }

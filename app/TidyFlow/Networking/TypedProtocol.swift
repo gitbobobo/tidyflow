@@ -144,6 +144,7 @@ protocol AIMessageHandler: AnyObject {
     func handleAIProviderList(_ ev: AIProviderListResult)
     func handleAIAgentList(_ ev: AIAgentListResult)
     func handleAISlashCommands(_ ev: AISlashCommandsResult)
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult)
     func handleAISessionSubscribeAck()
 }
 
@@ -164,6 +165,7 @@ extension AIMessageHandler {
     func handleAIProviderList(_ ev: AIProviderListResult) {}
     func handleAIAgentList(_ ev: AIAgentListResult) {}
     func handleAISlashCommands(_ ev: AISlashCommandsResult) {}
+    func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) {}
     func handleAISessionSubscribeAck() {}
 }
 
