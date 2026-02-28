@@ -724,9 +724,7 @@ impl AcpClient {
             let path = url
                 .to_file_path()
                 .map_err(|_| format!("ACP session cwd file URI 非法: {}", trimmed))?;
-            let normalized = url::Url::from_file_path(&path)
-                .map_err(|_| format!("ACP session cwd 无法转换为 file URI: {}", trimmed))?;
-            return Ok(normalized.to_string());
+            return Ok(path.to_string_lossy().to_string());
         }
 
         let path = Path::new(trimmed);
@@ -736,9 +734,7 @@ impl AcpClient {
                 trimmed
             ));
         }
-        let normalized = url::Url::from_file_path(path)
-            .map_err(|_| format!("ACP session cwd 无法转换为 file URI: {}", trimmed))?;
-        Ok(normalized.to_string())
+        Ok(path.to_string_lossy().to_string())
     }
 
     fn parse_session_updated_at_ms(value: &Value) -> Option<i64> {
@@ -1666,10 +1662,17 @@ mod tests {
     }
 
     #[test]
-    fn normalize_cwd_for_request_should_convert_absolute_path_to_file_uri() {
+    fn normalize_cwd_for_request_should_keep_absolute_path() {
         let cwd = AcpClient::normalize_cwd_for_request("/tmp/workspace")
             .expect("absolute path should normalize");
-        assert_eq!(cwd, "file:///tmp/workspace");
+        assert_eq!(cwd, "/tmp/workspace");
+    }
+
+    #[test]
+    fn normalize_cwd_for_request_should_convert_file_uri_to_absolute_path() {
+        let cwd = AcpClient::normalize_cwd_for_request("file:///tmp/workspace")
+            .expect("file uri should normalize");
+        assert_eq!(cwd, "/tmp/workspace");
     }
 
     #[test]
@@ -1680,7 +1683,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_new_should_send_file_uri_cwd() {
+    async fn session_new_should_send_absolute_path_cwd() {
         let transport = Arc::new(MockTransport::new(
             vec![Ok(json!({"sessionId": "session-1"}))],
             None,
@@ -1695,10 +1698,7 @@ mod tests {
             .first_request_params("session/new")
             .await
             .expect("session/new params should exist");
-        assert_eq!(
-            params.get("cwd").and_then(|v| v.as_str()),
-            Some("file:///tmp/workspace")
-        );
+        assert_eq!(params.get("cwd").and_then(|v| v.as_str()), Some("/tmp/workspace"));
         assert_eq!(
             params
                 .get("mcpServers")
@@ -1709,7 +1709,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_load_should_send_file_uri_cwd() {
+    async fn session_load_should_send_absolute_path_cwd() {
         let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
         let client = AcpClient::new_with_transport(transport.clone());
         let _ = client
@@ -1721,10 +1721,7 @@ mod tests {
             .first_request_params("session/load")
             .await
             .expect("session/load params should exist");
-        assert_eq!(
-            params.get("cwd").and_then(|v| v.as_str()),
-            Some("file:///tmp/workspace")
-        );
+        assert_eq!(params.get("cwd").and_then(|v| v.as_str()), Some("/tmp/workspace"));
         assert_eq!(
             params.get("sessionId").and_then(|v| v.as_str()),
             Some("session-1")
