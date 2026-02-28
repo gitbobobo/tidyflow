@@ -282,13 +282,23 @@ impl CodexAppServerManager {
         self.ensure_server_running()
             .await
             .map_err(AppServerRequestError::Transport)?;
-        self.send_request_raw_with_error(method, params).await
+        // ACP session/prompt 是长生命周期请求，agent 在完成所有工具调用后才返回
+        // response，中间进度通过 session/update notification 传递，不应设置超时。
+        // 上层 consume_stage_stream 已有 MAX_STAGE_RUNTIME_SECS (1h) 保护。
+        let timeout_secs = if method == "session/prompt" {
+            None
+        } else {
+            Some(REQUEST_TIMEOUT_SECS)
+        };
+        self.send_request_raw_with_error(method, params, timeout_secs)
+            .await
     }
 
     async fn send_request_raw_with_error(
         &self,
         method: &str,
         params: Option<Value>,
+        timeout_secs: Option<u64>,
     ) -> Result<Value, AppServerRequestError> {
         let id = {
             let mut next = self.next_id.lock().await;
@@ -320,18 +330,28 @@ impl CodexAppServerManager {
             return Err(AppServerRequestError::Transport(e));
         }
 
-        match timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS), rx).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(AppServerRequestError::Transport(format!(
-                "{} request channel dropped: {}",
-                self.display_name, method
-            ))),
-            Err(_) => {
-                self.pending.lock().await.remove(&id_key);
-                Err(AppServerRequestError::Transport(format!(
-                    "{} request timeout: {}",
+        if let Some(secs) = timeout_secs {
+            match timeout(Duration::from_secs(secs), rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(AppServerRequestError::Transport(format!(
+                    "{} request channel dropped: {}",
                     self.display_name, method
-                )))
+                ))),
+                Err(_) => {
+                    self.pending.lock().await.remove(&id_key);
+                    Err(AppServerRequestError::Transport(format!(
+                        "{} request timeout: {}",
+                        self.display_name, method
+                    )))
+                }
+            }
+        } else {
+            match rx.await {
+                Ok(result) => result,
+                Err(_) => Err(AppServerRequestError::Transport(format!(
+                    "{} request channel dropped: {}",
+                    self.display_name, method
+                ))),
             }
         }
     }
@@ -483,6 +503,7 @@ impl CodexAppServerManager {
                 .send_request_raw_with_error(
                     "initialize",
                     Some(Self::build_acp_initialize_params(version)),
+                    Some(REQUEST_TIMEOUT_SECS),
                 )
                 .await
                 .map_err(|e| e.to_user_string())?;
@@ -518,6 +539,7 @@ impl CodexAppServerManager {
                 .send_request_raw_with_error(
                     "initialize",
                     Some(Self::build_legacy_initialize_params()),
+                    Some(REQUEST_TIMEOUT_SECS),
                 )
                 .await
                 .map_err(|e| e.to_user_string())?;
