@@ -140,10 +140,11 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             Ok(Arc::new(CodexAppServerAgent::new(Arc::new(manager))))
         }
         "copilot" => {
+            // 需求：AI 聊天中的 copilot 默认使用不受限权限模式（与 codex / claude 一致）。
             let manager = CodexAppServerManager::new_with_command_and_protocol(
                 std::env::temp_dir(),
                 "copilot",
-                vec!["--acp".to_string()],
+                vec!["--acp".to_string(), "--allow-all".to_string()],
                 "Copilot ACP server",
                 Some(1),
             );
