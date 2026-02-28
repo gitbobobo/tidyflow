@@ -334,6 +334,9 @@ pub enum ClientMessage {
         /// 是否开启远程访问（开启后允许局域网连接）
         #[serde(default)]
         remote_access_enabled: Option<bool>,
+        /// Evolution implement lane 代理配置（全局）
+        #[serde(default)]
+        evolution_implement_agent_profiles: Option<EvolutionImplementAgentProfilesInfo>,
     },
 
     // v1.22: File watcher
@@ -1027,6 +1030,8 @@ pub enum ServerMessage {
         remote_access_enabled: bool,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,
+        #[serde(default)]
+        evolution_implement_agent_profiles: EvolutionImplementAgentProfilesInfo,
     },
     ClientSettingsSaved {
         ok: bool,
@@ -1703,6 +1708,40 @@ impl EvolutionStageProfileInfo {
     pub fn is_legacy_bootstrap_stage(&self) -> bool {
         self.normalized_stage() == "bootstrap"
     }
+}
+
+/// Evolution implement lane 单配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionImplementAgentProfileInfo {
+    pub ai_tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ai::ModelSelection>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub config_options: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl Default for EvolutionImplementAgentProfileInfo {
+    fn default() -> Self {
+        Self {
+            ai_tool: "codex".to_string(),
+            mode: None,
+            model: None,
+            config_options: std::collections::HashMap::new(),
+        }
+    }
+}
+
+/// Evolution implement 三类 lane 配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvolutionImplementAgentProfilesInfo {
+    #[serde(default)]
+    pub general: EvolutionImplementAgentProfileInfo,
+    #[serde(default)]
+    pub visual: EvolutionImplementAgentProfileInfo,
+    #[serde(default)]
+    pub advanced: EvolutionImplementAgentProfileInfo,
 }
 
 /// Evolution 代理运行信息

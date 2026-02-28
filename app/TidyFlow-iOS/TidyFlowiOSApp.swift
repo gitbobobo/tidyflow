@@ -3,6 +3,7 @@ import SwiftUI
 /// 导航路由定义
 enum MobileRoute: Hashable {
     case projects
+    case settings
     case workspaceDetail(project: String, workspace: String)
     case workspaceExplorer(project: String, workspace: String)
     case workspaceTasks(project: String, workspace: String)
@@ -33,6 +34,8 @@ struct TidyFlowiOSApp: App {
                             switch route {
                             case .projects:
                                 ProjectListView()
+                            case .settings:
+                                MobileSettingsView()
                             case .workspaceDetail(let project, let workspace):
                                 WorkspaceDetailView(project: project, workspace: workspace)
                             case .workspaceExplorer(let project, let workspace):

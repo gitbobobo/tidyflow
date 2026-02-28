@@ -2,9 +2,20 @@ import SwiftUI
 
 // MARK: - AI Agent 配置部分
 
+private struct ImplementAgentProfileDraft: Identifiable {
+    let id: String
+    let lane: String
+    var aiTool: AIChatTool
+    var mode: String
+    var providerID: String
+    var modelID: String
+    var configOptions: [String: Any]
+}
+
 struct AIAgentSection: View {
     @EnvironmentObject var appState: AppState
     @State private var editableProfiles: [EvolutionEditableProfile] = []
+    @State private var implementProfileDrafts: [ImplementAgentProfileDraft] = []
 
     /// AI Agent 选项列表（含"未配置"）
     private var agentOptions: [(value: String?, label: String, icon: String?)] {
@@ -20,16 +31,21 @@ struct AIAgentSection: View {
     var body: some View {
         Form {
             aiAgentBaseSection
+            implementAgentSections
             evolutionSections
         }
         .formStyle(.grouped)
         .settingsPageTopInset()
         .onAppear {
             editableProfiles = appState.evolutionDefaultProfiles
+            implementProfileDrafts = buildImplementProfileDrafts()
             _ = appState.requestAISelectorResourcesForSettings()
         }
         .onChange(of: appState.evolutionDefaultProfiles) {
             editableProfiles = appState.evolutionDefaultProfiles
+        }
+        .onReceive(appState.$clientSettings) { _ in
+            implementProfileDrafts = buildImplementProfileDrafts()
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
@@ -48,6 +64,16 @@ struct AIAgentSection: View {
             Text("settings.aiAgent.title".localized)
         } footer: {
             Text("settings.aiAgent.footer".localized)
+        }
+    }
+
+    @ViewBuilder
+    private var implementAgentSections: some View {
+        ForEach($implementProfileDrafts) { $draft in
+            implementAgentSection(
+                draft: $draft,
+                isLast: draft.id == implementProfileDrafts.last?.id
+            )
         }
     }
 
@@ -84,6 +110,150 @@ struct AIAgentSection: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
+        }
+    }
+
+    private func implementAgentSection(
+        draft: Binding<ImplementAgentProfileDraft>,
+        isLast: Bool
+    ) -> some View {
+        Section {
+            implementToolRow(draft: draft)
+            implementModeRow(draft: draft)
+            implementModelRow(draft: draft)
+            implementThoughtLevelRow(draft: draft)
+        } header: {
+            Text(implementLaneDisplayName(draft.wrappedValue.lane))
+        } footer: {
+            if isLast {
+                Text("仅用于 Evolution implement 编排 lane：通用/视觉/高级")
+            }
+        }
+    }
+
+    private func implementToolRow(draft: Binding<ImplementAgentProfileDraft>) -> some View {
+        LabeledContent("settings.evolution.aiTool".localized) {
+            Picker("", selection: Binding<AIChatTool>(
+                get: { draft.wrappedValue.aiTool },
+                set: { newValue in
+                    draft.wrappedValue.aiTool = newValue
+                    draft.wrappedValue.mode = ""
+                    draft.wrappedValue.providerID = ""
+                    draft.wrappedValue.modelID = ""
+                    draft.wrappedValue.configOptions = [:]
+                    persistImplementProfiles()
+                }
+            )) {
+                ForEach(AIChatTool.allCases) { tool in
+                    Text(tool.displayName).tag(tool)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+    }
+
+    private func implementModeRow(draft: Binding<ImplementAgentProfileDraft>) -> some View {
+        let selectedMode = draft.wrappedValue.mode
+        let options = modeOptions(for: draft.wrappedValue.aiTool)
+
+        return LabeledContent("settings.evolution.mode".localized) {
+            Menu {
+                Button("settings.evolution.defaultMode".localized) {
+                    draft.wrappedValue.mode = ""
+                    persistImplementProfiles()
+                }
+                if options.isEmpty {
+                    Text("settings.evolution.noModes".localized)
+                } else {
+                    ForEach(options, id: \.self) { option in
+                        Button(option) {
+                            draft.wrappedValue.mode = option
+                            persistImplementProfiles()
+                        }
+                    }
+                }
+            } label: {
+                Text(selectedMode.isEmpty ? "settings.evolution.defaultMode".localized : selectedMode)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    private func implementModelRow(draft: Binding<ImplementAgentProfileDraft>) -> some View {
+        let providers = modelProviders(for: draft.wrappedValue.aiTool)
+
+        return LabeledContent("settings.evolution.model".localized) {
+            Menu {
+                Button("settings.evolution.defaultModel".localized) {
+                    draft.wrappedValue.providerID = ""
+                    draft.wrappedValue.modelID = ""
+                    persistImplementProfiles()
+                }
+                if providers.isEmpty {
+                    Text("settings.evolution.noModels".localized)
+                } else if providers.count == 1, let onlyProvider = providers.first {
+                    ForEach(onlyProvider.models) { model in
+                        Button(model.name) {
+                            draft.wrappedValue.providerID = onlyProvider.id
+                            draft.wrappedValue.modelID = model.id
+                            persistImplementProfiles()
+                        }
+                    }
+                } else {
+                    ForEach(providers) { provider in
+                        Menu(provider.name) {
+                            ForEach(provider.models) { model in
+                                Button(model.name) {
+                                    draft.wrappedValue.providerID = provider.id
+                                    draft.wrappedValue.modelID = model.id
+                                    persistImplementProfiles()
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(selectedModelDisplayName(for: draft.wrappedValue))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .menuStyle(.borderlessButton)
+        }
+    }
+
+    private func implementThoughtLevelRow(draft: Binding<ImplementAgentProfileDraft>) -> some View {
+        let options = thoughtLevelOptions(for: draft.wrappedValue.aiTool)
+        let selected = selectedThoughtLevel(for: draft.wrappedValue)
+
+        return LabeledContent("思考强度") {
+            Menu {
+                Button("默认") {
+                    if let optionID = thoughtLevelOptionID(for: draft.wrappedValue.aiTool) {
+                        draft.wrappedValue.configOptions.removeValue(forKey: optionID)
+                        persistImplementProfiles()
+                    }
+                }
+                if options.isEmpty {
+                    Text("未提供 thought_level 选项")
+                } else {
+                    ForEach(options, id: \.self) { option in
+                        Button(option) {
+                            if let optionID = thoughtLevelOptionID(for: draft.wrappedValue.aiTool) {
+                                draft.wrappedValue.configOptions[optionID] = option
+                                persistImplementProfiles()
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(selected ?? "默认")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .menuStyle(.borderlessButton)
         }
     }
 
@@ -230,6 +400,15 @@ struct AIAgentSection: View {
         }
     }
 
+    private func implementLaneDisplayName(_ lane: String) -> String {
+        switch lane.lowercased() {
+        case "general": return "通用实现"
+        case "visual": return "视觉实现"
+        case "advanced": return "高级实现"
+        default: return lane
+        }
+    }
+
     private func stageDisplayName(_ stage: String) -> String {
         switch stage.lowercased() {
         case "direction": return "Direction"
@@ -271,6 +450,19 @@ struct AIAgentSection: View {
         return profile.modelID
     }
 
+    private func selectedModelDisplayName(for draft: ImplementAgentProfileDraft) -> String {
+        guard !draft.providerID.isEmpty, !draft.modelID.isEmpty else {
+            return "settings.evolution.defaultModel".localized
+        }
+        for provider in modelProviders(for: draft.aiTool) {
+            if provider.id == draft.providerID,
+               let model = provider.models.first(where: { $0.id == draft.modelID }) {
+                return model.name
+            }
+        }
+        return draft.modelID
+    }
+
     private func thoughtLevelOptionID(for tool: AIChatTool) -> String? {
         appState.aiSessionConfigOptions(for: tool).first(where: {
             let category = ($0.category ?? $0.optionID).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -296,8 +488,75 @@ struct AIAgentSection: View {
         return nil
     }
 
+    private func selectedThoughtLevel(for draft: ImplementAgentProfileDraft) -> String? {
+        guard let optionID = thoughtLevelOptionID(for: draft.aiTool) else { return nil }
+        let raw = draft.configOptions[optionID]
+        if let text = raw as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let number = raw as? NSNumber {
+            let trimmed = number.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
+    private func buildImplementProfileDrafts() -> [ImplementAgentProfileDraft] {
+        let profiles = appState.clientSettings.evolutionImplementAgentProfiles
+        let items: [(id: String, profile: EvolutionImplementAgentProfileInfoV2)] = [
+            ("general", profiles.general),
+            ("visual", profiles.visual),
+            ("advanced", profiles.advanced)
+        ]
+        return items.map { item in
+            ImplementAgentProfileDraft(
+                id: item.id,
+                lane: item.id,
+                aiTool: item.profile.aiTool,
+                mode: item.profile.mode ?? "",
+                providerID: item.profile.model?.providerID ?? "",
+                modelID: item.profile.model?.modelID ?? "",
+                configOptions: item.profile.configOptions
+            )
+        }
+    }
+
     private func persistEvolutionProfiles() {
         appState.saveEvolutionDefaultProfiles(editableProfiles)
+    }
+
+    private func persistImplementProfiles() {
+        func toProfile(_ draft: ImplementAgentProfileDraft) -> EvolutionImplementAgentProfileInfoV2 {
+            let mode = draft.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+            let model: EvolutionModelSelectionV2? = {
+                guard !draft.providerID.isEmpty, !draft.modelID.isEmpty else { return nil }
+                return EvolutionModelSelectionV2(
+                    providerID: draft.providerID,
+                    modelID: draft.modelID
+                )
+            }()
+            return EvolutionImplementAgentProfileInfoV2(
+                aiTool: draft.aiTool,
+                mode: mode.isEmpty ? nil : mode,
+                model: model,
+                configOptions: draft.configOptions
+            )
+        }
+
+        let general = implementProfileDrafts.first(where: { $0.lane == "general" }).map(toProfile)
+            ?? EvolutionImplementAgentProfileInfoV2()
+        let visual = implementProfileDrafts.first(where: { $0.lane == "visual" }).map(toProfile)
+            ?? EvolutionImplementAgentProfileInfoV2()
+        let advanced = implementProfileDrafts.first(where: { $0.lane == "advanced" }).map(toProfile)
+            ?? EvolutionImplementAgentProfileInfoV2()
+
+        appState.clientSettings.evolutionImplementAgentProfiles = EvolutionImplementAgentProfilesV2(
+            general: general,
+            visual: visual,
+            advanced: advanced
+        )
+        appState.saveClientSettings()
     }
 
     private var commitBinding: Binding<String?> {

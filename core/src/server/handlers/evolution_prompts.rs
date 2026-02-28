@@ -213,6 +213,8 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
       "id": "w-1",
       "title": "...",
       "type": "code|test|docs|script|config",
+      "implementation_agent": "general|visual",
+      "linked_check_ids": ["v-1"],
       "priority": "p0|p1|p2",
       "depends_on": [],
       "targets": ["文件或模块路径"],
@@ -281,7 +283,10 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 【质量门槛】
 - 每个 work_item 必须可直接执行，不允许空泛描述。
+- 每个 work_item 必须包含 `implementation_agent`，且只能是 `general|visual`。
+- 每个 work_item 的 `linked_check_ids` 必须非空，且每个 id 必须存在于 `verification_plan.checks[].id`。
 - 每条 acceptance criteria 必须至少映射到 1 个 check 与证据类型。
+- `acceptance_mapping` 中每条 `check_ids` 至少要能关联到 1 个 work_item（用于失败回流分类）。
 - `verification_plan.checks` 中 `executable=false` 的条目必须提供 `not_executable_reason` 与 `fallback_evidence_plan`。
 - 高风险项必须给出 rollback。
 - 计划必须与 `direction.selected_type` 一致，不得偏航。
@@ -356,6 +361,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
     {
       "id": "fb-1",
       "source": "verify.acceptance|verify.defect|judge.criteria|judge.focus",
+      "implementation_agent": "general|visual|unknown",
       "reason": "...",
       "required_evidence": ["..."]
     }
@@ -441,6 +447,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - 每条高风险改动必须记录回滚思路或缓解措施。
 - 输出必须让 VerifyAgent 能直接据此执行验证。
 - 当 `VERIFY_ITERATION > 0` 时，`failure_backlog` 与 `backlog_coverage` 必须一一对应且数量一致。
+- 当 `VERIFY_ITERATION > 0` 时，`failure_backlog[*].implementation_agent` 必须是 `general|visual|unknown`。
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"

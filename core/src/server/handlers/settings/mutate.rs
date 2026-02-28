@@ -22,6 +22,7 @@ pub async fn handle_mutate_message(
             fixed_port,
             app_language,
             remote_access_enabled,
+            evolution_implement_agent_profiles,
         } => {
             info!("SaveClientSettings request");
             save_client_settings(
@@ -35,6 +36,7 @@ pub async fn handle_mutate_message(
                     fixed_port: *fixed_port,
                     app_language: app_language.clone(),
                     remote_access_enabled: *remote_access_enabled,
+                    evolution_implement_agent_profiles: evolution_implement_agent_profiles.clone(),
                 },
             )
             .await;

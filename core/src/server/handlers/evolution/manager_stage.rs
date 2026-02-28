@@ -1,6 +1,6 @@
 use chrono::Utc;
 use futures::StreamExt;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
@@ -16,13 +16,268 @@ use crate::server::handlers::ai::{
 use crate::server::handlers::git::branch_commit::spawn_git_ai_commit_task;
 use crate::server::protocol::ServerMessage;
 
-use super::profile::profile_for_stage;
+use super::profile::{default_implement_agent_profile, profile_for_stage};
 use super::utils::cycle_dir_path;
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
 const AUTO_COMMIT_MAX_ATTEMPTS: u32 = 2;
 const AUTO_COMMIT_RETRY_DELAY_SECS: u64 = 2;
 const VALIDATION_REMINDER_MAX_RETRIES: u32 = 2;
+const IMPLEMENT_CONFIG_RESERVED_PREFIX: &str = "__evo_internal_";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PlanImplementationAgent {
+    General,
+    Visual,
+}
+
+impl PlanImplementationAgent {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "general" => Some(Self::General),
+            "visual" => Some(Self::Visual),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImplementLane {
+    General,
+    Visual,
+    Advanced,
+}
+
+impl ImplementLane {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Visual => "visual",
+            Self::Advanced => "advanced",
+        }
+    }
+}
+
+struct PlanRoutingTables {
+    lane_presence: HashSet<PlanImplementationAgent>,
+    criteria_to_checks: HashMap<String, Vec<String>>,
+    check_to_agents: HashMap<String, HashSet<PlanImplementationAgent>>,
+}
+
+struct StageRunContext {
+    ai_tool: String,
+    session_id: String,
+    directory: String,
+    agent: Arc<dyn AiAgent>,
+    model: Option<AiModelSelection>,
+    mode: Option<String>,
+    config_overrides: Option<HashMap<String, serde_json::Value>>,
+}
+
+fn sanitize_ai_config_options(
+    options: &HashMap<String, serde_json::Value>,
+) -> Option<HashMap<String, serde_json::Value>> {
+    if options.is_empty() {
+        return None;
+    }
+    let filtered: HashMap<String, serde_json::Value> = options
+        .iter()
+        .filter_map(|(key, value)| {
+            if key.starts_with(IMPLEMENT_CONFIG_RESERVED_PREFIX) {
+                None
+            } else {
+                Some((key.clone(), value.clone()))
+            }
+        })
+        .collect();
+    if filtered.is_empty() {
+        None
+    } else {
+        Some(filtered)
+    }
+}
+
+fn ordered_lanes_from_agent_presence(
+    agent_presence: &HashSet<PlanImplementationAgent>,
+) -> Vec<ImplementLane> {
+    let has_general = agent_presence.contains(&PlanImplementationAgent::General);
+    let has_visual = agent_presence.contains(&PlanImplementationAgent::Visual);
+    if has_general && has_visual {
+        return vec![ImplementLane::General, ImplementLane::Visual];
+    }
+    if has_general {
+        return vec![ImplementLane::General];
+    }
+    if has_visual {
+        return vec![ImplementLane::Visual];
+    }
+    vec![ImplementLane::General]
+}
+
+fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTables, String> {
+    let checks = value
+        .pointer("/verification_plan/checks")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "plan.execution.json 缺少 verification_plan.checks".to_string())?;
+    let mut check_ids = HashSet::new();
+    for (idx, check) in checks.iter().enumerate() {
+        let check_id = id_from_value(check, &["id"]).ok_or_else(|| {
+            format!("verification_plan.checks[{}] 缺少有效 id", idx)
+        })?;
+        if !check_ids.insert(check_id.clone()) {
+            return Err(format!("verification_plan.checks 存在重复 id: {}", check_id));
+        }
+    }
+    if check_ids.is_empty() {
+        return Err("verification_plan.checks 不能为空".to_string());
+    }
+
+    let work_items = value
+        .pointer("/work_items")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "plan.execution.json 缺少 work_items".to_string())?;
+    if work_items.is_empty() {
+        return Err("work_items 不能为空".to_string());
+    }
+
+    let mut work_item_ids = HashSet::new();
+    let mut lane_presence: HashSet<PlanImplementationAgent> = HashSet::new();
+    let mut check_to_agents: HashMap<String, HashSet<PlanImplementationAgent>> = HashMap::new();
+
+    for (idx, item) in work_items.iter().enumerate() {
+        let item_obj = item
+            .as_object()
+            .ok_or_else(|| format!("work_items[{}] 必须是对象", idx))?;
+        let work_id = item_obj
+            .get("id")
+            .and_then(parse_non_empty_string)
+            .ok_or_else(|| format!("work_items[{}] 缺少 id", idx))?;
+        if !work_item_ids.insert(work_id.clone()) {
+            return Err(format!("work_items.id 存在重复值: {}", work_id));
+        }
+
+        let agent_raw = item_obj
+            .get("implementation_agent")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("work_items[{}] 缺少 implementation_agent", idx))?;
+        let agent = PlanImplementationAgent::parse(agent_raw).ok_or_else(|| {
+            format!(
+                "work_items[{}].implementation_agent 非法: {}",
+                idx, agent_raw
+            )
+        })?;
+        lane_presence.insert(agent);
+
+        let linked = item_obj
+            .get("linked_check_ids")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| format!("work_items[{}] 缺少 linked_check_ids", idx))?;
+        if linked.is_empty() {
+            return Err(format!("work_items[{}].linked_check_ids 不能为空", idx));
+        }
+        for (check_idx, check_value) in linked.iter().enumerate() {
+            let check_id = check_value
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "work_items[{}].linked_check_ids[{}] 必须是非空字符串",
+                        idx, check_idx
+                    )
+                })?;
+            if !check_ids.contains(&check_id) {
+                return Err(format!(
+                    "work_items[{}].linked_check_ids 包含未知 check_id: {}",
+                    idx, check_id
+                ));
+            }
+            check_to_agents
+                .entry(check_id)
+                .or_default()
+                .insert(agent);
+        }
+    }
+
+    let acceptance_mapping = value
+        .pointer("/verification_plan/acceptance_mapping")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string())?;
+
+    let mut criteria_to_checks: HashMap<String, Vec<String>> = HashMap::new();
+    for (idx, item) in acceptance_mapping.iter().enumerate() {
+        let item_obj = item
+            .as_object()
+            .ok_or_else(|| format!("acceptance_mapping[{}] 必须是对象", idx))?;
+        let criteria_id = item_obj
+            .get("criteria_id")
+            .and_then(parse_non_empty_string)
+            .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))?;
+        let check_ids_raw = item_obj
+            .get("check_ids")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 check_ids", idx))?;
+        if check_ids_raw.is_empty() {
+            return Err(format!("acceptance_mapping[{}].check_ids 不能为空", idx));
+        }
+
+        let mut mapped_to_work_item = false;
+        let mut mapped_checks = Vec::with_capacity(check_ids_raw.len());
+        for (check_idx, value) in check_ids_raw.iter().enumerate() {
+            let check_id = value
+                .as_str()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "acceptance_mapping[{}].check_ids[{}] 必须是非空字符串",
+                        idx, check_idx
+                    )
+                })?;
+            if !check_ids.contains(&check_id) {
+                return Err(format!(
+                    "acceptance_mapping[{}].check_ids 包含未知 check_id: {}",
+                    idx, check_id
+                ));
+            }
+            if check_to_agents.contains_key(&check_id) {
+                mapped_to_work_item = true;
+            }
+            mapped_checks.push(check_id);
+        }
+        if !mapped_to_work_item {
+            return Err(format!(
+                "acceptance_mapping[{}].check_ids 未关联任何 work_item",
+                idx
+            ));
+        }
+        criteria_to_checks.insert(criteria_id, mapped_checks);
+    }
+
+    Ok(PlanRoutingTables {
+        lane_presence,
+        criteria_to_checks,
+        check_to_agents,
+    })
+}
+
+fn is_criteria_failure_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "fail" | "insufficient_evidence"
+    )
+}
+
+fn is_carryover_failure_status(status: &str) -> bool {
+    matches!(status.trim().to_ascii_lowercase().as_str(), "missing" | "blocked")
+}
 
 fn parse_judge_result_text(value: &str) -> Option<bool> {
     let normalized = value.trim().to_ascii_lowercase();
@@ -111,6 +366,12 @@ fn as_failing_status(status: &str) -> bool {
 }
 
 impl EvolutionManager {
+    fn validate_plan_artifact(cycle_dir: &Path) -> Result<(), String> {
+        let value = read_json_file(cycle_dir, "plan.execution.json")?;
+        parse_plan_routing_tables(&value)?;
+        Ok(())
+    }
+
     fn validate_implement_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
         if verify_iteration == 0 {
             return Ok(());
@@ -145,6 +406,24 @@ impl EvolutionManager {
                 return Err(format!(
                     "implement.result.json.backlog_coverage_summary.{} 必须是数字",
                     key
+                ));
+            }
+        }
+        for (idx, item) in backlog.iter().enumerate() {
+            let Some(obj) = item.as_object() else {
+                return Err(format!("failure_backlog[{}] 必须是对象", idx));
+            };
+            let agent = obj
+                .get("implementation_agent")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_ascii_lowercase())
+                .ok_or_else(|| {
+                    format!("failure_backlog[{}].implementation_agent 缺失或非法", idx)
+                })?;
+            if !matches!(agent.as_str(), "general" | "visual" | "unknown") {
+                return Err(format!(
+                    "failure_backlog[{}].implementation_agent 必须是 general|visual|unknown",
+                    idx
                 ));
             }
         }
@@ -310,6 +589,7 @@ impl EvolutionManager {
         verify_iteration: u32,
     ) -> Result<(), String> {
         match stage {
+            "plan" => Self::validate_plan_artifact(cycle_dir),
             "implement" => Self::validate_implement_artifact(cycle_dir, verify_iteration),
             "verify" => Self::validate_verify_artifact(cycle_dir, verify_iteration),
             "judge" => Self::validate_judge_artifact(cycle_dir, verify_iteration),
@@ -432,6 +712,307 @@ impl EvolutionManager {
             ));
         }
         Ok(())
+    }
+
+    fn build_implement_lane_prompt(
+        base_prompt: String,
+        lane: ImplementLane,
+        selected_lanes: &[ImplementLane],
+        verify_iteration: u32,
+    ) -> String {
+        let ordered = selected_lanes
+            .iter()
+            .map(|item| item.as_str())
+            .collect::<Vec<&str>>()
+            .join(" -> ");
+        let lane_guidance = match lane {
+            ImplementLane::General => {
+                "仅处理 plan.execution.json 中 implementation_agent=general 的任务。"
+            }
+            ImplementLane::Visual => {
+                "仅处理 plan.execution.json 中 implementation_agent=visual 的任务。"
+            }
+            ImplementLane::Advanced => {
+                "优先处理 verify/judge 失败项与 backlog 未完成项，可跨类别修复。"
+            }
+        };
+        format!(
+            "{}\n\n<system-reminder>implement lane={}；verify_iteration={}；本轮 lane 执行顺序={}。{} 若本 lane 无任务，允许保持最小改动并在 implement.result.json 说明。</system-reminder>\n",
+            base_prompt,
+            lane.as_str(),
+            verify_iteration,
+            ordered,
+            lane_guidance
+        )
+    }
+
+    fn map_failed_agents_from_results(
+        cycle_dir: &Path,
+        tables: &PlanRoutingTables,
+    ) -> Result<Option<HashSet<PlanImplementationAgent>>, String> {
+        let verify = read_json_file(cycle_dir, "verify.result.json")?;
+        let judge = read_json_file(cycle_dir, "judge.result.json")?;
+
+        let mut failed_criteria_ids: Vec<String> = Vec::new();
+        if let Some(items) = verify
+            .pointer("/acceptance_evaluation")
+            .and_then(|v| v.as_array())
+        {
+            for item in items {
+                let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if !is_criteria_failure_status(status) {
+                    continue;
+                }
+                if let Some(criteria_id) = id_from_value(item, &["criteria_id"]) {
+                    failed_criteria_ids.push(criteria_id);
+                }
+            }
+        }
+        if let Some(items) = judge.pointer("/criteria_judgement").and_then(|v| v.as_array()) {
+            for item in items {
+                let Some(status) = item.get("status").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if !is_criteria_failure_status(status) {
+                    continue;
+                }
+                if let Some(criteria_id) = id_from_value(item, &["criteria_id"]) {
+                    failed_criteria_ids.push(criteria_id);
+                }
+            }
+        }
+
+        let mut failed_carryover_ids: Vec<String> = Vec::new();
+        if let Some(items) = verify
+            .pointer("/carryover_verification/items")
+            .and_then(|v| v.as_array())
+        {
+            for item in items {
+                let status = item
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("missing");
+                if !is_carryover_failure_status(status) {
+                    continue;
+                }
+                if let Some(item_id) = id_from_value(item, &["id", "item_id", "criteria_id"]) {
+                    failed_carryover_ids.push(item_id);
+                }
+            }
+        }
+
+        let mut mapped_agents: HashSet<PlanImplementationAgent> = HashSet::new();
+        let mut incomplete_mapping = false;
+        let mut has_failure_signal = false;
+
+        for criteria_id in failed_criteria_ids {
+            has_failure_signal = true;
+            let Some(check_ids) = tables.criteria_to_checks.get(&criteria_id) else {
+                incomplete_mapping = true;
+                continue;
+            };
+            let mut mapped_in_this_criteria = false;
+            for check_id in check_ids {
+                if let Some(agents) = tables.check_to_agents.get(check_id) {
+                    mapped_agents.extend(agents.iter().copied());
+                    mapped_in_this_criteria = true;
+                } else {
+                    incomplete_mapping = true;
+                }
+            }
+            if !mapped_in_this_criteria {
+                incomplete_mapping = true;
+            }
+        }
+
+        for item_id in failed_carryover_ids {
+            has_failure_signal = true;
+            let mut item_mapped = false;
+
+            if let Some(agents) = tables.check_to_agents.get(&item_id) {
+                mapped_agents.extend(agents.iter().copied());
+                item_mapped = true;
+            }
+
+            if let Some(check_ids) = tables.criteria_to_checks.get(&item_id) {
+                let mut criteria_mapped = false;
+                for check_id in check_ids {
+                    if let Some(agents) = tables.check_to_agents.get(check_id) {
+                        mapped_agents.extend(agents.iter().copied());
+                        criteria_mapped = true;
+                    } else {
+                        incomplete_mapping = true;
+                    }
+                }
+                if criteria_mapped {
+                    item_mapped = true;
+                } else {
+                    incomplete_mapping = true;
+                }
+            }
+
+            if !item_mapped {
+                incomplete_mapping = true;
+            }
+        }
+
+        if !has_failure_signal || mapped_agents.is_empty() || incomplete_mapping {
+            return Ok(None);
+        }
+        Ok(Some(mapped_agents))
+    }
+
+    fn resolve_implement_lanes(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+    ) -> Result<Vec<ImplementLane>, String> {
+        if verify_iteration >= 2 {
+            return Ok(vec![ImplementLane::Advanced]);
+        }
+
+        let plan = read_json_file(cycle_dir, "plan.execution.json")?;
+        let tables = parse_plan_routing_tables(&plan)?;
+
+        if verify_iteration == 0 {
+            return Ok(ordered_lanes_from_agent_presence(&tables.lane_presence));
+        }
+
+        let failed_agents = match Self::map_failed_agents_from_results(cycle_dir, &tables) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("failed to map reimplementation categories, fallback to general: {}", err);
+                None
+            }
+        };
+        if let Some(agents) = failed_agents {
+            return Ok(ordered_lanes_from_agent_presence(&agents));
+        }
+
+        // verify_iteration=1 且失败项无法完成映射：按约定回退为仅 general。
+        Ok(vec![ImplementLane::General])
+    }
+
+    fn lane_profile_from_snapshot(
+        lane: ImplementLane,
+        profiles: &crate::server::protocol::EvolutionImplementAgentProfilesInfo,
+    ) -> crate::server::protocol::EvolutionImplementAgentProfileInfo {
+        match lane {
+            ImplementLane::General => profiles.general.clone(),
+            ImplementLane::Visual => profiles.visual.clone(),
+            ImplementLane::Advanced => profiles.advanced.clone(),
+        }
+    }
+
+    async fn profile_for_implement_lane(
+        &self,
+        key: &str,
+        lane: ImplementLane,
+    ) -> crate::server::protocol::EvolutionStageProfileInfo {
+        let (fallback_profile, lane_profile) = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return crate::server::protocol::EvolutionStageProfileInfo {
+                    stage: "implement".to_string(),
+                    ai_tool: "codex".to_string(),
+                    mode: None,
+                    model: None,
+                    config_options: HashMap::new(),
+                };
+            };
+            (
+                profile_for_stage(&entry.stage_profiles, "implement"),
+                Self::lane_profile_from_snapshot(lane, &entry.implement_agent_profiles),
+            )
+        };
+
+        let normalized_lane_profile = if lane_profile.ai_tool.trim().is_empty() {
+            default_implement_agent_profile()
+        } else {
+            lane_profile
+        };
+
+        if normalized_lane_profile.ai_tool.trim().is_empty() {
+            return fallback_profile;
+        }
+
+        crate::server::protocol::EvolutionStageProfileInfo {
+            stage: "implement".to_string(),
+            ai_tool: normalized_lane_profile.ai_tool,
+            mode: normalized_lane_profile.mode,
+            model: normalized_lane_profile.model,
+            config_options: normalized_lane_profile.config_options,
+        }
+    }
+
+    async fn run_stage_session_once(
+        &self,
+        key: &str,
+        project: &str,
+        workspace: &str,
+        cycle_id: &str,
+        stage: &str,
+        profile: crate::server::protocol::EvolutionStageProfileInfo,
+        prompt: String,
+        ctx: &HandlerContext,
+    ) -> Result<StageRunContext, String> {
+        let ai_tool = profile.ai_tool.clone();
+        let directory = resolve_directory(&ctx.app_state, project, workspace).await?;
+        let agent = ensure_agent(&ctx.ai_state, &ai_tool).await?;
+
+        let title = format!("Evolution {} {}", stage, cycle_id);
+        let session = agent.create_session(&directory, &title).await?;
+        self.set_stage_session(key, stage, &ai_tool, &session.id).await;
+        self.persist_chat_map(key).await.ok();
+        self.persist_stage_file(key, stage, "running", None, None)
+            .await
+            .ok();
+
+        let model = profile.model.as_ref().map(|m| AiModelSelection {
+            provider_id: m.provider_id.clone(),
+            model_id: m.model_id.clone(),
+        });
+        let mode = profile.mode.clone();
+        let config_overrides = sanitize_ai_config_options(&profile.config_options);
+
+        let stream = agent
+            .send_message_with_config(
+                &directory,
+                &session.id,
+                &prompt,
+                None,
+                None,
+                None,
+                model.clone(),
+                mode.clone(),
+                config_overrides.clone(),
+            )
+            .await?;
+        self.consume_stage_stream(
+            key,
+            project,
+            workspace,
+            cycle_id,
+            stage,
+            &ai_tool,
+            &session.id,
+            &directory,
+            &agent,
+            stream,
+            ctx,
+        )
+        .await?;
+
+        Ok(StageRunContext {
+            ai_tool,
+            session_id: session.id,
+            directory,
+            agent,
+            model,
+            mode,
+            config_overrides,
+        })
     }
 
     pub(super) async fn interrupt_for_blockers(
@@ -981,15 +1562,18 @@ impl EvolutionManager {
         round: u32,
         ctx: &HandlerContext,
     ) -> Result<bool, String> {
-        let profile = {
+        let (verify_iteration, workspace_root, stage_profile) = {
             let state = self.state.lock().await;
             let entry = state
                 .workspaces
                 .get(key)
                 .ok_or_else(|| "workspace state missing".to_string())?;
-            profile_for_stage(&entry.stage_profiles, stage)
+            (
+                entry.verify_iteration,
+                entry.workspace_root.clone(),
+                profile_for_stage(&entry.stage_profiles, stage),
+            )
         };
-        let ai_tool = profile.ai_tool.clone();
 
         self.set_stage_status(key, stage, "running").await;
         self.reset_stage_tool_call_tracking(key, stage).await;
@@ -999,60 +1583,60 @@ impl EvolutionManager {
             .ok();
         self.broadcast_cycle_update(key, ctx, "orchestrator").await;
 
-        let directory = resolve_directory(&ctx.app_state, project, workspace).await?;
-        let agent = ensure_agent(&ctx.ai_state, &ai_tool).await?;
-
-        let title = format!("Evolution {} {}", stage, cycle_id);
-        let session = agent.create_session(&directory, &title).await?;
-        self.set_stage_session(key, stage, &ai_tool, &session.id)
-            .await;
-        self.persist_chat_map(key).await.ok();
-        self.persist_stage_file(key, stage, "running", None, None)
-            .await
-            .ok();
-
-        let prompt = self
-            .build_stage_prompt(key, project, workspace, cycle_id, stage, round)
-            .await?;
-
-        let model = profile.model.as_ref().map(|m| AiModelSelection {
-            provider_id: m.provider_id.clone(),
-            model_id: m.model_id.clone(),
-        });
-        let mode = profile.mode.clone();
-        let config_overrides = if profile.config_options.is_empty() {
-            None
+        let mut last_run_ctx: Option<StageRunContext> = None;
+        if stage == "implement" {
+            let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+            let lanes = Self::resolve_implement_lanes(&cycle_dir, verify_iteration)?;
+            for lane in lanes.iter().copied() {
+                let profile = self.profile_for_implement_lane(key, lane).await;
+                let base_prompt = self
+                    .build_stage_prompt(key, project, workspace, cycle_id, stage, round)
+                    .await?;
+                let prompt = Self::build_implement_lane_prompt(
+                    base_prompt,
+                    lane,
+                    &lanes,
+                    verify_iteration,
+                );
+                let run_ctx = self
+                    .run_stage_session_once(
+                        key,
+                        project,
+                        workspace,
+                        cycle_id,
+                        stage,
+                        profile,
+                        prompt,
+                        ctx,
+                    )
+                    .await?;
+                last_run_ctx = Some(run_ctx);
+            }
         } else {
-            Some(profile.config_options.clone())
-        };
+            let prompt = self
+                .build_stage_prompt(key, project, workspace, cycle_id, stage, round)
+                .await?;
+            let run_ctx = self
+                .run_stage_session_once(
+                    key,
+                    project,
+                    workspace,
+                    cycle_id,
+                    stage,
+                    stage_profile,
+                    prompt,
+                    ctx,
+                )
+                .await?;
+            last_run_ctx = Some(run_ctx);
+        }
 
-        let stream = agent
-            .send_message_with_config(
-                &directory,
-                &session.id,
-                &prompt,
-                None,
-                None,
-                None,
-                model.clone(),
-                mode.clone(),
-                config_overrides.clone(),
+        let run_ctx = last_run_ctx.ok_or_else(|| {
+            format!(
+                "stage session not executed: project={}, workspace={}, stage={}",
+                project, workspace, stage
             )
-            .await?;
-        self.consume_stage_stream(
-            key,
-            project,
-            workspace,
-            cycle_id,
-            stage,
-            &ai_tool,
-            &session.id,
-            &directory,
-            &agent,
-            stream,
-            ctx,
-        )
-        .await?;
+        })?;
 
         let mut judge_pass = true;
         let mut reminder_attempts: u32 = 0;
@@ -1082,14 +1666,14 @@ impl EvolutionManager {
                             workspace,
                             cycle_id,
                             stage,
-                            &ai_tool,
-                            &session.id,
-                            &directory,
-                            &agent,
+                            &run_ctx.ai_tool,
+                            &run_ctx.session_id,
+                            &run_ctx.directory,
+                            &run_ctx.agent,
                             &validation_err,
-                            model.clone(),
-                            mode.clone(),
-                            config_overrides.clone(),
+                            run_ctx.model.clone(),
+                            run_ctx.mode.clone(),
+                            run_ctx.config_overrides.clone(),
                             ctx,
                         )
                         .await;
@@ -1644,7 +2228,7 @@ mod tests {
     use super::super::{stage::next_stage, STAGES};
     use super::{
         parse_judge_result_from_json, should_auto_commit_after_report, should_start_next_round,
-        EvolutionManager,
+        EvolutionManager, ImplementLane,
     };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -1654,6 +2238,27 @@ mod tests {
     fn write_json(path: &std::path::Path, value: serde_json::Value) {
         let content = serde_json::to_string_pretty(&value).expect("serialize json failed");
         std::fs::write(path, content).expect("write json failed");
+    }
+
+    fn base_plan_json(work_items: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({
+            "$schema_version": "1.0",
+            "cycle_id": "c-1",
+            "selected_direction_type": "architecture",
+            "goal": "demo",
+            "scope": {"in": ["core"], "out": []},
+            "work_items": work_items,
+            "verification_plan": {
+                "checks": [
+                    {"id": "v-1"},
+                    {"id": "v-2"}
+                ],
+                "acceptance_mapping": [
+                    {"criteria_id": "ac-1", "check_ids": ["v-1"]},
+                    {"criteria_id": "ac-2", "check_ids": ["v-2"]}
+                ]
+            }
+        })
     }
 
     #[test]
@@ -1885,7 +2490,10 @@ mod tests {
         write_json(
             &dir.path().join("implement.result.json"),
             serde_json::json!({
-                "failure_backlog": [{"id": "f-1"}, {"id": "f-2"}],
+                "failure_backlog": [
+                    {"id": "f-1", "implementation_agent": "general"},
+                    {"id": "f-2", "implementation_agent": "visual"}
+                ],
                 "backlog_coverage": [{"id": "f-1"}],
                 "backlog_coverage_summary": {
                     "total": 2,
@@ -1957,5 +2565,453 @@ mod tests {
         let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1)
             .expect_err("judge requirements missing should fail");
         assert!(err.contains("未覆盖 verify 未通过项"));
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_reject_missing_implementation_agent() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "linked_check_ids": ["v-1"]
+            })]),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+            .expect_err("missing implementation_agent should fail");
+        assert!(err.contains("implementation_agent"));
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_reject_invalid_agent() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "advanced",
+                "linked_check_ids": ["v-1"]
+            })]),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+            .expect_err("invalid implementation_agent should fail");
+        assert!(err.contains("implementation_agent"));
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_reject_missing_linked_check_ids() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "general"
+            })]),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+            .expect_err("missing linked_check_ids should fail");
+        assert!(err.contains("linked_check_ids"));
+    }
+
+    #[test]
+    fn validate_plan_artifact_should_reject_unknown_linked_check_id() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "general",
+                "linked_check_ids": ["v-404"]
+            })]),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+            .expect_err("unknown linked_check_ids should fail");
+        assert!(err.contains("未知 check_id"));
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_use_general_only_on_first_iteration() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "test",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/tests/x.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_use_visual_only_on_first_iteration() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "test",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlowTests/ViewTests.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::Visual]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_use_general_then_visual_on_first_iteration() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Visual]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_map_only_general_on_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
+                "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "criteria_judgement": []
+            }),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_map_only_visual_on_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [{"criteria_id": "ac-2", "status": "insufficient_evidence"}],
+                "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "criteria_judgement": []
+            }),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::Visual]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_map_general_then_visual_on_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
+                "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "criteria_judgement": []
+            }),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Visual]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_fallback_to_general_when_mapping_unknown() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["app/TidyFlow/View.swift"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "visual",
+                    "linked_check_ids": ["v-2"]
+                })
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [{"criteria_id": "ac-404", "status": "fail"}],
+                "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "criteria_judgement": []
+            }),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_use_advanced_after_second_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 2)
+            .expect("advanced lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::Advanced]);
+    }
+
+    #[test]
+    fn validate_implement_artifact_should_reject_invalid_failure_backlog_agent() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("implement.result.json"),
+            serde_json::json!({
+                "failure_backlog": [{"id": "f-1", "implementation_agent": "advanced"}],
+                "backlog_coverage": [{"id": "f-1"}],
+                "backlog_coverage_summary": {
+                    "total": 1,
+                    "done": 1,
+                    "blocked": 0,
+                    "not_done": 0
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("implement", dir.path(), 1)
+            .expect_err("invalid failure_backlog implementation_agent should fail");
+        assert!(err.contains("implementation_agent"));
     }
 }

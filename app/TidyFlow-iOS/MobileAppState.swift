@@ -175,6 +175,10 @@ final class MobileAppState: ObservableObject {
     @Published var explorerPreviewError: String?
     @Published var commitAIAgent: String?
     @Published var mergeAIAgent: String?
+    @Published var evolutionImplementAgentProfiles: EvolutionImplementAgentProfilesV2 = .default
+    private var clientFixedPort: Int = 0
+    private var clientRemoteAccessEnabled: Bool = false
+    private var clientAppLanguage: String = "system"
     // AI Chat 状态（iOS 端完整对齐 macOS）
     @Published var aiActiveProject: String = ""
     @Published var aiActiveWorkspace: String = ""
@@ -261,6 +265,17 @@ final class MobileAppState: ObservableObject {
     private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
     private var aiSelectedThoughtLevelByTool: [AIChatTool: String?] = [:]
     private var aiPendingSessionSelectionHintsByTool: [AIChatTool: [String: AISessionSelectionHint]] = [:]
+    private enum AISelectorResourceKind {
+        case providerList
+        case agentList
+    }
+    /// iOS 设置页在未进入聊天时的 AI 资源拉取上下文（按工具分桶）。
+    private var settingsSelectorContextByTool: [AIChatTool: (
+        project: String,
+        workspace: String,
+        providerPending: Bool,
+        agentPending: Bool
+    )] = [:]
 
     // 导航
     @Published var navigationPath = NavigationPath()
@@ -625,6 +640,21 @@ final class MobileAppState: ObservableObject {
         wsClient.requestTermList()
         wsClient.requestGetClientSettings()
         wsClient.requestListTasks()
+    }
+
+    func saveClientSettings() {
+        let payload = ClientSettings(
+            customCommands: customCommands,
+            workspaceShortcuts: workspaceShortcuts,
+            commitAIAgent: commitAIAgent,
+            mergeAIAgent: mergeAIAgent,
+            fixedPort: clientFixedPort,
+            remoteAccessEnabled: clientRemoteAccessEnabled,
+            appLanguage: clientAppLanguage,
+            evolutionAgentProfiles: [:],
+            evolutionImplementAgentProfiles: evolutionImplementAgentProfiles
+        )
+        wsClient.requestSaveClientSettings(settings: payload)
     }
 
     func selectProject(_ projectName: String) {
@@ -2144,6 +2174,110 @@ final class MobileAppState: ObservableObject {
         "\(project):\(workspace):\(aiChatTool.rawValue)"
     }
 
+    private func preferredAISelectorContextForSettings() -> (project: String, workspace: String)? {
+        let activeProject = aiActiveProject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeWorkspace = aiActiveWorkspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !activeProject.isEmpty, !activeWorkspace.isEmpty {
+            return (activeProject, activeWorkspace)
+        }
+
+        for project in sortedProjectsForSidebar {
+            let projectName = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !projectName.isEmpty else { continue }
+            if let workspaces = workspacesByProject[projectName], let first = workspaces.first {
+                let workspaceName = first.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !workspaceName.isEmpty {
+                    return (projectName, workspaceName)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    @discardableResult
+    func requestAISelectorResourcesForSettings() -> Bool {
+        guard isConnected else { return false }
+        guard let context = preferredAISelectorContextForSettings() else { return false }
+
+        for tool in AIChatTool.allCases {
+            settingsSelectorContextByTool[tool] = (
+                project: context.project,
+                workspace: context.workspace,
+                providerPending: true,
+                agentPending: true
+            )
+            wsClient.requestAIProviderList(
+                projectName: context.project,
+                workspaceName: context.workspace,
+                aiTool: tool
+            )
+            wsClient.requestAIAgentList(
+                projectName: context.project,
+                workspaceName: context.workspace,
+                aiTool: tool
+            )
+            wsClient.requestAISessionConfigOptions(
+                projectName: context.project,
+                workspaceName: context.workspace,
+                aiTool: tool,
+                sessionId: nil
+            )
+        }
+        return true
+    }
+
+    private func shouldAcceptSettingsSelectorEvent(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        kind: AISelectorResourceKind
+    ) -> Bool {
+        guard let pending = settingsSelectorContextByTool[aiTool] else { return false }
+        guard pending.project == projectName, pending.workspace == workspaceName else { return false }
+        switch kind {
+        case .providerList:
+            return pending.providerPending
+        case .agentList:
+            return pending.agentPending
+        }
+    }
+
+    private func consumeSettingsSelectorEventIfNeeded(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        kind: AISelectorResourceKind
+    ) {
+        guard var pending = settingsSelectorContextByTool[aiTool] else { return }
+        guard pending.project == projectName, pending.workspace == workspaceName else { return }
+        switch kind {
+        case .providerList:
+            pending.providerPending = false
+        case .agentList:
+            pending.agentPending = false
+        }
+        settingsSelectorContextByTool[aiTool] = pending
+    }
+
+    func settingsProviders(aiTool: AIChatTool) -> [AIProviderInfo] {
+        guard let context = settingsSelectorContextByTool[aiTool] else { return [] }
+        let key = globalWorkspaceKey(
+            project: context.project,
+            workspace: normalizeEvolutionWorkspaceName(context.workspace)
+        )
+        return evolutionProvidersByWorkspace[key]?[aiTool] ?? []
+    }
+
+    func settingsAgents(aiTool: AIChatTool) -> [AIAgentInfo] {
+        guard let context = settingsSelectorContextByTool[aiTool] else { return [] }
+        let key = globalWorkspaceKey(
+            project: context.project,
+            workspace: normalizeEvolutionWorkspaceName(context.workspace)
+        )
+        return evolutionAgentsByWorkspace[key]?[aiTool] ?? []
+    }
+
     private func shouldAcceptAISessionConfigOptionsEvent(project: String, workspace: String) -> Bool {
         if aiActiveProject == project, aiActiveWorkspace == workspace {
             return true
@@ -2156,7 +2290,12 @@ final class MobileAppState: ObservableObject {
         if evolutionPendingProfileReloadWorkspaces.contains(key) {
             return true
         }
-        return !evolutionStageProfilesByWorkspace[key, default: []].isEmpty
+        if !evolutionStageProfilesByWorkspace[key, default: []].isEmpty {
+            return true
+        }
+        return settingsSelectorContextByTool.values.contains { pending in
+            pending.project == project && pending.workspace == workspace
+        }
     }
 
     private func saveCurrentAISnapshotIfNeeded() {
@@ -3545,6 +3684,10 @@ final class MobileAppState: ObservableObject {
             self.workspaceShortcuts = settings.workspaceShortcuts
             self.commitAIAgent = settings.commitAIAgent
             self.mergeAIAgent = settings.mergeAIAgent
+            self.clientFixedPort = settings.fixedPort
+            self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
+            self.clientAppLanguage = settings.appLanguage
+            self.evolutionImplementAgentProfiles = settings.evolutionImplementAgentProfiles
             self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles
             self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }
@@ -4128,6 +4271,19 @@ final class MobileAppState: ObservableObject {
                 workspace: self.normalizeEvolutionWorkspaceName(ev.workspaceName),
                 aiTool: ev.aiTool
             )
+            if self.shouldAcceptSettingsSelectorEvent(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                kind: .providerList
+            ) {
+                self.consumeSettingsSelectorEventIfNeeded(
+                    projectName: ev.projectName,
+                    workspaceName: ev.workspaceName,
+                    aiTool: ev.aiTool,
+                    kind: .providerList
+                )
+            }
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
@@ -4165,6 +4321,19 @@ final class MobileAppState: ObservableObject {
                 workspace: self.normalizeEvolutionWorkspaceName(ev.workspaceName),
                 aiTool: ev.aiTool
             )
+            if self.shouldAcceptSettingsSelectorEvent(
+                projectName: ev.projectName,
+                workspaceName: ev.workspaceName,
+                aiTool: ev.aiTool,
+                kind: .agentList
+            ) {
+                self.consumeSettingsSelectorEventIfNeeded(
+                    projectName: ev.projectName,
+                    workspaceName: ev.workspaceName,
+                    aiTool: ev.aiTool,
+                    kind: .agentList
+                )
+            }
             guard self.aiActiveProject == ev.projectName,
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }

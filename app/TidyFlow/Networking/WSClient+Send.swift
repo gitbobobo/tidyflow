@@ -13,12 +13,43 @@ private struct SaveClientSettingsRequest: Encodable {
     let fixedPort: Int
     let appLanguage: String
     let remoteAccessEnabled: Bool
+    let evolutionImplementAgentProfiles: EvolutionImplementAgentProfilesPayload
 
     struct CustomCommandPayload: Encodable {
         let id: String
         let name: String
         let icon: String
         let command: String
+    }
+
+    struct EvolutionModelPayload: Encodable {
+        let providerID: String
+        let modelID: String
+
+        enum CodingKeys: String, CodingKey {
+            case providerID = "provider_id"
+            case modelID = "model_id"
+        }
+    }
+
+    struct EvolutionImplementAgentProfilePayload: Encodable {
+        let aiTool: String
+        let mode: String?
+        let model: EvolutionModelPayload?
+        let configOptions: [String: AnyCodable]
+
+        enum CodingKeys: String, CodingKey {
+            case aiTool = "ai_tool"
+            case mode
+            case model
+            case configOptions = "config_options"
+        }
+    }
+
+    struct EvolutionImplementAgentProfilesPayload: Encodable {
+        let general: EvolutionImplementAgentProfilePayload
+        let visual: EvolutionImplementAgentProfilePayload
+        let advanced: EvolutionImplementAgentProfilePayload
     }
 
     enum CodingKeys: String, CodingKey {
@@ -30,6 +61,7 @@ private struct SaveClientSettingsRequest: Encodable {
         case fixedPort = "fixed_port"
         case appLanguage = "app_language"
         case remoteAccessEnabled = "remote_access_enabled"
+        case evolutionImplementAgentProfiles = "evolution_implement_agent_profiles"
     }
 }
 
@@ -618,9 +650,30 @@ extension WSClient {
             mergeAIAgent: settings.mergeAIAgent,
             fixedPort: settings.fixedPort,
             appLanguage: settings.appLanguage,
-            remoteAccessEnabled: settings.remoteAccessEnabled
+            remoteAccessEnabled: settings.remoteAccessEnabled,
+            evolutionImplementAgentProfiles: SaveClientSettingsRequest.EvolutionImplementAgentProfilesPayload(
+                general: makeImplementAgentProfilePayload(settings.evolutionImplementAgentProfiles.general),
+                visual: makeImplementAgentProfilePayload(settings.evolutionImplementAgentProfiles.visual),
+                advanced: makeImplementAgentProfilePayload(settings.evolutionImplementAgentProfiles.advanced)
+            )
         )
         sendTyped(payload, requestId: UUID().uuidString)
+    }
+
+    private func makeImplementAgentProfilePayload(
+        _ profile: EvolutionImplementAgentProfileInfoV2
+    ) -> SaveClientSettingsRequest.EvolutionImplementAgentProfilePayload {
+        SaveClientSettingsRequest.EvolutionImplementAgentProfilePayload(
+            aiTool: profile.aiTool.rawValue,
+            mode: profile.mode,
+            model: profile.model.map {
+                SaveClientSettingsRequest.EvolutionModelPayload(
+                    providerID: $0.providerID,
+                    modelID: $0.modelID
+                )
+            },
+            configOptions: profile.configOptions.mapValues { AnyCodable.from($0) }
+        )
     }
 
     // MARK: - v1.22: 文件监控
