@@ -50,9 +50,16 @@ impl AcpBackendProfile {
 }
 
 #[derive(Debug, Clone)]
+struct PermissionOption {
+    option_id: String,
+    normalized_name: String,
+}
+
+#[derive(Debug, Clone)]
 struct PendingPermission {
     request_id: Value,
     session_id: String,
+    options: Vec<PermissionOption>,
 }
 
 #[derive(Debug, Clone)]
@@ -638,6 +645,102 @@ impl AcpAgent {
         raw.trim().to_lowercase()
     }
 
+    fn normalize_non_empty_token(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn is_set_mode_unsupported(err: &str) -> bool {
+        let normalized = err.to_lowercase();
+        normalized.contains("-32601")
+            || normalized.contains("method not found")
+            || normalized.contains("unknown method")
+            || normalized.contains("not supported")
+    }
+
+    fn normalize_current_mode_update(raw: &str) -> bool {
+        let normalized = Self::normalized_update_token(raw);
+        normalized == "current_mode_update" || normalized == "currentmodeupdate"
+    }
+
+    fn extract_current_mode_id(update: &Value) -> Option<String> {
+        let pick = |value: &Value| -> Option<String> {
+            value
+                .get("currentModeId")
+                .or_else(|| value.get("current_mode_id"))
+                .or_else(|| value.get("modeId"))
+                .or_else(|| value.get("mode_id"))
+                .and_then(|v| v.as_str())
+                .and_then(Self::normalize_non_empty_token)
+                .or_else(|| {
+                    value
+                        .get("mode")
+                        .and_then(|v| {
+                            v.as_str().map(|v| v.to_string()).or_else(|| {
+                                v.get("id")
+                                    .or_else(|| v.get("modeId"))
+                                    .or_else(|| v.get("mode_id"))
+                                    .and_then(|it| it.as_str())
+                                    .map(|it| it.to_string())
+                            })
+                        })
+                        .and_then(|v| Self::normalize_non_empty_token(&v))
+                })
+        };
+
+        pick(update).or_else(|| update.get("content").and_then(pick))
+    }
+
+    fn apply_current_mode_to_metadata(metadata: &mut AcpSessionMetadata, mode_id: &str) {
+        let Some(raw_mode_id) = Self::normalize_non_empty_token(mode_id) else {
+            return;
+        };
+
+        let resolved_mode_id = metadata
+            .modes
+            .iter()
+            .find(|mode| mode.id == raw_mode_id || mode.id.eq_ignore_ascii_case(&raw_mode_id))
+            .map(|mode| mode.id.clone())
+            .unwrap_or_else(|| raw_mode_id.clone());
+        metadata.current_mode_id = Some(resolved_mode_id.clone());
+
+        let exists = metadata.modes.iter().any(|mode| {
+            mode.id == resolved_mode_id || mode.id.eq_ignore_ascii_case(&resolved_mode_id)
+        });
+        if !exists {
+            metadata.modes.push(super::acp_client::AcpModeInfo {
+                id: resolved_mode_id.clone(),
+                name: resolved_mode_id,
+                description: None,
+            });
+        }
+    }
+
+    async fn apply_current_mode_to_caches(
+        metadata_by_directory: &Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
+        metadata_by_session: &Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
+        directory: &str,
+        session_id: &str,
+        mode_id: &str,
+    ) {
+        let directory_key = Self::normalize_directory(directory);
+        {
+            let mut by_directory = metadata_by_directory.lock().await;
+            let entry = by_directory.entry(directory_key.clone()).or_default();
+            Self::apply_current_mode_to_metadata(entry, mode_id);
+        }
+        {
+            let mut by_session = metadata_by_session.lock().await;
+            let key = Self::session_cache_key(directory, session_id);
+            let entry = by_session.entry(key).or_default();
+            Self::apply_current_mode_to_metadata(entry, mode_id);
+        }
+    }
+
     fn resolve_mode_id(
         metadata: &AcpSessionMetadata,
         selected_agent: Option<&str>,
@@ -855,16 +958,93 @@ impl AcpAgent {
         }
     }
 
+    fn parse_permission_options(params: &Value) -> Vec<PermissionOption> {
+        let mut options = Vec::new();
+        let mut seen_option_ids = HashSet::new();
+        let Some(rows) = params.get("options").and_then(|v| v.as_array()) else {
+            return options;
+        };
+        for row in rows {
+            let Some(option_id) = row
+                .get("optionId")
+                .or_else(|| row.get("option_id"))
+                .or_else(|| row.get("id"))
+                .and_then(|v| v.as_str())
+                .and_then(Self::normalize_non_empty_token)
+            else {
+                continue;
+            };
+            let option_id_key = option_id.to_lowercase();
+            if !seen_option_ids.insert(option_id_key) {
+                continue;
+            }
+            let name = row
+                .get("name")
+                .or_else(|| row.get("label"))
+                .and_then(|v| v.as_str())
+                .and_then(Self::normalize_non_empty_token)
+                .unwrap_or_else(|| option_id.clone());
+            options.push(PermissionOption {
+                option_id,
+                normalized_name: Self::normalize_mode_name(&name),
+            });
+        }
+        options
+    }
+
+    fn resolve_permission_option_id(
+        pending: &PendingPermission,
+        answers: &[Vec<String>],
+    ) -> Option<String> {
+        let candidates = answers
+            .iter()
+            .flat_map(|group| group.iter())
+            .filter_map(|answer| Self::normalize_non_empty_token(answer))
+            .collect::<Vec<_>>();
+
+        for candidate in &candidates {
+            if let Some(found) = pending.options.iter().find(|option| {
+                option.option_id == *candidate || option.option_id.eq_ignore_ascii_case(candidate)
+            }) {
+                return Some(found.option_id.clone());
+            }
+        }
+
+        for candidate in &candidates {
+            let normalized = Self::normalize_mode_name(candidate);
+            if normalized.is_empty() {
+                continue;
+            }
+            if let Some(found) = pending
+                .options
+                .iter()
+                .find(|option| option.normalized_name == normalized)
+            {
+                return Some(found.option_id.clone());
+            }
+        }
+
+        if let Some(found) = pending.options.iter().find(|option| {
+            option.option_id.eq_ignore_ascii_case("allow-once")
+                || option.option_id.eq_ignore_ascii_case("allow_once")
+        }) {
+            return Some(found.option_id.clone());
+        }
+
+        pending.options.first().map(|option| option.option_id.clone())
+    }
+
     fn build_question_from_permission_request(
         request_id: &Value,
         params: &Value,
-    ) -> Option<AiQuestionRequest> {
+    ) -> Option<(AiQuestionRequest, Vec<PermissionOption>)> {
         let session_id = params.get("sessionId")?.as_str()?.to_string();
         let tool_call = params.get("toolCall")?;
         let tool_call_id = tool_call
             .get("toolCallId")
             .and_then(|v| v.as_str())
             .map(String::from);
+        let permission_options = Self::parse_permission_options(params);
         let raw_input = tool_call.get("rawInput").cloned().unwrap_or(Value::Null);
 
         let questions = if let Some(qs) = raw_input.get("questions").and_then(|v| v.as_array()) {
@@ -882,8 +1062,19 @@ impl AcpAgent {
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|opt| {
+                                    let label = opt
+                                        .get("label")
+                                        .or_else(|| opt.get("name"))
+                                        .and_then(|v| v.as_str())
+                                        .and_then(Self::normalize_non_empty_token)?;
                                     Some(AiQuestionOption {
-                                        label: opt.get("label")?.as_str()?.to_string(),
+                                        option_id: opt
+                                            .get("optionId")
+                                            .or_else(|| opt.get("option_id"))
+                                            .or_else(|| opt.get("id"))
+                                            .and_then(|v| v.as_str())
+                                            .and_then(Self::normalize_non_empty_token),
+                                        label,
                                         description: opt
                                             .get("description")
                                             .and_then(|v| v.as_str())
@@ -919,8 +1110,19 @@ impl AcpAgent {
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|opt| {
+                                let label = opt
+                                    .get("name")
+                                    .or_else(|| opt.get("label"))
+                                    .and_then(|v| v.as_str())
+                                    .and_then(Self::normalize_non_empty_token)?;
                                 Some(AiQuestionOption {
-                                    label: opt.get("name")?.as_str()?.to_string(),
+                                    option_id: opt
+                                        .get("optionId")
+                                        .or_else(|| opt.get("option_id"))
+                                        .or_else(|| opt.get("id"))
+                                        .and_then(|v| v.as_str())
+                                        .and_then(Self::normalize_non_empty_token),
+                                    label,
                                     description: opt
                                         .get("kind")
                                         .and_then(|v| v.as_str())
@@ -936,13 +1138,16 @@ impl AcpAgent {
             }]
         };
 
-        Some(AiQuestionRequest {
-            id: Self::request_id_key(request_id),
-            session_id,
-            questions,
-            tool_message_id: tool_call_id.clone(),
-            tool_call_id,
-        })
+        Some((
+            AiQuestionRequest {
+                id: Self::request_id_key(request_id),
+                session_id,
+                questions,
+                tool_message_id: tool_call_id.clone(),
+                tool_call_id,
+            },
+            permission_options,
+        ))
     }
 
     fn extract_update(event: &Value) -> Option<(String, String, String)> {
@@ -1195,12 +1400,13 @@ impl AcpAgent {
         let mut history_plan_history: Vec<AcpPlanSnapshot> = Vec::new();
         let mut history_plan_revision: u64 = 0;
         let mut history_plan_message_index: u64 = 0;
+        let mut observed_mode_id: Option<String> = None;
 
         loop {
             tokio::select! {
                 load_result = &mut load_fut => {
                     match load_result {
-                        Ok(metadata) => {
+                        Ok(mut metadata) => {
                             Self::flush_plan_snapshot_for_history(
                                 &mut messages,
                                 &self.profile.message_id_prefix,
@@ -1208,6 +1414,9 @@ impl AcpAgent {
                                 &mut history_plan_current,
                                 &mut history_plan_history,
                             );
+                            if let Some(mode_id) = observed_mode_id.as_deref() {
+                                Self::apply_current_mode_to_metadata(&mut metadata, mode_id);
+                            }
                             return Ok((messages, metadata));
                         }
                         Err(err) if Self::is_session_already_loaded(&err) => {
@@ -1218,13 +1427,16 @@ impl AcpAgent {
                                 &mut history_plan_current,
                                 &mut history_plan_history,
                             );
-                            let cached = self
+                            let mut cached = self
                                 .metadata_by_directory
                                 .lock()
                                 .await
                                 .get(&Self::normalize_directory(directory))
                                 .cloned()
                                 .unwrap_or_default();
+                            if let Some(mode_id) = observed_mode_id.as_deref() {
+                                Self::apply_current_mode_to_metadata(&mut cached, mode_id);
+                            }
                             return Ok((messages, cached));
                         }
                         Err(err) => return Err(err),
@@ -1242,6 +1454,12 @@ impl AcpAgent {
                     }
                     let Some(update) = params.get("update") else { continue };
                     let Some((session_update, content_type, text)) = Self::extract_update(update) else { continue };
+                    if Self::normalize_current_mode_update(&session_update) {
+                        if let Some(mode_id) = Self::extract_current_mode_id(update) {
+                            observed_mode_id = Some(mode_id);
+                        }
+                        continue;
+                    }
                     if Self::is_plan_update(&session_update) {
                         let Some(entries) = Self::extract_plan_entries(update) else {
                             warn!(
@@ -1338,9 +1556,46 @@ impl AiAgent for AcpAgent {
         self.ensure_runtime_yolo_for_session(directory, session_id)
             .await?;
 
-        let metadata = self.metadata_for_directory(directory).await;
+        let mut metadata = self.metadata_for_directory(directory).await;
         let mode_id = Self::resolve_mode_id(&metadata, agent.as_deref());
         let model_id = model.map(|m| m.model_id);
+        let supports_load_session = self.client.supports_load_session().await;
+        if let Some(target_mode_id) = mode_id.as_ref() {
+            let needs_switch = metadata
+                .current_mode_id
+                .as_ref()
+                .map(|current| !current.eq_ignore_ascii_case(target_mode_id))
+                .unwrap_or(true);
+            if needs_switch {
+                let switch_result = match self
+                    .client
+                    .session_set_mode(session_id, target_mode_id)
+                    .await
+                {
+                    Ok(()) => Ok(()),
+                    Err(err) if Self::is_session_not_found(&err) && supports_load_session => {
+                        self.client.session_load(directory, session_id).await?;
+                        self.client.session_set_mode(session_id, target_mode_id).await
+                    }
+                    Err(err) => Err(err),
+                };
+                match switch_result {
+                    Ok(()) => {
+                        Self::apply_current_mode_to_metadata(&mut metadata, target_mode_id);
+                        self.cache_metadata(directory, metadata.clone()).await;
+                        self.cache_session_metadata(directory, session_id, metadata.clone())
+                            .await;
+                    }
+                    Err(err) if Self::is_set_mode_unsupported(&err) => {
+                        warn!(
+                            "{}: ACP session/set_mode unsupported, fallback to prompt.mode, error={}",
+                            self.profile.tool_id, err
+                        );
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        }
         if !self.client.supports_content_type("text").await {
             return Err("ACP 服务端 promptCapabilities 不支持 text，无法发送消息".to_string());
         }
@@ -1371,7 +1626,8 @@ impl AiAgent for AcpAgent {
         let user_message_id = format!("{}-user-{}", message_id_prefix, uuid::Uuid::new_v4());
         let pending_permissions = self.pending_permissions.clone();
         let cached_sessions = self.cached_sessions.clone();
-        let supports_load_session = self.client.supports_load_session().await;
+        let metadata_by_directory = self.metadata_by_directory.clone();
+        let metadata_by_session = self.metadata_by_session.clone();
 
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
@@ -1483,6 +1739,19 @@ impl AiAgent for AcpAgent {
                         }
                         let Some(update) = params.get("update") else { continue };
                         let Some((session_update, content_type, text)) = Self::extract_update(update) else { continue };
+                        if Self::normalize_current_mode_update(&session_update) {
+                            if let Some(mode_id) = Self::extract_current_mode_id(update) {
+                                Self::apply_current_mode_to_caches(
+                                    &metadata_by_directory,
+                                    &metadata_by_session,
+                                    &cache_directory,
+                                    &cache_session_id,
+                                    &mode_id,
+                                )
+                                .await;
+                            }
+                            continue;
+                        }
 
                         if Self::is_plan_update(&session_update) {
                             let Some(entries) = Self::extract_plan_entries(update) else {
@@ -1792,11 +2061,14 @@ impl AiAgent for AcpAgent {
                         if event_session_id != session_id {
                             continue;
                         }
-                        if let Some(question_request) = Self::build_question_from_permission_request(&req.id, &params) {
+                        if let Some((question_request, permission_options)) =
+                            Self::build_question_from_permission_request(&req.id, &params)
+                        {
                             let request_key = question_request.id.clone();
                             pending_permissions.lock().await.insert(request_key.clone(), PendingPermission {
                                 request_id: req.id.clone(),
                                 session_id: session_id.clone(),
+                                options: permission_options,
                             });
                             let _ = tx.send(Ok(AiEvent::QuestionAsked { request: question_request }));
                         }
@@ -2115,7 +2387,7 @@ impl AiAgent for AcpAgent {
         &self,
         _directory: &str,
         request_id: &str,
-        _answers: Vec<Vec<String>>,
+        answers: Vec<Vec<String>>,
     ) -> Result<(), String> {
         let pending = self
             .pending_permissions
@@ -2124,8 +2396,10 @@ impl AiAgent for AcpAgent {
             .remove(request_id)
             .ok_or_else(|| format!("Unknown permission request: {}", request_id))?;
 
+        let option_id = Self::resolve_permission_option_id(&pending, &answers)
+            .unwrap_or_else(|| "allow-once".to_string());
         self.client
-            .respond_to_permission_request(pending.request_id, "allow-once")
+            .respond_to_permission_request(pending.request_id, &option_id)
             .await
     }
 
@@ -2148,6 +2422,8 @@ mod tests {
     use super::{AcpAgent, AcpBackendProfile, AcpPlanEntry, AcpSessionSummary};
     use crate::ai::{AiImagePart, AiSession};
     use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::Mutex;
 
     #[test]
     fn map_update_to_output_should_follow_acp_mapping_contract() {
@@ -2655,5 +2931,139 @@ mod tests {
                 .map(|items| items.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn resolve_permission_option_id_should_prefer_option_id_and_name_fallback() {
+        let pending = super::PendingPermission {
+            request_id: json!(1),
+            session_id: "s1".to_string(),
+            options: vec![
+                super::PermissionOption {
+                    option_id: "code".to_string(),
+                    normalized_name: "开始实现".to_string(),
+                },
+                super::PermissionOption {
+                    option_id: "allow-once".to_string(),
+                    normalized_name: "手动确认".to_string(),
+                },
+            ],
+        };
+
+        let by_id = AcpAgent::resolve_permission_option_id(&pending, &[vec!["code".to_string()]]);
+        assert_eq!(by_id.as_deref(), Some("code"));
+
+        let by_name =
+            AcpAgent::resolve_permission_option_id(&pending, &[vec!["开始实现".to_string()]]);
+        assert_eq!(by_name.as_deref(), Some("code"));
+    }
+
+    #[test]
+    fn resolve_permission_option_id_should_fallback_to_allow_once_then_first() {
+        let pending_with_allow_once = super::PendingPermission {
+            request_id: json!(1),
+            session_id: "s1".to_string(),
+            options: vec![
+                super::PermissionOption {
+                    option_id: "reject".to_string(),
+                    normalized_name: "拒绝".to_string(),
+                },
+                super::PermissionOption {
+                    option_id: "allow-once".to_string(),
+                    normalized_name: "一次允许".to_string(),
+                },
+            ],
+        };
+        let resolved = AcpAgent::resolve_permission_option_id(&pending_with_allow_once, &[]);
+        assert_eq!(resolved.as_deref(), Some("allow-once"));
+
+        let pending_without_allow_once = super::PendingPermission {
+            request_id: json!(1),
+            session_id: "s1".to_string(),
+            options: vec![
+                super::PermissionOption {
+                    option_id: "reject".to_string(),
+                    normalized_name: "拒绝".to_string(),
+                },
+                super::PermissionOption {
+                    option_id: "code".to_string(),
+                    normalized_name: "开始实现".to_string(),
+                },
+            ],
+        };
+        let fallback_first =
+            AcpAgent::resolve_permission_option_id(&pending_without_allow_once, &[]);
+        assert_eq!(fallback_first.as_deref(), Some("reject"));
+    }
+
+    #[test]
+    fn apply_current_mode_to_metadata_should_add_unknown_mode() {
+        let mut metadata = crate::ai::acp_client::AcpSessionMetadata::default();
+        AcpAgent::apply_current_mode_to_metadata(&mut metadata, "code");
+        assert_eq!(metadata.current_mode_id.as_deref(), Some("code"));
+        assert_eq!(metadata.modes.len(), 1);
+        assert_eq!(metadata.modes[0].id, "code");
+        assert_eq!(metadata.modes[0].name, "code");
+    }
+
+    #[test]
+    fn extract_current_mode_id_should_support_common_payload_shapes() {
+        let top_level = json!({
+            "currentModeId": "code"
+        });
+        assert_eq!(
+            AcpAgent::extract_current_mode_id(&top_level).as_deref(),
+            Some("code")
+        );
+
+        let mode_id = json!({
+            "modeId": "plan"
+        });
+        assert_eq!(
+            AcpAgent::extract_current_mode_id(&mode_id).as_deref(),
+            Some("plan")
+        );
+
+        let nested_mode = json!({
+            "content": {
+                "mode": {
+                    "id": "agent"
+                }
+            }
+        });
+        assert_eq!(
+            AcpAgent::extract_current_mode_id(&nested_mode).as_deref(),
+            Some("agent")
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_current_mode_to_caches_should_update_directory_and_session() {
+        let metadata_by_directory = Arc::new(Mutex::new(HashMap::new()));
+        let metadata_by_session = Arc::new(Mutex::new(HashMap::new()));
+        AcpAgent::apply_current_mode_to_caches(
+            &metadata_by_directory,
+            &metadata_by_session,
+            "/tmp/workspace",
+            "session-1",
+            "code",
+        )
+        .await;
+
+        let dir_meta = metadata_by_directory
+            .lock()
+            .await
+            .get("/tmp/workspace")
+            .cloned()
+            .expect("directory metadata should exist");
+        assert_eq!(dir_meta.current_mode_id.as_deref(), Some("code"));
+
+        let session_meta = metadata_by_session
+            .lock()
+            .await
+            .get("/tmp/workspace::session-1")
+            .cloned()
+            .expect("session metadata should exist");
+        assert_eq!(session_meta.current_mode_id.as_deref(), Some("code"));
     }
 }

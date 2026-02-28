@@ -343,6 +343,18 @@ impl AcpClient {
             .await
     }
 
+    pub async fn session_set_mode(&self, session_id: &str, mode_id: &str) -> Result<(), String> {
+        self.send_request_with_auth_retry(
+            "session/set_mode",
+            Some(serde_json::json!({
+                "sessionId": session_id,
+                "modeId": mode_id
+            })),
+        )
+        .await
+        .map(|_| ())
+    }
+
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<CodexNotification> {
         self.transport.subscribe_notifications()
     }
@@ -1183,6 +1195,26 @@ mod tests {
             params.get("sessionId").and_then(|v| v.as_str()),
             Some("session-1")
         );
+    }
+
+    #[tokio::test]
+    async fn session_set_mode_should_send_mode_id() {
+        let transport = Arc::new(MockTransport::new(vec![Ok(json!({}))], None));
+        let client = AcpClient::new_with_transport(transport.clone());
+        client
+            .session_set_mode("session-1", "code")
+            .await
+            .expect("session/set_mode should succeed");
+
+        let params = transport
+            .first_request_params("session/set_mode")
+            .await
+            .expect("session/set_mode params should exist");
+        assert_eq!(
+            params.get("sessionId").and_then(|v| v.as_str()),
+            Some("session-1")
+        );
+        assert_eq!(params.get("modeId").and_then(|v| v.as_str()), Some("code"));
     }
 
     #[tokio::test]
