@@ -67,6 +67,29 @@
 - 会话选择提示字段：
   - `selection_hint` 新增 `config_options`，用于恢复 `mode/model/thought_level` 等配置状态。
 
+## ACP Slash Commands（`slash-commands`）
+
+- 客户端请求 action：
+  - `ai_slash_commands`：拉取斜杠命令列表，支持可选 `session_id`（会话维度）。
+- 服务端结果 action：
+  - `ai_slash_commands`：一次性返回当前可用命令；`payload.session_id` 可选。
+- 服务端增量事件 action：
+  - `ai_slash_commands_update`：实时推送命令列表更新；包含 `session_id` 与完整 `commands` 数组。
+- 命令字段：
+  - `name`、`description`、`action`、`input_hint`（可选，来自 ACP `input.hint`）。
+- ACP `session/update` 兼容解析：
+  - 更新 token 同时支持 `available_commands_update` / `availableCommandsUpdate` 等常见变体。
+  - 命令列表同时支持 `availableCommands`、`available_commands`、`content.availableCommands`（含 `commands` 兼容键）。
+  - 命令名按大小写不敏感去重，后出现覆盖先出现。
+  - 非法命令项仅告警并跳过，不中断会话流。
+- 缓存与回退：
+  - Core 按 `directory + session_id` 优先缓存命令；
+  - 会话命令缺失时回退到目录级命令。
+- 兼容策略：
+  - 保留 `ai_slash_commands` 一次性拉取接口；
+  - 不支持增量推送的后端仍可正常使用（前端继续使用拉取结果）；
+  - `/new` 作为本地命令保留，始终可用。
+
 ## 双栈兼容策略（锁定）
 
 - 优先级固定为：
