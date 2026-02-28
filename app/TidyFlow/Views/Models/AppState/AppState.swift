@@ -183,6 +183,8 @@ class AppState: ObservableObject {
 
     /// 右侧面板会话列表当前筛选的 AI 工具
     @Published var sessionPanelFilterTool: AIChatTool = .opencode
+    /// 正在加载会话列表的 AI 工具集合
+    @Published var aiSessionListLoadingTools: Set<AIChatTool> = []
 
     /// 右侧面板会话操作（由 SessionsPanelView 发起，AITabView 响应）
     enum SessionPanelAction: Equatable {
@@ -561,6 +563,7 @@ class AppState: ObservableObject {
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
         let sortedSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
         aiSessionsByTool[tool] = sortedSessions
+        aiSessionListLoadingTools.remove(tool)
         if aiChatTool == tool {
             aiSessions = sortedSessions
         }

@@ -191,6 +191,8 @@ final class MobileAppState: ObservableObject {
     }
     /// AI 会话状态缓存（按工具分桶；key: "project::workspace::sessionId"）
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
+    /// 正在加载会话列表的 AI 工具集合
+    @Published var aiSessionListLoadingTools: Set<AIChatTool> = []
     @Published var aiProviders: [AIProviderInfo] = []
     @Published var aiSelectedModel: AIModelSelection? {
         didSet {
@@ -3050,6 +3052,7 @@ final class MobileAppState: ObservableObject {
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
         let sortedSessions = sessions.sorted { $0.updatedAt > $1.updatedAt }
         aiSessionsByTool[tool] = sortedSessions
+        aiSessionListLoadingTools.remove(tool)
         if aiChatTool == tool {
             aiSessions = sortedSessions
         }

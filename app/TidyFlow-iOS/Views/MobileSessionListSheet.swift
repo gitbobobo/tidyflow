@@ -30,7 +30,18 @@ struct MobileSessionListSheet: View {
                 .padding(.vertical, 8)
 
                 let sessions = appState.aiSessionsForTool(filterTool)
-                if sessions.isEmpty {
+                let isLoadingSessions = appState.aiSessionListLoadingTools.contains(filterTool)
+                if isLoadingSessions && sessions.isEmpty {
+                    VStack(spacing: 12) {
+                        Spacer()
+                        ProgressView()
+                        Text("加载中…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if sessions.isEmpty {
                     VStack(spacing: 12) {
                         Spacer()
                         Image(systemName: "bubble.left.and.bubble.right")
@@ -131,6 +142,7 @@ struct MobileSessionListSheet: View {
 
     /// 向服务端请求指定 AI 工具的会话列表
     private func requestSessionList(for tool: AIChatTool) {
+        appState.aiSessionListLoadingTools.insert(tool)
         appState.requestAISessionList(for: tool)
     }
 }

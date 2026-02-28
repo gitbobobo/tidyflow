@@ -59,7 +59,19 @@ struct SessionsPanelView: View {
 
             // 会话列表
             let sessions = appState.aiSessionsForTool(appState.sessionPanelFilterTool)
-            if sessions.isEmpty {
+            let isLoadingSessions = appState.aiSessionListLoadingTools.contains(appState.sessionPanelFilterTool)
+            if isLoadingSessions && sessions.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.regular)
+                    Text("加载中…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if sessions.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "bubble.left.and.bubble.right")
@@ -91,7 +103,7 @@ struct SessionsPanelView: View {
                         }
                     }
                     .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -117,6 +129,7 @@ struct SessionsPanelView: View {
     private func requestSessionList(for tool: AIChatTool) {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
               appState.connectionState == .connected else { return }
+        appState.aiSessionListLoadingTools.insert(tool)
         appState.wsClient.requestAISessionList(
             projectName: appState.selectedProjectName,
             workspaceName: ws,

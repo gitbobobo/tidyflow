@@ -45,7 +45,7 @@ struct SessionListView: View {
                     }
                 }
                 .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
