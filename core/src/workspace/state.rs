@@ -61,6 +61,8 @@ pub struct EvolutionStageProfile {
     pub mode: Option<String>,
     #[serde(default)]
     pub model: Option<EvolutionModelSelection>,
+    #[serde(default)]
+    pub config_options: HashMap<String, serde_json::Value>,
 }
 
 /// 客户端设置

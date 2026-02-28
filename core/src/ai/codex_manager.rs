@@ -13,6 +13,7 @@ const REQUEST_TIMEOUT_SECS: u64 = 120;
 #[derive(Debug, Clone, Default)]
 pub struct AcpAgentCapabilities {
     pub load_session: bool,
+    pub set_config_option: bool,
     pub raw: Option<Value>,
 }
 
@@ -478,8 +479,11 @@ impl CodexAppServerManager {
             let state = Self::parse_acp_initialize_result(&result, version)?;
             if let Some(raw) = state.agent_capabilities.raw.as_ref() {
                 debug!(
-                    "{} ACP agentCapabilities detected: loadSession={}, raw={}",
-                    self.display_name, state.agent_capabilities.load_session, raw
+                    "{} ACP agentCapabilities detected: loadSession={}, setConfigOption={}, raw={}",
+                    self.display_name,
+                    state.agent_capabilities.load_session,
+                    state.agent_capabilities.set_config_option,
+                    raw
                 );
             } else {
                 debug!(
@@ -633,12 +637,39 @@ impl CodexAppServerManager {
     }
 
     fn parse_agent_capabilities(result: &Value) -> AcpAgentCapabilities {
-        let raw = result.get("agentCapabilities").cloned();
-        let load_session = raw
+        let agent_raw = result.get("agentCapabilities").cloned();
+        let session_raw = result.get("sessionCapabilities").cloned();
+        let raw = if agent_raw.is_some() || session_raw.is_some() {
+            Some(serde_json::json!({
+                "agentCapabilities": agent_raw,
+                "sessionCapabilities": session_raw
+            }))
+        } else {
+            None
+        };
+        let load_session = agent_raw
             .as_ref()
             .and_then(Self::read_load_session_capability)
+            .or_else(|| {
+                session_raw
+                    .as_ref()
+                    .and_then(Self::read_load_session_capability)
+            })
             .unwrap_or(false);
-        AcpAgentCapabilities { load_session, raw }
+        let set_config_option = session_raw
+            .as_ref()
+            .and_then(Self::read_set_config_option_capability)
+            .or_else(|| {
+                agent_raw
+                    .as_ref()
+                    .and_then(Self::read_set_config_option_capability)
+            })
+            .unwrap_or(false);
+        AcpAgentCapabilities {
+            load_session,
+            set_config_option,
+            raw,
+        }
     }
 
     fn parse_prompt_capabilities(result: &Value) -> AcpPromptCapabilities {
@@ -667,28 +698,52 @@ impl CodexAppServerManager {
     }
 
     fn read_load_session_capability(capabilities: &Value) -> Option<bool> {
-        capabilities
-            .get("loadSession")
-            .and_then(|v| v.as_bool())
-            .or_else(|| capabilities.get("load_session").and_then(|v| v.as_bool()))
-            .or_else(|| {
-                capabilities
-                    .get("session")
-                    .and_then(|v| v.get("loadSession"))
-                    .and_then(|v| v.as_bool())
-            })
-            .or_else(|| {
-                capabilities
-                    .get("session")
-                    .and_then(|v| v.get("load_session"))
-                    .and_then(|v| v.as_bool())
-            })
-            .or_else(|| {
-                capabilities
-                    .get("session")
-                    .and_then(|v| v.get("load"))
-                    .and_then(|v| v.as_bool())
-            })
+        Self::read_capability_flag(
+            capabilities,
+            &["loadSession", "load_session", "load"],
+            &["session"],
+        )
+    }
+
+    fn read_set_config_option_capability(capabilities: &Value) -> Option<bool> {
+        Self::read_capability_flag(
+            capabilities,
+            &["setConfigOption", "set_config_option"],
+            &["session"],
+        )
+    }
+
+    fn read_capability_flag(
+        capabilities: &Value,
+        direct_keys: &[&str],
+        nested_keys: &[&str],
+    ) -> Option<bool> {
+        for key in direct_keys {
+            if let Some(value) = capabilities.get(*key) {
+                if let Some(parsed) = Self::read_bool_like_value(value) {
+                    return Some(parsed);
+                }
+            }
+        }
+        for nest in nested_keys {
+            if let Some(obj) = capabilities.get(*nest) {
+                for key in direct_keys {
+                    if let Some(value) = obj.get(*key) {
+                        if let Some(parsed) = Self::read_bool_like_value(value) {
+                            return Some(parsed);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn read_bool_like_value(value: &Value) -> Option<bool> {
+        value
+            .as_bool()
+            .or_else(|| value.get("supported").and_then(|v| v.as_bool()))
+            .or_else(|| value.get("enabled").and_then(|v| v.as_bool()))
     }
 
     fn parse_auth_methods(result: &Value) -> Vec<AcpAuthMethod> {
@@ -824,6 +879,9 @@ mod tests {
                     "resume": false
                 }
             },
+            "sessionCapabilities": {
+                "setConfigOption": true
+            },
             "promptCapabilities": {
                 "contentTypes": ["text", "image", "resource_link"]
             },
@@ -842,6 +900,7 @@ mod tests {
             .expect("parse initialize response should succeed");
         assert_eq!(state.negotiated_protocol_version, Some(1));
         assert!(state.agent_capabilities.load_session);
+        assert!(state.agent_capabilities.set_config_option);
         assert!(state.prompt_capabilities.content_types.contains("text"));
         assert!(state.prompt_capabilities.content_types.contains("image"));
         assert!(

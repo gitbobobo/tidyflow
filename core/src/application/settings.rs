@@ -95,6 +95,7 @@ fn to_protocol_profiles(input: &[EvolutionStageProfile]) -> Vec<EvolutionStagePr
                 provider_id: model.provider_id.clone(),
                 model_id: model.model_id.clone(),
             }),
+            config_options: profile.config_options.clone(),
         })
         .collect()
 }

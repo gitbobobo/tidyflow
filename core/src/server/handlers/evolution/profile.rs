@@ -31,6 +31,7 @@ pub(super) fn normalize_profiles(
                     ai_tool,
                     mode: profile.mode,
                     model: profile.model,
+                    config_options: profile.config_options,
                 },
             );
         }
@@ -43,6 +44,7 @@ pub(super) fn normalize_profiles(
             ai_tool: default_evolution_ai_tool(),
             mode: None,
             model: None,
+            config_options: HashMap::new(),
         }));
     }
     Ok(result)
@@ -69,6 +71,7 @@ pub(super) fn normalize_profiles_lenient(
                 ai_tool,
                 mode: profile.mode,
                 model: profile.model,
+                config_options: profile.config_options,
             },
         );
     }
@@ -83,6 +86,7 @@ pub(super) fn normalize_profiles_lenient(
                     ai_tool: default_evolution_ai_tool(),
                     mode: None,
                     model: None,
+                    config_options: HashMap::new(),
                 })
         })
         .collect()
@@ -105,6 +109,7 @@ pub(super) fn default_stage_profiles() -> Vec<EvolutionStageProfileInfo> {
             ai_tool: default_evolution_ai_tool(),
             mode: None,
             model: None,
+            config_options: HashMap::new(),
         })
         .collect()
 }
@@ -122,6 +127,7 @@ pub(super) fn profile_for_stage(
             ai_tool: default_evolution_ai_tool(),
             mode: None,
             model: None,
+            config_options: HashMap::new(),
         })
 }
 
@@ -138,6 +144,7 @@ pub(super) fn to_persisted_profiles(
                 provider_id: m.provider_id.clone(),
                 model_id: m.model_id.clone(),
             }),
+            config_options: p.config_options.clone(),
         })
         .collect()
 }
@@ -155,6 +162,7 @@ pub(super) fn from_persisted_profiles(
                 provider_id: m.provider_id,
                 model_id: m.model_id,
             }),
+            config_options: p.config_options,
         })
         .collect()
 }
@@ -264,6 +272,7 @@ mod tests {
                 provider_id: "codex".to_string(),
                 model_id: "gpt-5.3-codex".to_string(),
             }),
+            config_options: HashMap::new(),
         }];
 
         let normalized = normalize_profiles_lenient(profiles);
@@ -282,12 +291,14 @@ mod tests {
                 ai_tool: "codex".to_string(),
                 mode: None,
                 model: None,
+                config_options: HashMap::new(),
             },
             EvolutionStageProfileInfo {
                 stage: "direction".to_string(),
                 ai_tool: "copilot".to_string(),
                 mode: None,
                 model: None,
+                config_options: HashMap::new(),
             },
         ];
 
@@ -304,6 +315,7 @@ mod tests {
             ai_tool: "codex".to_string(),
             mode: None,
             model: None,
+            config_options: HashMap::new(),
         }];
 
         let normalized = normalize_profiles_lenient(profiles);

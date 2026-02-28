@@ -759,6 +759,7 @@ impl EvolutionManager {
                                         agent: hint.agent,
                                         model_provider_id: hint.model_provider_id,
                                         model_id: hint.model_id,
+                                        config_options: hint.config_options,
                                     }
                                 }),
                             },
@@ -831,6 +832,7 @@ impl EvolutionManager {
                         return Err("evo_human_blocking_required:ai_question".to_string());
                     }
                     crate::ai::AiEvent::QuestionCleared { .. } => {}
+                    crate::ai::AiEvent::SessionConfigOptionsUpdated { .. } => {}
                 },
                 Ok(Some(Err(err))) => return Err(err),
                 Ok(None) => break,
@@ -928,11 +930,21 @@ impl EvolutionManager {
         validation_err: &str,
         model: Option<AiModelSelection>,
         mode: Option<String>,
+        config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
         ctx: &HandlerContext,
     ) -> Result<(), String> {
         let reminder = Self::build_validation_reminder_message(stage, validation_err);
         let stream = agent
-            .send_message(directory, session_id, &reminder, None, None, model, mode)
+            .send_message_with_config(
+                directory,
+                session_id,
+                &reminder,
+                None,
+                None,
+                model,
+                mode,
+                config_overrides,
+            )
             .await
             .map_err(|e| format!("validation reminder send failed: {}", e))?;
         self.consume_stage_stream(
@@ -1006,9 +1018,14 @@ impl EvolutionManager {
             model_id: m.model_id.clone(),
         });
         let mode = profile.mode.clone();
+        let config_overrides = if profile.config_options.is_empty() {
+            None
+        } else {
+            Some(profile.config_options.clone())
+        };
 
         let stream = agent
-            .send_message(
+            .send_message_with_config(
                 &directory,
                 &session.id,
                 &prompt,
@@ -1016,6 +1033,7 @@ impl EvolutionManager {
                 None,
                 model.clone(),
                 mode.clone(),
+                config_overrides.clone(),
             )
             .await?;
         self.consume_stage_stream(
@@ -1068,6 +1086,7 @@ impl EvolutionManager {
                             &validation_err,
                             model.clone(),
                             mode.clone(),
+                            config_overrides.clone(),
                             ctx,
                         )
                         .await;

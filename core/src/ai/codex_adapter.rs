@@ -288,6 +288,7 @@ impl CodexAppServerAgent {
                 agent,
                 model_provider_id,
                 model_id,
+                config_options: None,
             })
         }
     }
@@ -1976,6 +1977,7 @@ impl AiAgent for CodexAppServerAgent {
             agent: collaboration_mode.clone(),
             model_provider_id: model_provider.clone(),
             model_id: model_id.clone(),
+            config_options: None,
         };
         let turn_id = match self
             .client
