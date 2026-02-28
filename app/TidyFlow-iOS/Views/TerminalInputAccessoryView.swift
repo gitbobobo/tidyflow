@@ -162,16 +162,35 @@ final class TerminalInputAccessoryView: UIView {
 
     private func makeKeyButton(label: String, tag: Int) -> UIButton {
         let btn = UIButton(type: .system)
-        btn.setTitle(label, for: .normal)
-        btn.titleLabel?.font = .monospacedSystemFont(
-            ofSize: 14, weight: .medium
-        )
         btn.tintColor = .white
-        btn.backgroundColor = UIColor.white.withAlphaComponent(0.12)
-        btn.layer.cornerRadius = 6
-        btn.contentEdgeInsets = UIEdgeInsets(
-            top: 6, left: 12, bottom: 6, right: 12
-        )
+        if #available(iOS 15.0, *) {
+            var titleAttributes = AttributeContainer()
+            titleAttributes.font = .monospacedSystemFont(
+                ofSize: 14, weight: .medium
+            )
+            var config = UIButton.Configuration.plain()
+            config.attributedTitle = AttributedString(
+                label,
+                attributes: titleAttributes
+            )
+            config.baseForegroundColor = .white
+            config.contentInsets = NSDirectionalEdgeInsets(
+                top: 6, leading: 12, bottom: 6, trailing: 12
+            )
+            config.background.cornerRadius = 6
+            config.background.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+            btn.configuration = config
+        } else {
+            btn.setTitle(label, for: .normal)
+            btn.titleLabel?.font = .monospacedSystemFont(
+                ofSize: 14, weight: .medium
+            )
+            btn.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+            btn.layer.cornerRadius = 6
+            btn.contentEdgeInsets = UIEdgeInsets(
+                top: 6, left: 12, bottom: 6, right: 12
+            )
+        }
         btn.tag = tag
         btn.addTarget(
             self, action: #selector(keyTapped(_:)),
@@ -181,6 +200,18 @@ final class TerminalInputAccessoryView: UIView {
             ctrlButton = btn
         }
         return btn
+    }
+
+    private func setKeyButtonBackgroundColor(
+        _ button: UIButton,
+        color: UIColor
+    ) {
+        if #available(iOS 15.0, *), var config = button.configuration {
+            config.background.backgroundColor = color
+            button.configuration = config
+        } else {
+            button.backgroundColor = color
+        }
     }
 
     @objc private func keyTapped(_ sender: UIButton) {
@@ -204,9 +235,12 @@ final class TerminalInputAccessoryView: UIView {
 
     private func updateCtrlButtonAppearance() {
         guard let ctrlButton else { return }
-        ctrlButton.backgroundColor = ctrlArmed
-            ? UIColor.systemBlue.withAlphaComponent(0.85)
-            : UIColor.white.withAlphaComponent(0.12)
+        setKeyButtonBackgroundColor(
+            ctrlButton,
+            color: ctrlArmed
+                ? UIColor.systemBlue.withAlphaComponent(0.85)
+                : UIColor.white.withAlphaComponent(0.12)
+        )
     }
 
     private func sequenceForKey(_ key: KeyKind, ctrl: Bool) -> String {

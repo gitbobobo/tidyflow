@@ -255,6 +255,8 @@ final class MobileAppState: ObservableObject {
 
     // AI Chat：按工具分桶存储会话
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
+    private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
+    private var aiSlashCommandsBySessionByTool: [AIChatTool: [String: [AISlashCommandInfo]]] = [:]
     private var aiSessionConfigOptionsByTool: [AIChatTool: [AIProtocolSessionConfigOptionInfo]] = [:]
     private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
     private var aiSelectedThoughtLevelByTool: [AIChatTool: String?] = [:]
@@ -368,6 +370,8 @@ final class MobileAppState: ObservableObject {
         setupWSCallbacks()
         for tool in AIChatTool.allCases {
             aiSessionsByTool[tool] = []
+            aiSlashCommandsByTool[tool] = []
+            aiSlashCommandsBySessionByTool[tool] = [:]
             aiSessionConfigOptionsByTool[tool] = []
             aiSelectedConfigOptionsByTool[tool] = [:]
             aiSelectedThoughtLevelByTool[tool] = nil
@@ -1554,7 +1558,7 @@ final class MobileAppState: ObservableObject {
         aiSelectedAgent = nil
         aiSessionConfigOptions = aiSessionConfigOptionsByTool[aiChatTool] ?? []
         aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[aiChatTool] ?? nil
-        aiSlashCommands = []
+        refreshCurrentAISlashCommands(for: aiChatTool)
         requestAIContextResources()
         reloadCurrentAISessionIfNeeded()
     }
@@ -1603,7 +1607,7 @@ final class MobileAppState: ObservableObject {
             aiSelectedAgent = nil
             aiSessionConfigOptions = aiSessionConfigOptionsByTool[newTool] ?? []
             aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[newTool] ?? nil
-            aiSlashCommands = []
+            refreshCurrentAISlashCommands(for: newTool)
             requestAIContextResources()
             reloadCurrentAISessionIfNeeded()
         }
@@ -1620,7 +1624,12 @@ final class MobileAppState: ObservableObject {
         isAILoadingAgents = true
         wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
         wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
-        wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: aiChatTool)
+        wsClient.requestAISlashCommands(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: aiChatTool,
+            sessionId: aiCurrentSessionId
+        )
         wsClient.requestAISessionConfigOptions(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
@@ -1656,12 +1665,17 @@ final class MobileAppState: ObservableObject {
             aiSelectedAgent = nil
             aiSessionConfigOptions = aiSessionConfigOptionsByTool[targetTool] ?? []
             aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[targetTool] ?? nil
-            aiSlashCommands = []
+            refreshCurrentAISlashCommands(for: targetTool)
             isAILoadingModels = true
             isAILoadingAgents = true
             wsClient.requestAIProviderList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
             wsClient.requestAIAgentList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
-            wsClient.requestAISlashCommands(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: targetTool)
+            wsClient.requestAISlashCommands(
+                projectName: aiActiveProject,
+                workspaceName: aiActiveWorkspace,
+                aiTool: targetTool,
+                sessionId: aiCurrentSessionId
+            )
         }
 
         if let previousSessionId,
@@ -2704,6 +2718,54 @@ final class MobileAppState: ObservableObject {
               let modelID = agent.defaultModelID,
               !providerID.isEmpty, !modelID.isEmpty else { return }
         aiSelectedModel = AIModelSelection(providerID: providerID, modelID: modelID)
+    }
+
+    private func normalizeSlashCommandsSessionID(_ sessionId: String?) -> String? {
+        let trimmed = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func slashCommandsForContext(
+        tool: AIChatTool,
+        sessionId: String?
+    ) -> [AISlashCommandInfo] {
+        if let sessionId = normalizeSlashCommandsSessionID(sessionId),
+           let bySession = aiSlashCommandsBySessionByTool[tool],
+           let commands = bySession[sessionId] {
+            return commands
+        }
+        return aiSlashCommandsByTool[tool] ?? []
+    }
+
+    func refreshCurrentAISlashCommands(for tool: AIChatTool? = nil) {
+        let targetTool = tool ?? aiChatTool
+        guard aiChatTool == targetTool else { return }
+        aiSlashCommands = slashCommandsForContext(
+            tool: targetTool,
+            sessionId: aiCurrentSessionId
+        )
+    }
+
+    func setAISlashCommands(
+        _ commands: [AISlashCommandInfo],
+        for tool: AIChatTool,
+        sessionId: String? = nil
+    ) {
+        if let sessionId = normalizeSlashCommandsSessionID(sessionId) {
+            var bySession = aiSlashCommandsBySessionByTool[tool] ?? [:]
+            bySession[sessionId] = commands
+            aiSlashCommandsBySessionByTool[tool] = bySession
+        } else {
+            aiSlashCommandsByTool[tool] = commands
+        }
+        guard aiChatTool == tool else { return }
+        let currentSessionId = normalizeSlashCommandsSessionID(aiCurrentSessionId)
+        if let eventSessionID = normalizeSlashCommandsSessionID(sessionId) {
+            guard eventSessionID == currentSessionId else { return }
+            aiSlashCommands = commands
+            return
+        }
+        aiSlashCommands = slashCommandsForContext(tool: tool, sessionId: currentSessionId)
     }
 
     func setAISessions(_ sessions: [AISessionInfo], for tool: AIChatTool) {
@@ -4125,11 +4187,31 @@ final class MobileAppState: ObservableObject {
         wsClient.onAISlashCommands = { [weak self] ev in
             guard let self else { return }
             guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            self.aiSlashCommands = ev.commands.map {
-                AISlashCommandInfo(name: $0.name, description: $0.description, action: $0.action)
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            let commands = ev.commands.map {
+                AISlashCommandInfo(
+                    name: $0.name,
+                    description: $0.description,
+                    action: $0.action,
+                    inputHint: $0.inputHint
+                )
             }
+            self.setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
+        }
+
+        wsClient.onAISlashCommandsUpdate = { [weak self] ev in
+            guard let self else { return }
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName else { return }
+            let commands = ev.commands.map {
+                AISlashCommandInfo(
+                    name: $0.name,
+                    description: $0.description,
+                    action: $0.action,
+                    inputHint: $0.inputHint
+                )
+            }
+            self.setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
         }
 
         wsClient.onAISessionConfigOptions = { [weak self] ev in
