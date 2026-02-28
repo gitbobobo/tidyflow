@@ -149,6 +149,15 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_slash_commands_update":
+            if let ev = AISlashCommandsUpdateResult.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAISlashCommandsUpdate(ev)
+                } else {
+                    onAISlashCommandsUpdate?(ev)
+                }
+            }
+            return true
         case "ai_session_config_options":
             if let ev = AISessionConfigOptionsResult.from(json: json) {
                 if let handler = aiMessageHandler {

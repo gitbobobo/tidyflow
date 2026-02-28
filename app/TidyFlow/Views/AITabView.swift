@@ -497,6 +497,17 @@ struct AITabView: View {
                 }
             }
         }
+        .onChange(of: appState.aiSlashCommands) { _, _ in
+            if !inputIsComposing {
+                refreshAutocomplete(text: inputText)
+            }
+        }
+        .onReceive(aiChatStore.$currentSessionId) { _ in
+            appState.refreshCurrentAISlashCommands(for: appState.aiChatTool)
+            if !inputIsComposing {
+                refreshAutocomplete(text: inputText)
+            }
+        }
         .onChange(of: fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items.count) { _, _ in
             // 文件索引加载完成后，重新触发自动补全（解决首次 @ 时索引为空的问题）
             if !inputIsComposing {
@@ -656,7 +667,12 @@ struct AITabView: View {
         appState.isAILoadingAgents = true
         appState.wsClient.requestAIProviderList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
         appState.wsClient.requestAIAgentList(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
-        appState.wsClient.requestAISlashCommands(projectName: appState.selectedProjectName, workspaceName: ws, aiTool: aiTool)
+        appState.wsClient.requestAISlashCommands(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: aiTool,
+            sessionId: appState.aiStore(for: aiTool).currentSessionId
+        )
         appState.wsClient.requestAISessionConfigOptions(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
@@ -777,7 +793,8 @@ struct AITabView: View {
                 subtitle: cmd.description,
                 icon: slashCommandIcon(cmd.name),
                 value: cmd.name,
-                action: cmd.action
+                action: cmd.action,
+                inputHint: cmd.inputHint
             )
         }
         let fileItems = fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items ?? []
@@ -803,10 +820,16 @@ struct AITabView: View {
 
         case .slashCommand:
             // 2a：选中命令仅插入文本，不在此处执行；真正执行统一由 Enter 触发
-            if let replaceRange = autocomplete.replaceRange {
-                replaceInputText(in: replaceRange, with: "/\(item.value) ")
+            let insertion = if let hint = item.inputHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+                               !hint.isEmpty {
+                "/\(item.value) \(hint) "
             } else {
-                inputText = "/\(item.value) "
+                "/\(item.value) "
+            }
+            if let replaceRange = autocomplete.replaceRange {
+                replaceInputText(in: replaceRange, with: insertion)
+            } else {
+                inputText = insertion
             }
             autocomplete.reset()
 

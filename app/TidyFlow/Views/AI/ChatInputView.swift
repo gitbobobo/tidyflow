@@ -317,7 +317,7 @@ struct ChatInputView: View {
 
                 List(filteredSlashCommandsForIOS, id: \.id) { command in
                     Button(action: {
-                        insertSlashCommandAtInputStart(command.name)
+                        insertSlashCommandAtInputStart(command.name, inputHint: command.inputHint)
                         iOSInputPanelSheet = nil
                     }) {
                         HStack(spacing: 10) {
@@ -328,8 +328,11 @@ struct ChatInputView: View {
                                 Text("/\(command.name)")
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(.primary)
-                                if !command.description.isEmpty {
-                                    Text(command.description)
+                                let detail = command.description.isEmpty
+                                    ? (command.inputHint ?? "")
+                                    : command.description
+                                if !detail.isEmpty {
+                                    Text(detail)
                                         .font(.system(size: 12))
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
@@ -437,8 +440,15 @@ struct ChatInputView: View {
         }
     }
 
-    private func insertSlashCommandAtInputStart(_ commandName: String) {
-        let prefix = "/\(commandName)"
+    private func insertSlashCommandAtInputStart(_ commandName: String, inputHint: String?) {
+        let normalizedHint = inputHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body: String
+        if let normalizedHint, !normalizedHint.isEmpty {
+            body = "\(commandName) \(normalizedHint)"
+        } else {
+            body = commandName
+        }
+        let prefix = "/\(body)"
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             text = "\(prefix) "

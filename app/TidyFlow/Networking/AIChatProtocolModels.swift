@@ -882,6 +882,7 @@ struct AISlashCommandsResult {
     let projectName: String
     let workspaceName: String
     let aiTool: AIChatTool
+    let sessionID: String?
     let commands: [AIProtocolSlashCommand]
 
     static func from(json: [String: Any]) -> AISlashCommandsResult? {
@@ -889,7 +890,36 @@ struct AISlashCommandsResult {
               let workspaceName = json["workspace_name"] as? String,
               let aiTool = parseAIChatTool(json["ai_tool"]) else { return nil }
         let items = (json["commands"] as? [[String: Any]] ?? []).compactMap { AIProtocolSlashCommand.from(json: $0) }
-        return AISlashCommandsResult(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, commands: items)
+        return AISlashCommandsResult(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionID: parseOptionalString(json["session_id"]),
+            commands: items
+        )
+    }
+}
+
+struct AISlashCommandsUpdateResult {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionID: String
+    let commands: [AIProtocolSlashCommand]
+
+    static func from(json: [String: Any]) -> AISlashCommandsUpdateResult? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
+              let sessionID = parseOptionalString(json["session_id"]) else { return nil }
+        let items = (json["commands"] as? [[String: Any]] ?? []).compactMap { AIProtocolSlashCommand.from(json: $0) }
+        return AISlashCommandsUpdateResult(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionID: sessionID,
+            commands: items
+        )
     }
 }
 
@@ -897,12 +927,21 @@ struct AIProtocolSlashCommand {
     let name: String
     let description: String
     let action: String
+    let inputHint: String?
 
     static func from(json: [String: Any]) -> AIProtocolSlashCommand? {
         guard let name = json["name"] as? String else { return nil }
         let description = json["description"] as? String ?? ""
         let action = json["action"] as? String ?? "client"
-        return AIProtocolSlashCommand(name: name, description: description, action: action)
+        let nestedHint = parseOptionalString(parseDictionary(json["input"])?["hint"])
+        let inputHint = nestedHint
+            ?? parseOptionalString(json["input_hint"] ?? json["inputHint"] ?? json["hint"])
+        return AIProtocolSlashCommand(
+            name: name,
+            description: description,
+            action: action,
+            inputHint: inputHint
+        )
     }
 }
 

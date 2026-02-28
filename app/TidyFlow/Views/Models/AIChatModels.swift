@@ -1755,7 +1755,7 @@ struct AIAgentInfo: Identifiable {
 
 // MARK: - 斜杠命令（从后端获取）
 
-struct AISlashCommandInfo: Identifiable {
+struct AISlashCommandInfo: Identifiable, Equatable {
     var id: String { name }
     /// 命令名（不含 / 前缀）
     let name: String
@@ -1763,4 +1763,6 @@ struct AISlashCommandInfo: Identifiable {
     let description: String
     /// 执行方式："client"（前端本地执行）| "agent"（发送给 AI 代理）
     let action: String
+    /// 输入提示（可选），用于补全时插入参数模板
+    let inputHint: String?
 }

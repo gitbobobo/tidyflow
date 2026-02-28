@@ -194,9 +194,7 @@ class AppState: ObservableObject {
             syncModeConfigOptionForCurrentTool()
         }
     }
-    @Published var aiSlashCommands: [AISlashCommandInfo] = [] {
-        didSet { aiSlashCommandsByTool[aiChatTool] = aiSlashCommands }
-    }
+    @Published var aiSlashCommands: [AISlashCommandInfo] = []
     @Published var aiSessionConfigOptions: [AIProtocolSessionConfigOptionInfo] = [] {
         didSet { aiSessionConfigOptionsByTool[aiChatTool] = aiSessionConfigOptions }
     }
@@ -245,6 +243,7 @@ class AppState: ObservableObject {
     private var aiAgentsByTool: [AIChatTool: [AIAgentInfo]] = [:]
     private var aiSelectedAgentByTool: [AIChatTool: String?] = [:]
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
+    private var aiSlashCommandsBySessionByTool: [AIChatTool: [String: [AISlashCommandInfo]]] = [:]
     private var aiSessionConfigOptionsByTool: [AIChatTool: [AIProtocolSessionConfigOptionInfo]] = [:]
     /// 当前工具已选择的配置项值（option_id -> value），用于 send 时透传 config_overrides。
     private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
@@ -480,6 +479,7 @@ class AppState: ObservableObject {
             aiAgentsByTool[tool] = []
             aiSelectedAgentByTool[tool] = nil
             aiSlashCommandsByTool[tool] = []
+            aiSlashCommandsBySessionByTool[tool] = [:]
             aiSessionConfigOptionsByTool[tool] = []
             aiSelectedConfigOptionsByTool[tool] = [:]
             aiSelectedThoughtLevelByTool[tool] = nil
@@ -510,7 +510,10 @@ class AppState: ObservableObject {
         aiSelectedModel = aiSelectedModelByTool[tool] ?? nil
         aiAgents = aiAgentsByTool[tool] ?? []
         aiSelectedAgent = aiSelectedAgentByTool[tool] ?? nil
-        aiSlashCommands = aiSlashCommandsByTool[tool] ?? []
+        aiSlashCommands = slashCommandsForContext(
+            tool: tool,
+            sessionId: aiStore(for: tool).currentSessionId
+        )
         aiSessionConfigOptions = aiSessionConfigOptionsByTool[tool] ?? []
         aiSelectedThoughtLevel = aiSelectedThoughtLevelByTool[tool] ?? nil
 
@@ -1248,11 +1251,52 @@ class AppState: ObservableObject {
         aiPendingSessionSelectionHintsByTool[tool] = pending
     }
 
-    func setAISlashCommands(_ commands: [AISlashCommandInfo], for tool: AIChatTool) {
-        aiSlashCommandsByTool[tool] = commands
-        if aiChatTool == tool {
-            aiSlashCommands = commands
+    private func normalizeSlashCommandsSessionID(_ sessionId: String?) -> String? {
+        let trimmed = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func slashCommandsForContext(
+        tool: AIChatTool,
+        sessionId: String?
+    ) -> [AISlashCommandInfo] {
+        if let sessionId = normalizeSlashCommandsSessionID(sessionId),
+           let bySession = aiSlashCommandsBySessionByTool[tool],
+           let sessionCommands = bySession[sessionId] {
+            return sessionCommands
         }
+        return aiSlashCommandsByTool[tool] ?? []
+    }
+
+    func refreshCurrentAISlashCommands(for tool: AIChatTool? = nil) {
+        let targetTool = tool ?? aiChatTool
+        guard aiChatTool == targetTool else { return }
+        aiSlashCommands = slashCommandsForContext(
+            tool: targetTool,
+            sessionId: aiStore(for: targetTool).currentSessionId
+        )
+    }
+
+    func setAISlashCommands(
+        _ commands: [AISlashCommandInfo],
+        for tool: AIChatTool,
+        sessionId: String? = nil
+    ) {
+        if let sessionId = normalizeSlashCommandsSessionID(sessionId) {
+            var bySession = aiSlashCommandsBySessionByTool[tool] ?? [:]
+            bySession[sessionId] = commands
+            aiSlashCommandsBySessionByTool[tool] = bySession
+        } else {
+            aiSlashCommandsByTool[tool] = commands
+        }
+        guard aiChatTool == tool else { return }
+        let currentSessionId = normalizeSlashCommandsSessionID(aiStore(for: tool).currentSessionId)
+        if let eventSessionID = normalizeSlashCommandsSessionID(sessionId) {
+            guard eventSessionID == currentSessionId else { return }
+            aiSlashCommands = commands
+            return
+        }
+        aiSlashCommands = slashCommandsForContext(tool: tool, sessionId: currentSessionId)
     }
 
     func setBadgeRunning(_ running: Bool, for tool: AIChatTool) {

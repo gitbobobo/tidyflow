@@ -510,9 +510,28 @@ extension AppState {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let commands = ev.commands.map { cmd in
-            AISlashCommandInfo(name: cmd.name, description: cmd.description, action: cmd.action)
+            AISlashCommandInfo(
+                name: cmd.name,
+                description: cmd.description,
+                action: cmd.action,
+                inputHint: cmd.inputHint
+            )
         }
-        setAISlashCommands(commands, for: ev.aiTool)
+        setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
+    }
+
+    func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let commands = ev.commands.map { cmd in
+            AISlashCommandInfo(
+                name: cmd.name,
+                description: cmd.description,
+                action: cmd.action,
+                inputHint: cmd.inputHint
+            )
+        }
+        setAISlashCommands(commands, for: ev.aiTool, sessionId: ev.sessionID)
     }
 
     func handleEvolutionPulse() {

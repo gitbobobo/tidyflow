@@ -31,7 +31,9 @@ struct AutocompleteItem: Identifiable {
     /// 选中后插入/执行的值
     let value: String
     /// 斜杠命令的执行方式："client" | "agent"（仅 slashCommand 模式有效）
-    var action: String?
+    var action: String? = nil
+    /// 斜杠命令输入提示（可选），用于插入参数模板
+    var inputHint: String? = nil
 }
 
 // MARK: - 自动补全状态

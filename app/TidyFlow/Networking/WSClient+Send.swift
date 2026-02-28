@@ -1071,13 +1071,22 @@ extension WSClient {
     }
 
     /// 获取 AI 斜杠命令列表
-    func requestAISlashCommands(projectName: String, workspaceName: String, aiTool: AIChatTool) {
-        send([
+    func requestAISlashCommands(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String? = nil
+    ) {
+        var msg: [String: Any] = [
             "type": "ai_slash_commands",
             "project_name": projectName,
             "workspace_name": workspaceName,
             "ai_tool": aiTool.rawValue
-        ])
+        ]
+        if let sessionId, !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            msg["session_id"] = sessionId
+        }
+        send(msg)
     }
 
     /// 获取会话配置选项（ACP session-config-options）
