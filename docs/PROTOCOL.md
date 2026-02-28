@@ -64,6 +64,7 @@
   - `ai_session_config_options`：结果与事件复用同一个 action，`payload.options` 为配置项列表。
 - AI 发送请求字段：
   - `ai_chat_send`、`ai_chat_command` 新增可选 `config_overrides`（`option_id -> value`），用于“仅本次发送”覆盖。
+  - `ai_chat_send`、`ai_chat_command` 新增可选 `audio_parts`（`[{ filename, mime, data(bytes) }]`）。
 - 会话选择提示字段：
   - `selection_hint` 新增 `config_options`，用于恢复 `mode/model/thought_level` 等配置状态。
 
@@ -102,6 +103,41 @@
   - 同时接受 `config_option_update` 与 `config_options_update`。
 - 非 ACP 工具：
   - 可忽略 `config_overrides`，保持原行为不变。
+  - `audio_parts` 统一降级为文本摘要，不中断请求。
+
+## ACP `content` 协议双栈（完整）
+
+- 能力协商来源：
+  - 新协议：`agentCapabilities.promptCapabilities.{image,audio,embeddedContext}`（布尔）。
+  - 旧协议：`promptCapabilities.contentTypes`。
+- 归一化后基线能力恒包含：
+  - `text`
+  - `resource_link`
+- 编码模式：
+  - `New`：检测到新协议布尔能力。
+  - `Legacy`：仅检测到旧 `contentTypes`。
+  - `Unknown`：两者都缺失（按 Legacy 编码）。
+- 出站内容块支持：
+  - `text`、`image`、`audio`、`resource`、`resource_link`
+  - `image/audio`：
+    - `New`：`{ type, mimeType, data(base64) }`
+    - `Legacy/Unknown`：`{ type, mimeType, url(data:...) }`
+  - `resource_link`：
+    - `New`：顶层 `uri/name(/mimeType)`
+    - `Legacy/Unknown`：嵌套 `resource.uri/resource.name`
+- `file_refs` 嵌入策略：
+  - 优先 `resource`（要求能力含 `embeddedContext` -> 归一化为 `resource`）。
+  - 文本文件（UTF-8）`<= 256KB`：`resource.text`
+  - 二进制文件 `<= 1MB`：`resource.blob(base64)`
+  - 读取失败或超限：降级 `resource_link`，若不支持再降级文本提示块。
+  - MIME 来源：扩展名推断，保底 `application/octet-stream`。
+- 附件顺序（固定）：
+  - 用户文本 -> `resource/resource_link` -> `image` -> `audio`
+- 入站解析（流式 + 历史统一）：
+  - `image(data/url)`、`audio(data/url)`、`resource(text/blob)`、`resource_link(新旧两种结构)`。
+  - `resource.text` 映射为 `text` part。
+  - `blob/image/audio/resource_link` 映射为 `file` part。
+  - `annotations` 与原始 `content` 放入 part `source` 透传。
 
 ## UI 首版约束
 
