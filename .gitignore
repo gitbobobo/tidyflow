@@ -148,3 +148,5 @@ app/TidyFlow/Web/vendor/mermaid.min.js
 commit_result.json
 # Temporary workspace files
 w-*
+
+app/TidyFlow/Web/main/
