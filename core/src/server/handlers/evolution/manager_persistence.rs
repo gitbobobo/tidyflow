@@ -206,7 +206,9 @@ fn build_prompt_context(
         "CYCLE_DIR": cycle_dir,
         "CYCLE_FILE_PATH": cycle_dir.join("cycle.json"),
         "PLAN_EXECUTION_PATH": cycle_dir.join("plan.execution.json"),
-        "IMPLEMENT_RESULT_PATH": cycle_dir.join("implement.result.json"),
+        "IMPLEMENT_GENERAL_RESULT_PATH": cycle_dir.join("implement_general.result.json"),
+        "IMPLEMENT_VISUAL_RESULT_PATH": cycle_dir.join("implement_visual.result.json"),
+        "IMPLEMENT_ADVANCED_RESULT_PATH": cycle_dir.join("implement_advanced.result.json"),
         "VERIFY_RESULT_PATH": cycle_dir.join("verify.result.json"),
         "JUDGE_RESULT_PATH": cycle_dir.join("judge.result.json"),
         "STAGE_FILE_PATH": stage_file,
@@ -490,12 +492,12 @@ mod tests {
     #[test]
     fn build_prompt_context_should_include_explicit_result_paths() {
         let cycle_dir = Path::new("/tmp/tidyflow-cycle");
-        let stage_file = cycle_dir.join("stage.implement.json");
+        let stage_file = cycle_dir.join("stage.implement_general.json");
         let context = build_prompt_context(
             "demo",
             "default",
             "cycle-1",
-            "implement",
+            "implement_general",
             1,
             1,
             5,
@@ -512,10 +514,24 @@ mod tests {
         );
         assert_eq!(
             context
-                .get("IMPLEMENT_RESULT_PATH")
+                .get("IMPLEMENT_GENERAL_RESULT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement.result.json"
+            "/tmp/tidyflow-cycle/implement_general.result.json"
+        );
+        assert_eq!(
+            context
+                .get("IMPLEMENT_VISUAL_RESULT_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/implement_visual.result.json"
+        );
+        assert_eq!(
+            context
+                .get("IMPLEMENT_ADVANCED_RESULT_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/implement_advanced.result.json"
         );
         assert_eq!(
             context

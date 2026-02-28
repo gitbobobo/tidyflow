@@ -65,41 +65,6 @@ pub struct EvolutionStageProfile {
     pub config_options: HashMap<String, serde_json::Value>,
 }
 
-/// Evolution implement lane 代理配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvolutionImplementAgentProfile {
-    #[serde(default = "default_evolution_ai_tool")]
-    pub ai_tool: String,
-    #[serde(default)]
-    pub mode: Option<String>,
-    #[serde(default)]
-    pub model: Option<EvolutionModelSelection>,
-    #[serde(default)]
-    pub config_options: HashMap<String, serde_json::Value>,
-}
-
-impl Default for EvolutionImplementAgentProfile {
-    fn default() -> Self {
-        Self {
-            ai_tool: default_evolution_ai_tool(),
-            mode: None,
-            model: None,
-            config_options: HashMap::new(),
-        }
-    }
-}
-
-/// Evolution implement 三类 lane 代理配置（全局）
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EvolutionImplementAgentProfiles {
-    #[serde(default)]
-    pub general: EvolutionImplementAgentProfile,
-    #[serde(default)]
-    pub visual: EvolutionImplementAgentProfile,
-    #[serde(default)]
-    pub advanced: EvolutionImplementAgentProfile,
-}
-
 /// 客户端设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientSettings {
@@ -129,9 +94,6 @@ pub struct ClientSettings {
     /// Evolution 代理配置（key: "project/workspace"）
     #[serde(default)]
     pub evolution_agent_profiles: HashMap<String, Vec<EvolutionStageProfile>>,
-    /// Evolution implement lane 代理配置（全局）
-    #[serde(default)]
-    pub evolution_implement_agent_profiles: EvolutionImplementAgentProfiles,
 }
 
 fn default_app_language() -> String {
@@ -341,84 +303,21 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn client_settings_should_use_default_implement_profiles_when_field_missing() {
-        let parsed: ClientSettings = serde_json::from_value(json!({
-            "custom_commands": [],
-            "workspace_shortcuts": {}
-        }))
-        .expect("deserialize client settings should succeed");
-
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.general.ai_tool,
-            "codex"
-        );
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.visual.ai_tool,
-            "codex"
-        );
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.advanced.ai_tool,
-            "codex"
-        );
-        assert!(parsed
-            .evolution_implement_agent_profiles
-            .general
-            .config_options
-            .is_empty());
-    }
-
-    #[test]
-    fn client_settings_should_deserialize_custom_implement_profiles() {
-        let parsed: ClientSettings = serde_json::from_value(json!({
+    fn client_settings_should_ignore_removed_implement_profiles_field() {
+        let parsed: ClientSettings = serde_json::from_value(serde_json::json!({
             "custom_commands": [],
             "workspace_shortcuts": {},
             "evolution_implement_agent_profiles": {
-                "general": {
-                    "ai_tool": "codex",
-                    "mode": "primary",
-                    "model": {
-                        "provider_id": "openai",
-                        "model_id": "gpt-5"
-                    },
-                    "config_options": {
-                        "thought_level": "high"
-                    }
-                },
-                "visual": {
-                    "ai_tool": "opencode"
-                },
-                "advanced": {
-                    "ai_tool": "copilot"
-                }
+                "general": { "ai_tool": "codex" },
+                "visual": { "ai_tool": "opencode" },
+                "advanced": { "ai_tool": "copilot" }
             }
         }))
         .expect("deserialize client settings should succeed");
 
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.general.ai_tool,
-            "codex"
-        );
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.general.mode.as_deref(),
-            Some("primary")
-        );
-        let general_model = parsed
-            .evolution_implement_agent_profiles
-            .general
-            .model
-            .expect("general model should exist");
-        assert_eq!(general_model.provider_id, "openai");
-        assert_eq!(general_model.model_id, "gpt-5");
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.visual.ai_tool,
-            "opencode"
-        );
-        assert_eq!(
-            parsed.evolution_implement_agent_profiles.advanced.ai_tool,
-            "copilot"
-        );
+        assert!(parsed.custom_commands.is_empty());
+        assert!(parsed.workspace_shortcuts.is_empty());
     }
 }

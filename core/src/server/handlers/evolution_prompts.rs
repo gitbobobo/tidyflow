@@ -213,7 +213,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
       "id": "w-1",
       "title": "...",
       "type": "code|test|docs|script|config",
-      "implementation_agent": "general|visual",
+      "implementation_agent": "implement_general|implement_visual",
       "linked_check_ids": ["v-1"],
       "priority": "p0|p1|p2",
       "depends_on": [],
@@ -269,7 +269,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
   - `status = "done"`
   - `decision.result = "n/a"`
   - `decision.reason` 必须说明本阶段规划已完成
-  - `next_action = {"type":"goto_stage","target":"implement"}`
+  - `next_action = {"type":"goto_stage","target":"implement_general"}`
   - `outputs` 至少包含 `plan.execution.json`
   - `error = null`
   - 必须完整包含并正确填写以下字段：`$schema_version`、`cycle_id`、`stage`、`agent`、`status`、`inputs`、`outputs`、`decision`、`next_action`、`timing`、`error`。
@@ -283,7 +283,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 【质量门槛】
 - 每个 work_item 必须可直接执行，不允许空泛描述。
-- 每个 work_item 必须包含 `implementation_agent`，且只能是 `general|visual`。
+- 每个 work_item 必须包含 `implementation_agent`，且只能是 `implement_general|implement_visual`。
 - 每个 work_item 的 `linked_check_ids` 必须非空，且每个 id 必须存在于 `verification_plan.checks[].id`。
 - 每条 acceptance criteria 必须至少映射到 1 个 check 与证据类型。
 - `acceptance_mapping` 中每条 `check_ids` 至少要能关联到 1 个 work_item（用于失败回流分类）。
@@ -294,7 +294,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 "####;
 
 pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
-你是 Evolution 系统的 ImplementAgent。你必须自主探索当前 cycle 的阶段产物文档与证据，并把 implement 阶段结果写入文件，供程序与其他代理读取。
+你是 Evolution 系统的 ImplementAgent。你必须自主探索当前 cycle 的阶段产物文档与证据，并把当前实现阶段（`implement_general|implement_visual|implement_advanced`）结果写入文件，供程序与其他代理读取。
 
 【核心原则】
 - 先读取并严格对齐 plan 产物，再实施；禁止脱离上下文。
@@ -307,9 +307,12 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 
 【目标文件】
 在当前 cycle 目录下写入/更新：
-- `stage.implement.json`（必须）
-- `implement.result.json`（必须：供 verify/judge 读取）
-- `handoff.md`（建议：追加 implement 摘要）
+- `STAGE_FILE_PATH`（必须，对应当前实现阶段的 `stage.<stage>.json`）
+- 与当前阶段对应的实现结果文件（必须）：
+  - `implement_general.result.json`（当阶段为 `implement_general`）
+  - `implement_visual.result.json`（当阶段为 `implement_visual`）
+  - `implement_advanced.result.json`（当阶段为 `implement_advanced`）
+- `handoff.md`（建议：追加 implement 阶段摘要）
 - 除特别说明外，所有读写路径均相对当前 cycle 目录。
 - 本阶段默认不修改 `cycle.json`；尤其禁止修改控制字段：`status/current_stage/verify_iteration/pipeline`。
 
@@ -327,7 +330,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
   - `judge.result.json`
   - `stage.verify.json`（若存在）
   - `stage.judge.json`（若存在）
-并在 `stage.implement.json.inputs` 记录关键输入路径。
+并在 `STAGE_FILE_PATH` 对应 JSON 的 `inputs` 中记录关键输入路径。
 
 【输入使用约束】
 - 仅基于当前 cycle 的阶段产物文档与证据推进实施。
@@ -346,7 +349,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
    - `judge.result.focus_for_next_iteration`
 8. 上述全量清单中的每一项都必须在本轮给出处理结果：`done|blocked|not_done`，禁止静默省略。
 
-【implement.result.json 结构要求】
+【implement_<lane>.result.json 结构要求】
 {
   "$schema_version": "1.0",
   "cycle_id": "...",
@@ -361,7 +364,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
     {
       "id": "fb-1",
       "source": "verify.acceptance|verify.defect|judge.criteria|judge.focus",
-      "implementation_agent": "general|visual|unknown",
+      "implementation_agent": "implement_general|implement_visual|implement_advanced|unknown",
       "reason": "...",
       "required_evidence": ["..."]
     }
@@ -420,14 +423,17 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
   "updated_at": "RFC3339 UTC"
 }
 
-【stage.implement.json 写入要求】
-- `stage = "implement"`
+【实现阶段文件写入要求（`STAGE_FILE_PATH`）】
+- `stage` 必须是 `implement_general|implement_visual|implement_advanced` 之一，且与当前阶段一致。
 - 成功时：
   - `status = "done"`
   - `decision.result = "n/a"`
   - `decision.reason` 必须说明本阶段实施已完成
-  - `next_action = {"type":"goto_stage","target":"verify"}`
-  - `outputs` 至少包含 `implement.result.json`
+  - `next_action` 必须与阶段链路一致：
+    - `implement_general -> {"type":"goto_stage","target":"implement_visual"}`
+    - `implement_visual -> {"type":"goto_stage","target":"verify"}`
+    - `implement_advanced -> {"type":"goto_stage","target":"verify"}`
+  - `outputs` 至少包含当前阶段对应的 `implement_<lane>.result.json`
   - `error = null`
   - 必须完整包含并正确填写以下字段：`$schema_version`、`cycle_id`、`stage`、`agent`、`status`、`inputs`、`outputs`、`decision`、`next_action`、`timing`、`error`。
   - `next_action.type` 只能为 `goto_stage|finish_cycle|stop_cycle|none`；`next_action.target` 必须为 `string|null`。
@@ -447,7 +453,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - 每条高风险改动必须记录回滚思路或缓解措施。
 - 输出必须让 VerifyAgent 能直接据此执行验证。
 - 当 `VERIFY_ITERATION > 0` 时，`failure_backlog` 与 `backlog_coverage` 必须一一对应且数量一致。
-- 当 `VERIFY_ITERATION > 0` 时，`failure_backlog[*].implementation_agent` 必须是 `general|visual|unknown`。
+- 当 `VERIFY_ITERATION > 0` 时，`failure_backlog[*].implementation_agent` 必须是 `implement_general|implement_visual|implement_advanced|unknown`。
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
@@ -475,9 +481,13 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - `cycle.json`
 - `stage.direction.json`
 - `stage.plan.json`
-- `stage.implement.json`
+- `stage.implement_general.json`
+- `stage.implement_visual.json`
+- `stage.implement_advanced.json`
 - `plan.execution.json`
-- `implement.result.json`
+- `implement_general.result.json`
+- `implement_visual.result.json`
+- `implement_advanced.result.json`
 - `direction.lifecycle_scan.json`
 - `handoff.md`（若存在）
 并在 `stage.verify.json.inputs` 记录关键输入路径。
@@ -492,7 +502,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 4. 每条验收标准都必须给出判定：`pass|fail|insufficient_evidence`。
 5. 证据必须可复核，禁止伪造、禁止仅口头结论。
 6. 若发现实现与计划明显偏离，必须在结果中单列风险与影响。
-7. 当 `VERIFY_ITERATION > 0` 时，必须执行“整改覆盖审计”：逐项核验 implement 的 `failure_backlog` 是否都出现在 `backlog_coverage` 且给出证据结论。
+7. 当 `VERIFY_ITERATION > 0` 时，必须执行“整改覆盖审计”：逐项核验三份 implement 结果文件中的 `failure_backlog` 是否都出现在 `backlog_coverage` 且给出证据结论。
 8. 若存在任何整改项缺失（missing），`verification_overall.result` 必须判定为 `fail`。
 
 【verify.result.json 结构要求】
@@ -620,10 +630,14 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - `cycle.json`
 - `stage.direction.json`
 - `stage.plan.json`
-- `stage.implement.json`
+- `stage.implement_general.json`
+- `stage.implement_visual.json`
+- `stage.implement_advanced.json`
 - `stage.verify.json`
 - `plan.execution.json`
-- `implement.result.json`
+- `implement_general.result.json`
+- `implement_visual.result.json`
+- `implement_advanced.result.json`
 - `verify.result.json`
 - `handoff.md`（若存在）
 并在 `stage.judge.json.inputs` 记录关键输入路径。
@@ -638,7 +652,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 4. 若存在 `insufficient_evidence`，默认整体结果为 `fail`（除非有充分替代证据并给出明确理由）。
 5. 回路决策必须遵循：
    - 整体 `pass`：`next_action = goto_stage:report`
-   - 整体 `fail` 且 `verify_iteration < verify_iteration_limit`：`next_action = goto_stage:implement`
+   - 整体 `fail` 且 `verify_iteration < verify_iteration_limit`：`next_action = goto_stage:implement_general|implement_advanced`（由当前 verify_iteration 与调度规则决定）
    - 整体 `fail` 且 `verify_iteration >= verify_iteration_limit`：`next_action = stop_cycle`
    - 当触发 `verify_iteration >= verify_iteration_limit` 时，应在裁决理由或上下文中标记 `evo_verify_iteration_exhausted`。
 6. 裁决必须给出可执行建议：继续实现时列出修复重点；通过时列出发布前关注点。
@@ -690,7 +704,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
   "updated_at": "RFC3339 UTC"
 }
 - `next_action.target` 字段类型必须为 `string|null`。
-- 当 `next_action.type = "goto_stage"` 时，`next_action.target` 只能是 `report|implement`。
+- 当 `next_action.type = "goto_stage"` 时，`next_action.target` 只能是 `report|implement_general|implement_advanced`。
 - 当 `next_action.type = "stop_cycle"` 时，`next_action.target` 必须写为 JSON `null`（不是字符串）。
 
 【stage.judge.json 写入要求】
@@ -749,12 +763,16 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - `cycle.json`
 - `stage.direction.json`
 - `stage.plan.json`
-- `stage.implement.json`
+- `stage.implement_general.json`
+- `stage.implement_visual.json`
+- `stage.implement_advanced.json`
 - `stage.verify.json`
 - `stage.judge.json`
 - `direction.lifecycle_scan.json`
 - `plan.execution.json`
-- `implement.result.json`
+- `implement_general.result.json`
+- `implement_visual.result.json`
+- `implement_advanced.result.json`
 - `verify.result.json`
 - `judge.result.json`
 - `handoff.md`（若存在）

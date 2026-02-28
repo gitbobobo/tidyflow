@@ -2,14 +2,8 @@ use std::collections::HashMap;
 
 use crate::server::handlers::ai::normalize_ai_tool;
 use crate::server::protocol::ai;
-use crate::server::protocol::{
-    EvolutionImplementAgentProfileInfo, EvolutionImplementAgentProfilesInfo,
-    EvolutionStageProfileInfo,
-};
-use crate::workspace::state::{
-    EvolutionImplementAgentProfile, EvolutionImplementAgentProfiles, EvolutionModelSelection,
-    EvolutionStageProfile,
-};
+use crate::server::protocol::EvolutionStageProfileInfo;
+use crate::workspace::state::{EvolutionModelSelection, EvolutionStageProfile};
 
 use super::STAGES;
 
@@ -22,24 +16,34 @@ pub(super) fn normalize_profiles(
 ) -> Result<Vec<EvolutionStageProfileInfo>, String> {
     let mut by_stage: HashMap<String, EvolutionStageProfileInfo> = HashMap::new();
     for profile in input {
-        let stage = profile.normalized_stage();
-        if profile.is_legacy_bootstrap_stage() {
+        let normalized = profile.normalized_stage();
+        if normalized == "bootstrap" {
             continue;
         }
-        if STAGES.contains(&stage.as_str()) {
-            let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool).ok_or_else(|| {
-                format!("invalid ai_tool for stage '{}': {}", stage, profile.ai_tool)
-            })?;
-            by_stage.insert(
-                stage.clone(),
-                EvolutionStageProfileInfo {
-                    stage,
-                    ai_tool,
-                    mode: profile.mode,
-                    model: profile.model,
-                    config_options: profile.config_options,
-                },
-            );
+        let stages: Vec<String> = if normalized == "implement" {
+            vec![
+                "implement_general".to_string(),
+                "implement_visual".to_string(),
+            ]
+        } else {
+            vec![normalized]
+        };
+        for stage in stages {
+            if STAGES.contains(&stage.as_str()) {
+                let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool).ok_or_else(|| {
+                    format!("invalid ai_tool for stage '{}': {}", stage, profile.ai_tool)
+                })?;
+                by_stage.insert(
+                    stage.clone(),
+                    EvolutionStageProfileInfo {
+                        stage,
+                        ai_tool,
+                        mode: profile.mode.clone(),
+                        model: profile.model.clone(),
+                        config_options: profile.config_options.clone(),
+                    },
+                );
+            }
         }
     }
 
@@ -61,25 +65,35 @@ pub(super) fn normalize_profiles_lenient(
 ) -> Vec<EvolutionStageProfileInfo> {
     let mut by_stage: HashMap<String, EvolutionStageProfileInfo> = HashMap::new();
     for profile in input {
-        let stage = profile.normalized_stage();
-        if profile.is_legacy_bootstrap_stage() {
+        let normalized = profile.normalized_stage();
+        if normalized == "bootstrap" {
             continue;
         }
-        if !STAGES.contains(&stage.as_str()) {
-            continue;
+        let stages: Vec<String> = if normalized == "implement" {
+            vec![
+                "implement_general".to_string(),
+                "implement_visual".to_string(),
+            ]
+        } else {
+            vec![normalized]
+        };
+        for stage in stages {
+            if !STAGES.contains(&stage.as_str()) {
+                continue;
+            }
+            let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool)
+                .unwrap_or_else(default_evolution_ai_tool);
+            by_stage.insert(
+                stage.clone(),
+                EvolutionStageProfileInfo {
+                    stage,
+                    ai_tool,
+                    mode: profile.mode.clone(),
+                    model: profile.model.clone(),
+                    config_options: profile.config_options.clone(),
+                },
+            );
         }
-        let ai_tool = normalize_ai_tool_compatible(&profile.ai_tool)
-            .unwrap_or_else(default_evolution_ai_tool);
-        by_stage.insert(
-            stage.clone(),
-            EvolutionStageProfileInfo {
-                stage,
-                ai_tool,
-                mode: profile.mode,
-                model: profile.model,
-                config_options: profile.config_options,
-            },
-        );
     }
 
     STAGES
@@ -137,37 +151,6 @@ pub(super) fn profile_for_stage(
         })
 }
 
-pub(super) fn default_implement_agent_profile() -> EvolutionImplementAgentProfileInfo {
-    EvolutionImplementAgentProfileInfo {
-        ai_tool: default_evolution_ai_tool(),
-        mode: None,
-        model: None,
-        config_options: HashMap::new(),
-    }
-}
-
-fn normalize_implement_agent_profile(
-    input: EvolutionImplementAgentProfileInfo,
-) -> EvolutionImplementAgentProfileInfo {
-    let ai_tool = normalize_ai_tool_compatible(&input.ai_tool).unwrap_or_else(default_evolution_ai_tool);
-    EvolutionImplementAgentProfileInfo {
-        ai_tool,
-        mode: input.mode,
-        model: input.model,
-        config_options: input.config_options,
-    }
-}
-
-pub(super) fn normalize_implement_agent_profiles(
-    input: EvolutionImplementAgentProfilesInfo,
-) -> EvolutionImplementAgentProfilesInfo {
-    EvolutionImplementAgentProfilesInfo {
-        general: normalize_implement_agent_profile(input.general),
-        visual: normalize_implement_agent_profile(input.visual),
-        advanced: normalize_implement_agent_profile(input.advanced),
-    }
-}
-
 pub(super) fn to_persisted_profiles(
     input: &[EvolutionStageProfileInfo],
 ) -> Vec<EvolutionStageProfile> {
@@ -202,28 +185,6 @@ pub(super) fn from_persisted_profiles(
             config_options: p.config_options,
         })
         .collect()
-}
-
-pub(super) fn from_persisted_implement_profiles(
-    input: EvolutionImplementAgentProfiles,
-) -> EvolutionImplementAgentProfilesInfo {
-    fn to_protocol(input: EvolutionImplementAgentProfile) -> EvolutionImplementAgentProfileInfo {
-        EvolutionImplementAgentProfileInfo {
-            ai_tool: input.ai_tool,
-            mode: input.mode,
-            model: input.model.map(|m| ai::ModelSelection {
-                provider_id: m.provider_id,
-                model_id: m.model_id,
-            }),
-            config_options: input.config_options,
-        }
-    }
-
-    normalize_implement_agent_profiles(EvolutionImplementAgentProfilesInfo {
-        general: to_protocol(input.general),
-        visual: to_protocol(input.visual),
-        advanced: to_protocol(input.advanced),
-    })
 }
 
 pub(super) fn profile_key(project: &str, workspace: &str) -> String {

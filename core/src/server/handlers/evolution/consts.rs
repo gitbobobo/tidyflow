@@ -1,7 +1,9 @@
-pub(super) const STAGES: [&str; 6] = [
+pub(super) const STAGES: [&str; 8] = [
     "direction",
     "plan",
-    "implement",
+    "implement_general",
+    "implement_visual",
+    "implement_advanced",
     "verify",
     "judge",
     "report",

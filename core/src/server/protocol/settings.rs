@@ -23,8 +23,6 @@ pub enum SettingsRequest {
         app_language: Option<String>,
         #[serde(default)]
         remote_access_enabled: Option<bool>,
-        #[serde(default)]
-        evolution_implement_agent_profiles: Option<super::EvolutionImplementAgentProfilesInfo>,
     },
 }
 
@@ -45,8 +43,6 @@ pub enum SettingsResponse {
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles:
             std::collections::HashMap<String, Vec<super::EvolutionStageProfileInfo>>,
-        #[serde(default)]
-        evolution_implement_agent_profiles: super::EvolutionImplementAgentProfilesInfo,
     },
     ClientSettingsSaved {
         ok: bool,

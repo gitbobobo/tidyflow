@@ -10,7 +10,6 @@ use crate::server::protocol::{EvolutionWorkspaceItem, ServerMessage};
 
 use super::stage::{active_agents, build_agents};
 use super::utils::workspace_key;
-use super::profile::from_persisted_implement_profiles;
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState, DEFAULT_VERIFY_LIMIT,
     STAGES,
@@ -57,16 +56,6 @@ impl EvolutionManager {
         } else {
             super::profile::normalize_profiles(req.stage_profiles)?
         };
-        let implement_agent_profiles = {
-            let state = ctx.app_state.read().await;
-            from_persisted_implement_profiles(
-                state
-                    .client_settings
-                    .evolution_implement_agent_profiles
-                    .clone(),
-            )
-        };
-
         let now = Utc::now();
         let cycle_id = now.format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
 
@@ -112,7 +101,6 @@ impl EvolutionManager {
                     last_judge_result: None,
                     terminal_reason_code: None,
                     stage_profiles,
-                    implement_agent_profiles,
                     stage_statuses,
                     stage_sessions: HashMap::new(),
                     stage_session_history: HashMap::new(),

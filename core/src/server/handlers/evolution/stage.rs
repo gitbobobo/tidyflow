@@ -82,7 +82,9 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
     match stage {
         "direction" => "DirectionAgent",
         "plan" => "PlanAgent",
-        "implement" => "ImplementAgent",
+        "implement_general" => "ImplementGeneralAgent",
+        "implement_visual" => "ImplementVisualAgent",
+        "implement_advanced" => "ImplementAdvancedAgent",
         "verify" => "VerifyAgent",
         "judge" => "JudgeAgent",
         "report" => "ReportAgent",
@@ -94,8 +96,10 @@ pub(super) fn agent_name(stage: &str) -> &'static str {
 pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("plan"),
-        "plan" => Some("implement"),
-        "implement" => Some("verify"),
+        "plan" => Some("implement_general"),
+        "implement_general" => Some("implement_visual"),
+        "implement_visual" => Some("verify"),
+        "implement_advanced" => Some("verify"),
         "verify" => Some("judge"),
         "judge" => Some("report"),
         "report" => Some("direction"),
@@ -107,7 +111,9 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some(STAGE_DIRECTION_PROMPT),
         "plan" => Some(STAGE_PLAN_PROMPT),
-        "implement" => Some(STAGE_IMPLEMENT_PROMPT),
+        "implement_general" => Some(STAGE_IMPLEMENT_PROMPT),
+        "implement_visual" => Some(STAGE_IMPLEMENT_PROMPT),
+        "implement_advanced" => Some(STAGE_IMPLEMENT_PROMPT),
         "verify" => Some(STAGE_VERIFY_PROMPT),
         "judge" => Some(STAGE_JUDGE_PROMPT),
         "report" => Some(STAGE_REPORT_PROMPT),
@@ -119,7 +125,9 @@ pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
     match stage {
         "direction" => Some("builtin://evolution/stage.direction.prompt"),
         "plan" => Some("builtin://evolution/stage.plan.prompt"),
-        "implement" => Some("builtin://evolution/stage.implement.prompt"),
+        "implement_general" => Some("builtin://evolution/stage.implement.prompt"),
+        "implement_visual" => Some("builtin://evolution/stage.implement.prompt"),
+        "implement_advanced" => Some("builtin://evolution/stage.implement.prompt"),
         "verify" => Some("builtin://evolution/stage.verify.prompt"),
         "judge" => Some("builtin://evolution/stage.judge.prompt"),
         "report" => Some("builtin://evolution/stage.report.prompt"),

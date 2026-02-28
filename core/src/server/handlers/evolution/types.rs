@@ -1,9 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::server::protocol::{
-    EvolutionImplementAgentProfilesInfo, EvolutionSchedulerInfo, EvolutionStageProfileInfo,
-    EvolutionWorkspaceItem,
-};
+use crate::server::protocol::{EvolutionSchedulerInfo, EvolutionStageProfileInfo, EvolutionWorkspaceItem};
 
 pub(super) struct EvolutionState {
     pub(super) activation_state: String,
@@ -31,7 +28,6 @@ pub(super) struct WorkspaceRunState {
     pub(super) last_judge_result: Option<bool>,
     pub(super) terminal_reason_code: Option<String>,
     pub(super) stage_profiles: Vec<EvolutionStageProfileInfo>,
-    pub(super) implement_agent_profiles: EvolutionImplementAgentProfilesInfo,
     pub(super) stage_statuses: HashMap<String, String>,
     pub(super) stage_sessions: HashMap<String, StageSession>,
     pub(super) stage_session_history: HashMap<String, Vec<StageSession>>,
