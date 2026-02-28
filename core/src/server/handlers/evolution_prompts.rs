@@ -281,6 +281,13 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
   - `error.code` 使用：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
   - `error` 至少包含 `code`、`message`、`context`
 
+【implementation_agent 分配规则】
+- 必须参考 `direction.lifecycle_scan.json` 中的 `ui_capability` 与 `stage.direction.json` 中的 `capability_assessment` 来判断项目是否具备 UI 层。
+- `implement_visual`：涉及 UI/视觉层的任务（视图布局、样式、动画、交互组件、截图相关测试等）。仅当 `ui_capability != "none"` 时才允许分配。
+- `implement_general`：所有非 UI 层任务（后端逻辑、数据模型、协议、配置、非 UI 测试等）。
+- 若 `ui_capability = "none"`，所有 work_item 必须分配给 `implement_general`。
+- 一个 work_item 只能分配给一个 agent；若任务同时涉及 UI 与非 UI，拆分为两个 work_item。
+
 【质量门槛】
 - 每个 work_item 必须可直接执行，不允许空泛描述。
 - 每个 work_item 必须包含 `implementation_agent`，且只能是 `implement_general|implement_visual`。
