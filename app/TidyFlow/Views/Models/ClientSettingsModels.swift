@@ -35,8 +35,6 @@ struct ClientSettings: Codable {
     var appLanguage: String
     /// Evolution 代理配置（key: "project/workspace"）
     var evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]]
-    /// Evolution implement 三类实现代理配置（全局）
-    var evolutionImplementAgentProfiles: EvolutionImplementAgentProfilesV2
 
     enum CodingKeys: String, CodingKey {
         case customCommands
@@ -47,7 +45,6 @@ struct ClientSettings: Codable {
         case remoteAccessEnabled = "remote_access_enabled"
         case appLanguage = "app_language"
         case evolutionAgentProfiles = "evolution_agent_profiles"
-        case evolutionImplementAgentProfiles = "evolution_implement_agent_profiles"
         // 旧字段，仅用于解码迁移
         case selectedAIAgent = "selected_ai_agent"
     }
@@ -60,8 +57,7 @@ struct ClientSettings: Codable {
         fixedPort: Int = 0,
         remoteAccessEnabled: Bool = false,
         appLanguage: String = "system",
-        evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:],
-        evolutionImplementAgentProfiles: EvolutionImplementAgentProfilesV2 = .default
+        evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:]
     ) {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
@@ -71,7 +67,6 @@ struct ClientSettings: Codable {
         self.remoteAccessEnabled = remoteAccessEnabled
         self.appLanguage = appLanguage
         self.evolutionAgentProfiles = evolutionAgentProfiles
-        self.evolutionImplementAgentProfiles = evolutionImplementAgentProfiles
     }
 
     init(from decoder: Decoder) throws {
@@ -84,7 +79,6 @@ struct ClientSettings: Codable {
         remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
         appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? "system"
         evolutionAgentProfiles = [:]
-        evolutionImplementAgentProfiles = .default
         // 兼容旧字段迁移
         let oldAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
         if let old = oldAgent {
