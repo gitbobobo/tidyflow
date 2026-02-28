@@ -1798,6 +1798,16 @@ final class MobileAppState: ObservableObject {
         )
     }
 
+    /// 拉取指定 AI 工具的会话列表
+    func requestAISessionList(for tool: AIChatTool) {
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        wsClient.requestAISessionList(
+            projectName: aiActiveProject,
+            workspaceName: aiActiveWorkspace,
+            aiTool: tool
+        )
+    }
+
     /// 加载指定会话消息
     func loadAISession(_ session: AISessionInfo) {
         guard session.projectName == aiActiveProject,

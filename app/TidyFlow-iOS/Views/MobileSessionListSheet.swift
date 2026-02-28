@@ -122,6 +122,15 @@ struct MobileSessionListSheet: View {
         }
         .onAppear {
             filterTool = appState.aiChatTool
+            requestSessionList(for: appState.aiChatTool)
         }
+        .onChange(of: filterTool) { _, newTool in
+            requestSessionList(for: newTool)
+        }
+    }
+
+    /// 向服务端请求指定 AI 工具的会话列表
+    private func requestSessionList(for tool: AIChatTool) {
+        appState.requestAISessionList(for: tool)
     }
 }
