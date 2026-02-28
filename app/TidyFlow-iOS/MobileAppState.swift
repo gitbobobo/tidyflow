@@ -172,7 +172,7 @@ final class MobileAppState: ObservableObject {
     @Published var explorerPreviewError: String?
     @Published var commitAIAgent: String?
     @Published var mergeAIAgent: String?
-    @Published var evolutionImplementAgentProfiles: EvolutionImplementAgentProfilesV2 = .default
+    @Published var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = []
     private var clientFixedPort: Int = 0
     private var clientRemoteAccessEnabled: Bool = false
     private var clientAppLanguage: String = "system"
@@ -377,6 +377,8 @@ final class MobileAppState: ObservableObject {
     private let wsClient = WSClient()
     /// 重连任务（指数退避）
     private var reconnectTask: Task<Void, Never>?
+    private static let evolutionDefaultProfilesKeyV2 = "evolution_default_profiles_v2"
+    private static let evolutionDefaultProfilesKeyV1 = "evolution_default_profiles_v1"
 
     init() {
         setupWSCallbacks()
@@ -389,6 +391,7 @@ final class MobileAppState: ObservableObject {
             aiSelectedThoughtLevelByTool[tool] = nil
             aiPendingSessionSelectionHintsByTool[tool] = [:]
         }
+        loadEvolutionDefaultProfiles()
         if Self.uiTestModeEnabled {
             ConnectionStorage.clear()
             hasSavedConnection = false
@@ -648,8 +651,7 @@ final class MobileAppState: ObservableObject {
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
             appLanguage: clientAppLanguage,
-            evolutionAgentProfiles: [:],
-            evolutionImplementAgentProfiles: evolutionImplementAgentProfiles
+            evolutionAgentProfiles: [:]
         )
         wsClient.requestSaveClientSettings(settings: payload)
     }
@@ -1051,12 +1053,13 @@ final class MobileAppState: ObservableObject {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
         evolutionPendingActionByWorkspace[key] = "start"
+        let normalizedProfiles = Self.normalizedEvolutionProfiles(profiles)
         wsClient.requestEvoStartWorkspace(
             project: project,
             workspace: normalizedWorkspace,
             priority: 0,
             loopRoundLimit: max(1, loopRoundLimit),
-            stageProfiles: profiles
+            stageProfiles: normalizedProfiles
         )
     }
 
@@ -1087,7 +1090,12 @@ final class MobileAppState: ObservableObject {
 
     func updateEvolutionAgentProfile(project: String, workspace: String, profiles: [EvolutionStageProfileInfoV2]) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        wsClient.requestEvoUpdateAgentProfile(project: project, workspace: normalizedWorkspace, stageProfiles: profiles)
+        let normalizedProfiles = Self.normalizedEvolutionProfiles(profiles)
+        wsClient.requestEvoUpdateAgentProfile(
+            project: project,
+            workspace: normalizedWorkspace,
+            stageProfiles: normalizedProfiles
+        )
     }
 
     func evolutionProfiles(project: String, workspace: String) -> [EvolutionStageProfileInfoV2] {
@@ -1096,12 +1104,15 @@ final class MobileAppState: ObservableObject {
         if let profiles = evolutionStageProfilesByWorkspace[key], !profiles.isEmpty {
             if let fallback = resolveEvolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace),
                shouldPreferEvolutionProfiles(candidate: fallback, over: profiles) {
-                return fallback
+                return Self.normalizedEvolutionProfiles(fallback)
             }
-            return profiles
+            return Self.normalizedEvolutionProfiles(profiles)
         }
         if let profiles = resolveEvolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace) {
-            return profiles
+            return Self.normalizedEvolutionProfiles(profiles)
+        }
+        if !evolutionDefaultProfiles.isEmpty {
+            return Self.normalizedEvolutionProfiles(evolutionDefaultProfiles)
         }
         return Self.defaultEvolutionProfiles()
     }
@@ -1307,9 +1318,133 @@ final class MobileAppState: ObservableObject {
         subAgentViewerStore.clearAll()
     }
 
+    private static func evolutionStageOrder() -> [String] {
+        [
+            "direction",
+            "plan",
+            "implement_general",
+            "implement_visual",
+            "implement_advanced",
+            "verify",
+            "judge",
+            "report",
+        ]
+    }
+
+    private static func expandLegacyEvolutionStages(_ stage: String) -> [String] {
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "implement" {
+            return ["implement_general", "implement_visual"]
+        }
+        return [normalized]
+    }
+
     private static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
-        ["direction", "plan", "implement", "verify", "judge", "report"].map {
+        evolutionStageOrder().map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil, configOptions: [:])
+        }
+    }
+
+    private static func normalizedEvolutionProfiles(
+        _ profiles: [EvolutionStageProfileInfoV2]
+    ) -> [EvolutionStageProfileInfoV2] {
+        if profiles.isEmpty {
+            return defaultEvolutionProfiles()
+        }
+
+        let validStages = Set(evolutionStageOrder())
+        var byStage: [String: EvolutionStageProfileInfoV2] = [:]
+        for profile in profiles {
+            let mappedStages = expandLegacyEvolutionStages(profile.stage)
+            for stage in mappedStages where validStages.contains(stage) {
+                if byStage[stage] != nil { continue }
+                byStage[stage] = EvolutionStageProfileInfoV2(
+                    stage: stage,
+                    aiTool: profile.aiTool,
+                    mode: profile.mode,
+                    model: profile.model,
+                    configOptions: profile.configOptions
+                )
+            }
+        }
+
+        return defaultEvolutionProfiles().map { item in
+            byStage[item.stage] ?? item
+        }
+    }
+
+    private func loadEvolutionDefaultProfiles() {
+        func parseStoredProfiles(_ data: Data) -> [EvolutionStageProfileInfoV2] {
+            guard let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                return []
+            }
+            return jsonArray.compactMap { dict in
+                guard let stage = dict["stage"] as? String,
+                      let aiToolRaw = dict["aiTool"] as? String,
+                      let aiTool = AIChatTool(rawValue: aiToolRaw) else {
+                    return nil
+                }
+                let modeRaw = (dict["mode"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let providerID = (dict["providerID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let modelID = (dict["modelID"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let model: EvolutionModelSelectionV2? = {
+                    guard !providerID.isEmpty, !modelID.isEmpty else { return nil }
+                    return EvolutionModelSelectionV2(providerID: providerID, modelID: modelID)
+                }()
+                let configOptions = dict["configOptions"] as? [String: Any] ?? [:]
+                return EvolutionStageProfileInfoV2(
+                    stage: stage,
+                    aiTool: aiTool,
+                    mode: modeRaw.isEmpty ? nil : modeRaw,
+                    model: model,
+                    configOptions: configOptions
+                )
+            }
+        }
+
+        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV2) {
+            let loaded = parseStoredProfiles(data)
+            if !loaded.isEmpty {
+                evolutionDefaultProfiles = Self.normalizedEvolutionProfiles(loaded)
+                return
+            }
+        }
+
+        if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV1) {
+            let loaded = parseStoredProfiles(data)
+            if !loaded.isEmpty {
+                let normalized = Self.normalizedEvolutionProfiles(loaded)
+                evolutionDefaultProfiles = normalized
+                saveEvolutionDefaultProfiles(normalized)
+                return
+            }
+        }
+
+        evolutionDefaultProfiles = Self.defaultEvolutionProfiles()
+    }
+
+    func saveEvolutionDefaultProfiles(_ profiles: [EvolutionStageProfileInfoV2]) {
+        let normalized = Self.normalizedEvolutionProfiles(profiles)
+        evolutionDefaultProfiles = normalized
+        let jsonArray: [[String: Any]] = normalized.map { profile in
+            let providerID = profile.model?.providerID ?? ""
+            let modelID = profile.model?.modelID ?? ""
+            let mode = profile.mode ?? ""
+            let configOptions = JSONSerialization.isValidJSONObject(profile.configOptions)
+                ? profile.configOptions
+                : [:]
+            return [
+                "id": profile.stage,
+                "stage": profile.stage,
+                "aiTool": profile.aiTool.rawValue,
+                "mode": mode,
+                "providerID": providerID,
+                "modelID": modelID,
+                "configOptions": configOptions,
+            ]
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: jsonArray) {
+            UserDefaults.standard.set(data, forKey: Self.evolutionDefaultProfilesKeyV2)
         }
     }
 
@@ -3684,7 +3819,6 @@ final class MobileAppState: ObservableObject {
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
             self.clientAppLanguage = settings.appLanguage
-            self.evolutionImplementAgentProfiles = settings.evolutionImplementAgentProfiles
             self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles
             self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }
@@ -4705,8 +4839,9 @@ final class MobileAppState: ObservableObject {
             let workspace = normalizeEvolutionWorkspaceName(parsed.workspace)
             let key = globalWorkspaceKey(project: parsed.project, workspace: workspace)
             let current = evolutionStageProfilesByWorkspace[key] ?? []
-            if current.isEmpty || shouldPreferEvolutionProfiles(candidate: profiles, over: current) {
-                evolutionStageProfilesByWorkspace[key] = profiles
+            let normalized = Self.normalizedEvolutionProfiles(profiles)
+            if current.isEmpty || shouldPreferEvolutionProfiles(candidate: normalized, over: current) {
+                evolutionStageProfilesByWorkspace[key] = normalized
             }
         }
     }
@@ -4723,7 +4858,7 @@ final class MobileAppState: ObservableObject {
         )
         for key in candidateKeys {
             if let profiles = evolutionProfilesFromClientSettings[key], !profiles.isEmpty {
-                return profiles
+                return Self.normalizedEvolutionProfiles(profiles)
             }
         }
         for (storageKey, profiles) in evolutionProfilesFromClientSettings {
@@ -4731,7 +4866,7 @@ final class MobileAppState: ObservableObject {
             guard let parsed = parseEvolutionProfileStorageKey(storageKey) else { continue }
             let parsedWorkspace = normalizeEvolutionWorkspaceName(parsed.workspace)
             if parsed.project == project && parsedWorkspace == normalizedWorkspace {
-                return profiles
+                return Self.normalizedEvolutionProfiles(profiles)
             }
         }
         return nil
@@ -4774,6 +4909,7 @@ final class MobileAppState: ObservableObject {
                 return false
             }
             if profile.model != nil { return false }
+            if !profile.configOptions.isEmpty { return false }
         }
         return true
     }
