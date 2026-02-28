@@ -89,7 +89,66 @@
 - 兼容策略：
   - 保留 `ai_slash_commands` 一次性拉取接口；
   - 不支持增量推送的后端仍可正常使用（前端继续使用拉取结果）；
-  - `/new` 作为本地命令保留，始终可用。
+- `/new` 作为本地命令保留，始终可用。
+
+## ACP `tool-calls`（完整对齐）
+
+- 规范基线：
+  - 以 ACP 官方 `tool-calls` 页面与 schema 为准（实现时采用同版本字段名与语义）。
+- Core 解析策略：
+  - `session/update`（流式）与 `session/load`（历史）共用同一组 normalized parser。
+  - 支持 `tool_call` 首帧与 `tool_call_update` 增量，未知字段保留到 `tool_part_metadata`。
+  - 状态兼容归一化：
+    - 交互态：`pending/running/awaiting_input/requires_input/in_progress`
+    - 完成态：`completed/done/success`
+    - 失败态：`error/failed/rejected/cancelled/canceled`
+  - 支持 `content.type`：
+    - `markdown` / `diff` / `terminal`（其余类型保留原始 JSON 并走通用渲染）。
+- 双轨兼容（锁定）：
+  - 规范字段优先：`tool_kind/tool_title/tool_raw_input/tool_raw_output/tool_locations`
+  - 兼容镜像：继续写入 `tool_state.input/raw/output` 与 `tool_state.metadata.locations`
+
+### 字段映射（规范 -> Core -> App）
+
+| ACP 规范字段 | Core 内部模型 | Core->App 协议 | App 模型/渲染 |
+| --- | --- | --- | --- |
+| `toolCallId` / `id` | `AiPart.tool_call_id` | `PartInfo.tool_call_id` | `AIProtocolPartInfo.toolCallId` -> `AIChatPart.toolCallId` |
+| `kind` | `AiPart.tool_kind` | `PartInfo.tool_kind` | `AIProtocolPartInfo.toolKind` -> `AIChatPart.toolKind` |
+| `title` | `AiPart.tool_title` | `PartInfo.tool_title` | `AIProtocolPartInfo.toolTitle` -> `AIChatPart.toolTitle` |
+| `rawInput` | `AiPart.tool_raw_input` | `PartInfo.tool_raw_input` | `AIProtocolPartInfo.toolRawInput` -> `AIChatPart.toolRawInput` |
+| `rawOutput` | `AiPart.tool_raw_output` | `PartInfo.tool_raw_output` | `AIProtocolPartInfo.toolRawOutput` -> `AIChatPart.toolRawOutput` |
+| `locations[]` | `AiPart.tool_locations(Vec<AiToolCallLocation>)` | `PartInfo.tool_locations(Vec<ToolCallLocationInfo>)` | `AIProtocolPartInfo.toolLocations` -> `AIChatPart.toolLocations` |
+| `status/state` | `AiPart.tool_state.status`（归一化） | `PartInfo.tool_state.status` | `AIToolInvocationState.from` 归一化并驱动 `ToolCardView` 状态 |
+| `content(type=markdown)` | `tool_state.output/raw` | `tool_state` + `tool_raw_output` | `ToolCardView(markdown)` |
+| `content(type=diff)` | `tool_state.output/raw` | `tool_state` + `tool_raw_output` | `ToolCardView(diff)` |
+| `content(type=terminal)` | `tool_state.output/progress` | `tool_state` + `tool_raw_output` | `ToolCardView(terminal)` |
+
+### 权限请求与 Question
+
+- 入站：
+  - `session/request_permission` 解析 `toolCall.kind/title/rawInput` 并构建 `question`。
+- 回答：
+  - `selected`：`respond_to_permission_request`
+  - `cancelled`：`reject_permission_request`
+- 回填关联：
+  - `request_id` 与 `tool_call_id/tool_message_id` 通过 question payload 透传，供 UI 精确匹配。
+- 缺失 `optionId`：
+  - 沿用回退顺序：按答案 label 匹配 -> `allow-once` -> 第一项，并记录告警日志。
+
+### Follow-along（`terminal/create` / `terminal/release`）
+
+- Core RPC：
+  - `terminal/create(sessionId, toolCallId)`
+  - `terminal/release(terminalId)`
+- 生命周期：
+  - `kind=terminal` 且运行中时尝试 `create`
+  - 工具终态、会话结束、流 teardown 时统一 `release`
+- 降级：
+  - 能力缺失或方法不支持时非致命，自动回退到普通文本输出链路。
+- 可观测性计数：
+  - 未识别 `content.type` 次数
+  - `tool_call_update` 缺失 `toolCallId` 次数
+  - follow-along create/release 失败次数
 
 ## 双栈兼容策略（锁定）
 
