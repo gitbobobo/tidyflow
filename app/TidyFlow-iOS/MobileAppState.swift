@@ -4309,30 +4309,19 @@ final class MobileAppState: ObservableObject {
 
     private func aiUpsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
         guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
-        let kind = AIChatPartKind(rawValue: part.partType) ?? .text
 
         if let existing = aiPartIndexByPartId[part.id],
            existing.msgIdx == msgIdx,
            existing.partIdx >= 0,
            existing.partIdx < aiChatMessages[msgIdx].parts.count {
-            aiChatMessages[msgIdx].parts[existing.partIdx].text = part.text
-            aiChatMessages[msgIdx].parts[existing.partIdx].toolName = part.toolName
-            aiChatMessages[msgIdx].parts[existing.partIdx].toolState = part.toolState
-            aiChatMessages[msgIdx].parts[existing.partIdx].toolCallId = part.toolCallId
-            aiChatMessages[msgIdx].parts[existing.partIdx].toolPartMetadata = part.toolPartMetadata
+            var existingPart = aiChatMessages[msgIdx].parts[existing.partIdx]
+            AIChatPartNormalization.apply(protocolPart: part, to: &existingPart)
+            aiChatMessages[msgIdx].parts[existing.partIdx] = existingPart
             return
         }
 
         aiPartIndexByPartId.removeValue(forKey: part.id)
-        let newPart = AIChatPart(
-            id: part.id,
-            kind: kind,
-            text: part.text,
-            toolName: part.toolName,
-            toolState: part.toolState,
-            toolCallId: part.toolCallId,
-            toolPartMetadata: part.toolPartMetadata
-        )
+        let newPart = AIChatPartNormalization.makeChatPart(from: part)
         aiChatMessages[msgIdx].parts.append(newPart)
         let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
         aiPartIndexByPartId[part.id] = (msgIdx, newPartIdx)
