@@ -127,9 +127,6 @@ final class MobileAppState: ObservableObject {
         }
     }()
     private static let uiTestModeEnabled: Bool = {
-        if ProcessInfo.processInfo.arguments.contains("UI_TEST_MODE") {
-            return true
-        }
         switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
         case "1", "true", "yes", "on":
             return true

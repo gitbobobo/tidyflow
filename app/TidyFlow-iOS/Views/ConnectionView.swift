@@ -3,7 +3,14 @@ import SwiftUI
 /// 配对连接表单视图
 struct ConnectionView: View {
     @EnvironmentObject var appState: MobileAppState
-    private let isUITestMode = ProcessInfo.processInfo.arguments.contains("UI_TEST_MODE")
+    private let isUITestMode: Bool = {
+        switch ProcessInfo.processInfo.environment["UI_TEST_MODE"]?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }()
 
     var body: some View {
         Form {
