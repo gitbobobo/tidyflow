@@ -26,6 +26,12 @@ struct EvidenceReadRequestState {
     let pageCompletion: (_ payload: PagePayload?, _ errorMessage: String?) -> Void
 }
 
+enum StartupPhase: Equatable {
+    case loading
+    case ready
+    case failed(message: String)
+}
+
 class AppState: ObservableObject {
     private static let perfTerminalAutoDetachEnabled: Bool = {
         switch ProcessInfo.processInfo.environment["PERF_TERMINAL_AUTO_DETACH"]?.lowercased() {
@@ -47,6 +53,8 @@ class AppState: ObservableObject {
     @Published var selectedWorkspaceKey: String?
     @Published var activeRightTool: RightTool? = .explorer
     @Published var connectionState: ConnectionState = .disconnected
+    /// mac 启动门禁：首次 WS 连通前仅展示启动页
+    @Published var startupPhase: StartupPhase = .loading
     /// 最近一次生成的移动端配对码（6 位）
     @Published var mobilePairCode: String?
     /// 配对码过期时间文案（ISO8601 原文）
@@ -417,8 +425,8 @@ class AppState: ObservableObject {
 
     // Project name (for WS protocol)
     var selectedProjectName: String = "default"
-    /// Core 启动就绪后的窗口展示回调（由 App 注入）
-    var onCoreReadyForWindow: (() -> Void)?
+    /// 首次进入 ready 后锁定，不再回退到启动页
+    private var hasFinishedStartupPhase = false
 
     var commands: [Command] = []
 
@@ -464,6 +472,23 @@ class AppState: ObservableObject {
 
     var isPerfTerminalAutoDetachEnabled: Bool {
         Self.perfTerminalAutoDetachEnabled
+    }
+
+    func markStartupReadyIfNeeded() {
+        guard !hasFinishedStartupPhase else { return }
+        hasFinishedStartupPhase = true
+        startupPhase = .ready
+    }
+
+    func markStartupFailedIfNeeded(message: String) {
+        guard !hasFinishedStartupPhase else { return }
+        startupPhase = .failed(message: message)
+    }
+
+    func retryStartup() {
+        guard !hasFinishedStartupPhase else { return }
+        startupPhase = .loading
+        restartCore()
     }
 
     var isPerfAISelectionDebugLogEnabled: Bool {

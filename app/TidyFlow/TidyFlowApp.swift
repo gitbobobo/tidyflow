@@ -1,21 +1,23 @@
 import SwiftUI
 import UserNotifications
-import os
 
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     var appState: AppState?
     /// 用于跟踪是否已确认退出（避免重复弹框）
     private var terminationConfirmed = false
-    /// 启动期是否延迟展示主窗口（等待 Core ready）
-    private var shouldDeferMainWindow = true
-    /// 主窗口是否已完成首次展示
-    private var hasPresentedMainWindow = false
+    /// 启动期窗口可见性兜底重试计数（处理 UI Test 下窗口创建时序）
+    private var ensureMainWindowRetryCount = 0
+    private let maxEnsureMainWindowRetryCount = 40
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 设置主窗口 delegate，并在启动期先隐藏窗口，待 Core ready 再显示。
+        // 设置主窗口 delegate（窗口显示由 SwiftUI 默认行为管理）。
         if let window = NSApplication.shared.windows.first {
             prepareMainWindow(window)
+        }
+        // 启动即确保主窗口可见，避免 UI Test 下窗口未及时创建导致不可见。
+        DispatchQueue.main.async { [weak self] in
+            self?.ensureMainWindowVisible(reason: "did_finish_launching")
         }
 
         // 请求系统通知权限（横幅 + 声音）
@@ -33,26 +35,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
 
-    /// 配置主窗口并按启动策略决定是否暂时隐藏
+    /// 配置主窗口 delegate
     func prepareMainWindow(_ window: NSWindow) {
         window.delegate = self
-        if shouldDeferMainWindow && !hasPresentedMainWindow {
-            window.alphaValue = 0
-            window.orderOut(nil)
-        }
     }
 
-    /// Core ready 后展示主窗口（幂等）
-    func showMainWindowIfNeeded(reason: String) {
-        guard !hasPresentedMainWindow else { return }
-        shouldDeferMainWindow = false
-        guard let window = NSApplication.shared.windows.first else { return }
-
-        hasPresentedMainWindow = true
-        window.alphaValue = 1
-        window.makeKeyAndOrderFront(nil)
+    /// 启动期确保主窗口可见并前置（幂等）
+    func ensureMainWindowVisible(reason: String) {
+        NSRunningApplication.current.activate(options: [])
         NSApp.activate(ignoringOtherApps: true)
-        TFLog.app.info("Startup window presented (\(reason, privacy: .public))")
+
+        guard let window = preferredMainWindow() else {
+            guard ensureMainWindowRetryCount < maxEnsureMainWindowRetryCount else {
+                TFLog.app.warning("Main window not available after retries (\(reason, privacy: .public))")
+                return
+            }
+            ensureMainWindowRetryCount += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.ensureMainWindowVisible(reason: reason)
+            }
+            return
+        }
+
+        ensureMainWindowRetryCount = 0
+        prepareMainWindow(window)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func preferredMainWindow() -> NSWindow? {
+        let windows = NSApplication.shared.windows
+        return windows.first(where: { $0.canBecomeMain && !($0 is NSPanel) }) ?? windows.first
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -178,7 +192,7 @@ struct TidyFlowApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            startupRootView
                 .environmentObject(appState)
                 .environmentObject(appState.aiChatStore)
                 .environmentObject(appState.gitCache)
@@ -192,26 +206,14 @@ struct TidyFlowApp: App {
                 .onAppear {
                     // Give delegate access to appState for cleanup
                     appDelegate.appState = appState
-                    // 确保窗口已按启动策略配置（SwiftUI 可能延迟创建窗口）
+                    // SwiftUI 可能延迟创建窗口，这里兜底设置 delegate。
                     DispatchQueue.main.async {
                         guard !startupWindowConfigured else { return }
                         startupWindowConfigured = true
                         if let window = NSApplication.shared.windows.first {
                             appDelegate.prepareMainWindow(window)
                         }
-                        appState.onCoreReadyForWindow = { [weak appDelegate] in
-                            DispatchQueue.main.async {
-                                appDelegate?.showMainWindowIfNeeded(reason: "core_ready")
-                            }
-                        }
-                        // 兜底：如果 onCoreReady 回调注册时 Core 已经启动完成，立即展示主窗口。
-                        if appState.coreProcessManager.status.isRunning {
-                            appDelegate.showMainWindowIfNeeded(reason: "core_already_running")
-                        }
-                        // 兜底：Core 启动异常时也要给出窗口，避免 Dock 持续跳动且无可见 UI。
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
-                            appDelegate.showMainWindowIfNeeded(reason: "core_start_timeout")
-                        }
+                        appDelegate.ensureMainWindowVisible(reason: "root_on_appear")
                     }
                 }
                 .preferredColorScheme(.dark)
@@ -251,5 +253,63 @@ struct TidyFlowApp: App {
                 .frame(minWidth: 500, minHeight: 400)
                 .preferredColorScheme(.dark)
         }
+    }
+
+    @ViewBuilder
+    private var startupRootView: some View {
+        switch appState.startupPhase {
+        case .loading:
+            StartupLoadingView()
+        case .ready:
+            ContentView()
+        case .failed(let message):
+            StartupFailedView(message: message) {
+                appState.retryStartup()
+            }
+        }
+    }
+}
+
+private struct StartupLoadingView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            Text("common.loading".localized)
+                .font(.headline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("tf.mac.startup.loading")
+    }
+}
+
+private struct StartupFailedView: View {
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 28))
+                .foregroundColor(.orange)
+
+            Text("startup.failed.title".localized)
+                .font(.title3)
+                .fontWeight(.semibold)
+
+            Text(String(format: "startup.failed.message".localized, message))
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 520)
+
+            Button("startup.failed.retry".localized, action: onRetry)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("tf.mac.startup.retry")
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("tf.mac.startup.failed")
     }
 }

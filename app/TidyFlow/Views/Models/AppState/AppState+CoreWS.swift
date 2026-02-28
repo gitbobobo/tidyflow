@@ -133,13 +133,12 @@ extension AppState {
     func setupCoreCallbacks() {
         coreProcessManager.onCoreReady = { [weak self] port in
             self?.setupWSClient(port: port)
-            // 启动阶段：Core ready 后再展示主窗口
-            self?.onCoreReadyForWindow?()
         }
 
         coreProcessManager.onCoreFailed = { [weak self] message in
             TFLog.core.error("Core failed: \(message, privacy: .public)")
             self?.connectionState = .disconnected
+            self?.markStartupFailedIfNeeded(message: message)
         }
 
         coreProcessManager.onCoreRestarting = { [weak self] attempt, maxAttempts in
@@ -152,6 +151,7 @@ extension AppState {
         coreProcessManager.onCoreRestartLimitReached = { [weak self] message in
             TFLog.core.error("Core restart limit reached: \(message, privacy: .public)")
             self?.connectionState = .disconnected
+            self?.markStartupFailedIfNeeded(message: message)
         }
 
         // 注册系统唤醒通知，用于探活 + 自动重连

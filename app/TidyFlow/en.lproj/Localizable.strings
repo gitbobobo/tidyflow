@@ -20,6 +20,11 @@
 "common.rename" = "Rename";
 "common.loading" = "Loading";
 
+/* Startup */
+"startup.failed.title" = "Core startup failed";
+"startup.failed.message" = "Cannot connect to Core yet: %@";
+"startup.failed.retry" = "Retry";
+
 /* App Quit Confirmation */
 "app.quit.title" = "Confirm Quit";
 "app.quit.message" = "%d terminal sessions are running with possible ongoing work. Are you sure you want to quit?";

@@ -16,6 +16,7 @@ extension AppState {
         wsClient.onConnectionStateChanged = { [weak self] connected in
             self?.connectionState = connected ? .connected : .disconnected
             if connected {
+                self?.markStartupReadyIfNeeded()
                 self?.reconnectAttempt = 0  // 重置自动重连计数
                 self?.wsClient.requestListProjects()
                 self?.wsClient.requestGetClientSettings()

@@ -20,6 +20,11 @@
 "common.rename" = "重命名";
 "common.loading" = "加载中";
 
+/* 启动页 */
+"startup.failed.title" = "Core 启动失败";
+"startup.failed.message" = "当前无法连接 Core：%@";
+"startup.failed.retry" = "重试";
+
 /* 应用退出确认 */
 "app.quit.title" = "确认退出";
 "app.quit.message" = "当前有 %d 个终端会话正在运行，可能存在正在进行的工作。确定要退出吗？";
