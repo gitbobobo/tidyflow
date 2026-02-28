@@ -70,6 +70,11 @@ pub enum AiEvent {
         options: Vec<AiSessionConfigOption>,
         selection_hint: Option<AiSessionSelectionHint>,
     },
+    /// 斜杠命令更新（ACP available_commands_update）
+    SlashCommandsUpdated {
+        session_id: String,
+        commands: Vec<AiSlashCommand>,
+    },
     /// 流结束（可携带协议 stop_reason）
     Done { stop_reason: Option<String> },
 }
@@ -272,6 +277,8 @@ pub struct AiSlashCommand {
     pub description: String,
     /// 执行方式："client" | "agent"
     pub action: String,
+    /// 输入提示（可选），用于补全时插入参数模板
+    pub input_hint: Option<String>,
 }
 
 /// AI 事件流类型别名
@@ -445,7 +452,11 @@ pub trait AiAgent: Send + Sync {
     }
 
     /// 获取斜杠命令列表（默认返回空）
-    async fn list_slash_commands(&self, _directory: &str) -> Result<Vec<AiSlashCommand>, String> {
+    async fn list_slash_commands(
+        &self,
+        _directory: &str,
+        _session_id: Option<&str>,
+    ) -> Result<Vec<AiSlashCommand>, String> {
         Ok(vec![])
     }
 

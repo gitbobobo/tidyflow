@@ -633,6 +633,7 @@ pub(super) async fn handle_ai_slash_commands(
         project_name,
         workspace_name,
         ai_tool,
+        session_id,
     } = msg
     else {
         return Ok(false);
@@ -645,30 +646,34 @@ pub(super) async fn handle_ai_slash_commands(
     use crate::server::protocol::ai::SlashCommandInfo;
     use std::collections::BTreeMap;
 
-    // 内置兜底命令：按当前产品约定，仅保留 /new 本地命令。
+    // 动态命令来源：后端代理（ACP/OpenCode 等）
     let mut command_map: BTreeMap<String, SlashCommandInfo> = BTreeMap::new();
-    for cmd in [SlashCommandInfo {
-        name: "new".to_string(),
-        description: "新建会话".to_string(),
-        action: "client".to_string(),
-    }] {
-        command_map.insert(cmd.name.clone(), cmd);
-    }
-
-    // 动态命令来源：OpenCode /command（与 CLI 实际可用命令保持一致）
     if let Ok(agent) = ensure_agent(ai_state, &ai_tool).await {
         ensure_maintenance(ai_state).await;
-        if let Ok(dynamic_commands) = agent.list_slash_commands(&directory).await {
+        if let Ok(dynamic_commands) = agent
+            .list_slash_commands(&directory, session_id.as_deref())
+            .await
+        {
             for cmd in dynamic_commands {
                 let info = SlashCommandInfo {
                     name: cmd.name,
                     description: cmd.description,
                     action: cmd.action,
+                    input_hint: cmd.input_hint,
                 };
                 command_map.insert(info.name.clone(), info);
             }
         }
     }
+
+    // 内置兜底命令：按当前产品约定，仅保留 /new 本地命令，且优先本地语义。
+    let local_new = SlashCommandInfo {
+        name: "new".to_string(),
+        description: "新建会话".to_string(),
+        action: "client".to_string(),
+        input_hint: None,
+    };
+    command_map.insert(local_new.name.clone(), local_new);
 
     let commands: Vec<SlashCommandInfo> = command_map.into_values().collect();
 
@@ -678,6 +683,7 @@ pub(super) async fn handle_ai_slash_commands(
             project_name: project_name.clone(),
             workspace_name: workspace_name.clone(),
             ai_tool,
+            session_id: session_id.clone(),
             commands,
         },
     )

@@ -89,6 +89,8 @@ pub struct AcpAgent {
     profile: AcpBackendProfile,
     metadata_by_directory: Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
     metadata_by_session: Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
+    slash_commands_by_directory: Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
+    slash_commands_by_session: Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     cached_sessions: Arc<Mutex<HashMap<String, HashMap<String, CachedSessionRecord>>>>,
     runtime_yolo_sessions: Arc<Mutex<HashSet<String>>>,
@@ -104,6 +106,8 @@ impl AcpAgent {
             profile,
             metadata_by_directory: Arc::new(Mutex::new(HashMap::new())),
             metadata_by_session: Arc::new(Mutex::new(HashMap::new())),
+            slash_commands_by_directory: Arc::new(Mutex::new(HashMap::new())),
+            slash_commands_by_session: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
             cached_sessions: Arc::new(Mutex::new(HashMap::new())),
             runtime_yolo_sessions: Arc::new(Mutex::new(HashSet::new())),
@@ -688,6 +692,151 @@ impl AcpAgent {
         normalized == "config_options_update" || normalized == "configoptionsupdate"
     }
 
+    fn is_available_commands_update(raw: &str) -> bool {
+        let normalized = Self::normalized_update_token(raw);
+        matches!(
+            normalized.as_str(),
+            "available_commands_update"
+                | "availablecommandsupdate"
+                | "available_command_update"
+                | "availablecommandupdate"
+        )
+    }
+
+    fn extract_available_command_hint(value: &Value) -> Option<String> {
+        let pick = |candidate: Option<&Value>| -> Option<String> {
+            candidate
+                .and_then(|it| it.as_str())
+                .and_then(Self::normalize_non_empty_token)
+        };
+
+        let obj = value.as_object()?;
+        pick(obj.get("inputHint"))
+            .or_else(|| pick(obj.get("input_hint")))
+            .or_else(|| pick(obj.get("hint")))
+            .or_else(|| pick(obj.get("input")))
+            .or_else(|| {
+                obj.get("input")
+                    .and_then(|input| input.get("hint"))
+                    .and_then(|hint| hint.as_str())
+                    .and_then(Self::normalize_non_empty_token)
+            })
+    }
+
+    fn parse_available_command(
+        value: &Value,
+        fallback_name: Option<&str>,
+    ) -> Option<AiSlashCommand> {
+        let normalized_name = |name: Option<&str>| {
+            name.and_then(Self::normalize_non_empty_token)
+                .map(|it| it.trim_start_matches('/').trim().to_string())
+                .and_then(|it| Self::normalize_non_empty_token(&it))
+        };
+
+        let (name, description, input_hint) = if let Some(obj) = value.as_object() {
+            let name = normalized_name(
+                obj.get("name")
+                    .or_else(|| obj.get("command"))
+                    .or_else(|| obj.get("id"))
+                    .and_then(|it| it.as_str())
+                    .or(fallback_name),
+            )?;
+            let description = obj
+                .get("description")
+                .or_else(|| obj.get("title"))
+                .or_else(|| obj.get("summary"))
+                .and_then(|it| it.as_str())
+                .and_then(Self::normalize_non_empty_token)
+                .unwrap_or_default();
+            let input_hint = Self::extract_available_command_hint(value);
+            (name, description, input_hint)
+        } else {
+            let name = normalized_name(fallback_name)?;
+            let description = value
+                .as_str()
+                .and_then(Self::normalize_non_empty_token)
+                .unwrap_or_default();
+            (name, description, None)
+        };
+
+        Some(AiSlashCommand {
+            name,
+            description,
+            action: "agent".to_string(),
+            input_hint,
+        })
+    }
+
+    fn looks_like_available_command(value: &Value) -> bool {
+        value.as_object().is_some_and(|obj| {
+            obj.contains_key("name")
+                || obj.contains_key("command")
+                || obj.contains_key("id")
+                || obj.contains_key("input")
+                || obj.contains_key("inputHint")
+                || obj.contains_key("input_hint")
+                || obj.contains_key("hint")
+        })
+    }
+
+    fn extract_available_commands(update: &Value) -> Vec<AiSlashCommand> {
+        let mut results = Vec::<AiSlashCommand>::new();
+        let mut name_to_index = HashMap::<String, usize>::new();
+
+        let mut push_command = |command: AiSlashCommand| {
+            let key = command.name.to_lowercase();
+            if let Some(index) = name_to_index.get(&key).copied() {
+                results[index] = command;
+            } else {
+                name_to_index.insert(key, results.len());
+                results.push(command);
+            }
+        };
+
+        for source in [Some(update), update.get("content")] {
+            let Some(source) = source else { continue };
+            if let Some(command) = Self::parse_available_command(source, None) {
+                push_command(command);
+            } else if Self::looks_like_available_command(source) {
+                warn!(
+                    "ACP available_commands_update: skip invalid command source: {}",
+                    source
+                );
+            }
+
+            for key in ["availableCommands", "available_commands", "commands"] {
+                if let Some(items) = source.get(key).and_then(|it| it.as_array()) {
+                    for item in items {
+                        if let Some(command) = Self::parse_available_command(item, None) {
+                            push_command(command);
+                        } else {
+                            warn!(
+                                "ACP available_commands_update: skip invalid command item key={}, value={}",
+                                key, item
+                            );
+                        }
+                    }
+                }
+                if let Some(map) = source.get(key).and_then(|it| it.as_object()) {
+                    for (fallback_name, item) in map {
+                        if let Some(command) =
+                            Self::parse_available_command(item, Some(fallback_name.as_str()))
+                        {
+                            push_command(command);
+                        } else {
+                            warn!(
+                                "ACP available_commands_update: skip invalid mapped command key={}, fallback_name={}, value={}",
+                                key, fallback_name, item
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
     fn extract_config_option_updates(update: &Value) -> Vec<(String, Value)> {
         let mut results = Vec::<(String, Value)>::new();
         let mut seen = HashSet::<String>::new();
@@ -766,6 +915,45 @@ impl AcpAgent {
         }
 
         results
+    }
+
+    async fn cache_available_commands(
+        slash_commands_by_directory: &Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
+        slash_commands_by_session: &Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
+        directory: &str,
+        session_id: Option<&str>,
+        commands: Vec<AiSlashCommand>,
+    ) {
+        let directory_key = Self::normalize_directory(directory);
+        {
+            let mut by_directory = slash_commands_by_directory.lock().await;
+            by_directory.insert(directory_key, commands.clone());
+        }
+        if let Some(session_id) = session_id.and_then(Self::normalize_non_empty_token) {
+            let session_key = Self::session_cache_key(directory, &session_id);
+            let mut by_session = slash_commands_by_session.lock().await;
+            by_session.insert(session_key, commands);
+        }
+    }
+
+    async fn slash_commands_for(
+        &self,
+        directory: &str,
+        session_id: Option<&str>,
+    ) -> Vec<AiSlashCommand> {
+        if let Some(session_id) = session_id.and_then(Self::normalize_non_empty_token) {
+            let key = Self::session_cache_key(directory, &session_id);
+            let by_session = self.slash_commands_by_session.lock().await;
+            if let Some(commands) = by_session.get(&key) {
+                return commands.clone();
+            }
+        }
+
+        let by_directory = self.slash_commands_by_directory.lock().await;
+        by_directory
+            .get(&Self::normalize_directory(directory))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn extract_current_mode_id(update: &Value) -> Option<String> {
@@ -867,27 +1055,6 @@ impl AcpAgent {
         }
     }
 
-    async fn apply_current_model_to_caches(
-        metadata_by_directory: &Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
-        metadata_by_session: &Arc<Mutex<HashMap<String, AcpSessionMetadata>>>,
-        directory: &str,
-        session_id: &str,
-        model_id: &str,
-    ) {
-        let directory_key = Self::normalize_directory(directory);
-        {
-            let mut by_directory = metadata_by_directory.lock().await;
-            let entry = by_directory.entry(directory_key.clone()).or_default();
-            Self::apply_current_model_to_metadata(entry, model_id);
-        }
-        {
-            let mut by_session = metadata_by_session.lock().await;
-            let key = Self::session_cache_key(directory, session_id);
-            let entry = by_session.entry(key).or_default();
-            Self::apply_current_model_to_metadata(entry, model_id);
-        }
-    }
-
     fn normalized_category(category: Option<&str>, option_id: &str) -> String {
         if let Some(category) = category.map(|it| it.trim().to_lowercase()) {
             if !category.is_empty() {
@@ -895,11 +1062,6 @@ impl AcpAgent {
             }
         }
         option_id.trim().to_lowercase()
-    }
-
-    fn option_matches_category(option: &AcpConfigOptionInfo, category: &str) -> bool {
-        let normalized = Self::normalized_category(option.category.as_deref(), &option.option_id);
-        normalized == category
     }
 
     fn value_to_string(value: &Value) -> Option<String> {
@@ -1861,6 +2023,18 @@ impl AcpAgent {
                         }
                         continue;
                     }
+                    if Self::is_available_commands_update(&session_update) {
+                        let commands = Self::extract_available_commands(update);
+                        Self::cache_available_commands(
+                            &self.slash_commands_by_directory,
+                            &self.slash_commands_by_session,
+                            directory,
+                            Some(session_id),
+                            commands,
+                        )
+                        .await;
+                        continue;
+                    }
                     if Self::is_plan_update(&session_update) {
                         let Some(entries) = Self::extract_plan_entries(update) else {
                             warn!(
@@ -2213,6 +2387,8 @@ impl AiAgent for AcpAgent {
         let cached_sessions = self.cached_sessions.clone();
         let metadata_by_directory = self.metadata_by_directory.clone();
         let metadata_by_session = self.metadata_by_session.clone();
+        let slash_commands_by_directory = self.slash_commands_by_directory.clone();
+        let slash_commands_by_session = self.slash_commands_by_session.clone();
 
         let _ = tx.send(Ok(AiEvent::MessageUpdated {
             message_id: user_message_id.clone(),
@@ -2375,6 +2551,22 @@ impl AiAgent for AcpAgent {
                                     &metadata_snapshot,
                                     &provider_id,
                                 ),
+                            }));
+                            continue;
+                        }
+                        if Self::is_available_commands_update(&session_update) {
+                            let commands = Self::extract_available_commands(update);
+                            Self::cache_available_commands(
+                                &slash_commands_by_directory,
+                                &slash_commands_by_session,
+                                &cache_directory,
+                                Some(&cache_session_id),
+                                commands.clone(),
+                            )
+                            .await;
+                            let _ = tx.send(Ok(AiEvent::SlashCommandsUpdated {
+                                session_id: cache_session_id.clone(),
+                                commands,
                             }));
                             continue;
                         }
@@ -3179,12 +3371,12 @@ impl AiAgent for AcpAgent {
         Ok(agents)
     }
 
-    async fn list_slash_commands(&self, _directory: &str) -> Result<Vec<AiSlashCommand>, String> {
-        Ok(vec![AiSlashCommand {
-            name: "new".to_string(),
-            description: "新建会话".to_string(),
-            action: "client".to_string(),
-        }])
+    async fn list_slash_commands(
+        &self,
+        directory: &str,
+        session_id: Option<&str>,
+    ) -> Result<Vec<AiSlashCommand>, String> {
+        Ok(self.slash_commands_for(directory, session_id).await)
     }
 
     async fn reply_question(
@@ -3224,7 +3416,8 @@ impl AiAgent for AcpAgent {
 #[cfg(test)]
 mod tests {
     use super::{AcpAgent, AcpBackendProfile, AcpPlanEntry, AcpSessionSummary};
-    use crate::ai::{AiImagePart, AiSession};
+    use crate::ai::codex_manager::CodexAppServerManager;
+    use crate::ai::{AiImagePart, AiSession, AiSlashCommand};
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::Mutex;
@@ -3253,6 +3446,128 @@ mod tests {
         assert!(AcpAgent::is_terminal_update("foo_completed", ""));
         assert!(AcpAgent::is_terminal_update("", "done"));
         assert!(!AcpAgent::is_terminal_update("agent_message_chunk", ""));
+    }
+
+    #[test]
+    fn extract_available_commands_should_parse_common_shapes_and_input_hint() {
+        let update = json!({
+            "availableCommands": [
+                {
+                    "name": "/build",
+                    "description": "构建项目",
+                    "input": { "hint": "--release" }
+                }
+            ],
+            "available_commands": [
+                {
+                    "name": "test",
+                    "description": "运行测试",
+                    "input_hint": "--unit"
+                }
+            ],
+            "content": {
+                "commands": {
+                    "deploy": {
+                        "description": "发布",
+                        "input": { "hint": "--prod" }
+                    },
+                    "/lint": {
+                        "description": "静态检查",
+                        "inputHint": "--fix"
+                    }
+                }
+            }
+        });
+
+        let commands = AcpAgent::extract_available_commands(&update);
+        assert_eq!(commands.len(), 4);
+
+        let find = |name: &str| commands.iter().find(|command| command.name == name);
+        assert_eq!(
+            find("build").and_then(|command| command.input_hint.as_deref()),
+            Some("--release")
+        );
+        assert_eq!(
+            find("test").and_then(|command| command.input_hint.as_deref()),
+            Some("--unit")
+        );
+        assert_eq!(
+            find("deploy").and_then(|command| command.input_hint.as_deref()),
+            Some("--prod")
+        );
+        assert_eq!(
+            find("lint").and_then(|command| command.input_hint.as_deref()),
+            Some("--fix")
+        );
+    }
+
+    #[test]
+    fn extract_available_commands_should_dedup_case_insensitive_with_latest_overwrite() {
+        let update = json!({
+            "availableCommands": [
+                { "name": "Build", "description": "旧描述" },
+                { "name": "build", "description": "新描述", "input_hint": "--release" }
+            ],
+            "content": {
+                "available_commands": [
+                    { "name": "BUILD", "description": "最终描述", "input": { "hint": "--fast" } }
+                ]
+            }
+        });
+
+        let commands = AcpAgent::extract_available_commands(&update);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name, "BUILD");
+        assert_eq!(commands[0].description, "最终描述");
+        assert_eq!(commands[0].input_hint.as_deref(), Some("--fast"));
+    }
+
+    #[tokio::test]
+    async fn slash_commands_for_should_prefer_session_cache_then_fallback_directory() {
+        let manager = Arc::new(CodexAppServerManager::new(std::env::temp_dir()));
+        let agent = AcpAgent::new(manager, AcpBackendProfile::copilot());
+        let directory = "/tmp/tidyflow";
+
+        AcpAgent::cache_available_commands(
+            &agent.slash_commands_by_directory,
+            &agent.slash_commands_by_session,
+            directory,
+            None,
+            vec![AiSlashCommand {
+                name: "build".to_string(),
+                description: "目录命令".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("--release".to_string()),
+            }],
+        )
+        .await;
+
+        let fallback = agent.slash_commands_for(directory, Some("session-A")).await;
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].name, "build");
+
+        AcpAgent::cache_available_commands(
+            &agent.slash_commands_by_directory,
+            &agent.slash_commands_by_session,
+            directory,
+            Some("session-A"),
+            vec![AiSlashCommand {
+                name: "test".to_string(),
+                description: "会话命令".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("--unit".to_string()),
+            }],
+        )
+        .await;
+
+        let from_session = agent.slash_commands_for(directory, Some("session-A")).await;
+        assert_eq!(from_session.len(), 1);
+        assert_eq!(from_session[0].name, "test");
+        assert_eq!(from_session[0].input_hint.as_deref(), Some("--unit"));
+
+        let fallback_other_session = agent.slash_commands_for(directory, Some("session-B")).await;
+        assert_eq!(fallback_other_session.len(), 1);
+        assert_eq!(fallback_other_session[0].name, "test");
     }
 
     #[test]

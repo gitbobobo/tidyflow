@@ -1050,11 +1050,16 @@ impl AiAgent for ClaudeCodeAgent {
         ])
     }
 
-    async fn list_slash_commands(&self, _directory: &str) -> Result<Vec<AiSlashCommand>, String> {
+    async fn list_slash_commands(
+        &self,
+        _directory: &str,
+        _session_id: Option<&str>,
+    ) -> Result<Vec<AiSlashCommand>, String> {
         Ok(vec![AiSlashCommand {
             name: "new".to_string(),
             description: "新建会话".to_string(),
             action: "client".to_string(),
+            input_hint: None,
         }])
     }
 }

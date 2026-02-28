@@ -216,6 +216,9 @@ pub struct SlashCommandInfo {
     pub description: String,
     /// 命令执行方式："client"（前端本地执行）| "agent"（发送给 AI 代理）
     pub action: String,
+    /// 输入提示（可选），用于补全时插入参数模板
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_hint: Option<String>,
 }
 
 /// Question 选项

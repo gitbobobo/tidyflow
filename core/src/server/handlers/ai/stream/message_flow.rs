@@ -96,6 +96,42 @@ async fn resolve_selection_hint_for_done_with_timeout(
     }
 }
 
+fn map_slash_command_for_wire(
+    command: crate::ai::AiSlashCommand,
+) -> crate::server::protocol::ai::SlashCommandInfo {
+    crate::server::protocol::ai::SlashCommandInfo {
+        name: command.name,
+        description: command.description,
+        action: command.action,
+        input_hint: command.input_hint,
+    }
+}
+
+fn map_slash_commands_for_wire(
+    commands: Vec<crate::ai::AiSlashCommand>,
+) -> Vec<crate::server::protocol::ai::SlashCommandInfo> {
+    commands
+        .into_iter()
+        .map(map_slash_command_for_wire)
+        .collect::<Vec<_>>()
+}
+
+fn build_slash_commands_update_message(
+    project_name: String,
+    workspace_name: String,
+    ai_tool: String,
+    session_id: String,
+    commands: Vec<crate::ai::AiSlashCommand>,
+) -> ServerMessage {
+    ServerMessage::AISlashCommandsUpdate {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        commands: map_slash_commands_for_wire(commands),
+    }
+}
+
 pub(crate) async fn handle_ai_chat_start(
     msg: &ClientMessage,
     socket: &mut WebSocket,
@@ -549,6 +585,26 @@ pub(crate) async fn handle_ai_chat_send(
                                                 })
                                                 .collect::<Vec<_>>(),
                                         },
+                                        &mut emit_state,
+                                    )
+                                    .await;
+                                    true
+                                }
+                                AiEvent::SlashCommandsUpdated {
+                                    session_id: event_session_id,
+                                    commands,
+                                } => {
+                                    let _ = emit_server_message_with_state(
+                                        &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
+                                        build_slash_commands_update_message(
+                                            project_name.clone(),
+                                            workspace_name.clone(),
+                                            ai_tool.clone(),
+                                            event_session_id,
+                                            commands,
+                                        ),
                                         &mut emit_state,
                                     )
                                     .await;
@@ -1013,6 +1069,26 @@ pub(crate) async fn handle_ai_chat_command(
                                     .await;
                                     true
                                 }
+                                AiEvent::SlashCommandsUpdated {
+                                    session_id: event_session_id,
+                                    commands,
+                                } => {
+                                    let _ = emit_server_message_with_state(
+                                        &output_tx,
+                                        task_broadcast_tx,
+                                        origin_conn_id,
+                                        build_slash_commands_update_message(
+                                            project_name.clone(),
+                                            workspace_name.clone(),
+                                            ai_tool.clone(),
+                                            event_session_id,
+                                            commands,
+                                        ),
+                                        &mut emit_state,
+                                    )
+                                    .await;
+                                    true
+                                }
                                 AiEvent::Error { message } => {
                                     status_store_cloned.set_status_with_meta(
                                         status_meta_cloned.clone(),
@@ -1125,4 +1201,70 @@ pub(crate) async fn handle_ai_chat_command(
     });
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_slash_commands_update_message, map_slash_commands_for_wire};
+    use crate::ai::AiSlashCommand;
+    use crate::server::protocol::ServerMessage;
+
+    #[test]
+    fn map_slash_commands_for_wire_should_keep_input_hint() {
+        let mapped = map_slash_commands_for_wire(vec![
+            AiSlashCommand {
+                name: "build".to_string(),
+                description: "构建项目".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("--release".to_string()),
+            },
+            AiSlashCommand {
+                name: "new".to_string(),
+                description: "新建会话".to_string(),
+                action: "client".to_string(),
+                input_hint: None,
+            },
+        ]);
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].name, "build");
+        assert_eq!(mapped[0].input_hint.as_deref(), Some("--release"));
+        assert_eq!(mapped[1].name, "new");
+        assert_eq!(mapped[1].input_hint, None);
+    }
+
+    #[test]
+    fn build_slash_commands_update_message_should_map_event_payload() {
+        let message = build_slash_commands_update_message(
+            "tidyflow".to_string(),
+            "default".to_string(),
+            "codex".to_string(),
+            "session-1".to_string(),
+            vec![AiSlashCommand {
+                name: "build".to_string(),
+                description: "构建项目".to_string(),
+                action: "agent".to_string(),
+                input_hint: Some("--release".to_string()),
+            }],
+        );
+
+        match message {
+            ServerMessage::AISlashCommandsUpdate {
+                project_name,
+                workspace_name,
+                ai_tool,
+                session_id,
+                commands,
+            } => {
+                assert_eq!(project_name, "tidyflow");
+                assert_eq!(workspace_name, "default");
+                assert_eq!(ai_tool, "codex");
+                assert_eq!(session_id, "session-1");
+                assert_eq!(commands.len(), 1);
+                assert_eq!(commands[0].name, "build");
+                assert_eq!(commands[0].input_hint.as_deref(), Some("--release"));
+            }
+            _ => panic!("expected ai_slash_commands_update message"),
+        }
+    }
 }

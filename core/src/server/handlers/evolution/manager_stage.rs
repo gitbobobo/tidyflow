@@ -833,6 +833,7 @@ impl EvolutionManager {
                     }
                     crate::ai::AiEvent::QuestionCleared { .. } => {}
                     crate::ai::AiEvent::SessionConfigOptionsUpdated { .. } => {}
+                    crate::ai::AiEvent::SlashCommandsUpdated { .. } => {}
                 },
                 Ok(Some(Err(err))) => return Err(err),
                 Ok(None) => break,

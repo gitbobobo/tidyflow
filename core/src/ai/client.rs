@@ -2414,7 +2414,11 @@ impl AiAgent for OpenCodeAgent {
             .collect())
     }
 
-    async fn list_slash_commands(&self, directory: &str) -> Result<Vec<AiSlashCommand>, String> {
+    async fn list_slash_commands(
+        &self,
+        directory: &str,
+        _session_id: Option<&str>,
+    ) -> Result<Vec<AiSlashCommand>, String> {
         let client = OpenCodeClient::from_manager(&self.manager);
         let commands = client
             .list_commands(directory)
@@ -2432,6 +2436,7 @@ impl AiAgent for OpenCodeAgent {
                     // OpenCode /command 返回的是可在会话内执行的命令，
                     // 前端按 agent 命令处理（写入 `/xxx` 后发送）。
                     action: "agent".to_string(),
+                    input_hint: None,
                 }
             })
             .collect())

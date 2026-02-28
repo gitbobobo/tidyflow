@@ -585,6 +585,8 @@ pub enum ClientMessage {
         project_name: String,
         workspace_name: String,
         ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     #[serde(rename = "ai_session_config_options")]
     AISessionConfigOptions {
@@ -1310,6 +1312,16 @@ pub enum ServerMessage {
         project_name: String,
         workspace_name: String,
         ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        commands: Vec<ai::SlashCommandInfo>,
+    },
+    #[serde(rename = "ai_slash_commands_update")]
+    AISlashCommandsUpdate {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
         commands: Vec<ai::SlashCommandInfo>,
     },
     #[serde(rename = "ai_session_config_options")]
