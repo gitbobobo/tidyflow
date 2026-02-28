@@ -364,6 +364,57 @@ extension AppState {
     private static let evolutionDefaultProfilesKeyV2 = "evolution_default_profiles_v2"
     private static let evolutionDefaultProfilesKeyV1 = "evolution_default_profiles_v1"
 
+    private static func evolutionStageOrder() -> [String] {
+        [
+            "direction",
+            "plan",
+            "implement_general",
+            "implement_visual",
+            "implement_advanced",
+            "verify",
+            "judge",
+            "report",
+        ]
+    }
+
+    private static func expandLegacyEvolutionStages(_ stage: String) -> [String] {
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "implement" {
+            return ["implement_general", "implement_visual"]
+        }
+        return [normalized]
+    }
+
+    static func normalizedEvolutionEditableProfiles(
+        _ profiles: [EvolutionEditableProfile]
+    ) -> [EvolutionEditableProfile] {
+        if profiles.isEmpty {
+            return defaultEvolutionEditableProfiles()
+        }
+
+        let validStages = Set(evolutionStageOrder())
+        var byStage: [String: EvolutionEditableProfile] = [:]
+        for profile in profiles {
+            let mappedStages = expandLegacyEvolutionStages(profile.stage)
+            for stage in mappedStages where validStages.contains(stage) {
+                if byStage[stage] != nil { continue }
+                byStage[stage] = EvolutionEditableProfile(
+                    id: stage,
+                    stage: stage,
+                    aiTool: profile.aiTool,
+                    mode: profile.mode,
+                    providerID: profile.providerID,
+                    modelID: profile.modelID,
+                    configOptions: profile.configOptions
+                )
+            }
+        }
+
+        return defaultEvolutionEditableProfiles().map { item in
+            byStage[item.stage] ?? item
+        }
+    }
+
     /// 从 UserDefaults 加载 Evolution 全局默认配置
     func loadEvolutionDefaultProfiles() {
         if let data = UserDefaults.standard.data(forKey: Self.evolutionDefaultProfilesKeyV2),
@@ -385,7 +436,7 @@ extension AppState {
                 )
             }
             if !loaded.isEmpty {
-                evolutionDefaultProfiles = loaded
+                evolutionDefaultProfiles = Self.normalizedEvolutionEditableProfiles(loaded)
                 return
             }
         }
@@ -408,8 +459,9 @@ extension AppState {
                 )
             }
             if !loaded.isEmpty {
-                evolutionDefaultProfiles = loaded
-                saveEvolutionDefaultProfiles(loaded)
+                let normalized = Self.normalizedEvolutionEditableProfiles(loaded)
+                evolutionDefaultProfiles = normalized
+                saveEvolutionDefaultProfiles(normalized)
                 return
             }
         }
@@ -419,8 +471,9 @@ extension AppState {
 
     /// 保存 Evolution 全局默认配置到 UserDefaults
     func saveEvolutionDefaultProfiles(_ profiles: [EvolutionEditableProfile]) {
-        evolutionDefaultProfiles = profiles
-        let jsonArray: [[String: Any]] = profiles.map { profile in
+        let normalized = Self.normalizedEvolutionEditableProfiles(profiles)
+        evolutionDefaultProfiles = normalized
+        let jsonArray: [[String: Any]] = normalized.map { profile in
             [
                 "id": profile.id,
                 "stage": profile.stage,
@@ -438,7 +491,7 @@ extension AppState {
 
     /// 生成默认的每个 Stage EvolutionEditableProfile
     static func defaultEvolutionEditableProfiles() -> [EvolutionEditableProfile] {
-        ["direction", "plan", "implement", "verify", "judge", "report"].map { stage in
+        evolutionStageOrder().map { stage in
             EvolutionEditableProfile(id: stage, stage: stage, aiTool: .codex, mode: "", providerID: "", modelID: "")
         }
     }

@@ -153,7 +153,12 @@ extension AppState {
 
     func updateEvolutionAgentProfile(project: String, workspace: String, profiles: [EvolutionStageProfileInfoV2]) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        wsClient.requestEvoUpdateAgentProfile(project: project, workspace: normalizedWorkspace, stageProfiles: profiles)
+        let normalizedProfiles = Self.normalizedEvolutionProfiles(profiles)
+        wsClient.requestEvoUpdateAgentProfile(
+            project: project,
+            workspace: normalizedWorkspace,
+            stageProfiles: normalizedProfiles
+        )
     }
 
     func startEvolution(
@@ -165,12 +170,13 @@ extension AppState {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
         evolutionPendingActionByWorkspace[key] = "start"
+        let normalizedProfiles = Self.normalizedEvolutionProfiles(profiles)
         wsClient.requestEvoStartWorkspace(
             project: project,
             workspace: normalizedWorkspace,
             priority: 0,
             loopRoundLimit: loopRoundLimit,
-            stageProfiles: profiles
+            stageProfiles: normalizedProfiles
         )
     }
 
@@ -282,11 +288,39 @@ extension AppState {
         if let profiles = evolutionProfilesFromClientSettings(project: project, workspace: normalizedWorkspace) {
             return Self.normalizedEvolutionProfiles(profiles)
         }
+        if !evolutionDefaultProfiles.isEmpty {
+            let defaults = evolutionDefaultProfiles.map { item in
+                let model: EvolutionModelSelectionV2? = {
+                    guard !item.providerID.isEmpty, !item.modelID.isEmpty else { return nil }
+                    return EvolutionModelSelectionV2(
+                        providerID: item.providerID,
+                        modelID: item.modelID
+                    )
+                }()
+                return EvolutionStageProfileInfoV2(
+                    stage: item.stage,
+                    aiTool: item.aiTool,
+                    mode: item.mode.isEmpty ? nil : item.mode,
+                    model: model,
+                    configOptions: item.configOptions
+                )
+            }
+            return Self.normalizedEvolutionProfiles(defaults)
+        }
         return Self.defaultEvolutionProfiles()
     }
 
     static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {
-        ["direction", "plan", "implement", "verify", "judge", "report"].map {
+        [
+            "direction",
+            "plan",
+            "implement_general",
+            "implement_visual",
+            "implement_advanced",
+            "verify",
+            "judge",
+            "report",
+        ].map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil, configOptions: [:])
         }
     }
@@ -296,18 +330,27 @@ extension AppState {
             return defaultEvolutionProfiles()
         }
 
+        let validStages = Set(defaultEvolutionProfiles().map { $0.stage })
         var byStage: [String: EvolutionStageProfileInfoV2] = [:]
         for profile in profiles {
             let stage = profile.stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !stage.isEmpty else { continue }
-            if byStage[stage] != nil { continue }
-            byStage[stage] = EvolutionStageProfileInfoV2(
-                stage: stage,
-                aiTool: profile.aiTool,
-                mode: profile.mode,
-                model: profile.model,
-                configOptions: profile.configOptions
-            )
+            let mappedStages: [String]
+            if stage == "implement" {
+                mappedStages = ["implement_general", "implement_visual"]
+            } else {
+                mappedStages = [stage]
+            }
+            for mappedStage in mappedStages where validStages.contains(mappedStage) {
+                if byStage[mappedStage] != nil { continue }
+                byStage[mappedStage] = EvolutionStageProfileInfoV2(
+                    stage: mappedStage,
+                    aiTool: profile.aiTool,
+                    mode: profile.mode,
+                    model: profile.model,
+                    configOptions: profile.configOptions
+                )
+            }
         }
 
         return defaultEvolutionProfiles().map { item in
