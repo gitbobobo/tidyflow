@@ -61,7 +61,7 @@ pub struct SessionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartInfo {
     pub id: String,
-    /// "text" | "reasoning" | "tool" | "file"
+    /// "text" | "reasoning" | "tool" | "file" | "plan"
     pub part_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,

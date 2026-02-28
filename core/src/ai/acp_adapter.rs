@@ -62,6 +62,20 @@ struct CachedSessionRecord {
     messages: Vec<AiMessage>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AcpPlanEntry {
+    content: String,
+    status: String,
+    priority: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AcpPlanSnapshot {
+    revision: u64,
+    updated_at_ms: i64,
+    entries: Vec<AcpPlanEntry>,
+}
+
 pub struct AcpAgent {
     client: AcpClient,
     profile: AcpBackendProfile,
@@ -74,6 +88,7 @@ pub struct AcpAgent {
 
 impl AcpAgent {
     const SESSION_LOAD_TIMEOUT_SECS: u64 = 4;
+    const PLAN_HISTORY_LIMIT: usize = 20;
 
     pub fn new(manager: Arc<CodexAppServerManager>, profile: AcpBackendProfile) -> Self {
         Self {
@@ -355,10 +370,154 @@ impl AcpAgent {
         }
     }
 
+    fn normalize_optional_string(value: Option<&Value>) -> Option<String> {
+        value
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string())
+    }
+
+    fn parse_plan_entry(value: &Value) -> Option<AcpPlanEntry> {
+        let obj = value.as_object()?;
+        let content = Self::normalize_optional_string(obj.get("content"))?;
+        let status = Self::normalize_optional_string(obj.get("status"))?;
+        let priority = Self::normalize_optional_string(obj.get("priority"));
+        Some(AcpPlanEntry {
+            content,
+            status,
+            priority,
+        })
+    }
+
+    fn extract_plan_entries(update: &Value) -> Option<Vec<AcpPlanEntry>> {
+        let entries_value = update
+            .get("entries")
+            .or_else(|| update.get("content").and_then(|v| v.get("entries")))?;
+        let items = entries_value.as_array()?;
+        Some(
+            items
+                .iter()
+                .filter_map(Self::parse_plan_entry)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn is_plan_update(session_update: &str) -> bool {
+        Self::normalized_update_token(session_update) == "plan"
+    }
+
+    fn apply_plan_update(
+        current: &mut Option<AcpPlanSnapshot>,
+        history: &mut Vec<AcpPlanSnapshot>,
+        revision: &mut u64,
+        entries: Vec<AcpPlanEntry>,
+    ) -> AcpPlanSnapshot {
+        if let Some(previous) = current.take() {
+            history.push(previous);
+            if history.len() > Self::PLAN_HISTORY_LIMIT {
+                let overflow = history.len() - Self::PLAN_HISTORY_LIMIT;
+                history.drain(0..overflow);
+            }
+        }
+        *revision = revision.saturating_add(1);
+        let snapshot = AcpPlanSnapshot {
+            revision: *revision,
+            updated_at_ms: Self::now_ms(),
+            entries,
+        };
+        *current = Some(snapshot.clone());
+        snapshot
+    }
+
+    fn plan_entries_to_value(entries: &[AcpPlanEntry]) -> Value {
+        Value::Array(
+            entries
+                .iter()
+                .map(|entry| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("content".to_string(), Value::String(entry.content.clone()));
+                    obj.insert("status".to_string(), Value::String(entry.status.clone()));
+                    if let Some(priority) = entry.priority.clone() {
+                        obj.insert("priority".to_string(), Value::String(priority));
+                    }
+                    Value::Object(obj)
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn plan_snapshot_to_value(snapshot: &AcpPlanSnapshot) -> Value {
+        serde_json::json!({
+            "revision": snapshot.revision,
+            "updated_at_ms": snapshot.updated_at_ms,
+            "entries": Self::plan_entries_to_value(&snapshot.entries),
+        })
+    }
+
+    fn build_plan_source(current: &AcpPlanSnapshot, history: &[AcpPlanSnapshot]) -> Value {
+        let history_values = history
+            .iter()
+            .map(Self::plan_snapshot_to_value)
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "vendor": "acp",
+            "item_type": "plan",
+            "protocol": "agent-plan",
+            "revision": current.revision,
+            "updated_at_ms": current.updated_at_ms,
+            "entries": Self::plan_entries_to_value(&current.entries),
+            "history": history_values,
+        })
+    }
+
+    fn build_plan_part(
+        message_id: &str,
+        current: &AcpPlanSnapshot,
+        history: &[AcpPlanSnapshot],
+    ) -> AiPart {
+        AiPart {
+            id: format!("{}-plan", message_id),
+            part_type: "plan".to_string(),
+            source: Some(Self::build_plan_source(current, history)),
+            ..Default::default()
+        }
+    }
+
+    fn flush_plan_snapshot_for_history(
+        messages: &mut Vec<AiMessage>,
+        message_id_prefix: &str,
+        next_message_index: &mut u64,
+        plan_current: &mut Option<AcpPlanSnapshot>,
+        plan_history: &mut Vec<AcpPlanSnapshot>,
+    ) {
+        let Some(current) = plan_current.take() else {
+            return;
+        };
+        *next_message_index = next_message_index.saturating_add(1);
+        let message_id = format!(
+            "{}-assistant-plan-{}",
+            message_id_prefix, next_message_index
+        );
+        let plan_part = Self::build_plan_part(&message_id, &current, plan_history);
+        messages.push(AiMessage {
+            id: message_id,
+            role: "assistant".to_string(),
+            created_at: Some(Self::now_ms()),
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts: vec![plan_part],
+        });
+        plan_history.clear();
+    }
+
     fn build_cached_assistant_message(
         message_id: String,
         reasoning_text: String,
         answer_text: String,
+        plan_current: Option<AcpPlanSnapshot>,
+        plan_history: Vec<AcpPlanSnapshot>,
     ) -> Option<AiMessage> {
         let mut parts = Vec::new();
         if !reasoning_text.is_empty() {
@@ -374,6 +533,9 @@ impl AcpAgent {
                 format!("{}-text", message_id),
                 answer_text,
             ));
+        }
+        if let Some(current) = plan_current.as_ref() {
+            parts.push(Self::build_plan_part(&message_id, current, &plan_history));
         }
         if parts.is_empty() {
             return None;
@@ -618,13 +780,17 @@ impl AcpAgent {
                     for file_ref in files {
                         if let Some((uri, name)) = Self::resolve_resource_link(directory, &file_ref)
                         {
-                            prompt_parts.push(AcpClient::build_prompt_resource_link_part(uri, name));
+                            prompt_parts
+                                .push(AcpClient::build_prompt_resource_link_part(uri, name));
                         } else {
                             unresolved.push(file_ref);
                         }
                     }
                     if !unresolved.is_empty() {
-                        fallback_blocks.push(format!("文件引用（无法解析为 resource_link）：\n{}", unresolved.join("\n")));
+                        fallback_blocks.push(format!(
+                            "文件引用（无法解析为 resource_link）：\n{}",
+                            unresolved.join("\n")
+                        ));
                     }
                 } else {
                     fallback_blocks.push(format!("文件引用：\n{}", files.join("\n")));
@@ -879,7 +1045,10 @@ impl AcpAgent {
             "cancelled",
             "error",
         ];
-        if !ALLOWED.iter().any(|allowed| allowed == &stop_reason.as_str()) {
+        if !ALLOWED
+            .iter()
+            .any(|allowed| allowed == &stop_reason.as_str())
+        {
             return Err(format!(
                 "ACP session/prompt returned unsupported stopReason: {}",
                 stop_reason
@@ -1022,13 +1191,33 @@ impl AcpAgent {
         let load_fut = self.client.session_load(directory, session_id);
         tokio::pin!(load_fut);
         let mut messages = Vec::<AiMessage>::new();
+        let mut history_plan_current: Option<AcpPlanSnapshot> = None;
+        let mut history_plan_history: Vec<AcpPlanSnapshot> = Vec::new();
+        let mut history_plan_revision: u64 = 0;
+        let mut history_plan_message_index: u64 = 0;
 
         loop {
             tokio::select! {
                 load_result = &mut load_fut => {
                     match load_result {
-                        Ok(metadata) => return Ok((messages, metadata)),
+                        Ok(metadata) => {
+                            Self::flush_plan_snapshot_for_history(
+                                &mut messages,
+                                &self.profile.message_id_prefix,
+                                &mut history_plan_message_index,
+                                &mut history_plan_current,
+                                &mut history_plan_history,
+                            );
+                            return Ok((messages, metadata));
+                        }
                         Err(err) if Self::is_session_already_loaded(&err) => {
+                            Self::flush_plan_snapshot_for_history(
+                                &mut messages,
+                                &self.profile.message_id_prefix,
+                                &mut history_plan_message_index,
+                                &mut history_plan_current,
+                                &mut history_plan_history,
+                            );
                             let cached = self
                                 .metadata_by_directory
                                 .lock()
@@ -1052,7 +1241,33 @@ impl AcpAgent {
                         continue;
                     }
                     let Some(update) = params.get("update") else { continue };
-                    let Some((session_update, _content_type, text)) = Self::extract_update(update) else { continue };
+                    let Some((session_update, content_type, text)) = Self::extract_update(update) else { continue };
+                    if Self::is_plan_update(&session_update) {
+                        let Some(entries) = Self::extract_plan_entries(update) else {
+                            warn!(
+                                "{}: plan update missing entries array in history, ignore: {}",
+                                self.profile.tool_id, session_update
+                            );
+                            continue;
+                        };
+                        Self::apply_plan_update(
+                            &mut history_plan_current,
+                            &mut history_plan_history,
+                            &mut history_plan_revision,
+                            entries,
+                        );
+                        continue;
+                    }
+                    if Self::is_terminal_update(&session_update, &content_type) {
+                        Self::flush_plan_snapshot_for_history(
+                            &mut messages,
+                            &self.profile.message_id_prefix,
+                            &mut history_plan_message_index,
+                            &mut history_plan_current,
+                            &mut history_plan_history,
+                        );
+                        continue;
+                    }
                     let Some((part_type, should_emit)) =
                         Self::map_update_to_output(&session_update)
                     else {
@@ -1179,6 +1394,9 @@ impl AiAgent for AcpAgent {
         tokio::spawn(async move {
             let mut buffered_assistant_reasoning = String::new();
             let mut buffered_assistant_text = String::new();
+            let mut buffered_plan_current: Option<AcpPlanSnapshot> = None;
+            let mut buffered_plan_history: Vec<AcpPlanSnapshot> = Vec::new();
+            let mut buffered_plan_revision: u64 = 0;
             let mut assistant_opened = false;
             let mut tool_part_ids = HashMap::<String, String>::new();
             let mut request_completed = false;
@@ -1218,7 +1436,7 @@ impl AiAgent for AcpAgent {
                 if request_completed && terminal_seen && !done_emitted {
                     let Some(reason) = stop_reason.clone() else {
                         let _ = tx.send(Err(
-                            "ACP request completed but stopReason is unavailable".to_string(),
+                            "ACP request completed but stopReason is unavailable".to_string()
                         ));
                         break;
                     };
@@ -1265,6 +1483,39 @@ impl AiAgent for AcpAgent {
                         }
                         let Some(update) = params.get("update") else { continue };
                         let Some((session_update, content_type, text)) = Self::extract_update(update) else { continue };
+
+                        if Self::is_plan_update(&session_update) {
+                            let Some(entries) = Self::extract_plan_entries(update) else {
+                                warn!(
+                                    "{}: plan update missing entries array, ignore: {}",
+                                    tool_id, session_update
+                                );
+                                continue;
+                            };
+                            let snapshot = Self::apply_plan_update(
+                                &mut buffered_plan_current,
+                                &mut buffered_plan_history,
+                                &mut buffered_plan_revision,
+                                entries,
+                            );
+                            if !assistant_opened {
+                                assistant_opened = true;
+                                let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                    message_id: assistant_message_id.clone(),
+                                    role: "assistant".to_string(),
+                                    selection_hint: None,
+                                }));
+                            }
+                            let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                message_id: assistant_message_id.clone(),
+                                part: Self::build_plan_part(
+                                    &assistant_message_id,
+                                    &snapshot,
+                                    &buffered_plan_history,
+                                ),
+                            }));
+                            continue;
+                        }
 
                         if Self::is_error_update(&session_update, &content_type) {
                             let err_msg = if text.is_empty() {
@@ -1553,13 +1804,19 @@ impl AiAgent for AcpAgent {
                 }
             }
 
-            Self::reject_pending_permissions_for_session(&pending_permissions, &client, &session_id)
-                .await;
+            Self::reject_pending_permissions_for_session(
+                &pending_permissions,
+                &client,
+                &session_id,
+            )
+            .await;
 
             if let Some(cached_assistant) = Self::build_cached_assistant_message(
                 assistant_message_id.clone(),
                 buffered_assistant_reasoning,
                 buffered_assistant_text,
+                buffered_plan_current,
+                buffered_plan_history,
             ) {
                 Self::append_cached_message_in_map(
                     &cached_sessions,
@@ -1888,7 +2145,7 @@ impl AiAgent for AcpAgent {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcpAgent, AcpBackendProfile, AcpSessionSummary};
+    use super::{AcpAgent, AcpBackendProfile, AcpPlanEntry, AcpSessionSummary};
     use crate::ai::{AiImagePart, AiSession};
     use serde_json::json;
 
@@ -1919,6 +2176,251 @@ mod tests {
     }
 
     #[test]
+    fn extract_plan_entries_should_parse_top_level_entries() {
+        let update = json!({
+            "sessionUpdate": "plan",
+            "entries": [
+                { "content": "实现解析器", "status": "in_progress", "priority": "high" },
+                { "content": "补测试", "status": "pending" }
+            ]
+        });
+        let entries = AcpAgent::extract_plan_entries(&update).expect("entries should parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "实现解析器");
+        assert_eq!(entries[0].status, "in_progress");
+        assert_eq!(entries[0].priority.as_deref(), Some("high"));
+        assert_eq!(entries[1].content, "补测试");
+        assert_eq!(entries[1].status, "pending");
+        assert_eq!(entries[1].priority, None);
+    }
+
+    #[test]
+    fn extract_plan_entries_should_parse_content_entries() {
+        let update = json!({
+            "sessionUpdate": "plan",
+            "content": {
+                "entries": [
+                    { "content": "A", "status": "completed" }
+                ]
+            }
+        });
+        let entries = AcpAgent::extract_plan_entries(&update).expect("entries should parse");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].content, "A");
+        assert_eq!(entries[0].status, "completed");
+    }
+
+    #[test]
+    fn extract_plan_entries_should_allow_empty_entries() {
+        let update = json!({
+            "sessionUpdate": "plan",
+            "entries": []
+        });
+        let entries = AcpAgent::extract_plan_entries(&update).expect("entries should parse");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn extract_plan_entries_should_skip_invalid_entries() {
+        let update = json!({
+            "sessionUpdate": "plan",
+            "entries": [
+                { "content": "有效", "status": "pending" },
+                { "content": "", "status": "pending" },
+                { "status": "pending" },
+                { "content": "缺状态" }
+            ]
+        });
+        let entries = AcpAgent::extract_plan_entries(&update).expect("entries should parse");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].content, "有效");
+        assert_eq!(entries[0].status, "pending");
+    }
+
+    #[test]
+    fn apply_plan_update_should_replace_current_and_keep_history() {
+        let mut current = None;
+        let mut history = Vec::new();
+        let mut revision = 0;
+
+        let first = AcpAgent::apply_plan_update(
+            &mut current,
+            &mut history,
+            &mut revision,
+            vec![AcpPlanEntry {
+                content: "步骤一".to_string(),
+                status: "pending".to_string(),
+                priority: None,
+            }],
+        );
+        assert_eq!(first.revision, 1);
+        assert!(history.is_empty());
+
+        let second = AcpAgent::apply_plan_update(
+            &mut current,
+            &mut history,
+            &mut revision,
+            vec![AcpPlanEntry {
+                content: "步骤一".to_string(),
+                status: "completed".to_string(),
+                priority: Some("high".to_string()),
+            }],
+        );
+        assert_eq!(second.revision, 2);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].revision, 1);
+        assert_eq!(current.expect("current should exist").revision, 2);
+    }
+
+    #[test]
+    fn apply_plan_update_should_cap_history_size() {
+        let mut current = None;
+        let mut history = Vec::new();
+        let mut revision = 0;
+
+        for index in 0..25 {
+            let status = if index % 2 == 0 {
+                "pending".to_string()
+            } else {
+                "in_progress".to_string()
+            };
+            AcpAgent::apply_plan_update(
+                &mut current,
+                &mut history,
+                &mut revision,
+                vec![AcpPlanEntry {
+                    content: format!("步骤{}", index + 1),
+                    status,
+                    priority: None,
+                }],
+            );
+        }
+
+        assert_eq!(revision, 25);
+        assert_eq!(history.len(), AcpAgent::PLAN_HISTORY_LIMIT);
+        assert_eq!(history.first().map(|item| item.revision), Some(5));
+        assert_eq!(history.last().map(|item| item.revision), Some(24));
+        assert_eq!(current.as_ref().map(|item| item.revision), Some(25));
+    }
+
+    #[test]
+    fn build_plan_source_should_include_current_and_history() {
+        let mut current = None;
+        let mut history = Vec::new();
+        let mut revision = 0;
+
+        AcpAgent::apply_plan_update(
+            &mut current,
+            &mut history,
+            &mut revision,
+            vec![AcpPlanEntry {
+                content: "实现解析器".to_string(),
+                status: "pending".to_string(),
+                priority: None,
+            }],
+        );
+        let latest = AcpAgent::apply_plan_update(
+            &mut current,
+            &mut history,
+            &mut revision,
+            vec![AcpPlanEntry {
+                content: "实现解析器".to_string(),
+                status: "in_progress".to_string(),
+                priority: Some("high".to_string()),
+            }],
+        );
+
+        let source = AcpAgent::build_plan_source(&latest, &history);
+        assert_eq!(source.get("vendor").and_then(|v| v.as_str()), Some("acp"));
+        assert_eq!(
+            source.get("item_type").and_then(|v| v.as_str()),
+            Some("plan")
+        );
+        assert_eq!(
+            source.get("protocol").and_then(|v| v.as_str()),
+            Some("agent-plan")
+        );
+        assert_eq!(source.get("revision").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(
+            source
+                .get("entries")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|entry| entry.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("in_progress")
+        );
+        assert_eq!(
+            source
+                .get("history")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len()),
+            Some(1)
+        );
+        assert_eq!(
+            source
+                .get("history")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|snapshot| snapshot.get("revision"))
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn flush_plan_snapshot_for_history_should_emit_plan_message() {
+        let mut messages = Vec::new();
+        let mut index = 0;
+        let mut current = Some(super::AcpPlanSnapshot {
+            revision: 2,
+            updated_at_ms: 200,
+            entries: vec![AcpPlanEntry {
+                content: "补测试".to_string(),
+                status: "in_progress".to_string(),
+                priority: None,
+            }],
+        });
+        let mut history = vec![super::AcpPlanSnapshot {
+            revision: 1,
+            updated_at_ms: 100,
+            entries: vec![AcpPlanEntry {
+                content: "补测试".to_string(),
+                status: "pending".to_string(),
+                priority: None,
+            }],
+        }];
+
+        AcpAgent::flush_plan_snapshot_for_history(
+            &mut messages,
+            "tidyflow",
+            &mut index,
+            &mut current,
+            &mut history,
+        );
+
+        assert_eq!(index, 1);
+        assert!(current.is_none());
+        assert!(history.is_empty());
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].parts.len(), 1);
+        assert_eq!(messages[0].parts[0].part_type, "plan");
+        let source = messages[0].parts[0]
+            .source
+            .as_ref()
+            .expect("plan source should exist");
+        assert_eq!(source.get("revision").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(
+            source
+                .get("history")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn compose_prompt_parts_should_build_native_contents_when_supported() {
         let parts = AcpAgent::compose_prompt_parts(
             "/tmp/workspace",
@@ -1936,10 +2438,7 @@ mod tests {
             true,
         );
 
-        assert_eq!(
-            parts[0].get("type").and_then(|v| v.as_str()),
-            Some("text")
-        );
+        assert_eq!(parts[0].get("type").and_then(|v| v.as_str()), Some("text"));
         assert_eq!(
             parts[0].get("text").and_then(|v| v.as_str()),
             Some("请分析这些内容")
@@ -1973,10 +2472,7 @@ mod tests {
         );
 
         assert_eq!(parts.len(), 1);
-        assert_eq!(
-            parts[0].get("type").and_then(|v| v.as_str()),
-            Some("text")
-        );
+        assert_eq!(parts[0].get("type").and_then(|v| v.as_str()), Some("text"));
         let text = parts[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
         assert!(text.contains("原始问题"));
         assert!(text.contains("文件引用："));
@@ -1991,8 +2487,9 @@ mod tests {
             "end_turn"
         );
         assert!(AcpAgent::parse_prompt_stop_reason(&json!({})).is_err());
-        assert!(AcpAgent::parse_prompt_stop_reason(&json!({ "stopReason": "custom_reason" }))
-            .is_err());
+        assert!(
+            AcpAgent::parse_prompt_stop_reason(&json!({ "stopReason": "custom_reason" })).is_err()
+        );
     }
 
     #[test]
@@ -2103,11 +2600,60 @@ mod tests {
             "assistant-1".to_string(),
             "思考".to_string(),
             "回答".to_string(),
+            None,
+            Vec::new(),
         )
         .expect("assistant message should exist");
         assert_eq!(message.role, "assistant");
         assert_eq!(message.parts.len(), 2);
         assert_eq!(message.parts[0].part_type, "reasoning");
         assert_eq!(message.parts[1].part_type, "text");
+    }
+
+    #[test]
+    fn build_cached_assistant_message_should_capture_plan_part() {
+        let message = AcpAgent::build_cached_assistant_message(
+            "assistant-2".to_string(),
+            String::new(),
+            String::new(),
+            Some(super::AcpPlanSnapshot {
+                revision: 2,
+                updated_at_ms: 123,
+                entries: vec![AcpPlanEntry {
+                    content: "实现计划卡".to_string(),
+                    status: "in_progress".to_string(),
+                    priority: Some("high".to_string()),
+                }],
+            }),
+            vec![super::AcpPlanSnapshot {
+                revision: 1,
+                updated_at_ms: 122,
+                entries: vec![AcpPlanEntry {
+                    content: "实现计划卡".to_string(),
+                    status: "pending".to_string(),
+                    priority: None,
+                }],
+            }],
+        )
+        .expect("assistant message should exist");
+        assert_eq!(message.role, "assistant");
+        assert_eq!(message.parts.len(), 1);
+        assert_eq!(message.parts[0].part_type, "plan");
+        let source = message.parts[0]
+            .source
+            .as_ref()
+            .expect("plan source should exist");
+        assert_eq!(
+            source.get("protocol").and_then(|v| v.as_str()),
+            Some("agent-plan")
+        );
+        assert_eq!(source.get("revision").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(
+            source
+                .get("history")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len()),
+            Some(1)
+        );
     }
 }

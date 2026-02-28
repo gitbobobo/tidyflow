@@ -71,7 +71,7 @@ pub enum AiEvent {
 #[derive(Debug, Clone, Default)]
 pub struct AiPart {
     pub id: String,
-    /// "text" | "reasoning" | "tool" | "file"
+    /// "text" | "reasoning" | "tool" | "file" | "plan"
     pub part_type: String,
     /// text/reasoning 的内容（全量）
     pub text: Option<String>,
