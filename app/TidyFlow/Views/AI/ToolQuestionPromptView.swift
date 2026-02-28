@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct ToolQuestionPromptOption: Identifiable {
-    var id: String { label }
+    var id: String { optionID ?? "\(label)|\(description)" }
+    let optionID: String?
     let label: String
     let description: String
 }

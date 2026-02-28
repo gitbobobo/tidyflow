@@ -401,10 +401,11 @@ struct MobileAIChatView: View {
             return
         }
 
+        let protocolAnswers = request.protocolAnswers(from: answers)
         appState.replyAIQuestion(
             requestId: request.id,
             sessionId: request.sessionId,
-            answers: answers
+            answers: protocolAnswers
         )
         appState.completeAIQuestionRequestLocally(requestId: request.id, answers: answers)
     }

@@ -1575,15 +1575,19 @@ struct ToolCardView: View {
     private func questionPromptItems(from invocation: AIToolInvocationState?) -> [ToolQuestionPromptItem] {
         if let pendingQuestion, !pendingQuestion.questions.isEmpty {
             return pendingQuestion.questions.map { item in
-                ToolQuestionPromptItem(
-                    question: item.question,
-                    header: item.header,
-                    options: item.options.map {
-                        ToolQuestionPromptOption(label: $0.label, description: $0.description)
-                    },
-                    multiple: item.multiple,
-                    custom: item.custom
-                )
+                    ToolQuestionPromptItem(
+                        question: item.question,
+                        header: item.header,
+                        options: item.options.map {
+                            ToolQuestionPromptOption(
+                                optionID: $0.optionID,
+                                label: $0.label,
+                                description: $0.description
+                            )
+                        },
+                        multiple: item.multiple,
+                        custom: item.custom
+                    )
             }
         }
         guard let invocation else { return [] }
@@ -1632,13 +1636,22 @@ struct ToolCardView: View {
                 guard !label.isEmpty else { return nil }
                 let description = (stringValue(option["description"]) ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                return ToolQuestionPromptOption(label: label, description: description)
+                let optionID = (
+                    stringValue(option["option_id"]) ??
+                    stringValue(option["optionId"]) ??
+                    stringValue(option["id"])
+                )?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return ToolQuestionPromptOption(
+                    optionID: optionID?.isEmpty == false ? optionID : nil,
+                    label: label,
+                    description: description
+                )
             }
         } else if let choiceArray = dict["choices"] as? [String] {
             options = choiceArray.compactMap { raw in
                 let label = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !label.isEmpty else { return nil }
-                return ToolQuestionPromptOption(label: label, description: "")
+                return ToolQuestionPromptOption(optionID: nil, label: label, description: "")
             }
         }
 

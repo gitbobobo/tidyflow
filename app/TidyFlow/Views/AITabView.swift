@@ -936,13 +936,14 @@ struct AITabView: View {
             return
         }
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty else { return }
+        let protocolAnswers = request.protocolAnswers(from: answers)
         appState.wsClient.requestAIQuestionReply(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
             aiTool: appState.aiChatTool,
             sessionId: request.sessionId,
             requestId: request.id,
-            answers: answers
+            answers: protocolAnswers
         )
         // 先本地收敛（关闭交互并回显答案），后端会再推送 ai_question_cleared 做最终一致。
         aiChatStore.completeQuestionRequestLocally(requestId: request.id, answers: answers)

@@ -137,10 +137,12 @@ enum AIPlanImplementationQuestion {
             header: "计划已就绪",
             options: [
                 AIQuestionOptionInfo(
+                    optionID: nil,
                     label: yesOption,
                     description: "切换到 Default 模式并开始编码"
                 ),
                 AIQuestionOptionInfo(
+                    optionID: nil,
                     label: noOption,
                     description: "继续完善计划，不开始实现"
                 ),

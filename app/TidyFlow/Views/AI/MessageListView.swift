@@ -453,7 +453,16 @@ struct MessageListView: View {
                   !label.isEmpty else { return nil }
             let description = ((option["description"] as? String) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return AIQuestionOptionInfo(label: label, description: description)
+            let optionID =
+                (option["option_id"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ??
+                (option["optionId"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return AIQuestionOptionInfo(
+                optionID: optionID?.isEmpty == false ? optionID : nil,
+                label: label,
+                description: description
+            )
         }
         let multiple = (dict["multiple"] as? Bool) ?? false
         let custom = (dict["custom"] as? Bool) ?? ((dict["isOther"] as? Bool) ?? true)
@@ -748,7 +757,16 @@ private struct MessageBubble: View, Equatable {
                   !label.isEmpty else { return nil }
             let description = ((option["description"] as? String) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return AIQuestionOptionInfo(label: label, description: description)
+            let optionID =
+                (option["option_id"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ??
+                (option["optionId"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return AIQuestionOptionInfo(
+                optionID: optionID?.isEmpty == false ? optionID : nil,
+                label: label,
+                description: description
+            )
         }
         let multiple = (dict["multiple"] as? Bool) ?? false
         let custom = (dict["custom"] as? Bool) ?? ((dict["isOther"] as? Bool) ?? true)
