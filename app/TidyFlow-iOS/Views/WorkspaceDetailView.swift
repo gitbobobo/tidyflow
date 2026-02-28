@@ -1250,7 +1250,17 @@ struct MobileEvolutionView: View {
     private var item: EvolutionWorkspaceItemV2? {
         appState.evolutionItem(project: project, workspace: workspace)
     }
-    private let evolutionStageOrder: [String] = ["direction", "plan", "implement", "verify", "judge", "report", "auto_commit"]
+    private let evolutionStageOrder: [String] = [
+        "direction",
+        "plan",
+        "implement_general",
+        "implement_visual",
+        "implement_advanced",
+        "verify",
+        "judge",
+        "report",
+        "auto_commit",
+    ]
 
     var body: some View {
         List {
@@ -1770,7 +1780,11 @@ struct MobileEvolutionView: View {
     }
 
     private func normalizedStageKey(_ stage: String) -> String {
-        stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalized = stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "implement" {
+            return "implement_general"
+        }
+        return normalized
     }
 
     private func isCompletedStatus(_ status: String) -> Bool {
@@ -2140,6 +2154,8 @@ struct MobileEvolutionView: View {
             return "evolution.status.stopped".localized
         case "not_started", "not started", "未启动", "未运行":
             return "evolution.status.notStarted".localized
+        case "skipped", "skip", "已跳过":
+            return "evolution.status.skipped".localized
         default:
             return status
         }
@@ -2153,8 +2169,14 @@ struct MobileEvolutionView: View {
             return "evolution.stage.direction".localized
         case "plan":
             return "evolution.stage.plan".localized
+        case "implement_general":
+            return "evolution.stage.implementGeneral".localized
+        case "implement_visual":
+            return "evolution.stage.implementVisual".localized
+        case "implement_advanced":
+            return "evolution.stage.implementAdvanced".localized
         case "implement":
-            return "evolution.stage.implement".localized
+            return "evolution.stage.implementGeneral".localized
         case "verify":
             return "evolution.stage.verify".localized
         case "judge":

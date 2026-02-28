@@ -75,9 +75,9 @@ struct ProjectListView: View {
     }
 }
 
-private struct MobileImplementAgentDraft: Identifiable {
+private struct MobileEvolutionDefaultDraft: Identifiable {
     let id: String
-    let lane: String
+    let stage: String
     var aiTool: AIChatTool
     var mode: String
     var providerID: String
@@ -87,12 +87,12 @@ private struct MobileImplementAgentDraft: Identifiable {
 
 struct MobileSettingsView: View {
     @EnvironmentObject var appState: MobileAppState
-    @State private var drafts: [MobileImplementAgentDraft] = []
+    @State private var drafts: [MobileEvolutionDefaultDraft] = []
 
     var body: some View {
         Form {
             ForEach($drafts) { $draft in
-                Section(implementLaneTitle(draft.lane)) {
+                Section(stageDisplayName(draft.stage)) {
                     LabeledContent("AI 工具") {
                         Picker("", selection: Binding<AIChatTool>(
                             get: { draft.aiTool },
@@ -205,13 +205,13 @@ struct MobileSettingsView: View {
                 }
             }
         }
-        .navigationTitle("实现代理设置")
+        .navigationTitle("Evolution 代理设置")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             drafts = buildDrafts()
             _ = appState.requestAISelectorResourcesForSettings()
         }
-        .onReceive(appState.$evolutionImplementAgentProfiles) { _ in
+        .onReceive(appState.$evolutionDefaultProfiles) { _ in
             drafts = buildDrafts()
         }
         .onChange(of: appState.isConnected) { _, connected in
@@ -223,12 +223,18 @@ struct MobileSettingsView: View {
         }
     }
 
-    private func implementLaneTitle(_ lane: String) -> String {
-        switch lane {
-        case "general": return "通用实现"
-        case "visual": return "视觉实现"
-        case "advanced": return "高级实现"
-        default: return lane
+    private func stageDisplayName(_ stage: String) -> String {
+        switch stage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "direction": return "Direction"
+        case "plan": return "Plan"
+        case "implement_general": return "Implement General"
+        case "implement_visual": return "Implement Visual"
+        case "implement_advanced": return "Implement Advanced"
+        case "verify": return "Verify"
+        case "judge": return "Judge"
+        case "report": return "Report"
+        case "implement": return "Implement General"
+        default: return stage
         }
     }
 
@@ -248,7 +254,7 @@ struct MobileSettingsView: View {
         appState.settingsProviders(aiTool: tool).filter { !$0.models.isEmpty }
     }
 
-    private func selectedModelDisplayName(for draft: MobileImplementAgentDraft) -> String {
+    private func selectedModelDisplayName(for draft: MobileEvolutionDefaultDraft) -> String {
         guard !draft.providerID.isEmpty, !draft.modelID.isEmpty else { return "默认" }
         for provider in modelProviders(for: draft.aiTool) {
             if provider.id == draft.providerID,
@@ -268,7 +274,7 @@ struct MobileSettingsView: View {
         })?.optionID
     }
 
-    private func selectedThoughtLevel(for draft: MobileImplementAgentDraft) -> String? {
+    private func selectedThoughtLevel(for draft: MobileEvolutionDefaultDraft) -> String? {
         guard let optionID = thoughtLevelOptionID(for: draft.aiTool) else { return nil }
         let raw = draft.configOptions[optionID]
         if let text = raw as? String {
@@ -282,28 +288,23 @@ struct MobileSettingsView: View {
         return nil
     }
 
-    private func buildDrafts() -> [MobileImplementAgentDraft] {
-        let profiles = appState.evolutionImplementAgentProfiles
-        let items: [(id: String, profile: EvolutionImplementAgentProfileInfoV2)] = [
-            ("general", profiles.general),
-            ("visual", profiles.visual),
-            ("advanced", profiles.advanced)
-        ]
-        return items.map { item in
-            MobileImplementAgentDraft(
-                id: item.id,
-                lane: item.id,
-                aiTool: item.profile.aiTool,
-                mode: item.profile.mode ?? "",
-                providerID: item.profile.model?.providerID ?? "",
-                modelID: item.profile.model?.modelID ?? "",
-                configOptions: item.profile.configOptions
+    private func buildDrafts() -> [MobileEvolutionDefaultDraft] {
+        let profiles = appState.evolutionDefaultProfiles
+        return profiles.map { profile in
+            MobileEvolutionDefaultDraft(
+                id: profile.stage,
+                stage: profile.stage,
+                aiTool: profile.aiTool,
+                mode: profile.mode ?? "",
+                providerID: profile.model?.providerID ?? "",
+                modelID: profile.model?.modelID ?? "",
+                configOptions: profile.configOptions
             )
         }
     }
 
     private func persistDrafts() {
-        func toProfile(_ draft: MobileImplementAgentDraft) -> EvolutionImplementAgentProfileInfoV2 {
+        let profiles: [EvolutionStageProfileInfoV2] = drafts.map { draft in
             let mode = draft.mode.trimmingCharacters(in: .whitespacesAndNewlines)
             let model: EvolutionModelSelectionV2? = {
                 guard !draft.providerID.isEmpty, !draft.modelID.isEmpty else { return nil }
@@ -312,26 +313,14 @@ struct MobileSettingsView: View {
                     modelID: draft.modelID
                 )
             }()
-            return EvolutionImplementAgentProfileInfoV2(
+            return EvolutionStageProfileInfoV2(
+                stage: draft.stage,
                 aiTool: draft.aiTool,
                 mode: mode.isEmpty ? nil : mode,
                 model: model,
                 configOptions: draft.configOptions
             )
         }
-
-        let general = drafts.first(where: { $0.lane == "general" }).map(toProfile)
-            ?? EvolutionImplementAgentProfileInfoV2()
-        let visual = drafts.first(where: { $0.lane == "visual" }).map(toProfile)
-            ?? EvolutionImplementAgentProfileInfoV2()
-        let advanced = drafts.first(where: { $0.lane == "advanced" }).map(toProfile)
-            ?? EvolutionImplementAgentProfileInfoV2()
-
-        appState.evolutionImplementAgentProfiles = EvolutionImplementAgentProfilesV2(
-            general: general,
-            visual: visual,
-            advanced: advanced
-        )
-        appState.saveClientSettings()
+        appState.saveEvolutionDefaultProfiles(profiles)
     }
 }
