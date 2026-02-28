@@ -14,39 +14,47 @@ fn map_session_config_options(
 ) -> Vec<crate::server::protocol::ai::SessionConfigOptionInfo> {
     options
         .into_iter()
-        .map(|option| crate::server::protocol::ai::SessionConfigOptionInfo {
-            option_id: option.option_id,
-            category: option.category,
-            name: option.name,
-            description: option.description,
-            current_value: option.current_value,
-            options: option
-                .options
-                .into_iter()
-                .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
-                    value: choice.value,
-                    label: choice.label,
-                    description: choice.description,
-                })
-                .collect::<Vec<_>>(),
-            option_groups: option
-                .option_groups
-                .into_iter()
-                .map(|group| crate::server::protocol::ai::SessionConfigOptionGroup {
-                    label: group.label,
-                    options: group
-                        .options
-                        .into_iter()
-                        .map(|choice| crate::server::protocol::ai::SessionConfigOptionChoice {
+        .map(
+            |option| crate::server::protocol::ai::SessionConfigOptionInfo {
+                option_id: option.option_id,
+                category: option.category,
+                name: option.name,
+                description: option.description,
+                current_value: option.current_value,
+                options: option
+                    .options
+                    .into_iter()
+                    .map(
+                        |choice| crate::server::protocol::ai::SessionConfigOptionChoice {
                             value: choice.value,
                             label: choice.label,
                             description: choice.description,
-                        })
-                        .collect::<Vec<_>>(),
-                })
-                .collect::<Vec<_>>(),
-            raw: option.raw,
-        })
+                        },
+                    )
+                    .collect::<Vec<_>>(),
+                option_groups: option
+                    .option_groups
+                    .into_iter()
+                    .map(
+                        |group| crate::server::protocol::ai::SessionConfigOptionGroup {
+                            label: group.label,
+                            options: group
+                                .options
+                                .into_iter()
+                                .map(|choice| {
+                                    crate::server::protocol::ai::SessionConfigOptionChoice {
+                                        value: choice.value,
+                                        label: choice.label,
+                                        description: choice.description,
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        },
+                    )
+                    .collect::<Vec<_>>(),
+                raw: option.raw,
+            },
+        )
         .collect::<Vec<_>>()
 }
 

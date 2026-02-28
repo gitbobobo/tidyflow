@@ -169,6 +169,31 @@ fn image_part_url_for_opencode(image: &super::AiImagePart) -> String {
     format!("data:{};base64,{}", image.mime, encoded)
 }
 
+fn append_audio_fallback_text(message: &str, audio_parts: Option<&[super::AiAudioPart]>) -> String {
+    let Some(parts) = audio_parts else {
+        return message.to_string();
+    };
+    if parts.is_empty() {
+        return message.to_string();
+    }
+    let summary = parts
+        .iter()
+        .map(|part| format!("{} ({}, {}B)", part.filename, part.mime, part.data.len()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if message.trim().is_empty() {
+        format!(
+            "音频附件（当前后端不支持音频直传，已降级为文本摘要）：\n{}",
+            summary
+        )
+    } else {
+        format!(
+            "{}\n\n音频附件（当前后端不支持音频直传，已降级为文本摘要）：\n{}",
+            message, summary
+        )
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum OpenCodeError {
     #[error("HTTP error: {0}")]
@@ -325,14 +350,16 @@ impl OpenCodeClient {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<super::AiImagePart>>,
+        audio_parts: Option<Vec<super::AiAudioPart>>,
         model: Option<super::AiModelSelection>,
         agent: Option<String>,
     ) -> Result<(), OpenCodeError> {
         let url = format!("{}/session/{}/prompt_async", self.base_url, session_id);
+        let effective_message = append_audio_fallback_text(message, audio_parts.as_deref());
 
         let mut parts = vec![serde_json::json!({
             "type": "text",
-            "text": message,
+            "text": effective_message,
         })];
 
         if let Some(ref refs) = file_refs {
@@ -401,14 +428,16 @@ impl OpenCodeClient {
         arguments: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<super::AiImagePart>>,
+        audio_parts: Option<Vec<super::AiAudioPart>>,
         model: Option<super::AiModelSelection>,
         agent: Option<String>,
     ) -> Result<(), OpenCodeError> {
         let url = format!("{}/session/{}/command", self.base_url, session_id);
+        let effective_arguments = append_audio_fallback_text(arguments, audio_parts.as_deref());
 
         let mut body = serde_json::json!({
             "command": command,
-            "arguments": arguments,
+            "arguments": effective_arguments,
         });
 
         let mut parts: Vec<serde_json::Value> = Vec::new();
@@ -1183,7 +1212,7 @@ impl tokio_stream::Stream for SseJsonStream {
 use super::event_hub::OpenCodeEventHub;
 use super::session_status::AiSessionStatus;
 use super::{
-    AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
+    AiAgent, AiAgentInfo, AiAudioPart, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSlashCommand, OpenCodeManager,
 };
 use async_trait::async_trait;
@@ -2054,6 +2083,7 @@ impl AiAgent for OpenCodeAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
@@ -2073,6 +2103,7 @@ impl AiAgent for OpenCodeAgent {
                 message,
                 file_refs,
                 image_parts,
+                audio_parts,
                 model,
                 agent,
             )
@@ -2090,6 +2121,7 @@ impl AiAgent for OpenCodeAgent {
         arguments: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
@@ -2116,6 +2148,7 @@ impl AiAgent for OpenCodeAgent {
                     &arguments_owned,
                     file_refs,
                     image_parts,
+                    audio_parts,
                     model,
                     agent,
                 )

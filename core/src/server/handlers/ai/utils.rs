@@ -545,7 +545,11 @@ pub(crate) fn infer_hint_from_json(value: &serde_json::Value) -> AiSessionSelect
             .into_iter()
             .filter(|(k, _)| !k.trim().is_empty())
             .collect::<HashMap<_, _>>();
-        if map.is_empty() { None } else { Some(map) }
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
+        }
     });
 
     hint
@@ -955,6 +959,32 @@ pub(crate) async fn normalize_ai_image_parts(
     Ok(Some(normalized))
 }
 
+pub(crate) fn normalize_ai_audio_parts(
+    audio_parts: Option<Vec<crate::ai::AiAudioPart>>,
+) -> Option<Vec<crate::ai::AiAudioPart>> {
+    let parts = audio_parts?;
+    if parts.is_empty() {
+        return None;
+    }
+    let normalized = parts
+        .into_iter()
+        .map(|mut part| {
+            let mime = normalize_mime(&part.mime);
+            part.mime = if mime.is_empty() {
+                "application/octet-stream".to_string()
+            } else {
+                mime
+            };
+            let filename = part.filename.trim().to_string();
+            if filename.is_empty() {
+                part.filename = "audio".to_string();
+            }
+            part
+        })
+        .collect::<Vec<_>>();
+    Some(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1130,6 +1160,14 @@ mod tests {
 }
 
 pub(crate) fn summarize_ai_image_parts(parts: &[crate::ai::AiImagePart]) -> String {
+    parts
+        .iter()
+        .map(|p| format!("{}|{}|{}B", p.filename, p.mime, p.data.len()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(crate) fn summarize_ai_audio_parts(parts: &[crate::ai::AiAudioPart]) -> String {
     parts
         .iter()
         .map(|p| format!("{}|{}|{}B", p.filename, p.mime, p.data.len()))

@@ -217,6 +217,7 @@ pub(crate) async fn handle_ai_chat_send(
         message,
         file_refs,
         image_parts,
+        audio_parts,
         model,
         agent_name,
         config_overrides,
@@ -230,6 +231,7 @@ pub(crate) async fn handle_ai_chat_send(
             message,
             file_refs,
             image_parts,
+            audio_parts,
             model,
             agent,
             config_overrides,
@@ -240,6 +242,7 @@ pub(crate) async fn handle_ai_chat_send(
             message.clone(),
             file_refs.clone(),
             image_parts.clone(),
+            audio_parts.clone(),
             model.clone(),
             agent.clone(),
             config_overrides.clone(),
@@ -319,6 +322,32 @@ pub(crate) async fn handle_ai_chat_send(
             summarize_ai_image_parts(parts)
         );
     }
+    let ai_audio_parts_raw: Option<Vec<crate::ai::AiAudioPart>> =
+        audio_parts.as_ref().map(|parts| {
+            parts
+                .iter()
+                .map(|p| crate::ai::AiAudioPart {
+                    filename: p.filename.clone(),
+                    mime: p.mime.clone(),
+                    data: p.data.clone(),
+                })
+                .collect()
+        });
+    if let Some(parts) = ai_audio_parts_raw.as_ref() {
+        info!(
+            "AIChatSend audio parts received: count={}, items={}",
+            parts.len(),
+            summarize_ai_audio_parts(parts)
+        );
+    }
+    let ai_audio_parts = normalize_ai_audio_parts(ai_audio_parts_raw);
+    if let Some(parts) = ai_audio_parts.as_ref() {
+        info!(
+            "AIChatSend audio parts normalized: count={}, items={}",
+            parts.len(),
+            summarize_ai_audio_parts(parts)
+        );
+    }
     let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
         provider_id: m.provider_id.clone(),
         model_id: m.model_id.clone(),
@@ -355,6 +384,7 @@ pub(crate) async fn handle_ai_chat_send(
                 &message,
                 file_refs.clone(),
                 ai_image_parts,
+                ai_audio_parts,
                 ai_model,
                 agent_name.clone(),
                 config_overrides.clone(),
@@ -749,6 +779,7 @@ pub(crate) async fn handle_ai_chat_command(
         arguments,
         file_refs,
         image_parts,
+        audio_parts,
         model,
         agent_name,
         config_overrides,
@@ -763,6 +794,7 @@ pub(crate) async fn handle_ai_chat_command(
             arguments,
             file_refs,
             image_parts,
+            audio_parts,
             model,
             agent,
             config_overrides,
@@ -774,6 +806,7 @@ pub(crate) async fn handle_ai_chat_command(
             arguments.clone(),
             file_refs.clone(),
             image_parts.clone(),
+            audio_parts.clone(),
             model.clone(),
             agent.clone(),
             config_overrides.clone(),
@@ -853,6 +886,32 @@ pub(crate) async fn handle_ai_chat_command(
             summarize_ai_image_parts(parts)
         );
     }
+    let ai_audio_parts_raw: Option<Vec<crate::ai::AiAudioPart>> =
+        audio_parts.as_ref().map(|parts| {
+            parts
+                .iter()
+                .map(|p| crate::ai::AiAudioPart {
+                    filename: p.filename.clone(),
+                    mime: p.mime.clone(),
+                    data: p.data.clone(),
+                })
+                .collect()
+        });
+    if let Some(parts) = ai_audio_parts_raw.as_ref() {
+        info!(
+            "AIChatCommand audio parts received: count={}, items={}",
+            parts.len(),
+            summarize_ai_audio_parts(parts)
+        );
+    }
+    let ai_audio_parts = normalize_ai_audio_parts(ai_audio_parts_raw);
+    if let Some(parts) = ai_audio_parts.as_ref() {
+        info!(
+            "AIChatCommand audio parts normalized: count={}, items={}",
+            parts.len(),
+            summarize_ai_audio_parts(parts)
+        );
+    }
     let ai_model = model.as_ref().map(|m| crate::ai::AiModelSelection {
         provider_id: m.provider_id.clone(),
         model_id: m.model_id.clone(),
@@ -894,6 +953,7 @@ pub(crate) async fn handle_ai_chat_command(
                 &command_message,
                 file_refs.clone(),
                 ai_image_parts,
+                ai_audio_parts,
                 ai_model,
                 agent_name.clone(),
                 config_overrides.clone(),

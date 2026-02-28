@@ -1,11 +1,11 @@
 use super::acp_client::{AcpClient, AcpConfigOptionInfo, AcpSessionMetadata, AcpSessionSummary};
-use super::codex_manager::CodexAppServerManager;
+use super::codex_manager::{AcpContentEncodingMode, CodexAppServerManager};
 use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::{
-    AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
+    AiAgent, AiAgentInfo, AiAudioPart, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption, AiQuestionRequest,
-    AiSession, AiSessionConfigOption, AiSessionConfigOptionChoice, AiSessionConfigOptionChoiceGroup,
-    AiSessionConfigValue, AiSessionSelectionHint, AiSlashCommand,
+    AiSession, AiSessionConfigOption, AiSessionConfigOptionChoice,
+    AiSessionConfigOptionChoiceGroup, AiSessionConfigValue, AiSessionSelectionHint, AiSlashCommand,
 };
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -70,6 +70,15 @@ struct CachedSessionRecord {
     messages: Vec<AiMessage>,
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedPromptFileRef {
+    original: String,
+    path: PathBuf,
+    uri: String,
+    name: String,
+    mime: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AcpPlanEntry {
     content: String,
@@ -99,6 +108,8 @@ pub struct AcpAgent {
 impl AcpAgent {
     const SESSION_LOAD_TIMEOUT_SECS: u64 = 4;
     const PLAN_HISTORY_LIMIT: usize = 20;
+    const EMBED_TEXT_LIMIT_BYTES: usize = 256 * 1024;
+    const EMBED_BLOB_LIMIT_BYTES: usize = 1024 * 1024;
 
     pub fn new(manager: Arc<CodexAppServerManager>, profile: AcpBackendProfile) -> Self {
         Self {
@@ -869,21 +880,21 @@ impl AcpAgent {
             Some((option_id, option_value))
         };
 
-        let parse_from_map = |map: &serde_json::Map<String, Value>,
-                              add_pair: &mut dyn FnMut(String, Value)| {
-            for (option_id, value) in map {
-                if option_id.trim().is_empty() || value.is_null() {
-                    continue;
-                }
-                if value.is_object() {
-                    if let Some((id, option_value)) = parse_single(value) {
-                        add_pair(id, option_value);
+        let parse_from_map =
+            |map: &serde_json::Map<String, Value>, add_pair: &mut dyn FnMut(String, Value)| {
+                for (option_id, value) in map {
+                    if option_id.trim().is_empty() || value.is_null() {
                         continue;
                     }
+                    if value.is_object() {
+                        if let Some((id, option_value)) = parse_single(value) {
+                            add_pair(id, option_value);
+                            continue;
+                        }
+                    }
+                    add_pair(option_id.clone(), value.clone());
                 }
-                add_pair(option_id.clone(), value.clone());
-            }
-        };
+            };
 
         for source in [Some(update), update.get("content")] {
             let Some(source) = source else { continue };
@@ -1101,10 +1112,7 @@ impl AcpAgent {
         None
     }
 
-    fn resolve_model_id_from_option(
-        option: &AcpConfigOptionInfo,
-        value: &Value,
-    ) -> Option<String> {
+    fn resolve_model_id_from_option(option: &AcpConfigOptionInfo, value: &Value) -> Option<String> {
         let candidate = Self::resolve_choice_string(option, value)?;
         if let Some((_, suffix)) = candidate.split_once('/') {
             let trimmed = suffix.trim();
@@ -1127,13 +1135,9 @@ impl AcpAgent {
         metadata
             .config_values
             .insert(option_id.to_string(), value.clone());
-        if let Some(index) = metadata
-            .config_options
-            .iter()
-            .position(|option| {
-                option.option_id == option_id || option.option_id.eq_ignore_ascii_case(option_id)
-            })
-        {
+        if let Some(index) = metadata.config_options.iter().position(|option| {
+            option.option_id == option_id || option.option_id.eq_ignore_ascii_case(option_id)
+        }) {
             let category = {
                 let option = &metadata.config_options[index];
                 Self::normalized_category(option.category.as_deref(), &option.option_id)
@@ -1162,11 +1166,9 @@ impl AcpAgent {
             return;
         }
 
-        if let Some(existing) = metadata
-            .config_options
-            .iter_mut()
-            .find(|option| option.option_id == option_id || option.option_id.eq_ignore_ascii_case(option_id))
-        {
+        if let Some(existing) = metadata.config_options.iter_mut().find(|option| {
+            option.option_id == option_id || option.option_id.eq_ignore_ascii_case(option_id)
+        }) {
             existing.current_value = Some(value);
             return;
         }
@@ -1331,7 +1333,10 @@ impl AcpAgent {
     }
 
     fn map_config_options(options: &[AcpConfigOptionInfo]) -> Vec<AiSessionConfigOption> {
-        options.iter().map(Self::map_config_option).collect::<Vec<_>>()
+        options
+            .iter()
+            .map(Self::map_config_option)
+            .collect::<Vec<_>>()
     }
 
     fn selection_hint_from_metadata(
@@ -1369,7 +1374,49 @@ impl AcpAgent {
         trimmed.to_string()
     }
 
-    fn resolve_resource_link(directory: &str, file_ref: &str) -> Option<(String, String)> {
+    fn normalize_attachment_mime(raw: &str) -> String {
+        let mime = raw.trim().to_ascii_lowercase();
+        if mime.is_empty() {
+            "application/octet-stream".to_string()
+        } else {
+            mime
+        }
+    }
+
+    fn mime_from_path(path: &Path) -> String {
+        mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_string()
+    }
+
+    fn mime_is_text(mime: &str) -> bool {
+        let normalized = mime.trim().to_ascii_lowercase();
+        normalized.starts_with("text/")
+            || normalized.ends_with("+json")
+            || normalized.ends_with("+xml")
+            || matches!(
+                normalized.as_str(),
+                "application/json"
+                    | "application/xml"
+                    | "application/yaml"
+                    | "application/x-yaml"
+                    | "application/toml"
+                    | "application/javascript"
+                    | "application/x-javascript"
+                    | "application/typescript"
+                    | "application/sql"
+            )
+    }
+
+    fn decode_utf8_text(bytes: &[u8]) -> Option<String> {
+        if bytes.contains(&0) {
+            return None;
+        }
+        String::from_utf8(bytes.to_vec()).ok()
+    }
+
+    fn resolve_prompt_file_ref(directory: &str, file_ref: &str) -> Option<ResolvedPromptFileRef> {
         let normalized_ref = Self::strip_file_ref_location_suffix(file_ref);
         if normalized_ref.trim().is_empty() {
             return None;
@@ -1385,22 +1432,81 @@ impl AcpAgent {
                 .file_name()
                 .map(|v| v.to_string_lossy().to_string())
                 .unwrap_or_else(|| normalized_ref.clone());
-            return Some((uri, name));
+            let mime = Self::mime_from_path(&path);
+            return Some(ResolvedPromptFileRef {
+                original: file_ref.to_string(),
+                path,
+                uri,
+                name,
+                mime,
+            });
         }
 
         let input_path = Path::new(&normalized_ref);
-        let resolved = if input_path.is_absolute() {
+        let path = if input_path.is_absolute() {
             input_path.to_path_buf()
         } else {
             PathBuf::from(directory).join(input_path)
         };
 
-        let uri = Url::from_file_path(&resolved).ok()?.to_string();
-        let name = resolved
+        let uri = Url::from_file_path(&path).ok()?.to_string();
+        let name = path
             .file_name()
             .map(|v| v.to_string_lossy().to_string())
             .unwrap_or_else(|| normalized_ref.clone());
-        Some((uri, name))
+        let mime = Self::mime_from_path(&path);
+        Some(ResolvedPromptFileRef {
+            original: file_ref.to_string(),
+            path,
+            uri,
+            name,
+            mime,
+        })
+    }
+
+    fn build_embedded_resource_part(
+        file_ref: &ResolvedPromptFileRef,
+    ) -> Result<Option<Value>, String> {
+        let metadata = std::fs::metadata(&file_ref.path)
+            .map_err(|e| format!("读取文件元数据失败：{} ({})", file_ref.path.display(), e))?;
+        let size = metadata.len() as usize;
+
+        let mime = Self::normalize_attachment_mime(&file_ref.mime);
+        let declared_text = Self::mime_is_text(&mime);
+        if declared_text && size > Self::EMBED_TEXT_LIMIT_BYTES {
+            return Ok(None);
+        }
+        if size > Self::EMBED_BLOB_LIMIT_BYTES {
+            return Ok(None);
+        }
+
+        let bytes = std::fs::read(&file_ref.path)
+            .map_err(|e| format!("读取文件内容失败：{} ({})", file_ref.path.display(), e))?;
+        let is_text = declared_text || Self::decode_utf8_text(&bytes).is_some();
+        if is_text {
+            if bytes.len() > Self::EMBED_TEXT_LIMIT_BYTES {
+                return Ok(None);
+            }
+            if let Some(text) = Self::decode_utf8_text(&bytes) {
+                return Ok(Some(AcpClient::build_prompt_resource_text_part(
+                    file_ref.uri.clone(),
+                    file_ref.name.clone(),
+                    mime,
+                    text,
+                )));
+            }
+        }
+
+        if bytes.len() > Self::EMBED_BLOB_LIMIT_BYTES {
+            return Ok(None);
+        }
+
+        Ok(Some(AcpClient::build_prompt_resource_blob_part(
+            file_ref.uri.clone(),
+            file_ref.name.clone(),
+            mime,
+            BASE64.encode(bytes),
+        )))
     }
 
     fn compose_prompt_parts(
@@ -1408,7 +1514,11 @@ impl AcpAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
+        encoding_mode: AcpContentEncodingMode,
         supports_image: bool,
+        supports_audio: bool,
+        supports_resource: bool,
         supports_resource_link: bool,
     ) -> Vec<Value> {
         let mut prompt_parts = Vec::<Value>::new();
@@ -1417,25 +1527,50 @@ impl AcpAgent {
 
         if let Some(files) = file_refs {
             if !files.is_empty() {
-                if supports_resource_link {
-                    let mut unresolved = Vec::<String>::new();
-                    for file_ref in files {
-                        if let Some((uri, name)) = Self::resolve_resource_link(directory, &file_ref)
-                        {
-                            prompt_parts
-                                .push(AcpClient::build_prompt_resource_link_part(uri, name));
-                        } else {
-                            unresolved.push(file_ref);
+                let mut unresolved = Vec::<String>::new();
+                for file_ref in files {
+                    let Some(resolved) = Self::resolve_prompt_file_ref(directory, &file_ref) else {
+                        unresolved.push(file_ref);
+                        continue;
+                    };
+
+                    let mut encoded = false;
+                    if supports_resource {
+                        match Self::build_embedded_resource_part(&resolved) {
+                            Ok(Some(resource_part)) => {
+                                prompt_parts.push(resource_part);
+                                encoded = true;
+                            }
+                            Ok(None) => {
+                                debug!(
+                                    "ACP resource embed exceeded limit, fallback to resource_link: {}",
+                                    resolved.path.display()
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "ACP resource embed failed, fallback to resource_link: path={}, error={}",
+                                    resolved.path.display(),
+                                    err
+                                );
+                            }
                         }
                     }
-                    if !unresolved.is_empty() {
-                        fallback_blocks.push(format!(
-                            "文件引用（无法解析为 resource_link）：\n{}",
-                            unresolved.join("\n")
+                    if !encoded && supports_resource_link {
+                        prompt_parts.push(AcpClient::build_prompt_resource_link_part(
+                            encoding_mode,
+                            resolved.uri.clone(),
+                            resolved.name.clone(),
+                            Some(resolved.mime.clone()),
                         ));
+                        encoded = true;
                     }
-                } else {
-                    fallback_blocks.push(format!("文件引用：\n{}", files.join("\n")));
+                    if !encoded {
+                        unresolved.push(resolved.original);
+                    }
+                }
+                if !unresolved.is_empty() {
+                    fallback_blocks.push(format!("文件引用：\n{}", unresolved.join("\n")));
                 }
             }
         }
@@ -1444,14 +1579,12 @@ impl AcpAgent {
             if !images.is_empty() {
                 if supports_image {
                     for img in images {
-                        let mime = img.mime.trim().to_lowercase();
-                        let mime = if mime.is_empty() {
-                            "application/octet-stream".to_string()
-                        } else {
-                            mime
-                        };
-                        let data_url = format!("data:{};base64,{}", mime, BASE64.encode(&img.data));
-                        prompt_parts.push(AcpClient::build_prompt_image_part(mime, data_url));
+                        let mime = Self::normalize_attachment_mime(&img.mime);
+                        prompt_parts.push(AcpClient::build_prompt_image_part(
+                            encoding_mode,
+                            mime,
+                            BASE64.encode(img.data),
+                        ));
                     }
                 } else {
                     let names = images
@@ -1460,6 +1593,28 @@ impl AcpAgent {
                         .collect::<Vec<_>>()
                         .join("\n");
                     fallback_blocks.push(format!("图片附件：\n{}", names));
+                }
+            }
+        }
+
+        if let Some(audios) = audio_parts {
+            if !audios.is_empty() {
+                if supports_audio {
+                    for audio in audios {
+                        let mime = Self::normalize_attachment_mime(&audio.mime);
+                        prompt_parts.push(AcpClient::build_prompt_audio_part(
+                            encoding_mode,
+                            mime,
+                            BASE64.encode(audio.data),
+                        ));
+                    }
+                } else {
+                    let names = audios
+                        .iter()
+                        .map(|audio| format!("{} ({})", audio.filename, audio.mime))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    fallback_blocks.push(format!("音频附件：\n{}", names));
                 }
             }
         }
@@ -1570,7 +1725,10 @@ impl AcpAgent {
             return Some(found.option_id.clone());
         }
 
-        pending.options.first().map(|option| option.option_id.clone())
+        pending
+            .options
+            .first()
+            .map(|option| option.option_id.clone())
     }
 
     fn build_question_from_permission_request(
@@ -1708,6 +1866,170 @@ impl AcpAgent {
             .to_string();
         // content 可能为空（如 terminal update），此时返回空 type/text 供上层判定。
         Some((session_update, content_type, text))
+    }
+
+    fn build_acp_content_source(content: &serde_json::Map<String, Value>) -> Value {
+        serde_json::json!({
+            "vendor": "acp",
+            "annotations": content.get("annotations").cloned().unwrap_or(Value::Null),
+            "content": Value::Object(content.clone()),
+        })
+    }
+
+    fn normalized_content_type(content: &serde_json::Map<String, Value>) -> String {
+        content
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+    }
+
+    fn content_data_url(
+        mime: Option<&str>,
+        data: Option<&str>,
+        url: Option<&str>,
+    ) -> Option<String> {
+        if let Some(url) = url.and_then(Self::normalize_non_empty_token) {
+            return Some(url);
+        }
+        let data = data.and_then(Self::normalize_non_empty_token)?;
+        let mime = mime
+            .and_then(Self::normalize_non_empty_token)
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        Some(format!("data:{};base64,{}", mime, data))
+    }
+
+    fn map_content_to_non_text_parts(
+        message_id: &str,
+        content: &serde_json::Map<String, Value>,
+    ) -> Vec<AiPart> {
+        let content_type = Self::normalized_content_type(content);
+        if content_type.is_empty() {
+            return Vec::new();
+        }
+
+        let source = Some(Self::build_acp_content_source(content));
+        let resource = content.get("resource").and_then(|v| v.as_object());
+
+        let pick_str = |keys: &[&str], map: &serde_json::Map<String, Value>| -> Option<String> {
+            keys.iter().find_map(|key| {
+                map.get(*key)
+                    .and_then(|v| v.as_str())
+                    .and_then(Self::normalize_non_empty_token)
+            })
+        };
+
+        let make_file_part = |mime: Option<String>,
+                              filename: Option<String>,
+                              url: Option<String>|
+         -> Option<AiPart> {
+            if mime.is_none() && filename.is_none() && url.is_none() {
+                return None;
+            }
+            Some(AiPart {
+                id: format!("{}-file-{}", message_id, Uuid::new_v4()),
+                part_type: "file".to_string(),
+                mime,
+                filename,
+                url,
+                source: source.clone(),
+                ..Default::default()
+            })
+        };
+
+        match content_type.as_str() {
+            "image" | "audio" => {
+                let mime = pick_str(&["mimeType", "mime"], content);
+                let filename = pick_str(&["filename", "name"], content);
+                let url = Self::content_data_url(
+                    mime.as_deref(),
+                    pick_str(&["data"], content).as_deref(),
+                    pick_str(&["url"], content).as_deref(),
+                );
+                make_file_part(mime, filename, url)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            }
+            "resource" => {
+                let text = resource
+                    .and_then(|res| pick_str(&["text"], res))
+                    .or_else(|| pick_str(&["text"], content));
+                if let Some(text) = text {
+                    return vec![AiPart {
+                        id: format!("{}-text-{}", message_id, Uuid::new_v4()),
+                        part_type: "text".to_string(),
+                        text: Some(text),
+                        source,
+                        ..Default::default()
+                    }];
+                }
+
+                let mime = resource
+                    .and_then(|res| pick_str(&["mimeType", "mime"], res))
+                    .or_else(|| pick_str(&["mimeType", "mime"], content));
+                let filename = resource
+                    .and_then(|res| pick_str(&["name", "filename"], res))
+                    .or_else(|| pick_str(&["name", "filename"], content));
+                let uri = resource
+                    .and_then(|res| pick_str(&["uri"], res))
+                    .or_else(|| pick_str(&["uri"], content));
+                let blob = resource
+                    .and_then(|res| pick_str(&["blob"], res))
+                    .or_else(|| pick_str(&["blob"], content));
+                let url = Self::content_data_url(mime.as_deref(), blob.as_deref(), uri.as_deref());
+                make_file_part(mime, filename, url)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            }
+            "resource_link" => {
+                let mime = pick_str(&["mimeType", "mime"], content)
+                    .or_else(|| resource.and_then(|res| pick_str(&["mimeType", "mime"], res)));
+                let filename = pick_str(&["name", "filename"], content)
+                    .or_else(|| resource.and_then(|res| pick_str(&["name", "filename"], res)));
+                let uri = pick_str(&["uri"], content)
+                    .or_else(|| resource.and_then(|res| pick_str(&["uri"], res)));
+                let url = Self::content_data_url(mime.as_deref(), None, uri.as_deref());
+                make_file_part(mime, filename, url)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn role_for_session_update(session_update: &str) -> &'static str {
+        if session_update.eq_ignore_ascii_case("user_message_chunk") {
+            "user"
+        } else {
+            "assistant"
+        }
+    }
+
+    fn push_structured_parts_message(
+        messages: &mut Vec<AiMessage>,
+        message_id_prefix: &str,
+        role: &str,
+        parts: Vec<AiPart>,
+    ) {
+        if parts.is_empty() {
+            return;
+        }
+        if let Some(last) = messages.last_mut() {
+            if last.role.eq_ignore_ascii_case(role) {
+                last.parts.extend(parts);
+                return;
+            }
+        }
+        let message_id = format!("{}-history-{}", message_id_prefix, Uuid::new_v4());
+        messages.push(AiMessage {
+            id: message_id,
+            role: role.to_string(),
+            created_at: None,
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts,
+        });
     }
 
     fn map_update_to_output(session_update: &str) -> Option<(&'static str, bool)> {
@@ -2061,6 +2383,21 @@ impl AcpAgent {
                         );
                         continue;
                     }
+                    if let Some(content) = update.get("content").and_then(|v| v.as_object()) {
+                        let history_message_id =
+                            format!("{}-history-{}", self.profile.message_id_prefix, Uuid::new_v4());
+                        let content_parts =
+                            Self::map_content_to_non_text_parts(&history_message_id, content);
+                        if !content_parts.is_empty() {
+                            Self::push_structured_parts_message(
+                                &mut messages,
+                                &self.profile.message_id_prefix,
+                                Self::role_for_session_update(&session_update),
+                                content_parts,
+                            );
+                            continue;
+                        }
+                    }
                     let Some((part_type, should_emit)) =
                         Self::map_update_to_output(&session_update)
                     else {
@@ -2114,12 +2451,15 @@ impl AcpAgent {
                 .config_options
                 .iter()
                 .find(|option| {
-                    option.option_id == option_id || option.option_id.eq_ignore_ascii_case(&option_id)
+                    option.option_id == option_id
+                        || option.option_id.eq_ignore_ascii_case(&option_id)
                 })
                 .cloned();
             let category = option_meta
                 .as_ref()
-                .map(|option| Self::normalized_category(option.category.as_deref(), &option.option_id))
+                .map(|option| {
+                    Self::normalized_category(option.category.as_deref(), &option.option_id)
+                })
                 .unwrap_or_else(|| option_id.trim().to_lowercase());
 
             let set_result: Result<(), String> = if supports_set_config_option {
@@ -2166,21 +2506,18 @@ impl AcpAgent {
                             })
                             .or_else(|| Self::value_to_string(&option_value));
                         if let Some(mode_id) = mode_id {
-                            let mode_result = match self
-                                .client
-                                .session_set_mode(session_id, &mode_id)
-                                .await
-                            {
-                                Ok(()) => Ok(()),
-                                Err(mode_err)
-                                    if Self::is_session_not_found(&mode_err)
-                                        && supports_load_session =>
-                                {
-                                    self.client.session_load(directory, session_id).await?;
-                                    self.client.session_set_mode(session_id, &mode_id).await
-                                }
-                                Err(mode_err) => Err(mode_err),
-                            };
+                            let mode_result =
+                                match self.client.session_set_mode(session_id, &mode_id).await {
+                                    Ok(()) => Ok(()),
+                                    Err(mode_err)
+                                        if Self::is_session_not_found(&mode_err)
+                                            && supports_load_session =>
+                                    {
+                                        self.client.session_load(directory, session_id).await?;
+                                        self.client.session_set_mode(session_id, &mode_id).await
+                                    }
+                                    Err(mode_err) => Err(mode_err),
+                                };
                             match mode_result {
                                 Ok(()) => {
                                     Self::apply_current_mode_to_metadata(metadata, &mode_id);
@@ -2307,6 +2644,7 @@ impl AiAgent for AcpAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
@@ -2333,7 +2671,9 @@ impl AiAgent for AcpAgent {
                     Ok(()) => Ok(()),
                     Err(err) if Self::is_session_not_found(&err) && supports_load_session => {
                         self.client.session_load(directory, session_id).await?;
-                        self.client.session_set_mode(session_id, target_mode_id).await
+                        self.client
+                            .session_set_mode(session_id, target_mode_id)
+                            .await
                     }
                     Err(err) => Err(err),
                 };
@@ -2357,14 +2697,21 @@ impl AiAgent for AcpAgent {
         if !self.client.supports_content_type("text").await {
             return Err("ACP 服务端 promptCapabilities 不支持 text，无法发送消息".to_string());
         }
+        let encoding_mode = self.client.prompt_encoding_mode().await;
         let supports_image = self.client.supports_content_type("image").await;
+        let supports_audio = self.client.supports_content_type("audio").await;
+        let supports_resource = self.client.supports_content_type("resource").await;
         let supports_resource_link = self.client.supports_content_type("resource_link").await;
         let prompt = Self::compose_prompt_parts(
             directory,
             message,
             file_refs,
             image_parts,
+            audio_parts,
+            encoding_mode,
             supports_image,
+            supports_audio,
+            supports_resource,
             supports_resource_link,
         );
 
@@ -2760,7 +3107,12 @@ impl AiAgent for AcpAgent {
                                     }
                                     continue;
                                 }
-                                "image" => {
+                                "image" | "audio" | "resource_link" | "resource" => {
+                                    let parts =
+                                        Self::map_content_to_non_text_parts(&assistant_message_id, content);
+                                    if parts.is_empty() {
+                                        continue;
+                                    }
                                     if !assistant_opened {
                                         assistant_opened = true;
                                         let _ = tx.send(Ok(AiEvent::MessageUpdated {
@@ -2769,59 +3121,12 @@ impl AiAgent for AcpAgent {
                                             selection_hint: None,
                                         }));
                                     }
-                                    let _ = tx.send(Ok(AiEvent::PartUpdated {
-                                        message_id: assistant_message_id.clone(),
-                                        part: AiPart {
-                                            id: format!("{}-file-{}", assistant_message_id, Uuid::new_v4()),
-                                            part_type: "file".to_string(),
-                                            mime: content
-                                                .get("mimeType")
-                                                .or_else(|| content.get("mime"))
-                                                .and_then(|v| v.as_str())
-                                                .map(|v| v.to_string()),
-                                            filename: content
-                                                .get("filename")
-                                                .or_else(|| content.get("name"))
-                                                .and_then(|v| v.as_str())
-                                                .map(|v| v.to_string()),
-                                            url: content
-                                                .get("url")
-                                                .and_then(|v| v.as_str())
-                                                .map(|v| v.to_string()),
-                                            ..Default::default()
-                                        },
-                                    }));
-                                    continue;
-                                }
-                                "resource_link" | "resource" => {
-                                    if !assistant_opened {
-                                        assistant_opened = true;
-                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                    for part in parts {
+                                        let _ = tx.send(Ok(AiEvent::PartUpdated {
                                             message_id: assistant_message_id.clone(),
-                                            role: "assistant".to_string(),
-                                            selection_hint: None,
+                                            part,
                                         }));
                                     }
-                                    let _ = tx.send(Ok(AiEvent::PartUpdated {
-                                        message_id: assistant_message_id.clone(),
-                                        part: AiPart {
-                                            id: format!("{}-file-{}", assistant_message_id, Uuid::new_v4()),
-                                            part_type: "file".to_string(),
-                                            filename: content
-                                                .get("resource")
-                                                .and_then(|v| v.get("name"))
-                                                .or_else(|| content.get("name"))
-                                                .and_then(|v| v.as_str())
-                                                .map(|v| v.to_string()),
-                                            url: content
-                                                .get("resource")
-                                                .and_then(|v| v.get("uri"))
-                                                .or_else(|| content.get("uri"))
-                                                .and_then(|v| v.as_str())
-                                                .map(|v| v.to_string()),
-                                            ..Default::default()
-                                        },
-                                    }));
                                     continue;
                                 }
                                 "text" | "reasoning" => {
@@ -2936,16 +3241,17 @@ impl AiAgent for AcpAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
         config_overrides: Option<HashMap<String, AiSessionConfigValue>>,
     ) -> Result<AiEventStream, String> {
-        let mut metadata = if let Some(cached) = self.metadata_for_session(directory, session_id).await
-        {
-            cached
-        } else {
-            self.metadata_for_directory(directory).await
-        };
+        let mut metadata =
+            if let Some(cached) = self.metadata_for_session(directory, session_id).await {
+                cached
+            } else {
+                self.metadata_for_directory(directory).await
+            };
 
         let (effective_model, effective_agent) = if let Some(overrides) = config_overrides.as_ref()
         {
@@ -2972,6 +3278,7 @@ impl AiAgent for AcpAgent {
             message,
             file_refs,
             image_parts,
+            audio_parts,
             effective_model,
             effective_agent,
         )
@@ -3024,12 +3331,12 @@ impl AiAgent for AcpAgent {
         let supports_load_session = self.client.supports_load_session().await;
         let supports_set_config = self.client.supports_set_config_option().await;
 
-        let mut metadata = if let Some(cached) = self.metadata_for_session(directory, session_id).await
-        {
-            cached
-        } else {
-            self.metadata_for_directory(directory).await
-        };
+        let mut metadata =
+            if let Some(cached) = self.metadata_for_session(directory, session_id).await {
+                cached
+            } else {
+                self.metadata_for_directory(directory).await
+            };
         let option_meta = metadata
             .config_options
             .iter()
@@ -3065,9 +3372,7 @@ impl AiAgent for AcpAgent {
             Ok(()) => {
                 Self::apply_config_value_to_metadata(&mut metadata, option_id, value.clone());
             }
-            Err(err)
-                if Self::is_set_config_option_unsupported(&err) || !supports_set_config =>
-            {
+            Err(err) if Self::is_set_config_option_unsupported(&err) || !supports_set_config => {
                 if category == "mode" {
                     let mode_id = option_meta
                         .as_ref()
@@ -3416,8 +3721,8 @@ impl AiAgent for AcpAgent {
 #[cfg(test)]
 mod tests {
     use super::{AcpAgent, AcpBackendProfile, AcpPlanEntry, AcpSessionSummary};
-    use crate::ai::codex_manager::CodexAppServerManager;
-    use crate::ai::{AiImagePart, AiSession, AiSlashCommand};
+    use crate::ai::codex_manager::{AcpContentEncodingMode, CodexAppServerManager};
+    use crate::ai::{AiAudioPart, AiImagePart, AiSession, AiSlashCommand};
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::Mutex;
@@ -3829,7 +4134,15 @@ mod tests {
                 mime: "image/png".to_string(),
                 data: vec![1, 2, 3, 4],
             }]),
+            Some(vec![AiAudioPart {
+                filename: "voice.wav".to_string(),
+                mime: "audio/wav".to_string(),
+                data: vec![5, 6, 7, 8],
+            }]),
+            AcpContentEncodingMode::New,
             true,
+            true,
+            false,
             true,
         );
 
@@ -3838,16 +4151,31 @@ mod tests {
             parts[0].get("text").and_then(|v| v.as_str()),
             Some("请分析这些内容")
         );
+        assert_eq!(
+            parts[1].get("type").and_then(|v| v.as_str()),
+            Some("resource_link")
+        );
+        assert_eq!(
+            parts[2].get("type").and_then(|v| v.as_str()),
+            Some("resource_link")
+        );
+        assert_eq!(parts[3].get("type").and_then(|v| v.as_str()), Some("image"));
+        assert_eq!(parts[4].get("type").and_then(|v| v.as_str()), Some("audio"));
 
         let image_count = parts
             .iter()
             .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("image"))
+            .count();
+        let audio_count = parts
+            .iter()
+            .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("audio"))
             .count();
         let resource_count = parts
             .iter()
             .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("resource_link"))
             .count();
         assert_eq!(image_count, 1);
+        assert_eq!(audio_count, 1);
         assert_eq!(resource_count, 2);
     }
 
@@ -3862,6 +4190,14 @@ mod tests {
                 mime: "image/png".to_string(),
                 data: vec![9, 9, 9],
             }]),
+            Some(vec![AiAudioPart {
+                filename: "voice.wav".to_string(),
+                mime: "audio/wav".to_string(),
+                data: vec![1, 2, 3],
+            }]),
+            AcpContentEncodingMode::Legacy,
+            false,
+            false,
             false,
             false,
         );
@@ -3872,6 +4208,247 @@ mod tests {
         assert!(text.contains("原始问题"));
         assert!(text.contains("文件引用："));
         assert!(text.contains("图片附件："));
+        assert!(text.contains("音频附件："));
+    }
+
+    #[test]
+    fn compose_prompt_parts_should_encode_image_audio_by_mode() {
+        let new_parts = AcpAgent::compose_prompt_parts(
+            "/tmp/workspace",
+            "hello",
+            None,
+            Some(vec![AiImagePart {
+                filename: "a.png".to_string(),
+                mime: "image/png".to_string(),
+                data: vec![1, 2],
+            }]),
+            Some(vec![AiAudioPart {
+                filename: "a.wav".to_string(),
+                mime: "audio/wav".to_string(),
+                data: vec![3, 4],
+            }]),
+            AcpContentEncodingMode::New,
+            true,
+            true,
+            false,
+            false,
+        );
+        let new_image = new_parts
+            .iter()
+            .find(|part| part.get("type").and_then(|v| v.as_str()) == Some("image"))
+            .expect("new image part");
+        assert!(new_image.get("data").is_some());
+        assert!(new_image.get("url").is_none());
+        let new_audio = new_parts
+            .iter()
+            .find(|part| part.get("type").and_then(|v| v.as_str()) == Some("audio"))
+            .expect("new audio part");
+        assert!(new_audio.get("data").is_some());
+        assert!(new_audio.get("url").is_none());
+
+        let legacy_parts = AcpAgent::compose_prompt_parts(
+            "/tmp/workspace",
+            "hello",
+            None,
+            Some(vec![AiImagePart {
+                filename: "a.png".to_string(),
+                mime: "image/png".to_string(),
+                data: vec![1, 2],
+            }]),
+            Some(vec![AiAudioPart {
+                filename: "a.wav".to_string(),
+                mime: "audio/wav".to_string(),
+                data: vec![3, 4],
+            }]),
+            AcpContentEncodingMode::Legacy,
+            true,
+            true,
+            false,
+            false,
+        );
+        let legacy_image = legacy_parts
+            .iter()
+            .find(|part| part.get("type").and_then(|v| v.as_str()) == Some("image"))
+            .expect("legacy image part");
+        assert!(legacy_image.get("url").is_some());
+        assert!(legacy_image.get("data").is_none());
+        let legacy_audio = legacy_parts
+            .iter()
+            .find(|part| part.get("type").and_then(|v| v.as_str()) == Some("audio"))
+            .expect("legacy audio part");
+        assert!(legacy_audio.get("url").is_some());
+        assert!(legacy_audio.get("data").is_none());
+    }
+
+    #[test]
+    fn compose_prompt_parts_should_embed_resource_text_and_blob_when_supported() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let text_path = temp.path().join("a.txt");
+        let bin_path = temp.path().join("b.bin");
+        std::fs::write(&text_path, "hello resource text").expect("write text");
+        std::fs::write(&bin_path, vec![0, 159, 1, 2, 3]).expect("write bin");
+
+        let parts = AcpAgent::compose_prompt_parts(
+            temp.path().to_string_lossy().as_ref(),
+            "资源测试",
+            Some(vec![
+                text_path.to_string_lossy().to_string(),
+                bin_path.to_string_lossy().to_string(),
+            ]),
+            None,
+            None,
+            AcpContentEncodingMode::New,
+            false,
+            false,
+            true,
+            true,
+        );
+
+        let resource_parts = parts
+            .iter()
+            .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("resource"))
+            .collect::<Vec<_>>();
+        assert_eq!(resource_parts.len(), 2);
+        assert!(resource_parts.iter().any(|part| {
+            part.get("resource")
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str())
+                == Some("hello resource text")
+        }));
+        assert!(resource_parts.iter().any(|part| {
+            part.get("resource")
+                .and_then(|v| v.get("blob"))
+                .and_then(|v| v.as_str())
+                .is_some()
+        }));
+    }
+
+    #[test]
+    fn compose_prompt_parts_should_downgrade_large_text_resource_to_link() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let big_text_path = temp.path().join("big.txt");
+        let payload = "a".repeat(AcpAgent::EMBED_TEXT_LIMIT_BYTES + 1);
+        std::fs::write(&big_text_path, payload).expect("write big text");
+
+        let parts = AcpAgent::compose_prompt_parts(
+            temp.path().to_string_lossy().as_ref(),
+            "资源超限",
+            Some(vec![big_text_path.to_string_lossy().to_string()]),
+            None,
+            None,
+            AcpContentEncodingMode::New,
+            false,
+            false,
+            true,
+            true,
+        );
+
+        assert!(parts
+            .iter()
+            .any(|part| part.get("type").and_then(|v| v.as_str()) == Some("resource_link")));
+        assert!(!parts
+            .iter()
+            .any(|part| part.get("type").and_then(|v| v.as_str()) == Some("resource")));
+    }
+
+    #[test]
+    fn map_content_to_non_text_parts_should_parse_supported_blocks() {
+        let image = json!({
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "AQID",
+            "annotations": { "origin": "stream" }
+        });
+        let image_parts =
+            AcpAgent::map_content_to_non_text_parts("m1", image.as_object().expect("object"));
+        assert_eq!(image_parts.len(), 1);
+        assert_eq!(image_parts[0].part_type, "file");
+        assert_eq!(image_parts[0].mime.as_deref(), Some("image/png"));
+        assert!(image_parts[0]
+            .url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("data:image/png;base64,AQID")));
+
+        let audio = json!({
+            "type": "audio",
+            "mime": "audio/wav",
+            "url": "https://example.com/a.wav"
+        });
+        let audio_parts =
+            AcpAgent::map_content_to_non_text_parts("m2", audio.as_object().expect("object"));
+        assert_eq!(audio_parts.len(), 1);
+        assert_eq!(audio_parts[0].part_type, "file");
+        assert_eq!(
+            audio_parts[0].url.as_deref(),
+            Some("https://example.com/a.wav")
+        );
+
+        let resource_text = json!({
+            "type": "resource",
+            "resource": {
+                "text": "embedded text"
+            }
+        });
+        let resource_text_parts = AcpAgent::map_content_to_non_text_parts(
+            "m3",
+            resource_text.as_object().expect("object"),
+        );
+        assert_eq!(resource_text_parts.len(), 1);
+        assert_eq!(resource_text_parts[0].part_type, "text");
+        assert_eq!(
+            resource_text_parts[0].text.as_deref(),
+            Some("embedded text")
+        );
+
+        let resource_blob = json!({
+            "type": "resource",
+            "resource": {
+                "mimeType": "application/octet-stream",
+                "blob": "AAEC"
+            }
+        });
+        let resource_blob_parts = AcpAgent::map_content_to_non_text_parts(
+            "m4",
+            resource_blob.as_object().expect("object"),
+        );
+        assert_eq!(resource_blob_parts.len(), 1);
+        assert_eq!(resource_blob_parts[0].part_type, "file");
+        assert!(resource_blob_parts[0]
+            .url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("data:application/octet-stream;base64,AAEC")));
+
+        let resource_link_new = json!({
+            "type": "resource_link",
+            "uri": "file:///tmp/a.txt",
+            "name": "a.txt"
+        });
+        let resource_link_new_parts = AcpAgent::map_content_to_non_text_parts(
+            "m5",
+            resource_link_new.as_object().expect("object"),
+        );
+        assert_eq!(resource_link_new_parts.len(), 1);
+        assert_eq!(
+            resource_link_new_parts[0].url.as_deref(),
+            Some("file:///tmp/a.txt")
+        );
+
+        let resource_link_legacy = json!({
+            "type": "resource_link",
+            "resource": {
+                "uri": "file:///tmp/b.txt",
+                "name": "b.txt"
+            }
+        });
+        let resource_link_legacy_parts = AcpAgent::map_content_to_non_text_parts(
+            "m6",
+            resource_link_legacy.as_object().expect("object"),
+        );
+        assert_eq!(resource_link_legacy_parts.len(), 1);
+        assert_eq!(
+            resource_link_legacy_parts[0].url.as_deref(),
+            Some("file:///tmp/b.txt")
+        );
     }
 
     #[test]

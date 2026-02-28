@@ -200,6 +200,15 @@ pub struct ImagePart {
     pub data: Vec<u8>,
 }
 
+/// 音频附件（二进制）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioPart {
+    pub filename: String,
+    pub mime: String,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
 /// 模型选择
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSelection {

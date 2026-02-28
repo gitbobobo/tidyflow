@@ -17,9 +17,18 @@ pub struct AcpAgentCapabilities {
     pub raw: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AcpContentEncodingMode {
+    New,
+    Legacy,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AcpPromptCapabilities {
     pub content_types: HashSet<String>,
+    pub encoding_mode: AcpContentEncodingMode,
     pub raw: Option<Value>,
 }
 
@@ -673,14 +682,29 @@ impl CodexAppServerManager {
     }
 
     fn parse_prompt_capabilities(result: &Value) -> AcpPromptCapabilities {
-        let raw = result.get("promptCapabilities").cloned();
+        let legacy_raw = result.get("promptCapabilities").cloned();
+        let new_raw = result
+            .get("agentCapabilities")
+            .and_then(|v| v.get("promptCapabilities"))
+            .cloned();
+        let raw = if legacy_raw.is_some() || new_raw.is_some() {
+            Some(serde_json::json!({
+                "promptCapabilities": legacy_raw,
+                "agentCapabilities.promptCapabilities": new_raw
+            }))
+        } else {
+            None
+        };
+
         let mut content_types = HashSet::new();
-        if let Some(capabilities) = raw.as_ref() {
+        let mut has_legacy_decl = false;
+        if let Some(capabilities) = legacy_raw.as_ref() {
             let items = capabilities
                 .get("contentTypes")
                 .and_then(|v| v.as_array())
                 .or_else(|| capabilities.get("content_types").and_then(|v| v.as_array()));
             if let Some(items) = items {
+                has_legacy_decl = true;
                 for item in items {
                     if let Some(content_type) = item.as_str() {
                         let normalized = content_type.trim().to_lowercase();
@@ -691,10 +715,66 @@ impl CodexAppServerManager {
                 }
             }
         }
-        if content_types.is_empty() {
-            content_types.insert("text".to_string());
+
+        let mut has_new_decl = false;
+        if let Some(capabilities) = new_raw.as_ref() {
+            if let Some(supported) = Self::read_prompt_content_capability(
+                capabilities,
+                &["image", "imageInput", "image_input"],
+            ) {
+                has_new_decl = true;
+                if supported {
+                    content_types.insert("image".to_string());
+                }
+            }
+            if let Some(supported) = Self::read_prompt_content_capability(
+                capabilities,
+                &["audio", "audioInput", "audio_input"],
+            ) {
+                has_new_decl = true;
+                if supported {
+                    content_types.insert("audio".to_string());
+                }
+            }
+            if let Some(supported) = Self::read_prompt_content_capability(
+                capabilities,
+                &["embeddedContext", "embedded_context"],
+            ) {
+                has_new_decl = true;
+                if supported {
+                    content_types.insert("resource".to_string());
+                }
+            }
         }
-        AcpPromptCapabilities { content_types, raw }
+
+        // ACP content 协议基线能力：始终保留 text + resource_link。
+        content_types.insert("text".to_string());
+        content_types.insert("resource_link".to_string());
+
+        let encoding_mode = if has_new_decl {
+            AcpContentEncodingMode::New
+        } else if has_legacy_decl {
+            AcpContentEncodingMode::Legacy
+        } else {
+            AcpContentEncodingMode::Unknown
+        };
+
+        AcpPromptCapabilities {
+            content_types,
+            encoding_mode,
+            raw,
+        }
+    }
+
+    fn read_prompt_content_capability(capabilities: &Value, keys: &[&str]) -> Option<bool> {
+        for key in keys {
+            if let Some(value) = capabilities.get(*key) {
+                if let Some(parsed) = Self::read_bool_like_value(value) {
+                    return Some(parsed);
+                }
+            }
+        }
+        None
     }
 
     fn read_load_session_capability(capabilities: &Value) -> Option<bool> {
@@ -818,7 +898,7 @@ impl CodexAppServerManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppServerRequestError, CodexAppServerManager};
+    use super::{AcpContentEncodingMode, AppServerRequestError, CodexAppServerManager};
     use serde_json::json;
 
     #[test]
@@ -903,11 +983,13 @@ mod tests {
         assert!(state.agent_capabilities.set_config_option);
         assert!(state.prompt_capabilities.content_types.contains("text"));
         assert!(state.prompt_capabilities.content_types.contains("image"));
-        assert!(
-            state
-                .prompt_capabilities
-                .content_types
-                .contains("resource_link")
+        assert!(state
+            .prompt_capabilities
+            .content_types
+            .contains("resource_link"));
+        assert_eq!(
+            state.prompt_capabilities.encoding_mode,
+            AcpContentEncodingMode::Legacy
         );
         assert_eq!(state.auth_methods.len(), 2);
         assert_eq!(state.auth_methods[0].id, "oauth");
@@ -915,14 +997,80 @@ mod tests {
     }
 
     #[test]
-    fn parse_acp_initialize_response_should_default_prompt_content_type_to_text() {
+    fn parse_acp_initialize_response_should_parse_new_prompt_capabilities() {
+        let response = json!({
+            "protocolVersion": 1,
+            "agentCapabilities": {
+                "promptCapabilities": {
+                    "image": true,
+                    "audio": true,
+                    "embeddedContext": true
+                }
+            }
+        });
+        let state = CodexAppServerManager::parse_acp_initialize_result(&response, 1)
+            .expect("parse initialize response should succeed");
+        assert_eq!(
+            state.prompt_capabilities.encoding_mode,
+            AcpContentEncodingMode::New
+        );
+        assert!(state.prompt_capabilities.content_types.contains("text"));
+        assert!(state
+            .prompt_capabilities
+            .content_types
+            .contains("resource_link"));
+        assert!(state.prompt_capabilities.content_types.contains("image"));
+        assert!(state.prompt_capabilities.content_types.contains("audio"));
+        assert!(state.prompt_capabilities.content_types.contains("resource"));
+    }
+
+    #[test]
+    fn parse_acp_initialize_response_should_default_prompt_content_types_to_baseline() {
         let response = json!({
             "protocolVersion": 1
         });
         let state = CodexAppServerManager::parse_acp_initialize_result(&response, 1)
             .expect("parse initialize response should succeed");
-        assert_eq!(state.prompt_capabilities.content_types.len(), 1);
+        assert_eq!(
+            state.prompt_capabilities.encoding_mode,
+            AcpContentEncodingMode::Unknown
+        );
+        assert_eq!(state.prompt_capabilities.content_types.len(), 2);
         assert!(state.prompt_capabilities.content_types.contains("text"));
+        assert!(state
+            .prompt_capabilities
+            .content_types
+            .contains("resource_link"));
+    }
+
+    #[test]
+    fn parse_acp_initialize_response_should_prefer_new_encoding_mode_when_both_present() {
+        let response = json!({
+            "protocolVersion": 1,
+            "promptCapabilities": {
+                "contentTypes": ["text", "image"]
+            },
+            "agentCapabilities": {
+                "promptCapabilities": {
+                    "audio": false,
+                    "embeddedContext": true
+                }
+            }
+        });
+        let state = CodexAppServerManager::parse_acp_initialize_result(&response, 1)
+            .expect("parse initialize response should succeed");
+        assert_eq!(
+            state.prompt_capabilities.encoding_mode,
+            AcpContentEncodingMode::New
+        );
+        assert!(state.prompt_capabilities.content_types.contains("text"));
+        assert!(state
+            .prompt_capabilities
+            .content_types
+            .contains("resource_link"));
+        assert!(state.prompt_capabilities.content_types.contains("image"));
+        assert!(state.prompt_capabilities.content_types.contains("resource"));
+        assert!(!state.prompt_capabilities.content_types.contains("audio"));
     }
 
     #[test]

@@ -176,11 +176,14 @@ mod tests {
     }
 
     #[derive(Serialize)]
-    struct TestEnvelope<'a> {
+    struct TestEnvelope<'a, P>
+    where
+        P: Serialize,
+    {
         request_id: &'a str,
         domain: &'a str,
         action: &'a str,
-        payload: TestAiChatSendPayload<'a>,
+        payload: P,
         client_ts: u64,
     }
 
@@ -192,10 +195,32 @@ mod tests {
         session_id: &'a str,
         message: &'a str,
         image_parts: Vec<TestImagePart<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        audio_parts: Option<Vec<TestAudioPart<'a>>>,
+    }
+
+    #[derive(Serialize)]
+    struct TestAiChatCommandPayload<'a> {
+        project_name: &'a str,
+        workspace_name: &'a str,
+        ai_tool: &'a str,
+        session_id: &'a str,
+        command: &'a str,
+        arguments: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        audio_parts: Option<Vec<TestAudioPart<'a>>>,
     }
 
     #[derive(Serialize)]
     struct TestImagePart<'a> {
+        filename: &'a str,
+        mime: &'a str,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    struct TestAudioPart<'a> {
         filename: &'a str,
         mime: &'a str,
         #[serde(with = "serde_bytes")]
@@ -219,6 +244,11 @@ mod tests {
                     mime: "image/png",
                     data: vec![0, 1, 2, 255],
                 }],
+                audio_parts: Some(vec![TestAudioPart {
+                    filename: "b.wav",
+                    mime: "audio/wav",
+                    data: vec![7, 8, 9],
+                }]),
             },
             client_ts: 1,
         };
@@ -228,12 +258,93 @@ mod tests {
         let msg = envelope_payload_to_client_message(&env).expect("decode client message");
 
         match msg {
-            ClientMessage::AIChatSend { image_parts, .. } => {
+            ClientMessage::AIChatSend {
+                image_parts,
+                audio_parts,
+                ..
+            } => {
                 let parts = image_parts.expect("image parts should exist");
                 assert_eq!(parts.len(), 1);
                 assert_eq!(parts[0].filename, "a.png");
                 assert_eq!(parts[0].mime, "image/png");
                 assert_eq!(parts[0].data, vec![0, 1, 2, 255]);
+                let audios = audio_parts.expect("audio parts should exist");
+                assert_eq!(audios.len(), 1);
+                assert_eq!(audios[0].filename, "b.wav");
+                assert_eq!(audios[0].mime, "audio/wav");
+                assert_eq!(audios[0].data, vec![7, 8, 9]);
+            }
+            other => panic!("unexpected message: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_envelope_should_keep_backward_compat_when_audio_parts_missing() {
+        let raw = TestEnvelope {
+            request_id: "req-img-no-audio",
+            domain: "ai",
+            action: "ai_chat_send",
+            payload: TestAiChatSendPayload {
+                project_name: "p",
+                workspace_name: "w",
+                ai_tool: "opencode",
+                session_id: "s2",
+                message: "hello",
+                image_parts: vec![TestImagePart {
+                    filename: "a.png",
+                    mime: "image/png",
+                    data: vec![1, 2],
+                }],
+                audio_parts: None,
+            },
+            client_ts: 1,
+        };
+
+        let bytes = rmp_serde::to_vec_named(&raw).expect("encode test envelope");
+        let env = decode_and_validate_envelope(&bytes).expect("decode envelope");
+        let msg = envelope_payload_to_client_message(&env).expect("decode client message");
+
+        match msg {
+            ClientMessage::AIChatSend { audio_parts, .. } => {
+                assert!(audio_parts.is_none());
+            }
+            other => panic!("unexpected message: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_envelope_should_decode_command_audio_parts() {
+        let raw = TestEnvelope {
+            request_id: "req-cmd-audio",
+            domain: "ai",
+            action: "ai_chat_command",
+            payload: TestAiChatCommandPayload {
+                project_name: "p",
+                workspace_name: "w",
+                ai_tool: "opencode",
+                session_id: "s3",
+                command: "build",
+                arguments: "--release",
+                audio_parts: Some(vec![TestAudioPart {
+                    filename: "voice.m4a",
+                    mime: "audio/m4a",
+                    data: vec![9, 8, 7],
+                }]),
+            },
+            client_ts: 1,
+        };
+
+        let bytes = rmp_serde::to_vec_named(&raw).expect("encode test envelope");
+        let env = decode_and_validate_envelope(&bytes).expect("decode envelope");
+        let msg = envelope_payload_to_client_message(&env).expect("decode client message");
+
+        match msg {
+            ClientMessage::AIChatCommand { audio_parts, .. } => {
+                let audios = audio_parts.expect("audio parts should exist");
+                assert_eq!(audios.len(), 1);
+                assert_eq!(audios[0].filename, "voice.m4a");
+                assert_eq!(audios[0].mime, "audio/m4a");
+                assert_eq!(audios[0].data, vec![9, 8, 7]);
             }
             other => panic!("unexpected message: {:?}", other),
         }

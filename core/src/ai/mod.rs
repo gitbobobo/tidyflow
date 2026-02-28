@@ -187,6 +187,14 @@ pub struct AiImagePart {
     pub data: Vec<u8>,
 }
 
+/// AI 音频附件（二进制）
+#[derive(Debug, Clone)]
+pub struct AiAudioPart {
+    pub filename: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
 /// AI 模型选择
 #[derive(Debug, Clone)]
 pub struct AiModelSelection {
@@ -311,6 +319,7 @@ pub trait AiAgent: Send + Sync {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String>;
@@ -323,6 +332,7 @@ pub trait AiAgent: Send + Sync {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
         _config_overrides: Option<HashMap<String, AiSessionConfigValue>>,
@@ -333,6 +343,7 @@ pub trait AiAgent: Send + Sync {
             message,
             file_refs,
             image_parts,
+            audio_parts,
             model,
             agent,
         )
@@ -348,6 +359,7 @@ pub trait AiAgent: Send + Sync {
         arguments: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
@@ -364,6 +376,7 @@ pub trait AiAgent: Send + Sync {
             &message,
             file_refs,
             image_parts,
+            audio_parts,
             model,
             agent,
         )

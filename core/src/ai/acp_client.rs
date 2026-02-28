@@ -1,6 +1,6 @@
 use super::codex_manager::{
-    AcpInitializationState, AppServerRequestError, CodexAppServerManager, CodexNotification,
-    CodexServerRequest,
+    AcpContentEncodingMode, AcpInitializationState, AppServerRequestError, CodexAppServerManager,
+    CodexNotification, CodexServerRequest,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -171,12 +171,22 @@ impl AcpClient {
             .await
             .map(|state| {
                 if state.prompt_capabilities.content_types.is_empty() {
-                    normalized == "text"
+                    normalized == "text" || normalized == "resource_link"
                 } else {
-                    state.prompt_capabilities.content_types.contains(&normalized)
+                    state
+                        .prompt_capabilities
+                        .content_types
+                        .contains(&normalized)
                 }
             })
-            .unwrap_or_else(|| normalized == "text")
+            .unwrap_or_else(|| normalized == "text" || normalized == "resource_link")
+    }
+
+    pub async fn prompt_encoding_mode(&self) -> AcpContentEncodingMode {
+        self.initialization_state()
+            .await
+            .map(|state| state.prompt_capabilities.encoding_mode)
+            .unwrap_or(AcpContentEncodingMode::Unknown)
     }
 
     pub fn build_prompt_text_part(text: String) -> Value {
@@ -186,7 +196,31 @@ impl AcpClient {
         })
     }
 
-    pub fn build_prompt_image_part(mime_type: String, data_url: String) -> Value {
+    pub fn build_prompt_image_part(
+        mode: AcpContentEncodingMode,
+        mime_type: String,
+        data_base64: String,
+    ) -> Value {
+        match mode {
+            AcpContentEncodingMode::New => {
+                Self::build_prompt_image_part_new(mime_type, data_base64)
+            }
+            AcpContentEncodingMode::Legacy | AcpContentEncodingMode::Unknown => {
+                let data_url = format!("data:{};base64,{}", mime_type, data_base64);
+                Self::build_prompt_image_part_legacy(mime_type, data_url)
+            }
+        }
+    }
+
+    pub fn build_prompt_image_part_new(mime_type: String, data_base64: String) -> Value {
+        serde_json::json!({
+            "type": "image",
+            "mimeType": mime_type,
+            "data": data_base64
+        })
+    }
+
+    pub fn build_prompt_image_part_legacy(mime_type: String, data_url: String) -> Value {
         serde_json::json!({
             "type": "image",
             "mimeType": mime_type,
@@ -194,7 +228,105 @@ impl AcpClient {
         })
     }
 
-    pub fn build_prompt_resource_link_part(uri: String, name: String) -> Value {
+    pub fn build_prompt_audio_part(
+        mode: AcpContentEncodingMode,
+        mime_type: String,
+        data_base64: String,
+    ) -> Value {
+        match mode {
+            AcpContentEncodingMode::New => {
+                Self::build_prompt_audio_part_new(mime_type, data_base64)
+            }
+            AcpContentEncodingMode::Legacy | AcpContentEncodingMode::Unknown => {
+                let data_url = format!("data:{};base64,{}", mime_type, data_base64);
+                Self::build_prompt_audio_part_legacy(mime_type, data_url)
+            }
+        }
+    }
+
+    pub fn build_prompt_audio_part_new(mime_type: String, data_base64: String) -> Value {
+        serde_json::json!({
+            "type": "audio",
+            "mimeType": mime_type,
+            "data": data_base64
+        })
+    }
+
+    pub fn build_prompt_audio_part_legacy(mime_type: String, data_url: String) -> Value {
+        serde_json::json!({
+            "type": "audio",
+            "mimeType": mime_type,
+            "url": data_url
+        })
+    }
+
+    pub fn build_prompt_resource_text_part(
+        uri: String,
+        name: String,
+        mime_type: String,
+        text: String,
+    ) -> Value {
+        serde_json::json!({
+            "type": "resource",
+            "resource": {
+                "uri": uri,
+                "name": name,
+                "mimeType": mime_type,
+                "text": text
+            }
+        })
+    }
+
+    pub fn build_prompt_resource_blob_part(
+        uri: String,
+        name: String,
+        mime_type: String,
+        blob_base64: String,
+    ) -> Value {
+        serde_json::json!({
+            "type": "resource",
+            "resource": {
+                "uri": uri,
+                "name": name,
+                "mimeType": mime_type,
+                "blob": blob_base64
+            }
+        })
+    }
+
+    pub fn build_prompt_resource_link_part(
+        mode: AcpContentEncodingMode,
+        uri: String,
+        name: String,
+        mime_type: Option<String>,
+    ) -> Value {
+        match mode {
+            AcpContentEncodingMode::New => {
+                Self::build_prompt_resource_link_part_new(uri, name, mime_type)
+            }
+            AcpContentEncodingMode::Legacy | AcpContentEncodingMode::Unknown => {
+                Self::build_prompt_resource_link_part_legacy(uri, name)
+            }
+        }
+    }
+
+    pub fn build_prompt_resource_link_part_new(
+        uri: String,
+        name: String,
+        mime_type: Option<String>,
+    ) -> Value {
+        let mut payload = serde_json::json!({
+            "type": "resource_link",
+            "uri": uri,
+            "name": name,
+        });
+        if let Some(mime_type) = mime_type.filter(|m| !m.trim().is_empty()) {
+            payload["mimeType"] = Value::String(mime_type);
+        }
+        payload
+    }
+
+    pub fn build_prompt_resource_link_part_legacy(uri: String, name: String) -> Value {
         serde_json::json!({
             "type": "resource_link",
             "resource": {
@@ -1351,8 +1483,8 @@ impl AcpClient {
 mod tests {
     use super::{AcpClient, AcpTransport};
     use crate::ai::codex_manager::{
-        AcpAuthMethod, AcpInitializationState, AppServerRequestError, CodexNotification,
-        CodexServerRequest, JsonRpcError,
+        AcpAuthMethod, AcpContentEncodingMode, AcpInitializationState, AppServerRequestError,
+        CodexNotification, CodexServerRequest, JsonRpcError,
     };
     use async_trait::async_trait;
     use serde_json::{json, Value};
@@ -1807,6 +1939,113 @@ mod tests {
         let client = AcpClient::new_with_transport(transport);
 
         assert!(client.supports_content_type("text").await);
+        assert!(client.supports_content_type("resource_link").await);
         assert!(!client.supports_content_type("image").await);
+    }
+
+    #[tokio::test]
+    async fn prompt_encoding_mode_should_follow_initialization_state() {
+        let mut state = AcpInitializationState {
+            negotiated_protocol_version: Some(1),
+            ..Default::default()
+        };
+        state.prompt_capabilities.encoding_mode = AcpContentEncodingMode::New;
+        let transport = Arc::new(MockTransport::new(vec![], Some(state)));
+        let client = AcpClient::new_with_transport(transport);
+
+        assert_eq!(
+            client.prompt_encoding_mode().await,
+            AcpContentEncodingMode::New
+        );
+    }
+
+    #[test]
+    fn prompt_image_audio_builder_should_follow_encoding_mode() {
+        let new_image = AcpClient::build_prompt_image_part(
+            AcpContentEncodingMode::New,
+            "image/png".to_string(),
+            "AQID".to_string(),
+        );
+        assert_eq!(
+            new_image.get("type").and_then(|v| v.as_str()),
+            Some("image")
+        );
+        assert_eq!(new_image.get("data").and_then(|v| v.as_str()), Some("AQID"));
+        assert!(new_image.get("url").is_none());
+
+        let legacy_image = AcpClient::build_prompt_image_part(
+            AcpContentEncodingMode::Legacy,
+            "image/png".to_string(),
+            "AQID".to_string(),
+        );
+        assert!(legacy_image
+            .get("url")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.starts_with("data:image/png;base64,AQID")));
+        assert!(legacy_image.get("data").is_none());
+
+        let new_audio = AcpClient::build_prompt_audio_part(
+            AcpContentEncodingMode::New,
+            "audio/wav".to_string(),
+            "BAUG".to_string(),
+        );
+        assert_eq!(
+            new_audio.get("type").and_then(|v| v.as_str()),
+            Some("audio")
+        );
+        assert_eq!(new_audio.get("data").and_then(|v| v.as_str()), Some("BAUG"));
+        assert!(new_audio.get("url").is_none());
+
+        let legacy_audio = AcpClient::build_prompt_audio_part(
+            AcpContentEncodingMode::Legacy,
+            "audio/wav".to_string(),
+            "BAUG".to_string(),
+        );
+        assert!(legacy_audio
+            .get("url")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.starts_with("data:audio/wav;base64,BAUG")));
+        assert!(legacy_audio.get("data").is_none());
+    }
+
+    #[test]
+    fn prompt_resource_link_builder_should_support_new_and_legacy_shapes() {
+        let new_part = AcpClient::build_prompt_resource_link_part(
+            AcpContentEncodingMode::New,
+            "file:///tmp/a.txt".to_string(),
+            "a.txt".to_string(),
+            Some("text/plain".to_string()),
+        );
+        assert_eq!(
+            new_part.get("uri").and_then(|v| v.as_str()),
+            Some("file:///tmp/a.txt")
+        );
+        assert_eq!(new_part.get("name").and_then(|v| v.as_str()), Some("a.txt"));
+        assert_eq!(
+            new_part.get("mimeType").and_then(|v| v.as_str()),
+            Some("text/plain")
+        );
+        assert!(new_part.get("resource").is_none());
+
+        let legacy_part = AcpClient::build_prompt_resource_link_part(
+            AcpContentEncodingMode::Legacy,
+            "file:///tmp/b.txt".to_string(),
+            "b.txt".to_string(),
+            None,
+        );
+        assert_eq!(
+            legacy_part
+                .get("resource")
+                .and_then(|v| v.get("uri"))
+                .and_then(|v| v.as_str()),
+            Some("file:///tmp/b.txt")
+        );
+        assert_eq!(
+            legacy_part
+                .get("resource")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str()),
+            Some("b.txt")
+        );
     }
 }

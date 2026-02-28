@@ -470,6 +470,8 @@ pub enum ClientMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         image_parts: Option<Vec<ai::ImagePart>>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        audio_parts: Option<Vec<ai::AudioPart>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<ai::ModelSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
@@ -488,6 +490,8 @@ pub enum ClientMessage {
         file_refs: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         image_parts: Option<Vec<ai::ImagePart>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        audio_parts: Option<Vec<ai::AudioPart>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<ai::ModelSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]

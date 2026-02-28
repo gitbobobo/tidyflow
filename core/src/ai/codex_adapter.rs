@@ -3,7 +3,7 @@ use super::codex_manager::CodexAppServerManager;
 use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::session_status::AiSessionStatus;
 use super::{
-    AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
+    AiAgent, AiAgentInfo, AiAudioPart, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiQuestionInfo, AiQuestionOption, AiQuestionRequest,
     AiSession, AiSessionSelectionHint, AiSlashCommand,
 };
@@ -69,6 +69,31 @@ impl CodexAppServerAgent {
             Some(Value::Number(n)) => n.as_f64(),
             Some(Value::String(s)) => s.trim().parse::<f64>().ok(),
             _ => None,
+        }
+    }
+
+    fn append_audio_fallback_text(message: &str, audio_parts: Option<&[AiAudioPart]>) -> String {
+        let Some(parts) = audio_parts else {
+            return message.to_string();
+        };
+        if parts.is_empty() {
+            return message.to_string();
+        }
+        let summary = parts
+            .iter()
+            .map(|part| format!("{} ({}, {}B)", part.filename, part.mime, part.data.len()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if message.trim().is_empty() {
+            format!(
+                "音频附件（当前后端不支持音频直传，已降级为文本摘要）：\n{}",
+                summary
+            )
+        } else {
+            format!(
+                "{}\n\n音频附件（当前后端不支持音频直传，已降级为文本摘要）：\n{}",
+                message, summary
+            )
         }
     }
 
@@ -1935,12 +1960,14 @@ impl AiAgent for CodexAppServerAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
         self.client.ensure_started().await?;
 
-        let mut input = vec![CodexAppServerClient::text_input(message)];
+        let effective_message = Self::append_audio_fallback_text(message, audio_parts.as_deref());
+        let mut input = vec![CodexAppServerClient::text_input(&effective_message)];
         if let Some(files) = file_refs {
             for file in files {
                 let absolute = format!("{}/{}", directory.trim_end_matches('/'), file);
@@ -2029,7 +2056,7 @@ impl AiAgent for CodexAppServerAgent {
             .await
             .insert(session_id.to_string(), turn_id.clone());
 
-        self.build_turn_stream(session_id.to_string(), turn_id, message.to_string())
+        self.build_turn_stream(session_id.to_string(), turn_id, effective_message)
             .await
     }
 

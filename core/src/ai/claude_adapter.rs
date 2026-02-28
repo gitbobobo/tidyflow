@@ -1,7 +1,7 @@
 use super::context_usage::{extract_context_remaining_percent, AiSessionContextUsage};
 use super::session_status::AiSessionStatus;
 use super::{
-    AiAgent, AiAgentInfo, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
+    AiAgent, AiAgentInfo, AiAudioPart, AiEvent, AiEventStream, AiImagePart, AiMessage, AiModelInfo,
     AiModelSelection, AiPart, AiProviderInfo, AiSession, AiSessionSelectionHint, AiSlashCommand,
 };
 use async_trait::async_trait;
@@ -93,6 +93,7 @@ impl ClaudeCodeAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
     ) -> String {
         let mut chunks = vec![message.to_string()];
         if let Some(files) = file_refs {
@@ -108,6 +109,16 @@ impl ClaudeCodeAgent {
                     .collect::<Vec<_>>()
                     .join("\n");
                 chunks.push(format!("图片附件：\n{}", names));
+            }
+        }
+        if let Some(audios) = audio_parts {
+            if !audios.is_empty() {
+                let names = audios
+                    .iter()
+                    .map(|audio| format!("{} ({})", audio.filename, audio.mime))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                chunks.push(format!("音频附件：\n{}", names));
             }
         }
         chunks.join("\n\n")
@@ -321,6 +332,7 @@ impl AiAgent for ClaudeCodeAgent {
         message: &str,
         file_refs: Option<Vec<String>>,
         image_parts: Option<Vec<AiImagePart>>,
+        audio_parts: Option<Vec<AiAudioPart>>,
         model: Option<AiModelSelection>,
         agent: Option<String>,
     ) -> Result<AiEventStream, String> {
@@ -398,7 +410,7 @@ impl AiAgent for ClaudeCodeAgent {
         let session_id_owned = session_id.to_string();
         let message_owned = message.to_string();
         let model_id = model.as_ref().map(|m| m.model_id.clone());
-        let prompt = Self::compose_message(&message_owned, file_refs, image_parts);
+        let prompt = Self::compose_message(&message_owned, file_refs, image_parts, audio_parts);
 
         tokio::spawn(async move {
             let assistant_message_id = format!("claude-assistant-{}", Uuid::new_v4());
