@@ -354,6 +354,48 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(encodedNested?["id"] as? String, "advanced")
     }
 
+    func testEvolutionStageProfileInfoParsesImplementGeneralStage() {
+        let json: [String: Any] = [
+            "stage": "implement_general",
+            "ai_tool": "codex",
+            "mode": "code",
+        ]
+
+        let profile = EvolutionStageProfileInfoV2.from(json: json)
+        XCTAssertNotNil(profile)
+        XCTAssertEqual(profile?.stage, "implement_general")
+        XCTAssertEqual(profile?.aiTool, .codex)
+    }
+
+    func testEvolutionAgentProfileParsesImplementStagesFromMapPayload() {
+        let json: [String: Any] = [
+            "project": "tidyflow",
+            "workspace": "default",
+            "stage_profiles": [
+                "direction": [
+                    "ai_tool": "codex",
+                ],
+                "implement_general": [
+                    "ai_tool": "codex",
+                    "mode": "code",
+                ],
+                "implement_visual": [
+                    "ai_tool": "codex",
+                ],
+                "implement_advanced": [
+                    "ai_tool": "codex",
+                ],
+            ],
+        ]
+
+        let result = EvolutionAgentProfileV2.from(json: json)
+        XCTAssertNotNil(result)
+        let stages = Set(result?.stageProfiles.map { $0.stage } ?? [])
+        XCTAssertTrue(stages.contains("implement_general"))
+        XCTAssertTrue(stages.contains("implement_visual"))
+        XCTAssertTrue(stages.contains("implement_advanced"))
+    }
+
     func testAIProtocolPartInfoParsesToolCallExtendedFields() {
         let json: [String: Any] = [
             "id": "tool-1",
