@@ -255,6 +255,11 @@ struct AIProtocolPartInfo {
     let source: [String: Any]?
     let toolName: String?
     let toolCallId: String?
+    let toolKind: String?
+    let toolTitle: String?
+    let toolRawInput: Any?
+    let toolRawOutput: Any?
+    let toolLocations: [AIProtocolToolCallLocationInfo]?
     let toolState: [String: Any]?
     let toolPartMetadata: [String: Any]?
 
@@ -270,6 +275,12 @@ struct AIProtocolPartInfo {
         let source = json["source"] as? [String: Any]
         let toolName = json["tool_name"] as? String
         let toolCallId = json["tool_call_id"] as? String
+        let toolKind = parseOptionalString(json["tool_kind"])
+        let toolTitle = parseOptionalString(json["tool_title"])
+        let toolRawInput = json["tool_raw_input"]
+        let toolRawOutput = json["tool_raw_output"]
+        let toolLocations = (json["tool_locations"] as? [[String: Any]] ?? [])
+            .compactMap { AIProtocolToolCallLocationInfo.from(json: $0) }
         let toolState = json["tool_state"] as? [String: Any]
         let toolPartMetadata = json["tool_part_metadata"] as? [String: Any]
         return AIProtocolPartInfo(
@@ -284,8 +295,45 @@ struct AIProtocolPartInfo {
             source: source,
             toolName: toolName,
             toolCallId: toolCallId,
+            toolKind: toolKind,
+            toolTitle: toolTitle,
+            toolRawInput: toolRawInput,
+            toolRawOutput: toolRawOutput,
+            toolLocations: toolLocations.isEmpty ? nil : toolLocations,
             toolState: toolState,
             toolPartMetadata: toolPartMetadata
+        )
+    }
+}
+
+struct AIProtocolToolCallLocationInfo {
+    let uri: String?
+    let path: String?
+    let line: Int?
+    let column: Int?
+    let endLine: Int?
+    let endColumn: Int?
+    let label: String?
+
+    static func from(json: [String: Any]) -> AIProtocolToolCallLocationInfo? {
+        let uri = parseOptionalString(json["uri"])
+        let path = parseOptionalString(json["path"])
+        let line = Int(parseInt64(json["line"]))
+        let column = Int(parseInt64(json["column"]))
+        let endLine = Int(parseInt64(json["end_line"] ?? json["endLine"]))
+        let endColumn = Int(parseInt64(json["end_column"] ?? json["endColumn"]))
+        let label = parseOptionalString(json["label"])
+        if uri == nil && path == nil && line == 0 && column == 0 && endLine == 0 && endColumn == 0 && label == nil {
+            return nil
+        }
+        return AIProtocolToolCallLocationInfo(
+            uri: uri,
+            path: path,
+            line: line == 0 ? nil : line,
+            column: column == 0 ? nil : column,
+            endLine: endLine == 0 ? nil : endLine,
+            endColumn: endColumn == 0 ? nil : endColumn,
+            label: label
         )
     }
 }
@@ -1511,24 +1559,7 @@ extension AISessionMessagesV2 {
     func toChatMessages() -> [AIChatMessage] {
         messages.compactMap { message in
             let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
-            let parts: [AIChatPart] = message.parts.compactMap { part in
-                let kind = AIChatPartKind(rawValue: part.partType) ?? .text
-                return AIChatPart(
-                    id: part.id,
-                    kind: kind,
-                    text: part.text,
-                    mime: part.mime,
-                    filename: part.filename,
-                    url: part.url,
-                    synthetic: part.synthetic,
-                    ignored: part.ignored,
-                    source: part.source,
-                    toolName: part.toolName,
-                    toolState: part.toolState,
-                    toolCallId: part.toolCallId,
-                    toolPartMetadata: part.toolPartMetadata
-                )
-            }
+            let parts: [AIChatPart] = message.parts.map { AIChatPartNormalization.makeChatPart(from: $0) }
             return AIChatMessage(messageId: message.id, role: role, parts: parts, isStreaming: false)
         }
     }
