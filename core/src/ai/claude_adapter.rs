@@ -798,12 +798,61 @@ impl AiAgent for ClaudeCodeAgent {
                 }
             }
 
+            // 先构建助手消息并存入内存，再发送 Done，
+            // 避免客户端收到 Done 后立即 requestAISessionMessages 时助手消息尚未入库。
+            let mut assistant_parts = Vec::<AiPart>::new();
+            if !assistant_reasoning.is_empty() {
+                assistant_parts.push(AiPart {
+                    id: reasoning_part_id,
+                    part_type: "reasoning".to_string(),
+                    text: Some(assistant_reasoning),
+                    ..Default::default()
+                });
+            }
+            if !assistant_text.trim().is_empty() {
+                assistant_parts.push(AiPart::new_text(text_part_id, assistant_text));
+            }
+            let mut tool_parts = tool_states.values().cloned().collect::<Vec<_>>();
+            tool_parts.sort_by(|a, b| a.part_id.cmp(&b.part_id));
+            for state in tool_parts {
+                assistant_parts.push(state.to_part());
+            }
+
+            {
+                let mut sessions_guard = sessions.lock().await;
+                if let Some(record) = sessions_guard.get_mut(&session_id_owned) {
+                    record.updated_at = ClaudeCodeAgent::now_ms();
+                    if let Some(real_session_id) = parsed_claude_session_id {
+                        record.claude_session_id = Some(real_session_id);
+                    }
+                    record.selection_hint = history_hint.clone();
+                    if let Some(usage_json) = last_usage_json {
+                        if let Some(percent) = extract_context_remaining_percent(&usage_json) {
+                            record.context_usage = Some(AiSessionContextUsage {
+                                context_remaining_percent: Some(percent),
+                            });
+                        }
+                    }
+                    if !assistant_parts.is_empty() {
+                        record.messages.push(AiMessage {
+                            id: assistant_message_id.clone(),
+                            role: "assistant".to_string(),
+                            created_at: Some(ClaudeCodeAgent::now_ms()),
+                            agent: None,
+                            model_provider_id: history_hint.model_provider_id.clone(),
+                            model_id: history_hint.model_id.clone(),
+                            parts: assistant_parts,
+                        });
+                    }
+                }
+            }
+
             if !terminated_with_error {
                 match child.wait().await {
                     Ok(status) if status.success() => {
                         if !assistant_opened {
                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                message_id: assistant_message_id.clone(),
+                                message_id: assistant_message_id,
                                 role: "assistant".to_string(),
                                 selection_hint: None,
                             }));
@@ -827,53 +876,6 @@ impl AiAgent for ClaudeCodeAgent {
                     }
                 }
             }
-
-            let mut assistant_parts = Vec::<AiPart>::new();
-            if !assistant_reasoning.is_empty() {
-                assistant_parts.push(AiPart {
-                    id: reasoning_part_id,
-                    part_type: "reasoning".to_string(),
-                    text: Some(assistant_reasoning),
-                    ..Default::default()
-                });
-            }
-            if !assistant_text.trim().is_empty() {
-                assistant_parts.push(AiPart::new_text(text_part_id, assistant_text));
-            }
-            let mut tool_parts = tool_states.values().cloned().collect::<Vec<_>>();
-            tool_parts.sort_by(|a, b| a.part_id.cmp(&b.part_id));
-            for state in tool_parts {
-                assistant_parts.push(state.to_part());
-            }
-
-            let mut sessions_guard = sessions.lock().await;
-            if let Some(record) = sessions_guard.get_mut(&session_id_owned) {
-                record.updated_at = ClaudeCodeAgent::now_ms();
-                if let Some(real_session_id) = parsed_claude_session_id {
-                    record.claude_session_id = Some(real_session_id);
-                }
-                record.selection_hint = history_hint.clone();
-                // 更新 context usage
-                if let Some(usage_json) = last_usage_json {
-                    if let Some(percent) = extract_context_remaining_percent(&usage_json) {
-                        record.context_usage = Some(AiSessionContextUsage {
-                            context_remaining_percent: Some(percent),
-                        });
-                    }
-                }
-                if !assistant_parts.is_empty() {
-                    record.messages.push(AiMessage {
-                        id: assistant_message_id,
-                        role: "assistant".to_string(),
-                        created_at: Some(ClaudeCodeAgent::now_ms()),
-                        agent: None,
-                        model_provider_id: history_hint.model_provider_id.clone(),
-                        model_id: history_hint.model_id.clone(),
-                        parts: assistant_parts,
-                    });
-                }
-            }
-            drop(sessions_guard);
 
             active_aborters.lock().await.remove(&key);
         });

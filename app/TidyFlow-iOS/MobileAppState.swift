@@ -4143,9 +4143,9 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onAISessionMessages = { [weak self] ev in
             guard let self else { return }
-            if self.consumeEvolutionReplayMessagesIfNeeded(ev) {
-                return
-            }
+            // iOS 没有独立的进化回放视图，使用主聊天视图展示；
+            // 不提前 return，让消息同时流入主聊天。
+            _ = self.consumeEvolutionReplayMessagesIfNeeded(ev)
             if self.consumeSubAgentViewerMessagesIfNeeded(ev) {
                 return
             }
