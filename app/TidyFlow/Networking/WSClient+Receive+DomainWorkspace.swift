@@ -143,10 +143,6 @@ extension WSClient {
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
             let appLanguage = json["app_language"] as? String ?? "system"
             let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
-            let evolutionImplementAgentProfiles =
-                parseEvolutionImplementAgentProfilesFromClientSettings(
-                    json["evolution_implement_agent_profiles"]
-                )
             let settings = ClientSettings(
                 customCommands: commands,
                 workspaceShortcuts: workspaceShortcuts,
@@ -155,8 +151,7 @@ extension WSClient {
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
                 appLanguage: appLanguage,
-                evolutionAgentProfiles: evolutionAgentProfiles,
-                evolutionImplementAgentProfiles: evolutionImplementAgentProfiles
+                evolutionAgentProfiles: evolutionAgentProfiles
             )
             if let handler = settingsMessageHandler {
                 handler.handleClientSettingsResult(settings)
@@ -323,12 +318,5 @@ extension WSClient {
             return nil
         }
         return dicts.compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
-    }
-
-    private func parseEvolutionImplementAgentProfilesFromClientSettings(
-        _ raw: Any?
-    ) -> EvolutionImplementAgentProfilesV2 {
-        guard let rawMap = raw as? [String: Any] else { return .default }
-        return EvolutionImplementAgentProfilesV2.from(json: rawMap)
     }
 }
