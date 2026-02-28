@@ -48,4 +48,31 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(result?.aiTool, .claude_code)
         XCTAssertEqual(result?.agents.first?.name, "default")
     }
+
+    func testAIChatDoneParsesOptionalStopReason() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "copilot",
+            "session_id": "s1",
+            "stop_reason": "cancelled",
+        ]
+
+        let result = AIChatDoneV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.stopReason, "cancelled")
+    }
+
+    func testAIChatDoneAllowsMissingStopReason() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "copilot",
+            "session_id": "s1",
+        ]
+
+        let result = AIChatDoneV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertNil(result?.stopReason)
+    }
 }

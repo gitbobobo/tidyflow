@@ -1819,7 +1819,7 @@ fn map_opencode_hub_stream(
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         if idle_session == session_id {
-                            Some(Ok(AiEvent::Done))
+                            Some(Ok(AiEvent::Done { stop_reason: None }))
                         } else {
                             None
                         }
@@ -1855,7 +1855,7 @@ fn map_opencode_hub_stream(
                                 .map(|s| s == "idle")
                                 .unwrap_or(false);
                         if is_idle {
-                            Some(Ok(AiEvent::Done))
+                            Some(Ok(AiEvent::Done { stop_reason: None }))
                         } else {
                             None
                         }

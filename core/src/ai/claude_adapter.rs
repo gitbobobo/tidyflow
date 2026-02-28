@@ -484,7 +484,7 @@ impl AiAgent for ClaudeCodeAgent {
                     _ = abort_rx.recv() => {
                         let _ = child.start_kill();
                         let _ = child.wait().await;
-                        let _ = tx.send(Ok(AiEvent::Done));
+                        let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
                         active_aborters.lock().await.remove(&key);
                         return;
                     }
@@ -795,7 +795,7 @@ impl AiAgent for ClaudeCodeAgent {
                                 selection_hint: None,
                             }));
                         }
-                        let _ = tx.send(Ok(AiEvent::Done));
+                        let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
                     }
                     Ok(status) => {
                         if stderr_tail.is_empty() {

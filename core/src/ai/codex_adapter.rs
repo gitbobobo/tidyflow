@@ -1730,7 +1730,7 @@ impl CodexAppServerAgent {
                                             message_id: user_message_id.clone(),
                                             part: AiPart::new_text(format!("{}-text", user_message_id), real_user_text),
                                         }));
-                                        let _ = tx.send(Ok(AiEvent::Done));
+                                        let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
                                         active_turns.lock().await.remove(&session_id);
                                         break;
                                     }

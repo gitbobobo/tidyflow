@@ -318,7 +318,9 @@ extension AppState {
         store.clearAbortPendingIfMatches(ev.sessionId)
         guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
         if isPerfAISelectionDebugLogEnabled {
-            TFLog.app.debug("AI stream done: session_id=\(ev.sessionId, privacy: .public)")
+            TFLog.app.debug(
+                "AI stream done: session_id=\(ev.sessionId, privacy: .public), stop_reason=\((ev.stopReason ?? "none"), privacy: .public)"
+            )
         }
         sendAISelectionPipelineLog(
             event: "chat_done_received",

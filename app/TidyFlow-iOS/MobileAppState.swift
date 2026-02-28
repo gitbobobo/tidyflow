@@ -3413,6 +3413,9 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
+            TFLog.app.debug(
+                "AI stream done(iOS): session_id=\(ev.sessionId, privacy: .public), stop_reason=\((ev.stopReason ?? "none"), privacy: .public)"
+            )
             if self.aiAbortPendingSessionId == ev.sessionId {
                 self.aiAbortPendingSessionId = nil
             }
@@ -3658,9 +3661,92 @@ final class MobileAppState: ObservableObject {
         field: String,
         delta: String
     ) {
-        // 当前仅消费 text 增量，避免未知字段污染 UI
-        guard field == "text" else { return }
         guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
+
+        let normalizedPartType: String = {
+            if partType == AIChatPartKind.tool.rawValue || field == "progress" || field == "output" {
+                return AIChatPartKind.tool.rawValue
+            }
+            return partType
+        }()
+
+        if field == "progress", normalizedPartType == AIChatPartKind.tool.rawValue {
+            if let existing = aiPartIndexByPartId[partId],
+               existing.msgIdx == msgIdx,
+               existing.partIdx >= 0,
+               existing.partIdx < aiChatMessages[msgIdx].parts.count {
+                var part = aiChatMessages[msgIdx].parts[existing.partIdx]
+                var toolState = part.toolState ?? [:]
+                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
+                var lines = (metadata["progress_lines"] as? [String]) ?? []
+                lines.append(delta)
+                if lines.count > 300 {
+                    lines.removeFirst(lines.count - 300)
+                }
+                metadata["progress_lines"] = lines
+                toolState["metadata"] = metadata
+                if toolState["status"] == nil {
+                    toolState["status"] = "running"
+                }
+                part.toolState = toolState
+                part.kind = .tool
+                aiChatMessages[msgIdx].parts[existing.partIdx] = part
+                return
+            }
+
+            let newPart = AIChatPart(
+                id: partId,
+                kind: .tool,
+                text: nil,
+                toolName: "unknown",
+                toolState: [
+                    "status": "running",
+                    "metadata": [
+                        "progress_lines": [delta]
+                    ]
+                ]
+            )
+            aiChatMessages[msgIdx].parts.append(newPart)
+            let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
+            aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
+            return
+        }
+
+        if field == "output", normalizedPartType == AIChatPartKind.tool.rawValue {
+            if let existing = aiPartIndexByPartId[partId],
+               existing.msgIdx == msgIdx,
+               existing.partIdx >= 0,
+               existing.partIdx < aiChatMessages[msgIdx].parts.count {
+                var part = aiChatMessages[msgIdx].parts[existing.partIdx]
+                var toolState = part.toolState ?? [:]
+                let currentOutput = (toolState["output"] as? String) ?? ""
+                toolState["output"] = currentOutput + delta
+                if toolState["status"] == nil {
+                    toolState["status"] = "running"
+                }
+                part.toolState = toolState
+                part.kind = .tool
+                aiChatMessages[msgIdx].parts[existing.partIdx] = part
+                return
+            }
+
+            let newPart = AIChatPart(
+                id: partId,
+                kind: .tool,
+                text: nil,
+                toolName: "unknown",
+                toolState: [
+                    "status": "running",
+                    "output": delta
+                ]
+            )
+            aiChatMessages[msgIdx].parts.append(newPart)
+            let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
+            aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
+            return
+        }
+
+        guard field == "text" else { return }
 
         if let existing = aiPartIndexByPartId[partId],
            existing.msgIdx == msgIdx,
@@ -3671,7 +3757,7 @@ final class MobileAppState: ObservableObject {
             return
         }
 
-        let kind = AIChatPartKind(rawValue: partType) ?? .text
+        let kind = AIChatPartKind(rawValue: normalizedPartType) ?? .text
         let newPart = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil, toolState: nil)
         aiChatMessages[msgIdx].parts.append(newPart)
         let newPartIdx = aiChatMessages[msgIdx].parts.count - 1

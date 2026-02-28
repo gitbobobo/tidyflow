@@ -322,6 +322,7 @@ struct AIChatDoneV2 {
     let aiTool: AIChatTool
     let sessionId: String
     let selectionHint: AISessionSelectionHint?
+    let stopReason: String?
 
     static func from(json: [String: Any]) -> AIChatDoneV2? {
         guard let projectName = json["project_name"] as? String,
@@ -329,12 +330,14 @@ struct AIChatDoneV2 {
               let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
         let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
+        let stopReason = parseOptionalString(json["stop_reason"])
         return AIChatDoneV2(
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
-            selectionHint: selectionHint
+            selectionHint: selectionHint,
+            stopReason: stopReason
         )
     }
 }
