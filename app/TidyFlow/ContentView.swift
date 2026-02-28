@@ -37,7 +37,7 @@ struct ContentView: View {
             .inspector(isPresented: inspectorPresented) {
                 InspectorContentView()
                     .environmentObject(appState)
-                    .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
+                    .inspectorColumnWidth(min: 250, ideal: 300, max: 500)
             }
             .toolbar {
                 // 根据是否选中工作空间显示不同内容

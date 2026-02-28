@@ -18,8 +18,8 @@ struct TabContentHostView: View {
                         EvolutionTabView()
                             .environmentObject(appState)
                     case .evidence:
-                        EvidenceTabView()
-                            .environmentObject(appState)
+                        // Mac 端证据页面已移至右侧面板，此处不再渲染
+                        EmptyView()
                     }
                 } else if let activeId = appState.activeTabIdByWorkspace[globalKey],
                           let tabs = appState.workspaceTabs[globalKey],
@@ -651,6 +651,7 @@ struct EvidenceTabView: View {
     @State private var selectedTab: EvidenceTabType = .screenshot
     @State private var selectedScreenshotID: String?
     @State private var selectedLogID: String?
+    @State private var showDetailSheet: Bool = false
     @State private var itemLoading: Bool = false
     @State private var itemPaging: Bool = false
     @State private var itemError: String?
@@ -727,6 +728,23 @@ struct EvidenceTabView: View {
             Divider()
             content
         }
+        .sheet(isPresented: $showDetailSheet) {
+            if let item = currentSelectedItem {
+                EvidenceDetailSheetView(
+                    item: item,
+                    selectedTab: selectedTab,
+                    itemLoading: $itemLoading,
+                    itemPaging: $itemPaging,
+                    itemError: $itemError,
+                    itemTextChunks: $itemTextChunks,
+                    itemTextNextOffset: $itemTextNextOffset,
+                    itemTextHasMore: $itemTextHasMore,
+                    itemImage: $itemImage,
+                    itemByteCount: $itemByteCount,
+                    onLoadNextPage: { loadNextTextPageIfNeeded(for: item) }
+                )
+            }
+        }
         .onAppear {
             refreshEvidence()
         }
@@ -767,28 +785,32 @@ struct EvidenceTabView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Text("证据")
-                .font(.headline)
-            Spacer()
+        HStack(spacing: 8) {
             if let actionMessage, !actionMessage.isEmpty {
                 Text(actionMessage)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
-            Button("刷新") {
+            Spacer()
+            Button {
                 refreshEvidence()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
             }
-            .buttonStyle(.borderless)
-            Button("重建全链路证据") {
+            .buttonStyle(.plain)
+            .help("刷新")
+            Button("重建") {
                 rebuildEvidence()
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
             .disabled(workspace == nil || workspace?.isEmpty == true)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
     
     private var tabSwitcher: some View {
@@ -800,15 +822,14 @@ struct EvidenceTabView: View {
                         clearItemPreview()
                     }
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
                         Image(systemName: tab.iconName)
-                        Text(tab.displayName)
-                        Text("(\(itemsCount(for: tab)))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 11))
+                        Text("\(tab.displayName)(\(itemsCount(for: tab)))")
+                            .font(.system(size: 11))
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                     .background(
                         selectedTab == tab
                             ? Color.accentColor.opacity(0.15)
@@ -821,12 +842,12 @@ struct EvidenceTabView: View {
                 
                 if tab != EvidenceTabType.allCases.last {
                     Divider()
-                        .frame(height: 20)
+                        .frame(height: 16)
                 }
             }
             Spacer()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .background(Color(NSColor.controlBackgroundColor))
     }
     
@@ -865,32 +886,19 @@ struct EvidenceTabView: View {
     
     @ViewBuilder
     private var mainContent: some View {
-        if currentSelectedItem == nil {
-            evidenceListPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            HStack(spacing: 0) {
-                evidenceListPane
-                    .frame(minWidth: 340, maxWidth: 480)
-
-                Divider()
-
-                // 右侧详情区域
-                detailPane
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
+        evidenceListPane
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var evidenceListPane: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 ForEach(currentTabDeviceTypes, id: \.self) { deviceType in
                     deviceSection(deviceType: deviceType, items: items(for: deviceType))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(10)
         }
     }
     
@@ -922,9 +930,9 @@ struct EvidenceTabView: View {
     private func screenshotGrid(items: [EvidenceItemInfoV2]) -> some View {
         return LazyVGrid(
             columns: [
-                GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)
+                GridItem(.adaptive(minimum: 100, maximum: 140), spacing: 8)
             ],
-            spacing: 12
+            spacing: 8
         ) {
             ForEach(items, id: \.itemID) { item in
                 screenshotThumbnail(item: item)
@@ -935,10 +943,12 @@ struct EvidenceTabView: View {
     
     /// 截图缩略图卡片
     private func screenshotThumbnail(item: EvidenceItemInfoV2) -> some View {
-        let thumbnailHeight: CGFloat = 96
+        let thumbnailHeight: CGFloat = 80
         return Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 selectedScreenshotID = item.itemID
+                loadItem(item)
+                showDetailSheet = true
             }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -1011,32 +1021,21 @@ struct EvidenceTabView: View {
     private func logRow(item: EvidenceItemInfoV2) -> some View {
         Button {
             selectedLogID = item.itemID
+            loadItem(item)
+            showDetailSheet = true
         } label: {
-            HStack(spacing: 12) {
-                // 序号
-                Text("#\(item.order)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .frame(width: 32, alignment: .leading)
-                
+            HStack(spacing: 8) {
                 // 文件图标
                 Image(systemName: "doc.text")
-                    .font(.system(size: 14))
+                    .font(.system(size: 12))
                     .foregroundColor(.accentColor)
                 
                 // 内容
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .font(.body)
+                        .font(.system(size: 12))
                         .foregroundColor(.primary)
                         .lineLimit(1)
-                    
-                    if !item.description.isEmpty && item.description != item.title {
-                        Text(item.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
                     
                     Text(item.path)
                         .font(.system(size: 10, design: .monospaced))
@@ -1045,16 +1044,9 @@ struct EvidenceTabView: View {
                 }
                 
                 Spacer()
-                
-                // 文件大小
-                if item.sizeBytes > 0 {
-                    Text(formatByteCount(item.sizeBytes))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(
                 selectedLogID == item.itemID
                     ? Color.accentColor.opacity(0.12)
@@ -1063,13 +1055,6 @@ struct EvidenceTabView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-    
-    /// 格式化字节数
-    private func formatByteCount(_ bytes: UInt64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
     }
     
     /// 空状态视图
@@ -1106,56 +1091,6 @@ struct EvidenceTabView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder
-    private var detailPane: some View {
-        let selectedItem = currentSelectedItem
-        if let item = selectedItem {
-            VStack(alignment: .leading, spacing: 12) {
-                // 标题栏
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title)
-                        .font(.title3)
-                    Text(item.description)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    HStack {
-                        Text(item.path)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        if item.sizeBytes > 0 {
-                            Text(formatByteCount(item.sizeBytes))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .padding(.bottom, 8)
-                
-                Divider()
-
-                // 内容区域
-                detailContent(for: item)
-            }
-            .padding(16)
-            .onAppear {
-                loadItemIfNeeded(item)
-            }
-            .onChange(of: item.itemID) { _, _ in
-                loadItem(item)
-            }
-        } else {
-            VStack(spacing: 10) {
-                Image(systemName: selectedTab == .screenshot ? "photo" : "doc.text")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary.opacity(0.6))
-                Text("选择一项查看详情")
-                    .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-    
     /// 当前选中的条目
     private var currentSelectedItem: EvidenceItemInfoV2? {
         let selectedID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
@@ -1163,93 +1098,6 @@ struct EvidenceTabView: View {
             return currentTabItems.first { $0.itemID == id }
         }
         return nil
-    }
-    
-    /// 详情内容
-    @ViewBuilder
-    private func detailContent(for item: EvidenceItemInfoV2) -> some View {
-        if itemLoading {
-            ProgressView("加载内容中...")
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        } else if let itemError {
-            VStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 32))
-                    .foregroundColor(.orange)
-                Text(itemError)
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        } else if let itemImage, selectedTab == .screenshot {
-            // 图片详情
-            ZStack {
-                Color.black.opacity(0.05)
-                Image(nsImage: itemImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .padding(10)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipShape(.rect(cornerRadius: 10))
-        } else if !itemTextChunks.isEmpty {
-            // 文本详情
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(itemTextChunks.indices, id: \.self) { idx in
-                        Text(itemTextChunks[idx])
-                            .font(.system(size: 12, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if itemPaging || itemTextHasMore {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text(itemPaging ? "加载更多中..." : "滚动到底部继续加载")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 8)
-                        .onAppear {
-                            loadNextTextPageIfNeeded(for: item)
-                        }
-                    }
-                }
-                .padding(12)
-            }
-            .background(Color(NSColor.textBackgroundColor))
-            .cornerRadius(10)
-        } else {
-            VStack(spacing: 8) {
-                Image(systemName: "doc")
-                    .font(.system(size: 40))
-                    .foregroundColor(.secondary.opacity(0.5))
-                Text("无法预览该证据")
-                    .foregroundColor(.secondary)
-                if item.mimeType != "application/octet-stream" {
-                    Text("MIME: \(item.mimeType)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        }
-    }
-    
-    private func loadItemIfNeeded(_ item: EvidenceItemInfoV2) {
-        let currentID = selectedTab == .screenshot ? selectedScreenshotID : selectedLogID
-        if currentID != item.itemID {
-            if selectedTab == .screenshot {
-                selectedScreenshotID = item.itemID
-            } else {
-                selectedLogID = item.itemID
-            }
-            loadItem(item)
-        } else if itemTextChunks.isEmpty && itemImage == nil && !itemLoading && itemError == nil {
-            loadItem(item)
-        }
     }
 
     private func syncSelectionIfNeeded() {
@@ -1495,6 +1343,135 @@ struct EvidenceTabView: View {
                 }
                 itemError = errorMessage ?? "未知错误"
             }
+        }
+    }
+}
+
+// MARK: - 证据详情 Sheet
+
+/// 证据详情弹出视图（用于右侧面板点击证据项后展示）
+struct EvidenceDetailSheetView: View {
+    let item: EvidenceItemInfoV2
+    let selectedTab: EvidenceTabType
+    @Binding var itemLoading: Bool
+    @Binding var itemPaging: Bool
+    @Binding var itemError: String?
+    @Binding var itemTextChunks: [String]
+    @Binding var itemTextNextOffset: UInt64
+    @Binding var itemTextHasMore: Bool
+    @Binding var itemImage: NSImage?
+    @Binding var itemByteCount: Int
+    var onLoadNextPage: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 标题栏
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.headline)
+                    Text(item.path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if item.sizeBytes > 0 {
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(item.sizeBytes), countStyle: .file))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+
+            Divider()
+
+            // 内容区域
+            detailContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 500, idealWidth: 700, minHeight: 400, idealHeight: 600)
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        if itemLoading {
+            ProgressView("加载内容中...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else if let itemError {
+            VStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 32))
+                    .foregroundColor(.orange)
+                Text(itemError)
+                    .foregroundColor(.red)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else if let itemImage, selectedTab == .screenshot {
+            ZStack {
+                Color.black.opacity(0.05)
+                Image(nsImage: itemImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .padding(10)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(.rect(cornerRadius: 10))
+            .padding(16)
+        } else if !itemTextChunks.isEmpty {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(itemTextChunks.indices, id: \.self) { idx in
+                        Text(itemTextChunks[idx])
+                            .font(.system(size: 12, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if itemPaging || itemTextHasMore {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text(itemPaging ? "加载更多中..." : "滚动到底部继续加载")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                        .onAppear {
+                            onLoadNextPage()
+                        }
+                    }
+                }
+                .padding(12)
+            }
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(10)
+            .padding(16)
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: "doc")
+                    .font(.system(size: 40))
+                    .foregroundColor(.secondary.opacity(0.5))
+                Text("无法预览该证据")
+                    .foregroundColor(.secondary)
+                if item.mimeType != "application/octet-stream" {
+                    Text("MIME: \(item.mimeType)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
     }
 }

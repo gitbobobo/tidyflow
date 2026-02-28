@@ -53,15 +53,7 @@ struct TabStripView: View {
                 )
                 .padding(.horizontal, 4)
 
-                WorkspaceSpecialPageButton(
-                    iconName: "photo.stack",
-                    helpText: "Evidence",
-                    isSelected: appState.workspaceSpecialPageByWorkspace[globalKey] == .evidence,
-                    onTap: {
-                        appState.toggleWorkspaceSpecialPage(workspaceKey: globalKey, page: .evidence)
-                    }
-                )
-                .padding(.horizontal, 4)
+
             } else {
                 Spacer()
             }
