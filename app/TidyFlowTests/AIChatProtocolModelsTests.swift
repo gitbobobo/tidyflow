@@ -75,4 +75,26 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertNotNil(result)
         XCTAssertNil(result?.stopReason)
     }
+
+    func testAIProtocolPartInfoParsesPlanPartAndSource() {
+        let json: [String: Any] = [
+            "id": "assistant-1-plan",
+            "part_type": "plan",
+            "source": [
+                "vendor": "acp",
+                "item_type": "plan",
+                "protocol": "agent-plan",
+                "revision": 2,
+                "entries": [
+                    ["content": "实现解析器", "status": "in_progress"],
+                ],
+            ],
+        ]
+
+        let part = AIProtocolPartInfo.from(json: json)
+        XCTAssertNotNil(part)
+        XCTAssertEqual(part?.partType, "plan")
+        XCTAssertEqual(part?.source?["protocol"] as? String, "agent-plan")
+        XCTAssertEqual(part?.source?["revision"] as? Int, 2)
+    }
 }

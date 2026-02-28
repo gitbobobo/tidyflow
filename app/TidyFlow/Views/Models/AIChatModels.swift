@@ -52,6 +52,7 @@ enum AIChatPartKind: String {
     case reasoning
     case tool
     case file
+    case plan
     case compaction
 }
 

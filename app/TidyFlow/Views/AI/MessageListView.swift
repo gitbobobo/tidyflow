@@ -114,6 +114,8 @@ struct MessageListView: View {
                 return true
             case .file:
                 return true
+            case .plan:
+                return true
             case .compaction:
                 return true
             case .text, .reasoning:
@@ -636,6 +638,8 @@ private struct MessageBubble: View, Equatable {
             }
         case .file:
             filePartView(part)
+        case .plan:
+            AIPlanCardView(part: part)
         case .compaction:
             Label("上下文压缩中", systemImage: "arrow.triangle.2.circlepath")
                 .font(.system(size: 12, weight: .medium))
@@ -796,6 +800,12 @@ private struct MessageBubble: View, Equatable {
             case .file:
                 let name = part.filename ?? "attachment"
                 lines.append("[附件] \(name)")
+            case .plan:
+                if let payload = AIPlanCardPayload.from(source: part.source) {
+                    lines.append(payload.summaryLine)
+                } else {
+                    lines.append("[计划] 已更新")
+                }
             case .compaction:
                 lines.append("[系统] 上下文压缩中")
             case .tool:
