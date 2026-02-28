@@ -1102,6 +1102,81 @@ impl AcpAgent {
         })
     }
 
+    fn is_tool_call_session_update(session_update: &str) -> bool {
+        matches!(
+            Self::normalized_update_token(session_update).as_str(),
+            "tool_call" | "tool_call_update"
+        )
+    }
+
+    fn parse_tool_call_update_event(
+        update: &Value,
+        session_update: &str,
+    ) -> Option<ParsedToolCallUpdate> {
+        let update_obj = update.as_object()?;
+        if let Some(content_obj) = update_obj.get("content").and_then(|v| v.as_object()) {
+            if let Some(parsed) = Self::parse_tool_call_update_content(content_obj) {
+                return Some(parsed);
+            }
+        }
+
+        if !Self::is_tool_call_session_update(session_update) {
+            return None;
+        }
+        let update_type = Self::normalized_update_token(session_update);
+
+        if let Some(tool_call_obj) = update_obj.get("toolCall").and_then(|v| v.as_object()) {
+            let mut candidate = tool_call_obj.clone();
+            if !candidate.contains_key("type") {
+                candidate.insert("type".to_string(), Value::String(update_type.clone()));
+            }
+            for key in [
+                "toolCallId",
+                "tool_call_id",
+                "id",
+                "toolName",
+                "tool_name",
+                "name",
+                "kind",
+                "toolKind",
+                "tool_kind",
+                "title",
+                "label",
+                "status",
+                "state",
+                "rawInput",
+                "raw_input",
+                "input",
+                "rawOutput",
+                "raw_output",
+                "output",
+                "delta",
+                "progress",
+                "message",
+                "content",
+                "locations",
+                "toolCallLocations",
+                "tool_call_locations",
+            ] {
+                if candidate.contains_key(key) {
+                    continue;
+                }
+                if let Some(value) = update_obj.get(key) {
+                    candidate.insert(key.to_string(), value.clone());
+                }
+            }
+            if let Some(parsed) = Self::parse_tool_call_update_content(&candidate) {
+                return Some(parsed);
+            }
+        }
+
+        let mut candidate = update_obj.clone();
+        if !candidate.contains_key("type") {
+            candidate.insert("type".to_string(), Value::String(update_type));
+        }
+        Self::parse_tool_call_update_content(&candidate)
+    }
+
     fn tool_state_from_parsed_tool_update(parsed: &ParsedToolCallUpdate) -> Value {
         let mut state = serde_json::Map::<String, Value>::new();
         state.insert(
@@ -3034,50 +3109,50 @@ impl AcpAgent {
                         );
                         continue;
                     }
+                    if let Some(parsed) =
+                        Self::parse_tool_call_update_event(update, &session_update)
+                    {
+                        let part_id = if let Some(tool_call_id) = parsed.tool_call_id.as_ref() {
+                            history_tool_part_ids
+                                .entry(tool_call_id.clone())
+                                .or_insert_with(|| {
+                                    format!(
+                                        "{}-tool-{}",
+                                        self.profile.message_id_prefix,
+                                        tool_call_id.replace(':', "_")
+                                    )
+                                })
+                                .clone()
+                        } else {
+                            Self::log_missing_tool_call_id(&self.profile.tool_id, "history");
+                            format!("{}-tool-{}", self.profile.message_id_prefix, Uuid::new_v4())
+                        };
+                        let tool_state =
+                            Self::merge_tool_state(history_tool_states.get(&part_id), &parsed);
+                        history_tool_states.insert(part_id.clone(), tool_state.clone());
+                        let part = AiPart {
+                            id: part_id,
+                            part_type: "tool".to_string(),
+                            tool_name: Some(parsed.tool_name.clone()),
+                            tool_call_id: parsed.tool_call_id.clone(),
+                            tool_kind: parsed.tool_kind.clone(),
+                            tool_title: parsed.tool_title.clone(),
+                            tool_raw_input: parsed.raw_input.clone(),
+                            tool_raw_output: parsed.raw_output.clone(),
+                            tool_locations: parsed.locations.clone(),
+                            tool_state: Some(tool_state),
+                            tool_part_metadata: Some(parsed.tool_part_metadata.clone()),
+                            ..Default::default()
+                        };
+                        Self::push_structured_parts_message(
+                            &mut messages,
+                            &self.profile.message_id_prefix,
+                            Self::role_for_session_update(&session_update),
+                            vec![part],
+                        );
+                        continue;
+                    }
                     if let Some(content) = update.get("content").and_then(|v| v.as_object()) {
-                        if let Some(parsed) = Self::parse_tool_call_update_content(content) {
-                            let part_id = if let Some(tool_call_id) = parsed.tool_call_id.as_ref() {
-                                history_tool_part_ids
-                                    .entry(tool_call_id.clone())
-                                    .or_insert_with(|| {
-                                        format!(
-                                            "{}-tool-{}",
-                                            self.profile.message_id_prefix,
-                                            tool_call_id.replace(':', "_")
-                                        )
-                                    })
-                                    .clone()
-                            } else {
-                                Self::log_missing_tool_call_id(&self.profile.tool_id, "history");
-                                format!("{}-tool-{}", self.profile.message_id_prefix, Uuid::new_v4())
-                            };
-                            let tool_state = Self::merge_tool_state(
-                                history_tool_states.get(&part_id),
-                                &parsed,
-                            );
-                            history_tool_states.insert(part_id.clone(), tool_state.clone());
-                            let part = AiPart {
-                                id: part_id,
-                                part_type: "tool".to_string(),
-                                tool_name: Some(parsed.tool_name.clone()),
-                                tool_call_id: parsed.tool_call_id.clone(),
-                                tool_kind: parsed.tool_kind.clone(),
-                                tool_title: parsed.tool_title.clone(),
-                                tool_raw_input: parsed.raw_input.clone(),
-                                tool_raw_output: parsed.raw_output.clone(),
-                                tool_locations: parsed.locations.clone(),
-                                tool_state: Some(tool_state),
-                                tool_part_metadata: Some(parsed.tool_part_metadata.clone()),
-                                ..Default::default()
-                            };
-                            Self::push_structured_parts_message(
-                                &mut messages,
-                                &self.profile.message_id_prefix,
-                                Self::role_for_session_update(&session_update),
-                                vec![part],
-                            );
-                            continue;
-                        }
                         let history_message_id =
                             format!("{}-history-{}", self.profile.message_id_prefix, Uuid::new_v4());
                         let content_parts =
@@ -3688,139 +3763,140 @@ impl AiAgent for AcpAgent {
                             continue;
                         }
 
-                        if let Some(content) = update.get("content").and_then(|v| v.as_object()) {
-                            if let Some(parsed) = Self::parse_tool_call_update_content(content) {
-                                if !assistant_opened {
-                                    assistant_opened = true;
-                                    let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                        message_id: assistant_message_id.clone(),
-                                        role: "assistant".to_string(),
-                                        selection_hint: None,
-                                    }));
-                                }
-                                let part_id = if let Some(tool_call_id) = parsed.tool_call_id.as_ref() {
-                                    tool_part_ids
-                                        .entry(tool_call_id.clone())
-                                        .or_insert_with(|| {
-                                            format!(
-                                                "{}-tool-{}",
-                                                assistant_message_id,
-                                                tool_call_id.replace(':', "_")
-                                            )
-                                        })
-                                        .clone()
-                                } else {
-                                    Self::log_missing_tool_call_id(&tool_id, "stream");
-                                    format!("{}-tool-{}", assistant_message_id, Uuid::new_v4())
-                                };
-
-                                let tool_state = Self::merge_tool_state(
-                                    tool_states_by_part.get(&part_id),
-                                    &parsed,
-                                );
-                                tool_states_by_part.insert(part_id.clone(), tool_state.clone());
-
-                                let _ = tx.send(Ok(AiEvent::PartUpdated {
+                        if let Some(parsed) =
+                            Self::parse_tool_call_update_event(update, &session_update)
+                        {
+                            if !assistant_opened {
+                                assistant_opened = true;
+                                let _ = tx.send(Ok(AiEvent::MessageUpdated {
                                     message_id: assistant_message_id.clone(),
-                                    part: AiPart {
-                                        id: part_id.clone(),
-                                        part_type: "tool".to_string(),
-                                        tool_name: Some(parsed.tool_name.clone()),
-                                        tool_call_id: parsed.tool_call_id.clone(),
-                                        tool_kind: parsed.tool_kind.clone(),
-                                        tool_title: parsed.tool_title.clone(),
-                                        tool_raw_input: parsed.raw_input.clone(),
-                                        tool_raw_output: parsed.raw_output.clone(),
-                                        tool_locations: parsed.locations.clone(),
-                                        tool_state: Some(tool_state),
-                                        tool_part_metadata: Some(parsed.tool_part_metadata.clone()),
-                                        ..Default::default()
-                                    },
+                                    role: "assistant".to_string(),
+                                    selection_hint: None,
                                 }));
+                            }
+                            let part_id = if let Some(tool_call_id) = parsed.tool_call_id.as_ref() {
+                                tool_part_ids
+                                    .entry(tool_call_id.clone())
+                                    .or_insert_with(|| {
+                                        format!(
+                                            "{}-tool-{}",
+                                            assistant_message_id,
+                                            tool_call_id.replace(':', "_")
+                                        )
+                                    })
+                                    .clone()
+                            } else {
+                                Self::log_missing_tool_call_id(&tool_id, "stream");
+                                format!("{}-tool-{}", assistant_message_id, Uuid::new_v4())
+                            };
 
-                                if let Some(progress) = parsed.progress_delta.as_deref() {
-                                    let _ = tx.send(Ok(AiEvent::PartDelta {
-                                        message_id: assistant_message_id.clone(),
-                                        part_id: part_id.clone(),
-                                        part_type: "tool".to_string(),
-                                        field: "progress".to_string(),
-                                        delta: progress.to_string(),
-                                    }));
-                                }
-                                if let Some(output) = parsed.output_delta.as_deref() {
-                                    let _ = tx.send(Ok(AiEvent::PartDelta {
-                                        message_id: assistant_message_id.clone(),
-                                        part_id: part_id.clone(),
-                                        part_type: "tool".to_string(),
-                                        field: "output".to_string(),
-                                        delta: output.to_string(),
-                                    }));
-                                }
+                            let tool_state =
+                                Self::merge_tool_state(tool_states_by_part.get(&part_id), &parsed);
+                            tool_states_by_part.insert(part_id.clone(), tool_state.clone());
 
-                                let tool_kind = parsed
-                                    .tool_kind
-                                    .as_deref()
-                                    .map(Self::normalized_update_token)
-                                    .unwrap_or_default();
-                                if follow_along_supported && tool_kind == "terminal" {
-                                    let tool_call_key = parsed
-                                        .tool_call_id
-                                        .clone()
-                                        .unwrap_or_else(|| part_id.clone());
-                                    let status = parsed
-                                        .status
-                                        .clone()
-                                        .unwrap_or_else(|| "running".to_string());
-                                    if !Self::status_is_terminal(&status)
-                                        && !follow_terminal_ids.contains_key(&tool_call_key)
-                                    {
-                                        match client.terminal_create(&session_id, &tool_call_key).await {
-                                            Ok(terminal_id) => {
-                                                follow_terminal_ids.insert(tool_call_key.clone(), terminal_id);
-                                            }
-                                            Err(err) => {
-                                                if Self::is_rpc_method_unsupported(&err) {
-                                                    follow_along_supported = false;
-                                                    Self::log_follow_along_failure(
-                                                        &tool_id,
-                                                        "create",
-                                                        &err,
-                                                    );
-                                                    warn!(
-                                                        "{}: ACP terminal/create unsupported, fallback to plain stream output: {}",
-                                                        tool_id, err
-                                                    );
-                                                } else {
-                                                    Self::log_follow_along_failure(
-                                                        &tool_id,
-                                                        "create",
-                                                        &err,
-                                                    );
-                                                    warn!(
-                                                        "{}: ACP terminal/create failed, continue without follow-along: {}",
-                                                        tool_id, err
-                                                    );
-                                                }
-                                            }
+                            let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                message_id: assistant_message_id.clone(),
+                                part: AiPart {
+                                    id: part_id.clone(),
+                                    part_type: "tool".to_string(),
+                                    tool_name: Some(parsed.tool_name.clone()),
+                                    tool_call_id: parsed.tool_call_id.clone(),
+                                    tool_kind: parsed.tool_kind.clone(),
+                                    tool_title: parsed.tool_title.clone(),
+                                    tool_raw_input: parsed.raw_input.clone(),
+                                    tool_raw_output: parsed.raw_output.clone(),
+                                    tool_locations: parsed.locations.clone(),
+                                    tool_state: Some(tool_state),
+                                    tool_part_metadata: Some(parsed.tool_part_metadata.clone()),
+                                    ..Default::default()
+                                },
+                            }));
+
+                            if let Some(progress) = parsed.progress_delta.as_deref() {
+                                let _ = tx.send(Ok(AiEvent::PartDelta {
+                                    message_id: assistant_message_id.clone(),
+                                    part_id: part_id.clone(),
+                                    part_type: "tool".to_string(),
+                                    field: "progress".to_string(),
+                                    delta: progress.to_string(),
+                                }));
+                            }
+                            if let Some(output) = parsed.output_delta.as_deref() {
+                                let _ = tx.send(Ok(AiEvent::PartDelta {
+                                    message_id: assistant_message_id.clone(),
+                                    part_id: part_id.clone(),
+                                    part_type: "tool".to_string(),
+                                    field: "output".to_string(),
+                                    delta: output.to_string(),
+                                }));
+                            }
+
+                            let tool_kind = parsed
+                                .tool_kind
+                                .as_deref()
+                                .map(Self::normalized_update_token)
+                                .unwrap_or_default();
+                            if follow_along_supported && tool_kind == "terminal" {
+                                let tool_call_key = parsed
+                                    .tool_call_id
+                                    .clone()
+                                    .unwrap_or_else(|| part_id.clone());
+                                let status = parsed
+                                    .status
+                                    .clone()
+                                    .unwrap_or_else(|| "running".to_string());
+                                if !Self::status_is_terminal(&status)
+                                    && !follow_terminal_ids.contains_key(&tool_call_key)
+                                {
+                                    match client.terminal_create(&session_id, &tool_call_key).await {
+                                        Ok(terminal_id) => {
+                                            follow_terminal_ids.insert(tool_call_key.clone(), terminal_id);
                                         }
-                                    } else if Self::status_is_terminal(&status) {
-                                        if let Some(terminal_id) = follow_terminal_ids.remove(&tool_call_key) {
-                                            if let Err(err) = client.terminal_release(&terminal_id).await {
+                                        Err(err) => {
+                                            if Self::is_rpc_method_unsupported(&err) {
+                                                follow_along_supported = false;
                                                 Self::log_follow_along_failure(
                                                     &tool_id,
-                                                    "release",
-                                                    &format!("terminal_id={}, error={}", terminal_id, err),
+                                                    "create",
+                                                    &err,
                                                 );
                                                 warn!(
-                                                    "{}: ACP terminal/release failed, terminal_id={}, error={}",
-                                                    tool_id, terminal_id, err
+                                                    "{}: ACP terminal/create unsupported, fallback to plain stream output: {}",
+                                                    tool_id, err
+                                                );
+                                            } else {
+                                                Self::log_follow_along_failure(
+                                                    &tool_id,
+                                                    "create",
+                                                    &err,
+                                                );
+                                                warn!(
+                                                    "{}: ACP terminal/create failed, continue without follow-along: {}",
+                                                    tool_id, err
                                                 );
                                             }
                                         }
                                     }
+                                } else if Self::status_is_terminal(&status) {
+                                    if let Some(terminal_id) = follow_terminal_ids.remove(&tool_call_key) {
+                                        if let Err(err) = client.terminal_release(&terminal_id).await {
+                                            Self::log_follow_along_failure(
+                                                &tool_id,
+                                                "release",
+                                                &format!("terminal_id={}, error={}", terminal_id, err),
+                                            );
+                                            warn!(
+                                                "{}: ACP terminal/release failed, terminal_id={}, error={}",
+                                                tool_id, terminal_id, err
+                                            );
+                                        }
+                                    }
                                 }
-                                continue;
                             }
+                            continue;
+                        }
+
+                        if let Some(content) = update.get("content").and_then(|v| v.as_object()) {
 
                             match content_type.as_str() {
                                 "image" | "audio" | "resource_link" | "resource" | "markdown" | "diff" | "terminal" => {
@@ -5312,6 +5388,60 @@ mod tests {
                 .and_then(|v| v.get("foo"))
                 .and_then(|v| v.as_str()),
             Some("bar")
+        );
+    }
+
+    #[test]
+    fn parse_tool_call_update_event_should_parse_root_level_tool_update() {
+        let update = json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-root",
+            "toolName": "bash",
+            "kind": "terminal",
+            "status": "in_progress",
+            "output": "running..."
+        });
+        let parsed = AcpAgent::parse_tool_call_update_event(&update, "tool_call_update")
+            .expect("should parse root level tool update");
+        assert_eq!(parsed.tool_call_id.as_deref(), Some("call-root"));
+        assert_eq!(parsed.tool_name, "bash");
+        assert_eq!(parsed.tool_kind.as_deref(), Some("terminal"));
+        assert_eq!(parsed.status.as_deref(), Some("running"));
+        assert_eq!(parsed.output_delta.as_deref(), Some("running..."));
+    }
+
+    #[test]
+    fn parse_tool_call_update_event_should_parse_nested_tool_call_payload() {
+        let update = json!({
+            "sessionUpdate": "tool_call_update",
+            "status": "completed",
+            "content": {
+                "type": "terminal",
+                "output": "done"
+            },
+            "toolCall": {
+                "toolCallId": "call-nested",
+                "toolName": "bash",
+                "kind": "terminal",
+                "rawInput": {
+                    "command": "npm test"
+                }
+            }
+        });
+        let parsed = AcpAgent::parse_tool_call_update_event(&update, "tool_call_update")
+            .expect("should parse nested toolCall payload");
+        assert_eq!(parsed.tool_call_id.as_deref(), Some("call-nested"));
+        assert_eq!(parsed.tool_name, "bash");
+        assert_eq!(parsed.tool_kind.as_deref(), Some("terminal"));
+        assert_eq!(parsed.status.as_deref(), Some("completed"));
+        assert_eq!(parsed.output_delta.as_deref(), Some("done"));
+        assert_eq!(
+            parsed
+                .raw_input
+                .as_ref()
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("npm test")
         );
     }
 
