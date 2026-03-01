@@ -24,6 +24,10 @@ const AUTO_COMMIT_MAX_ATTEMPTS: u32 = 2;
 const AUTO_COMMIT_RETRY_DELAY_SECS: u64 = 2;
 const VALIDATION_REMINDER_MAX_RETRIES: u32 = 2;
 const IMPLEMENT_CONFIG_RESERVED_PREFIX: &str = "__evo_internal_";
+const STAGE_STREAM_IDLE_TIMEOUT_SECS: u64 = 180;
+const STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS: u32 = 2;
+const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
+const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PlanImplementationAgent {
@@ -1079,6 +1083,9 @@ impl EvolutionManager {
             &directory,
             &agent,
             stream,
+            model.clone(),
+            mode.clone(),
+            config_overrides.clone(),
             ctx,
         )
         .await?;
@@ -1340,172 +1347,249 @@ impl EvolutionManager {
         directory: &str,
         agent: &Arc<dyn AiAgent>,
         mut stream: crate::ai::AiEventStream,
+        model: Option<AiModelSelection>,
+        mode: Option<String>,
+        config_overrides: Option<std::collections::HashMap<String, serde_json::Value>>,
         ctx: &HandlerContext,
     ) -> Result<(), String> {
+        let idle_timeout_secs = STAGE_STREAM_IDLE_TIMEOUT_SECS.min(MAX_STAGE_RUNTIME_SECS);
+        let mut stall_recovery_attempts: u32 = 0;
+
         loop {
-            let next = timeout(Duration::from_secs(MAX_STAGE_RUNTIME_SECS), stream.next()).await;
+            let next = timeout(Duration::from_secs(idle_timeout_secs), stream.next()).await;
             match next {
-                Ok(Some(Ok(event))) => match event {
-                    crate::ai::AiEvent::Done { stop_reason } => {
-                        let adapter_hint =
-                            match agent.session_selection_hint(directory, session_id).await {
-                                Ok(Some(adapter_hint)) => adapter_hint,
-                                Ok(None) => crate::ai::AiSessionSelectionHint::default(),
-                                Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                            };
-                        let inferred_hint =
-                            match agent.list_messages(directory, session_id, Some(200)).await {
-                                Ok(messages) => {
-                                    let wire_messages: Vec<
-                                        crate::server::protocol::ai::MessageInfo,
-                                    > = messages
-                                        .into_iter()
-                                        .map(|m| crate::server::protocol::ai::MessageInfo {
-                                            id: m.id,
-                                            role: m.role,
-                                            created_at: m.created_at,
-                                            agent: m.agent,
-                                            model_provider_id: m.model_provider_id,
-                                            model_id: m.model_id,
-                                            parts: m
-                                                .parts
-                                                .into_iter()
-                                                .map(normalize_part_for_wire)
-                                                .collect(),
-                                        })
-                                        .collect();
-                                    infer_selection_hint_from_messages(&wire_messages)
-                                }
-                                Err(_) => crate::ai::AiSessionSelectionHint::default(),
-                            };
-                        let selection_hint =
-                            merge_session_selection_hint(adapter_hint, inferred_hint);
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatDone {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.to_string(),
-                                session_id: session_id.to_string(),
-                                selection_hint,
-                                stop_reason,
-                            },
-                        )
-                        .await;
-                        break;
-                    }
-                    crate::ai::AiEvent::Error { message } => {
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatErrorV2 {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.to_string(),
-                                session_id: session_id.to_string(),
-                                error: message.clone(),
-                            },
-                        )
-                        .await;
-                        return Err(format!("stage stream error: {}", message));
-                    }
-                    crate::ai::AiEvent::MessageUpdated {
-                        message_id,
-                        role,
-                        selection_hint,
-                    } => {
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatMessageUpdated {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.to_string(),
-                                session_id: session_id.to_string(),
-                                message_id,
-                                role,
-                                selection_hint: selection_hint.map(|hint| {
-                                    crate::server::protocol::ai::SessionSelectionHint {
-                                        agent: hint.agent,
-                                        model_provider_id: hint.model_provider_id,
-                                        model_id: hint.model_id,
-                                        config_options: hint.config_options,
+                Ok(Some(Ok(event))) => {
+                    stall_recovery_attempts = 0;
+                    match event {
+                        crate::ai::AiEvent::Done { stop_reason } => {
+                            let adapter_hint =
+                                match agent.session_selection_hint(directory, session_id).await {
+                                    Ok(Some(adapter_hint)) => adapter_hint,
+                                    Ok(None) => crate::ai::AiSessionSelectionHint::default(),
+                                    Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                                };
+                            let inferred_hint =
+                                match agent.list_messages(directory, session_id, Some(200)).await {
+                                    Ok(messages) => {
+                                        let wire_messages: Vec<
+                                            crate::server::protocol::ai::MessageInfo,
+                                        > = messages
+                                            .into_iter()
+                                            .map(|m| crate::server::protocol::ai::MessageInfo {
+                                                id: m.id,
+                                                role: m.role,
+                                                created_at: m.created_at,
+                                                agent: m.agent,
+                                                model_provider_id: m.model_provider_id,
+                                                model_id: m.model_id,
+                                                parts: m
+                                                    .parts
+                                                    .into_iter()
+                                                    .map(normalize_part_for_wire)
+                                                    .collect(),
+                                            })
+                                            .collect();
+                                        infer_selection_hint_from_messages(&wire_messages)
                                     }
-                                }),
-                            },
-                        )
-                        .await;
-                    }
-                    crate::ai::AiEvent::PartUpdated { message_id, part } => {
-                        let mut tool_call_count_changed = false;
-                        if part.part_type == "tool" {
-                            let call_key = part
-                                .tool_call_id
-                                .as_deref()
-                                .filter(|v| !v.trim().is_empty())
-                                .unwrap_or(part.id.as_str());
-                            tool_call_count_changed =
-                                self.record_stage_tool_call(key, stage, call_key).await;
+                                    Err(_) => crate::ai::AiSessionSelectionHint::default(),
+                                };
+                            let selection_hint =
+                                merge_session_selection_hint(adapter_hint, inferred_hint);
+                            self.broadcast(
+                                ctx,
+                                ServerMessage::AIChatDone {
+                                    project_name: project.to_string(),
+                                    workspace_name: workspace.to_string(),
+                                    ai_tool: ai_tool.to_string(),
+                                    session_id: session_id.to_string(),
+                                    selection_hint,
+                                    stop_reason,
+                                },
+                            )
+                            .await;
+                            break;
                         }
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatPartUpdated {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.to_string(),
-                                session_id: session_id.to_string(),
-                                message_id,
-                                part: normalize_part_for_wire(part),
-                            },
-                        )
-                        .await;
-                        if tool_call_count_changed {
-                            self.broadcast_cycle_update(key, ctx, "agent").await;
+                        crate::ai::AiEvent::Error { message } => {
+                            self.broadcast(
+                                ctx,
+                                ServerMessage::AIChatErrorV2 {
+                                    project_name: project.to_string(),
+                                    workspace_name: workspace.to_string(),
+                                    ai_tool: ai_tool.to_string(),
+                                    session_id: session_id.to_string(),
+                                    error: message.clone(),
+                                },
+                            )
+                            .await;
+                            return Err(format!("stage stream error: {}", message));
                         }
-                    }
-                    crate::ai::AiEvent::PartDelta {
-                        message_id,
-                        part_id,
-                        part_type,
-                        field,
-                        delta,
-                    } => {
-                        let tool_call_count_changed = if part_type == "tool" {
-                            self.record_stage_tool_call(key, stage, &part_id).await
-                        } else {
-                            false
-                        };
-                        self.broadcast(
-                            ctx,
-                            ServerMessage::AIChatPartDelta {
-                                project_name: project.to_string(),
-                                workspace_name: workspace.to_string(),
-                                ai_tool: ai_tool.to_string(),
-                                session_id: session_id.to_string(),
-                                message_id,
-                                part_id,
-                                part_type,
-                                field,
-                                delta,
-                            },
-                        )
-                        .await;
-                        if tool_call_count_changed {
-                            self.broadcast_cycle_update(key, ctx, "agent").await;
+                        crate::ai::AiEvent::MessageUpdated {
+                            message_id,
+                            role,
+                            selection_hint,
+                        } => {
+                            self.broadcast(
+                                ctx,
+                                ServerMessage::AIChatMessageUpdated {
+                                    project_name: project.to_string(),
+                                    workspace_name: workspace.to_string(),
+                                    ai_tool: ai_tool.to_string(),
+                                    session_id: session_id.to_string(),
+                                    message_id,
+                                    role,
+                                    selection_hint: selection_hint.map(|hint| {
+                                        crate::server::protocol::ai::SessionSelectionHint {
+                                            agent: hint.agent,
+                                            model_provider_id: hint.model_provider_id,
+                                            model_id: hint.model_id,
+                                            config_options: hint.config_options,
+                                        }
+                                    }),
+                                },
+                            )
+                            .await;
                         }
+                        crate::ai::AiEvent::PartUpdated { message_id, part } => {
+                            let mut tool_call_count_changed = false;
+                            if part.part_type == "tool" {
+                                let call_key = part
+                                    .tool_call_id
+                                    .as_deref()
+                                    .filter(|v| !v.trim().is_empty())
+                                    .unwrap_or(part.id.as_str());
+                                tool_call_count_changed =
+                                    self.record_stage_tool_call(key, stage, call_key).await;
+                            }
+                            self.broadcast(
+                                ctx,
+                                ServerMessage::AIChatPartUpdated {
+                                    project_name: project.to_string(),
+                                    workspace_name: workspace.to_string(),
+                                    ai_tool: ai_tool.to_string(),
+                                    session_id: session_id.to_string(),
+                                    message_id,
+                                    part: normalize_part_for_wire(part),
+                                },
+                            )
+                            .await;
+                            if tool_call_count_changed {
+                                self.broadcast_cycle_update(key, ctx, "agent").await;
+                            }
+                        }
+                        crate::ai::AiEvent::PartDelta {
+                            message_id,
+                            part_id,
+                            part_type,
+                            field,
+                            delta,
+                        } => {
+                            let tool_call_count_changed = if part_type == "tool" {
+                                self.record_stage_tool_call(key, stage, &part_id).await
+                            } else {
+                                false
+                            };
+                            self.broadcast(
+                                ctx,
+                                ServerMessage::AIChatPartDelta {
+                                    project_name: project.to_string(),
+                                    workspace_name: workspace.to_string(),
+                                    ai_tool: ai_tool.to_string(),
+                                    session_id: session_id.to_string(),
+                                    message_id,
+                                    part_id,
+                                    part_type,
+                                    field,
+                                    delta,
+                                },
+                            )
+                            .await;
+                            if tool_call_count_changed {
+                                self.broadcast_cycle_update(key, ctx, "agent").await;
+                            }
+                        }
+                        crate::ai::AiEvent::QuestionAsked { request } => {
+                            self.block_current_stage_by_question(
+                                key, project, workspace, cycle_id, stage, &request, ctx,
+                            )
+                            .await?;
+                            return Err("evo_human_blocking_required:ai_question".to_string());
+                        }
+                        crate::ai::AiEvent::QuestionCleared { .. } => {}
+                        crate::ai::AiEvent::SessionConfigOptionsUpdated { .. } => {}
+                        crate::ai::AiEvent::SlashCommandsUpdated { .. } => {}
                     }
-                    crate::ai::AiEvent::QuestionAsked { request } => {
-                        self.block_current_stage_by_question(
-                            key, project, workspace, cycle_id, stage, &request, ctx,
-                        )
-                        .await?;
-                        return Err("evo_human_blocking_required:ai_question".to_string());
-                    }
-                    crate::ai::AiEvent::QuestionCleared { .. } => {}
-                    crate::ai::AiEvent::SessionConfigOptionsUpdated { .. } => {}
-                    crate::ai::AiEvent::SlashCommandsUpdated { .. } => {}
-                },
+                }
                 Ok(Some(Err(err))) => return Err(err),
                 Ok(None) => break,
-                Err(_) => return Err("stage stream timeout".to_string()),
+                Err(_) => {
+                    let stage_tool_call_count = {
+                        let state = self.state.lock().await;
+                        state
+                            .workspaces
+                            .get(key)
+                            .and_then(|entry| entry.stage_tool_call_counts.get(stage).copied())
+                            .unwrap_or(0)
+                    };
+
+                    let can_auto_recover = ai_tool == "claude_code"
+                        && stall_recovery_attempts < STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS;
+                    if can_auto_recover {
+                        stall_recovery_attempts += 1;
+                        warn!(
+                            "stage stream idle timeout: key={}, stage={}, ai_tool={}, session_id={}, tool_call_count={}, attempt={}/{}, action=abort_and_continue",
+                            key,
+                            stage,
+                            ai_tool,
+                            session_id,
+                            stage_tool_call_count,
+                            stall_recovery_attempts,
+                            STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS
+                        );
+
+                        if let Err(err) = agent.abort_session(directory, session_id).await {
+                            warn!(
+                                "stage stream idle recovery abort failed: key={}, stage={}, session_id={}, error={}",
+                                key, stage, session_id, err
+                            );
+                        }
+
+                        sleep(Duration::from_millis(
+                            STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS,
+                        ))
+                        .await;
+
+                        match agent
+                            .send_message_with_config(
+                                directory,
+                                session_id,
+                                STAGE_STREAM_IDLE_RECOVERY_MESSAGE,
+                                None,
+                                None,
+                                None,
+                                model.clone(),
+                                mode.clone(),
+                                config_overrides.clone(),
+                            )
+                            .await
+                        {
+                            Ok(recovery_stream) => {
+                                stream = recovery_stream;
+                                continue;
+                            }
+                            Err(err) => {
+                                return Err(format!(
+                                    "stage stream timeout; idle recovery send failed: {}",
+                                    err
+                                ));
+                            }
+                        }
+                    }
+
+                    return Err(format!(
+                        "stage stream timeout (idle {}s, tool_call_count={})",
+                        idle_timeout_secs, stage_tool_call_count
+                    ));
+                }
             }
         }
 
@@ -1611,15 +1695,27 @@ impl EvolutionManager {
                 None,
                 None,
                 None,
-                model,
-                mode,
-                config_overrides,
+                model.clone(),
+                mode.clone(),
+                config_overrides.clone(),
             )
             .await
             .map_err(|e| format!("validation reminder send failed: {}", e))?;
         self.consume_stage_stream(
-            key, project, workspace, cycle_id, stage, ai_tool, session_id, directory, agent,
-            stream, ctx,
+            key,
+            project,
+            workspace,
+            cycle_id,
+            stage,
+            ai_tool,
+            session_id,
+            directory,
+            agent,
+            stream,
+            model,
+            mode,
+            config_overrides,
+            ctx,
         )
         .await
     }
