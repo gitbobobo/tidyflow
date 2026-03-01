@@ -363,7 +363,7 @@ struct EvolutionPipelineView: View {
         }
     }
 
-    // MARK: - 待命队列
+    // MARK: - 待命队列（横向胶囊）
 
     private var standbySection: some View {
         let standbyAgents = computeStandbyAgents()
@@ -373,9 +373,12 @@ struct EvolutionPipelineView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     sectionLabel("evolution.page.pipeline.standby".localized, icon: "clock", color: .secondary)
 
-                    ForEach(standbyAgents, id: \.stage) { agent in
-                        standbyAgentRow(agent)
-                            .transition(.opacity.combined(with: .slide))
+                    // 横向排列，允许换行
+                    StandbyFlowLayout(spacing: 6) {
+                        ForEach(standbyAgents, id: \.stage) { agent in
+                            standbyCapsule(agent)
+                                .transition(.opacity.combined(with: .scale))
+                        }
                     }
                 }
                 .animation(.easeInOut(duration: 0.3), value: standbyAgents.map(\.stage))
@@ -383,37 +386,34 @@ struct EvolutionPipelineView: View {
         }
     }
 
-    private func standbyAgentRow(_ agent: PipelineStandbyAgent) -> some View {
-        HStack(spacing: 8) {
-            // 连接线指示
-            Circle()
-                .fill(stageColor(agent.stage).opacity(0.4))
-                .frame(width: 6, height: 6)
-
+    /// 胶囊形代理标签
+    private func standbyCapsule(_ agent: PipelineStandbyAgent) -> some View {
+        let color = stageColor(agent.stage)
+        return HStack(spacing: 4) {
             Image(systemName: stageIconName(agent.stage))
-                .font(.system(size: 11))
-                .foregroundColor(stageColor(agent.stage))
-                .frame(width: 20, height: 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(stageColor(agent.stage).opacity(0.1))
-                )
+                .font(.system(size: 10))
 
             Text(stageDisplayName(agent.stage))
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .lineLimit(1)
-
-            Spacer()
 
             if agent.isLoopable {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary.opacity(0.6))
-                    .help("evolution.page.pipeline.loopable".localized)
+                    .font(.system(size: 8))
+                    .foregroundColor(color.opacity(0.7))
             }
         }
-        .padding(.vertical, 4)
+        .foregroundColor(color)
         .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(color.opacity(0.25), lineWidth: 0.5)
+        )
     }
 
     // MARK: - 已完成时间线
@@ -1076,6 +1076,65 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     let id: String
     let round: Int
     let stages: [String]
+}
+
+// MARK: - 横向换行布局（待命胶囊专用）
+
+/// 简易 Flow Layout：子视图横向排列，空间不足时自动换行
+struct StandbyFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        guard !rows.isEmpty else { return .zero }
+        let height = rows.reduce(CGFloat(0)) { $0 + $1.height } + CGFloat(rows.count - 1) * spacing
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(item.size)
+                )
+                x += item.size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct RowItem {
+        let index: Int
+        let size: CGSize
+    }
+    private struct Row {
+        var items: [RowItem] = []
+        var height: CGFloat = 0
+    }
+
+    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [Row] = [Row()]
+        var currentWidth: CGFloat = 0
+
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            let needed = currentWidth == 0 ? size.width : currentWidth + spacing + size.width
+            if needed > maxWidth && currentWidth > 0 {
+                rows.append(Row())
+                currentWidth = 0
+            }
+            rows[rows.count - 1].items.append(RowItem(index: index, size: size))
+            rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
+            currentWidth = currentWidth == 0 ? size.width : currentWidth + spacing + size.width
+        }
+        return rows.filter { !$0.items.isEmpty }
+    }
 }
 
 #endif
