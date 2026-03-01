@@ -19,6 +19,8 @@ struct EvolutionPipelineView: View {
 
     /// 已完成代理的时间线记录（本轮）
     @State private var completedTimeline: [PipelineTimelineEntry] = []
+    /// 已添加到时间线的执行标识符（stage|startedAt），用于允许同一阶段多次出现
+    @State private var addedExecutionKeys: Set<String> = []
     /// 历史循环汇总（每轮结束后的合并记录）
     @State private var cycleHistories: [PipelineCycleHistory] = []
     /// 上次记录的轮次
@@ -1220,6 +1222,7 @@ struct EvolutionPipelineView: View {
         // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
         if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 && !completedTimeline.isEmpty {
             completedTimeline.removeAll()
+            addedExecutionKeys.removeAll()
             cycleStartDate = Date()
             // 从工作空间文件夹重新加载历史数据
             if let ws = workspace {
@@ -1231,11 +1234,12 @@ struct EvolutionPipelineView: View {
         // 更新已完成代理
         let agents = item.agents
         let completedAgents = agents.filter { isCompletedStatus(normalizedStageStatus($0.status)) }
-        let existingStages = Set(completedTimeline.map(\.stage))
 
         for agent in completedAgents {
             let key = normalizedStageKey(agent.stage)
-            if !existingStages.contains(key) {
+            let execKey = "\(key)|\(agent.startedAt ?? "")"
+            if !addedExecutionKeys.contains(execKey) {
+                addedExecutionKeys.insert(execKey)
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm"
                 completedTimeline.append(PipelineTimelineEntry(
@@ -1257,6 +1261,7 @@ struct EvolutionPipelineView: View {
 
     private func resetLocalTimeline() {
         completedTimeline.removeAll()
+        addedExecutionKeys.removeAll()
         cycleHistories.removeAll()
         lastRecordedRound = 0
         cycleStartDate = Date()
