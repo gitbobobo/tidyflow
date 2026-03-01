@@ -13,7 +13,11 @@ struct CenterContentView: View {
     /// 分割线热区高度，需要与 VerticalSplitDivider 保持一致
     private let splitDividerHeight: CGFloat = 8
     /// 拖拽开始时记录的 Tab 面板高度
-    @State private var dragStartTabPanelHeight: CGFloat = 0
+    @State private var dragStartTabPanelHeight: CGFloat?
+    /// 记录拖拽开始时面板是否已展开，避免拖拽过程中展开态来回切换导致跳变
+    @State private var dragStartWasExpanded: Bool = false
+    /// 拖拽过程中仅记录“应当收起”的意图，在 onEnded 再真正收起
+    @State private var shouldCollapseAfterDrag: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -124,32 +128,47 @@ struct CenterContentView: View {
         guard maxTabHeight > 0 else {
             appState.tabPanelExpanded = false
             appState.tabPanelHeight = 0
-            dragStartTabPanelHeight = 0
+            resetDividerDragSession()
             return
         }
-        if dragStartTabPanelHeight == 0 {
+        if dragStartTabPanelHeight == nil {
+            dragStartWasExpanded = appState.tabPanelExpanded
             dragStartTabPanelHeight = appState.tabPanelExpanded
                 ? clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
                 : 0
+            shouldCollapseAfterDrag = false
         }
+        guard let dragStartTabPanelHeight else { return }
         // delta 正值 = 向下拖 = Tab 面板变小，负值 = 向上拖 = Tab 面板变大
         let newHeight = dragStartTabPanelHeight - delta
+        let collapseThreshold = minEffectiveTabPanelHeight(totalHeight: totalHeight) / 2
 
-        if newHeight < minEffectiveTabPanelHeight(totalHeight: totalHeight) / 2 {
-            // 拖到足够小时收起
-            appState.tabPanelExpanded = false
-            appState.tabPanelHeight = 0
-            dragStartTabPanelHeight = 0
-        } else {
-            appState.tabPanelExpanded = true
-            appState.tabPanelHeight = clampedTabPanelHeightValue(newHeight, totalHeight: totalHeight)
-            // 不重置 dragStartTabPanelHeight，因为 DragGesture 的 translation 是相对于起始点的累计值。
+        if newHeight < collapseThreshold {
+            shouldCollapseAfterDrag = true
+            if dragStartWasExpanded {
+                // 拖拽中保持展开结构稳定，避免在阈值附近来回切换造成界面跳变。
+                appState.tabPanelExpanded = true
+                appState.tabPanelHeight = minEffectiveTabPanelHeight(totalHeight: totalHeight)
+            } else {
+                appState.tabPanelExpanded = false
+                appState.tabPanelHeight = 0
+            }
+            return
         }
+        shouldCollapseAfterDrag = false
+        appState.tabPanelExpanded = true
+        appState.tabPanelHeight = clampedTabPanelHeightValue(newHeight, totalHeight: totalHeight)
+        // 不重置 dragStartTabPanelHeight，因为 DragGesture 的 translation 是相对于起始点的累计值。
     }
 
     /// 拖拽结束后重置基线，并将状态高度归一化到当前布局范围内。
     private func finalizeDividerDrag(totalHeight: CGFloat) {
-        dragStartTabPanelHeight = 0
+        defer { resetDividerDragSession() }
+        if shouldCollapseAfterDrag {
+            appState.tabPanelExpanded = false
+            appState.tabPanelHeight = 0
+            return
+        }
         guard appState.tabPanelExpanded else { return }
         let normalized = clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
         if normalized <= 0 {
@@ -158,6 +177,12 @@ struct CenterContentView: View {
         } else {
             appState.tabPanelHeight = normalized
         }
+    }
+
+    private func resetDividerDragSession() {
+        dragStartTabPanelHeight = nil
+        dragStartWasExpanded = false
+        shouldCollapseAfterDrag = false
     }
 
     private func minEffectiveTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
