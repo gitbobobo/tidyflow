@@ -29,6 +29,11 @@ const STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS: u32 = 2;
 const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 
+fn should_attempt_idle_recovery(stall_recovery_attempts: u32) -> bool {
+    // 对所有 AI 工具统一启用 idle 超时恢复，避免不同工具行为不一致。
+    stall_recovery_attempts < STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PlanImplementationAgent {
     ImplementGeneral,
@@ -1531,8 +1536,7 @@ impl EvolutionManager {
                             .unwrap_or(0)
                     };
 
-                    let can_auto_recover = ai_tool == "claude_code"
-                        && stall_recovery_attempts < STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS;
+                    let can_auto_recover = should_attempt_idle_recovery(stall_recovery_attempts);
                     if can_auto_recover {
                         stall_recovery_attempts += 1;
                         warn!(
@@ -2644,6 +2648,14 @@ mod tests {
             "judge",
             "stage stream timeout"
         ));
+    }
+
+    #[test]
+    fn should_attempt_idle_recovery_should_allow_within_limit() {
+        assert!(super::should_attempt_idle_recovery(0));
+        assert!(super::should_attempt_idle_recovery(1));
+        assert!(!super::should_attempt_idle_recovery(2));
+        assert!(!super::should_attempt_idle_recovery(3));
     }
 
     // ── 八阶段新约束回归测试 ──────────────────────────────────────────────
