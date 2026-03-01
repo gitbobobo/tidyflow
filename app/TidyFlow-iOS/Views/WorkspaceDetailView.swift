@@ -2265,8 +2265,7 @@ struct MobileEvolutionView: View {
                         // 紧凑彩色条
                         HStack(spacing: 2) {
                             ForEach(Array(cycle.stages.enumerated()), id: \.offset) { _, stage in
-                                let durationSec = stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-                                let durationText = durationSec > 0 ? mobileStageDuration(durationSec) : ""
+                                let durationText = mobileTooltipDuration(stage.durationMs)
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(mobileStageColor(stage.stage))
                                     .frame(height: 6)
@@ -2281,9 +2280,7 @@ struct MobileEvolutionView: View {
                                                 if !stage.aiTool.isEmpty {
                                                     Text("AI: \(stage.aiTool)")
                                                 }
-                                                if !durationText.isEmpty {
-                                                    Text("evolution.page.pipeline.durationLabel".localized + ": \(durationText)")
-                                                }
+                                                Text("evolution.page.pipeline.durationLabel".localized + ": \(durationText)")
                                             }
                                     }
                             }
@@ -2323,5 +2320,12 @@ struct MobileEvolutionView: View {
             let secs = Int(seconds) % 60
             return "\(minutes)m\(String(format: "%02d", secs))s"
         }
+    }
+
+    private func mobileTooltipDuration(_ durationMs: UInt64?) -> String {
+        guard let durationMs, durationMs > 0 else {
+            return "evolution.page.pipeline.durationUnknown".localized
+        }
+        return mobileStageDuration(TimeInterval(durationMs) / 1000.0)
     }
 }

@@ -402,6 +402,7 @@
 "evolution.page.pipeline.completedAgents" = "已完成";
 "evolution.page.pipeline.agentLabel" = "代理";
 "evolution.page.pipeline.durationLabel" = "耗时";
+"evolution.page.pipeline.durationUnknown" = "未知";
 "evolution.page.pipeline.historyCycles" = "历史循环";
 
 "evolution.stage.direction" = "方向";

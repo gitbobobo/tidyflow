@@ -400,6 +400,7 @@
 "evolution.page.pipeline.completedAgents" = "Completed";
 "evolution.page.pipeline.agentLabel" = "Agent";
 "evolution.page.pipeline.durationLabel" = "Duration";
+"evolution.page.pipeline.durationUnknown" = "Unknown";
 "evolution.page.pipeline.historyCycles" = "History Cycles";
 
 "evolution.stage.direction" = "Direction";

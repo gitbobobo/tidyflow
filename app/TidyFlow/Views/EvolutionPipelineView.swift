@@ -591,7 +591,13 @@ struct EvolutionPipelineView: View {
                     isSelected: selectedCycle == .currentCycle,
                     badge: currentCycleBadge,
                     stageEntries: completedTimeline.map { entry in
-                        PipelineCycleStageEntry(id: entry.id, stage: entry.stage, agent: entry.agent, aiToolName: entry.aiToolName, durationSeconds: 0)
+                        PipelineCycleStageEntry(
+                            id: entry.id,
+                            stage: entry.stage,
+                            agent: entry.agent,
+                            aiToolName: entry.aiToolName,
+                            durationSeconds: entry.durationSeconds
+                        )
                     }
                 ) {
                     withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
@@ -685,7 +691,12 @@ struct EvolutionPipelineView: View {
                             RoundedRectangle(cornerRadius: 2)
                                 .fill(stageColor(entry.stage))
                                 .frame(height: 4)
-                                .help(stageTooltip(stage: entry.stage, agent: entry.agent, aiTool: entry.aiToolName, duration: entry.durationSeconds > 0 ? entry.formattedDuration : nil))
+                                .help(stageTooltip(
+                                    stage: entry.stage,
+                                    agent: entry.agent,
+                                    aiTool: entry.aiToolName,
+                                    duration: tooltipDurationText(entry.durationSeconds)
+                                ))
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -766,7 +777,12 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
-                        .help(stageTooltip(stage: entry.stage, agent: entry.agent, aiTool: entry.aiToolName, duration: nil))
+                        .help(stageTooltip(
+                            stage: entry.stage,
+                            agent: entry.agent,
+                            aiTool: entry.aiToolName,
+                            duration: tooltipDurationText(entry.durationSeconds)
+                        ))
                         .onTapGesture {
                             if normalizedStageKey(entry.stage) != "auto_commit" {
                                 openStageChat(stage: entry.stage)
@@ -808,7 +824,12 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
-                        .help(stageTooltip(stage: entry.stage, agent: entry.agent, aiTool: entry.aiToolName, duration: entry.durationSeconds > 0 ? entry.formattedDuration : nil))
+                        .help(stageTooltip(
+                            stage: entry.stage,
+                            agent: entry.agent,
+                            aiTool: entry.aiToolName,
+                            duration: tooltipDurationText(entry.durationSeconds)
+                        ))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -842,6 +863,13 @@ struct EvolutionPipelineView: View {
             parts.append("evolution.page.pipeline.durationLabel".localized + ": \(duration)")
         }
         return parts.joined(separator: "\n")
+    }
+
+    private func tooltipDurationText(_ durationSeconds: TimeInterval) -> String {
+        if durationSeconds > 0 {
+            return Self.formatDuration(durationSeconds)
+        }
+        return "evolution.page.pipeline.durationUnknown".localized
     }
 
     // MARK: - 本轮循环已完成时间线（上方详情）
@@ -948,9 +976,12 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
-                        .help(entry.agent.isEmpty
-                            ? stageDisplayName(entry.stage)
-                            : "\(stageDisplayName(entry.stage)) · \(entry.formattedDuration)")
+                        .help(stageTooltip(
+                            stage: entry.stage,
+                            agent: entry.agent,
+                            aiTool: entry.aiToolName,
+                            duration: tooltipDurationText(entry.durationSeconds)
+                        ))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1247,7 +1278,8 @@ struct EvolutionPipelineView: View {
                     stage: key,
                     agent: agent.agent,
                     toolCallCount: agent.toolCallCount,
-                    completedAt: formatter.string(from: Date())
+                    completedAt: formatter.string(from: Date()),
+                    durationSeconds: agent.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
                 ))
             }
         }
@@ -1643,16 +1675,28 @@ struct PipelineTimelineEntry: Identifiable, Equatable {
     let toolCallCount: Int
     let completedAt: String
     let aiToolName: String
+    /// 运行时长（秒）
+    let durationSeconds: TimeInterval
     /// 记录完成时的绝对时间，用于计算运行时长
     let completedDate: Date
 
-    init(id: String, stage: String, agent: String, toolCallCount: Int, completedAt: String, aiToolName: String = "", completedDate: Date = Date()) {
+    init(
+        id: String,
+        stage: String,
+        agent: String,
+        toolCallCount: Int,
+        completedAt: String,
+        aiToolName: String = "",
+        durationSeconds: TimeInterval = 0,
+        completedDate: Date = Date()
+    ) {
         self.id = id
         self.stage = stage
         self.agent = agent
         self.toolCallCount = toolCallCount
         self.completedAt = completedAt
         self.aiToolName = aiToolName
+        self.durationSeconds = durationSeconds
         self.completedDate = completedDate
     }
 }
