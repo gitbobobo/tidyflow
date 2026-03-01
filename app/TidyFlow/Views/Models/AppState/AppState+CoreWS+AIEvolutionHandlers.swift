@@ -544,12 +544,21 @@ extension AppState {
             ($0.project, $0.workspace) < ($1.project, $1.workspace)
         }
         evolutionWorkspaceItems = items
-        for item in items where item.status != "interrupted" {
+        var itemStatusByWorkspace: [String: String] = [:]
+        for item in items {
             let key = globalWorkspaceKey(
                 projectName: item.project,
                 workspaceName: normalizeEvolutionWorkspaceName(item.workspace)
             )
-            evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            itemStatusByWorkspace[key] = item.status
+        }
+        for (key, pendingAction) in evolutionPendingActionByWorkspace {
+            if EvolutionControlCapability.shouldClearPendingAction(
+                pendingAction,
+                currentStatus: itemStatusByWorkspace[key]
+            ) {
+                evolutionPendingActionByWorkspace.removeValue(forKey: key)
+            }
         }
     }
 
@@ -606,15 +615,12 @@ extension AppState {
         }
         evolutionBlockingRequired = nil
         let key = globalWorkspaceKey(projectName: ev.project, workspaceName: normalizedWorkspace)
-        guard let pendingAction = evolutionPendingActionByWorkspace.removeValue(forKey: key) else {
+        guard let pendingAction = evolutionPendingActionByWorkspace[key] else {
             return
         }
-        if pendingAction == "start" {
+        if pendingAction.action == .start {
             let profiles = evolutionProfiles(project: ev.project, workspace: normalizedWorkspace)
-            let loopRoundLimit = max(
-                1,
-                evolutionItem(project: ev.project, workspace: normalizedWorkspace)?.loopRoundLimit ?? 1
-            )
+            let loopRoundLimit = pendingAction.resolvedLoopRoundLimit(fallback: 1)
             startEvolution(
                 project: ev.project,
                 workspace: normalizedWorkspace,
@@ -623,8 +629,12 @@ extension AppState {
             )
             return
         }
-        if pendingAction == "resume" {
+        if pendingAction.action == .resume {
             resumeEvolution(project: ev.project, workspace: normalizedWorkspace)
+            return
+        }
+        if pendingAction.action == .stop {
+            stopEvolution(project: ev.project, workspace: normalizedWorkspace)
         }
     }
 
@@ -683,9 +693,14 @@ extension AppState {
         )
     }
 
-    func handleEvolutionError(_ message: String) {
+    func handleEvolutionError(_ message: String, project: String? = nil, workspace: String? = nil) {
         evolutionReplayLoading = false
         evolutionReplayError = message
+        if let project, let workspace {
+            clearEvolutionPendingAction(project: project, workspace: workspace)
+        } else if let workspace = selectedWorkspaceKey {
+            clearEvolutionPendingAction(project: selectedProjectName, workspace: workspace)
+        }
         for key in evidenceLoadingByWorkspace.keys {
             evidenceLoadingByWorkspace[key] = false
             evidenceErrorByWorkspace[key] = message

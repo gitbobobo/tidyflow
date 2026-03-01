@@ -173,8 +173,12 @@ extension AppState {
         profiles: [EvolutionStageProfileInfoV2]
     ) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        evolutionPendingActionByWorkspace[key] = "start"
+        setEvolutionPendingAction(
+            project: project,
+            workspace: normalizedWorkspace,
+            action: .start,
+            requestedLoopRoundLimit: loopRoundLimit
+        )
         let normalizedProfiles = Self.normalizedEvolutionProfiles(profiles)
         wsClient.requestEvoStartWorkspace(
             project: project,
@@ -187,13 +191,21 @@ extension AppState {
 
     func stopEvolution(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        setEvolutionPendingAction(
+            project: project,
+            workspace: normalizedWorkspace,
+            action: .stop
+        )
         wsClient.requestEvoStopWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
     func resumeEvolution(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
-        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
-        evolutionPendingActionByWorkspace[key] = "resume"
+        setEvolutionPendingAction(
+            project: project,
+            workspace: normalizedWorkspace,
+            action: .resume
+        )
         wsClient.requestEvoResumeWorkspace(project: project, workspace: normalizedWorkspace)
     }
 
@@ -278,6 +290,44 @@ extension AppState {
             $0.project == project &&
                 normalizeEvolutionWorkspaceName($0.workspace) == normalizedWorkspace
         }
+    }
+
+    func evolutionControlCapability(project: String, workspace: String?) -> EvolutionControlCapability {
+        guard let workspace else {
+            return EvolutionControlCapability.evaluate(
+                workspaceReady: false,
+                currentStatus: nil,
+                pendingAction: nil
+            )
+        }
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        let currentStatus = evolutionItem(project: project, workspace: normalizedWorkspace)?.status
+        return EvolutionControlCapability.evaluate(
+            workspaceReady: true,
+            currentStatus: currentStatus,
+            pendingAction: evolutionPendingActionByWorkspace[key]
+        )
+    }
+
+    func setEvolutionPendingAction(
+        project: String,
+        workspace: String,
+        action: EvolutionControlAction,
+        requestedLoopRoundLimit: Int? = nil
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionPendingActionByWorkspace[key] = EvolutionPendingActionState(
+            action: action,
+            requestedLoopRoundLimit: requestedLoopRoundLimit
+        )
+    }
+
+    func clearEvolutionPendingAction(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionPendingActionByWorkspace.removeValue(forKey: key)
     }
 
     func evolutionProfiles(project: String, workspace: String) -> [EvolutionStageProfileInfoV2] {
