@@ -188,7 +188,9 @@ final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { appState?.handleEvolutionBlockingRequired(ev) }
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { appState?.handleEvolutionBlockersUpdated(ev) }
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) { appState?.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles) }
-    func handleEvolutionError(_ message: String) { appState?.handleEvolutionError(message) }
+    func handleEvolutionError(_ message: String, project: String?, workspace: String?) {
+        appState?.handleEvolutionError(message, project: project, workspace: workspace)
+    }
 }
 
 final class AppStateEvidenceMessageHandlerAdapter: EvidenceMessageHandler {
