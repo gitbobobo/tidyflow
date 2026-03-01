@@ -29,11 +29,10 @@ struct EvolutionPipelineView: View {
     /// 当前循环的开始时间
     @State private var cycleStartDate: Date = Date()
     /// 当前选中的循环
-    @State private var selectedCycle: CycleSelection = .newCycle
+    @State private var selectedCycle: CycleSelection = .currentCycle
 
     /// 循环选择类型
     enum CycleSelection: Equatable {
-        case newCycle
         case currentCycle
         case history(id: String)
     }
@@ -57,6 +56,10 @@ struct EvolutionPipelineView: View {
     private var currentItem: EvolutionWorkspaceItemV2? {
         guard let workspace else { return nil }
         return appState.evolutionItem(project: project, workspace: workspace)
+    }
+
+    private var controlCapability: EvolutionControlCapability {
+        appState.evolutionControlCapability(project: project, workspace: workspace)
     }
 
     private let evolutionStageOrder: [String] = [
@@ -119,16 +122,19 @@ struct EvolutionPipelineView: View {
         .onAppear {
             refreshData()
             syncStartOptions()
+            normalizeCycleSelection(preferCurrent: true)
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             refreshData()
             syncStartOptions()
             resetLocalTimeline()
+            normalizeCycleSelection(preferCurrent: true)
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             refreshData()
             syncStartOptions()
             resetLocalTimeline()
+            normalizeCycleSelection(preferCurrent: true)
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
@@ -137,6 +143,7 @@ struct EvolutionPipelineView: View {
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
             syncStartOptions()
             updateTimeline()
+            normalizeCycleSelection(preferCurrent: false)
         }
         .onReceive(appState.$evolutionBlockingRequired) { value in
             syncBlockerSheetState(value)
@@ -227,6 +234,7 @@ struct EvolutionPipelineView: View {
                 .pickerStyle(.menu)
                 .frame(maxWidth: 100)
                 .controlSize(.small)
+                .disabled(!controlCapability.canStart)
 
                 Spacer(minLength: 4)
 
@@ -235,31 +243,48 @@ struct EvolutionPipelineView: View {
                     Button {
                         startCurrentWorkspace()
                     } label: {
-                        Image(systemName: "play.fill")
+                        if controlCapability.isStartPending {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "play.fill")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .help("evolution.page.action.startManual".localized)
+                    .help(actionHelpText("evolution.page.action.startManual".localized, reason: controlCapability.startReason))
+                    .disabled(!controlCapability.canStart)
 
                     Button {
                         guard let workspace else { return }
+                        guard controlCapability.canStop else { return }
                         appState.stopEvolution(project: project, workspace: workspace)
                     } label: {
-                        Image(systemName: "stop.fill")
+                        if controlCapability.isStopPending {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "stop.fill")
+                        }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("evolution.page.action.stop".localized)
+                    .help(actionHelpText("evolution.page.action.stop".localized, reason: controlCapability.stopReason))
+                    .disabled(!controlCapability.canStop)
 
                     Button {
                         guard let workspace else { return }
+                        guard controlCapability.canResume else { return }
                         appState.resumeEvolution(project: project, workspace: workspace)
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        if controlCapability.isResumePending {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("evolution.page.action.resume".localized)
+                    .help(actionHelpText("evolution.page.action.resume".localized, reason: controlCapability.resumeReason))
+                    .disabled(!controlCapability.canResume)
 
                     Divider().frame(height: 14)
 
@@ -452,24 +477,23 @@ struct EvolutionPipelineView: View {
 
     @ViewBuilder
     private var cycleDetailArea: some View {
-        switch selectedCycle {
-        case .newCycle:
-            // 新循环：显示控制区域 + 初始待命队列
+        VStack(alignment: .leading, spacing: 8) {
             controlSection
-            standbySection
 
-        case .currentCycle:
-            // 本轮循环：显示控制区域 + 运行中代理 + 待命
-            controlSection
-            // 仅在终止或异常时显示原因
-            terminalReasonBanner
-            runningAgentSection
-            standbySection
+            switch selectedCycle {
+            case .currentCycle:
+                // 本轮循环：运行中代理 + 待命
+                terminalReasonBanner
+                runningAgentSection
+                standbySection
 
-        case .history(let id):
-            // 历史循环：只读查看紧凑条形
-            if let cycle = cycleHistories.first(where: { $0.id == id }) {
-                historyCycleCompactView(cycle)
+            case .history(let id):
+                // 历史循环：只读查看紧凑条形
+                if let cycle = cycleHistories.first(where: { $0.id == id }) {
+                    historyCycleCompactView(cycle)
+                } else {
+                    standbySection
+                }
             }
         }
     }
@@ -552,7 +576,7 @@ struct EvolutionPipelineView: View {
             return (.blue, "clock.fill", "evolution.status.queued".localized)
         case "completed", "done", "success":
             return (.green, "checkmark.circle.fill", "evolution.status.completed".localized)
-        case "interrupted":
+        case "interrupted", "stopped":
             return (.orange, "pause.circle.fill", "evolution.status.interrupted".localized)
         case "failed_exhausted":
             return (.red, "xmark.circle.fill", "evolution.status.failedExhausted".localized)
@@ -577,18 +601,8 @@ struct EvolutionPipelineView: View {
 
     private var cycleListArea: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // 新循环
-            cycleListRow(
-                icon: "plus.circle.fill",
-                color: .blue,
-                title: "evolution.page.pipeline.newCycle".localized,
-                isSelected: selectedCycle == .newCycle
-            ) {
-                withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .newCycle }
-            }
-
             // 本轮循环（有运行数据时才显示）
-            if !completedTimeline.isEmpty || hasRunningAgents {
+            if hasCurrentCycleRow {
                 cycleListRow(
                     icon: "arrow.triangle.2.circlepath",
                     color: .green,
@@ -623,7 +637,18 @@ struct EvolutionPipelineView: View {
                     withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .history(id: cycle.id) }
                 }
             }
+
+            if !hasCurrentCycleRow && cycleHistories.isEmpty {
+                Text("暂无循环记录")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 4)
+            }
         }
+    }
+
+    private var hasCurrentCycleRow: Bool {
+        !completedTimeline.isEmpty || hasRunningAgents
     }
 
     private var hasRunningAgents: Bool {
@@ -1289,11 +1314,6 @@ struct EvolutionPipelineView: View {
             }
         }
 
-        // 有运行中代理或已完成代理时，自动切换到本轮循环
-        let hasRunning = agents.contains { normalizedStageStatus($0.status) == "running" }
-        if (hasRunning || !completedTimeline.isEmpty) && selectedCycle == .newCycle {
-            withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
-        }
     }
 
     private func resetLocalTimeline() {
@@ -1302,7 +1322,7 @@ struct EvolutionPipelineView: View {
         cycleHistories.removeAll()
         lastRecordedRound = 0
         cycleStartDate = Date()
-        selectedCycle = .newCycle
+        selectedCycle = .currentCycle
     }
 
     /// 将 API 返回的历史循环数据同步到本地视图模型
@@ -1337,6 +1357,7 @@ struct EvolutionPipelineView: View {
                 terminalReasonCode: cycle.terminalReasonCode
             )
         }
+        normalizeCycleSelection(preferCurrent: false)
     }
 
     // MARK: - Stage Chat
@@ -1575,6 +1596,7 @@ struct EvolutionPipelineView: View {
 
     private func startCurrentWorkspace() {
         guard let workspace else { return }
+        guard controlCapability.canStart else { return }
         let defaultProfiles = appState.evolutionDefaultProfiles
         let profiles: [EvolutionStageProfileInfoV2] = defaultProfiles.map { item in
             let model: EvolutionModelSelectionV2? = {
@@ -1598,6 +1620,48 @@ struct EvolutionPipelineView: View {
         resetLocalTimeline()
         // 启动后自动切换到本轮循环
         withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
+    }
+
+    private func actionHelpText(_ base: String, reason: String?) -> String {
+        guard let reason,
+              !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return base
+        }
+        return "\(base)\n\(reason)"
+    }
+
+    private func normalizeCycleSelection(preferCurrent: Bool) {
+        let hasCurrent = hasCurrentCycleRow
+        let firstHistoryID = cycleHistories.first?.id
+
+        if preferCurrent {
+            if hasCurrent {
+                selectedCycle = .currentCycle
+                return
+            }
+            if let firstHistoryID {
+                selectedCycle = .history(id: firstHistoryID)
+                return
+            }
+            selectedCycle = .currentCycle
+            return
+        }
+
+        switch selectedCycle {
+        case .currentCycle:
+            if !hasCurrent, let firstHistoryID {
+                selectedCycle = .history(id: firstHistoryID)
+            }
+        case .history(let id):
+            guard let firstHistoryID else {
+                selectedCycle = .currentCycle
+                return
+            }
+            let stillExists = cycleHistories.contains { $0.id == id }
+            if !stillExists {
+                selectedCycle = hasCurrent ? .currentCycle : .history(id: firstHistoryID)
+            }
+        }
     }
 
     private func refreshData() {

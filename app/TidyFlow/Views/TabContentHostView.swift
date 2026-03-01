@@ -1552,6 +1552,10 @@ struct EvolutionTabView: View {
         return appState.evolutionItem(project: project, workspace: workspace)
     }
 
+    private var controlCapability: EvolutionControlCapability {
+        appState.evolutionControlCapability(project: project, workspace: workspace)
+    }
+
     private let evolutionStageOrder: [String] = [
         "direction",
         "plan",
@@ -1921,6 +1925,7 @@ struct EvolutionTabView: View {
                             TextField("evolution.page.workspace.loopRoundInput".localized, text: $loopRoundLimitText)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 60)
+                                .disabled(!controlCapability.canStart)
                             Text("evolution.page.workspace.verifyLoopFixed".localized)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -1931,24 +1936,41 @@ struct EvolutionTabView: View {
                             Button {
                                 startCurrentWorkspace()
                             } label: {
-                                Label("evolution.page.action.startManual".localized, systemImage: "play.fill")
+                                if controlCapability.isStartPending {
+                                    Label("evolution.page.action.startManual".localized, systemImage: "clock")
+                                } else {
+                                    Label("evolution.page.action.startManual".localized, systemImage: "play.fill")
+                                }
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .disabled(!controlCapability.canStart)
                             Button {
+                                guard controlCapability.canStop else { return }
                                 appState.stopEvolution(project: project, workspace: workspace)
                             } label: {
-                                Label("evolution.page.action.stop".localized, systemImage: "stop.fill")
+                                if controlCapability.isStopPending {
+                                    Label("evolution.page.action.stop".localized, systemImage: "clock")
+                                } else {
+                                    Label("evolution.page.action.stop".localized, systemImage: "stop.fill")
+                                }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .disabled(!controlCapability.canStop)
                             Button {
+                                guard controlCapability.canResume else { return }
                                 appState.resumeEvolution(project: project, workspace: workspace)
                             } label: {
-                                Label("evolution.page.action.resume".localized, systemImage: "arrow.clockwise")
+                                if controlCapability.isResumePending {
+                                    Label("evolution.page.action.resume".localized, systemImage: "clock")
+                                } else {
+                                    Label("evolution.page.action.resume".localized, systemImage: "arrow.clockwise")
+                                }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .disabled(!controlCapability.canResume)
                             Divider().frame(height: 16)
                             Button {
                                 loadHandoffAndPresent()
@@ -2513,6 +2535,7 @@ struct EvolutionTabView: View {
 
     private func startCurrentWorkspace() {
         guard let workspace else { return }
+        guard controlCapability.canStart else { return }
         let loopRoundLimit = max(1, Int(loopRoundLimitText) ?? 1)
         let defaultProfiles = appState.evolutionDefaultProfiles
         let profiles: [EvolutionStageProfileInfoV2] = defaultProfiles.map { item in
