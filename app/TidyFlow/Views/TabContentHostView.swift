@@ -1518,6 +1518,7 @@ struct EvolutionEditableProfile: Identifiable, Equatable {
 struct EvolutionTabView: View {
     @EnvironmentObject var appState: AppState
     @State private var loopRoundLimitText: String = "1"
+    @State private var lastLoopRoundWorkspaceContext: String = ""
     @State private var isSessionViewerPresented: Bool = false
     @State private var viewerStage: String?
     @State private var isBlockerSheetPresented: Bool = false
@@ -1541,6 +1542,10 @@ struct EvolutionTabView: View {
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
     private var workspaceReady: Bool { workspace != nil && !(workspace ?? "").isEmpty }
+    private var workspaceContextKey: String {
+        let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace ?? "")
+        return "\(project)/\(normalizedWorkspace)"
+    }
 
     private var currentItem: EvolutionWorkspaceItemV2? {
         guard let workspace else { return nil }
@@ -2532,11 +2537,15 @@ struct EvolutionTabView: View {
     }
 
     private func syncStartOptionsFromCurrentItem() {
-        guard let item = currentItem else {
-            loopRoundLimitText = "1"
+        guard workspaceReady else { return }
+        if let item = currentItem {
+            loopRoundLimitText = "\(max(1, item.loopRoundLimit))"
+            lastLoopRoundWorkspaceContext = workspaceContextKey
             return
         }
-        loopRoundLimitText = "\(max(1, item.loopRoundLimit))"
+        guard workspaceContextKey != lastLoopRoundWorkspaceContext else { return }
+        loopRoundLimitText = "1"
+        lastLoopRoundWorkspaceContext = workspaceContextKey
     }
 }
 

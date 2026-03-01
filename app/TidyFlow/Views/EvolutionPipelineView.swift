@@ -12,6 +12,7 @@ struct EvolutionPipelineView: View {
     // MARK: - 本地状态
 
     @State private var loopRoundLimit: Int = 1
+    @State private var lastLoopRoundWorkspaceContext: String = ""
     @State private var isSessionViewerPresented: Bool = false
     @State private var isBlockerSheetPresented: Bool = false
     @State private var isHandoffSheetPresented: Bool = false
@@ -48,6 +49,10 @@ struct EvolutionPipelineView: View {
     private var project: String { appState.selectedProjectName }
     private var workspace: String? { appState.selectedWorkspaceKey }
     private var workspaceReady: Bool { workspace != nil && !(workspace ?? "").isEmpty }
+    private var workspaceContextKey: String {
+        let normalizedWorkspace = appState.normalizeEvolutionWorkspaceName(workspace ?? "")
+        return "\(project)/\(normalizedWorkspace)"
+    }
 
     private var currentItem: EvolutionWorkspaceItemV2? {
         guard let workspace else { return nil }
@@ -494,7 +499,7 @@ struct EvolutionPipelineView: View {
                 }
 
                 // 终止原因
-                if let reason = item.terminalReasonCode, !reason.isEmpty {
+                if let reason = trimmedNonEmptyText(item.terminalReasonCode) {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 9))
@@ -510,7 +515,7 @@ struct EvolutionPipelineView: View {
                 }
 
                 // 限流错误信息
-                if let rateLimitMsg = item.rateLimitErrorMessage, !rateLimitMsg.isEmpty {
+                if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
                     HStack(alignment: .top, spacing: 4) {
                         Image(systemName: "clock.badge.exclamationmark")
                             .font(.system(size: 9))
@@ -729,7 +734,7 @@ struct EvolutionPipelineView: View {
                 let statusInfo = cycleStatusInfo(item.status)
                 VStack(alignment: .leading, spacing: 4) {
                     // 终止原因
-                    if let reason = item.terminalReasonCode, !reason.isEmpty {
+                    if let reason = trimmedNonEmptyText(item.terminalReasonCode) {
                         HStack(spacing: 4) {
                             Image(systemName: statusInfo.icon)
                                 .font(.system(size: 9))
@@ -742,7 +747,7 @@ struct EvolutionPipelineView: View {
                     }
 
                     // 限流错误信息
-                    if let rateLimitMsg = item.rateLimitErrorMessage, !rateLimitMsg.isEmpty {
+                    if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "clock.badge.exclamationmark")
                                 .font(.system(size: 9))
@@ -836,7 +841,7 @@ struct EvolutionPipelineView: View {
             .clipShape(Capsule())
 
             // 终止原因（如有）
-            if let reason = cycle.terminalReasonCode, !reason.isEmpty {
+            if let reason = trimmedNonEmptyText(cycle.terminalReasonCode) {
                 HStack(spacing: 4) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 9))
@@ -1604,11 +1609,15 @@ struct EvolutionPipelineView: View {
     }
 
     private func syncStartOptions() {
-        guard let item = currentItem else {
-            loopRoundLimit = 3
+        guard workspaceReady else { return }
+        if let item = currentItem {
+            loopRoundLimit = max(1, item.loopRoundLimit)
+            lastLoopRoundWorkspaceContext = workspaceContextKey
             return
         }
-        loopRoundLimit = max(1, item.loopRoundLimit)
+        guard workspaceContextKey != lastLoopRoundWorkspaceContext else { return }
+        loopRoundLimit = 1
+        lastLoopRoundWorkspaceContext = workspaceContextKey
     }
 
     // MARK: - 阶段辅助方法
@@ -1621,6 +1630,12 @@ struct EvolutionPipelineView: View {
 
     private func normalizedStageStatus(_ status: String) -> String {
         status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func trimmedNonEmptyText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func isCompletedStatus(_ status: String) -> Bool {

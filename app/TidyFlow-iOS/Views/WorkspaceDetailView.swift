@@ -1312,7 +1312,7 @@ struct MobileEvolutionView: View {
                             .lineLimit(1)
                     }
                     // 终止原因
-                    if let reason = item.terminalReasonCode, !reason.isEmpty {
+                    if let reason = trimmedNonEmptyText(item.terminalReasonCode) {
                         LabeledContent("evolution.page.pipeline.terminalReason".localized) {
                             Text(mobileLocalizedTerminalReason(reason))
                                 .foregroundColor(.red)
@@ -1320,7 +1320,7 @@ struct MobileEvolutionView: View {
                         }
                     }
                     // 限流错误信息
-                    if let rateLimitMsg = item.rateLimitErrorMessage, !rateLimitMsg.isEmpty {
+                    if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
                         LabeledContent("evolution.page.pipeline.rateLimitError".localized) {
                             Text(rateLimitMsg)
                                 .foregroundColor(.orange)
@@ -2044,11 +2044,14 @@ struct MobileEvolutionView: View {
     }
 
     private func syncStartOptionsFromItem() {
-        guard let item else {
-            loopRoundLimitText = "1"
-            return
-        }
+        guard let item else { return }
         loopRoundLimitText = "\(max(1, item.loopRoundLimit))"
+    }
+
+    private func trimmedNonEmptyText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private var activeBlockingRequest: EvolutionBlockingRequiredV2? {
@@ -2288,7 +2291,7 @@ struct MobileEvolutionView: View {
                         .clipShape(Capsule())
 
                         // 终止原因
-                        if let reason = cycle.terminalReasonCode, !reason.isEmpty {
+                        if let reason = trimmedNonEmptyText(cycle.terminalReasonCode) {
                             Text(mobileLocalizedTerminalReason(reason))
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
