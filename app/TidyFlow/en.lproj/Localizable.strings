@@ -28,7 +28,9 @@
 /* App Quit Confirmation */
 "app.quit.title" = "Confirm Quit";
 "app.quit.message" = "%d terminal sessions are running with possible ongoing work. Are you sure you want to quit?";
+"app.quit.message.generic" = "Are you sure you want to quit?";
 "app.quit.quit" = "Quit";
+"app.quit.dontAskAgain" = "Don't ask again next time";
 
 /* Settings */
 "settings.title" = "Settings";

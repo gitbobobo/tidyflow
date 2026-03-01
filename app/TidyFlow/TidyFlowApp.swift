@@ -6,6 +6,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     var appState: AppState?
     /// 用于跟踪是否已确认退出（避免重复弹框）
     private var terminationConfirmed = false
+    /// 退出确认弹框抑制开关（勾选“下次不再提示”后生效）
+    private static let suppressQuitConfirmationKey = "app.quit.suppressConfirmation"
     /// 启动期窗口可见性兜底重试计数（处理 UI Test 下窗口创建时序）
     private var ensureMainWindowRetryCount = 0
     private let maxEnsureMainWindowRetryCount = 40
@@ -98,30 +100,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             }
             return .terminateLater
         }
-        
-        // 检查是否有活跃的终端会话
+
         let activeTerminalCount = appState?.terminalSessionByTabId.count ?? 0
-        
-        if activeTerminalCount > 0 {
-            // 有活跃终端，显示确认弹框
-            if showTerminationConfirmation(terminalCount: activeTerminalCount) {
-                // 用户确认退出
-                terminationConfirmed = true
-                appState?.stopCore()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    Thread.sleep(forTimeInterval: 0.5)
-                    DispatchQueue.main.async {
-                        NSApp.reply(toApplicationShouldTerminate: true)
-                    }
-                }
-                return .terminateLater
-            } else {
-                // 用户取消
-                return .terminateCancel
-            }
+        if !showTerminationConfirmation(terminalCount: activeTerminalCount) {
+            return .terminateCancel
         }
-        
-        // 没有活跃终端，直接退出
+
+        terminationConfirmed = true
         appState?.stopCore()
         DispatchQueue.global(qos: .userInitiated).async {
             Thread.sleep(forTimeInterval: 0.5)
@@ -135,40 +120,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     // MARK: - NSWindowDelegate
     
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // 检查是否有活跃的终端会话
         let activeTerminalCount = appState?.terminalSessionByTabId.count ?? 0
-        
-        if activeTerminalCount > 0 {
-            // 有活跃终端，显示确认弹框
-            if showTerminationConfirmation(terminalCount: activeTerminalCount) {
-                // 用户确认，标记并退出应用
-                terminationConfirmed = true
-                NSApp.terminate(nil)
-                return false  // 不直接关闭窗口，让 terminate 处理
-            } else {
-                // 用户取消
-                return false
-            }
+
+        if showTerminationConfirmation(terminalCount: activeTerminalCount) {
+            // 用户确认，标记并退出应用
+            terminationConfirmed = true
+            NSApp.terminate(nil)
         }
-        
-        // 没有活跃终端，直接退出应用
-        NSApp.terminate(nil)
+
         return false  // 不直接关闭窗口，让 terminate 处理
     }
 
     // MARK: - Helper
     
-    /// 显示退出确认弹框，返回用户是否确认退出
+    /// 是否已启用“退出时不再提示”
+    private var isQuitConfirmationSuppressed: Bool {
+        UserDefaults.standard.bool(forKey: Self.suppressQuitConfirmationKey)
+    }
+
+    /// 显示退出确认弹框，返回用户是否确认退出；若用户已选择不再提示则直接确认。
     private func showTerminationConfirmation(terminalCount: Int) -> Bool {
+        if isQuitConfirmationSuppressed {
+            return true
+        }
+
         let alert = NSAlert()
         alert.messageText = "app.quit.title".localized
-        alert.informativeText = String(format: "app.quit.message".localized, terminalCount)
+        if terminalCount > 0 {
+            alert.informativeText = String(format: "app.quit.message".localized, terminalCount)
+        } else {
+            alert.informativeText = "app.quit.message.generic".localized
+        }
         alert.alertStyle = .warning
         alert.addButton(withTitle: "app.quit.quit".localized)
         alert.addButton(withTitle: "common.cancel".localized)
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "app.quit.dontAskAgain".localized
         
         let response = alert.runModal()
-        return response == .alertFirstButtonReturn
+        let didConfirmQuit = response == .alertFirstButtonReturn
+        if didConfirmQuit, alert.suppressionButton?.state == .on {
+            UserDefaults.standard.set(true, forKey: Self.suppressQuitConfirmationKey)
+        }
+        return didConfirmQuit
     }
 }
 
