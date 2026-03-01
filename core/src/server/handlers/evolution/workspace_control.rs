@@ -6,10 +6,13 @@ use uuid::Uuid;
 
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::resolve_directory;
-use crate::server::protocol::{EvolutionWorkspaceItem, ServerMessage};
+use crate::server::protocol::{
+    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionWorkspaceItem,
+    ServerMessage,
+};
 
 use super::stage::{active_agents, build_agents};
-use super::utils::workspace_key;
+use super::utils::{evolution_workspace_dir, workspace_key};
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState, DEFAULT_VERIFY_LIMIT,
     STAGES,
@@ -333,6 +336,8 @@ impl EvolutionManager {
                 verify_iteration_limit: w.verify_iteration_limit,
                 agents,
                 active_agents: active_agents(&w.stage_statuses),
+                terminal_reason_code: w.terminal_reason_code.clone(),
+                rate_limit_error_message: w.rate_limit_error_message.clone(),
             });
         }
 
@@ -349,6 +354,151 @@ impl EvolutionManager {
             },
             workspace_items,
         }
+    }
+
+    /// 从工作空间文件夹扫描历史循环记录
+    pub(super) async fn list_cycle_history(
+        &self,
+        project: &str,
+        workspace: &str,
+        ctx: &HandlerContext,
+    ) -> Result<Vec<EvolutionCycleHistoryItem>, String> {
+        let workspace_root = resolve_directory(&ctx.app_state, project, workspace).await?;
+        let evo_dir = evolution_workspace_dir(&workspace_root)?;
+
+        if !evo_dir.exists() {
+            return Ok(vec![]);
+        }
+
+        // 当前运行中的 cycle_id，用于排除
+        let current_cycle_id = {
+            let state = self.state.lock().await;
+            let key = workspace_key(project, workspace);
+            state
+                .workspaces
+                .get(&key)
+                .map(|w| w.cycle_id.clone())
+                .unwrap_or_default()
+        };
+
+        let mut cycles: Vec<EvolutionCycleHistoryItem> = Vec::new();
+
+        let entries = std::fs::read_dir(&evo_dir).map_err(|e| e.to_string())?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let cycle_id = match path.file_name().and_then(|n| n.to_str()) {
+                Some(name) => name.to_string(),
+                None => continue,
+            };
+
+            // 跳过当前运行中的循环
+            if !current_cycle_id.is_empty() && cycle_id == current_cycle_id {
+                continue;
+            }
+
+            let cycle_file = path.join("cycle.json");
+            if !cycle_file.exists() {
+                continue;
+            }
+
+            let content = match std::fs::read_to_string(&cycle_file) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let json: serde_json::Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let status = json["status"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+            let global_loop_round = json["global_loop_round"].as_u64().unwrap_or(0) as u32;
+            let created_at = json["created_at"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let updated_at = json["updated_at"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let terminal_reason_code = json["terminal_reason_code"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            // 读取各阶段文件
+            let mut stages: Vec<EvolutionCycleStageHistoryEntry> = Vec::new();
+            for stage_name in STAGES.iter() {
+                let stage_file = path.join(format!("stage.{}.json", stage_name));
+                if !stage_file.exists() {
+                    continue;
+                }
+                let stage_content = match std::fs::read_to_string(&stage_file) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let stage_json: serde_json::Value =
+                    match serde_json::from_str(&stage_content) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                let stage_status = stage_json["status"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
+                // 只包含已完成的阶段
+                if stage_status != "done" {
+                    continue;
+                }
+
+                let agent = stage_json["agent"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let ai_tool = stage_json["ai_tool"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let duration_ms = stage_json["timing"]["duration_ms"].as_u64();
+
+                stages.push(EvolutionCycleStageHistoryEntry {
+                    stage: stage_name.to_string(),
+                    agent,
+                    ai_tool,
+                    status: stage_status,
+                    duration_ms,
+                });
+            }
+
+            // 只包含有已完成阶段的循环
+            if stages.is_empty() {
+                continue;
+            }
+
+            cycles.push(EvolutionCycleHistoryItem {
+                cycle_id,
+                status,
+                global_loop_round,
+                created_at,
+                updated_at,
+                terminal_reason_code,
+                stages,
+            });
+        }
+
+        // 按 updated_at 降序排列
+        cycles.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        // 限制返回最近 20 条
+        cycles.truncate(20);
+
+        Ok(cycles)
     }
 }
 

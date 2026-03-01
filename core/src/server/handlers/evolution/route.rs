@@ -165,6 +165,19 @@ pub(super) async fn handle_message(
             send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
+        ClientMessage::EvoListCycleHistory { project, workspace } => {
+            let cycles = manager.list_cycle_history(project, workspace, ctx).await?;
+            send_message(
+                socket,
+                &ServerMessage::EvoCycleHistory {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    cycles,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }

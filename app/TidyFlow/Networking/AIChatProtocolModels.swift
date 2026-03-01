@@ -1274,6 +1274,8 @@ struct EvolutionWorkspaceItemV2 {
     let verifyIterationLimit: Int
     let agents: [EvolutionAgentInfoV2]
     let activeAgents: [String]
+    let terminalReasonCode: String?
+    let rateLimitErrorMessage: String?
 
     var workspaceKey: String {
         "\(project):\(workspace)"
@@ -1299,7 +1301,9 @@ struct EvolutionWorkspaceItemV2 {
             verifyIteration: Int(parseInt64(json["verify_iteration"])),
             verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
             agents: agents,
-            activeAgents: activeAgents
+            activeAgents: activeAgents,
+            terminalReasonCode: json["terminal_reason_code"] as? String,
+            rateLimitErrorMessage: json["rate_limit_error_message"] as? String
         )
     }
 }
@@ -1371,6 +1375,66 @@ struct EvolutionAgentProfileV2 {
         let stageProfiles = stageProfileDicts
             .compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
         return EvolutionAgentProfileV2(project: project, workspace: workspace, stageProfiles: stageProfiles)
+    }
+}
+
+// MARK: - 进化循环历史数据模型
+
+struct EvolutionCycleStageHistoryEntryV2 {
+    let stage: String
+    let agent: String
+    let aiTool: String
+    let status: String
+    let durationMs: UInt64?
+
+    static func from(json: [String: Any]) -> EvolutionCycleStageHistoryEntryV2? {
+        guard let stage = parseOptionalString(json["stage"]) else { return nil }
+        let agent = parseOptionalString(json["agent"]) ?? ""
+        let aiTool = parseOptionalString(json["ai_tool"]) ?? ""
+        let status = parseOptionalString(json["status"]) ?? "unknown"
+        let durationMs: UInt64? = {
+            if let v = json["duration_ms"] as? UInt64 { return v }
+            if let v = json["duration_ms"] as? Int { return UInt64(v) }
+            if let v = json["duration_ms"] as? Double { return UInt64(v) }
+            return nil
+        }()
+        return EvolutionCycleStageHistoryEntryV2(
+            stage: stage,
+            agent: agent,
+            aiTool: aiTool,
+            status: status,
+            durationMs: durationMs
+        )
+    }
+}
+
+struct EvolutionCycleHistoryItemV2 {
+    let cycleID: String
+    let status: String
+    let globalLoopRound: Int
+    let createdAt: String
+    let updatedAt: String
+    let terminalReasonCode: String?
+    let stages: [EvolutionCycleStageHistoryEntryV2]
+
+    static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
+        guard let cycleID = parseOptionalString(json["cycle_id"]) else { return nil }
+        let status = parseOptionalString(json["status"]) ?? "unknown"
+        let globalLoopRound = Int(parseInt64(json["global_loop_round"]))
+        let createdAt = parseOptionalString(json["created_at"]) ?? ""
+        let updatedAt = parseOptionalString(json["updated_at"]) ?? ""
+        let terminalReasonCode = parseOptionalString(json["terminal_reason_code"])
+        let stages = (json["stages"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionCycleStageHistoryEntryV2.from(json: $0) }
+        return EvolutionCycleHistoryItemV2(
+            cycleID: cycleID,
+            status: status,
+            globalLoopRound: globalLoopRound,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            terminalReasonCode: terminalReasonCode,
+            stages: stages
+        )
     }
 }
 

@@ -671,6 +671,11 @@ pub enum ClientMessage {
         #[serde(default)]
         resolutions: Vec<EvolutionBlockerResolutionInput>,
     },
+    #[serde(rename = "evo_list_cycle_history")]
+    EvoListCycleHistory {
+        project: String,
+        workspace: String,
+    },
     #[serde(rename = "evidence_get_snapshot")]
     EvidenceGetSnapshot {
         project: String,
@@ -1423,6 +1428,10 @@ pub enum ServerMessage {
         verify_iteration_limit: u32,
         agents: Vec<EvolutionAgentInfo>,
         active_agents: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        terminal_reason_code: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rate_limit_error_message: Option<String>,
     },
     #[serde(rename = "evo_judge_result")]
     EvoJudgeResult {
@@ -1475,6 +1484,12 @@ pub enum ServerMessage {
         workspace: String,
         unresolved_count: u32,
         unresolved_items: Vec<EvolutionBlockerItemInfo>,
+    },
+    #[serde(rename = "evo_cycle_history")]
+    EvoCycleHistory {
+        project: String,
+        workspace: String,
+        cycles: Vec<EvolutionCycleHistoryItem>,
     },
     #[serde(rename = "evidence_snapshot")]
     EvidenceSnapshot {
@@ -1740,6 +1755,10 @@ pub struct EvolutionWorkspaceItem {
     pub verify_iteration_limit: u32,
     pub agents: Vec<EvolutionAgentInfo>,
     pub active_agents: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit_error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1773,6 +1792,27 @@ pub struct EvolutionBlockerResolutionInput {
     pub selected_option_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionCycleHistoryItem {
+    pub cycle_id: String,
+    pub status: String,
+    pub global_loop_round: u32,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_reason_code: Option<String>,
+    pub stages: Vec<EvolutionCycleStageHistoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionCycleStageHistoryEntry {
+    pub stage: String,
+    pub agent: String,
+    pub ai_tool: String,
+    pub status: String,
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

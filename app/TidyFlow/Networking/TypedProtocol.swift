@@ -178,6 +178,7 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2)
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2)
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
+    func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2])
     func handleEvolutionError(_ message: String)
 }
 
@@ -188,6 +189,7 @@ extension EvolutionMessageHandler {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) {}
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {}
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
+    func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {}
     func handleEvolutionError(_ message: String) {}
 }
 

@@ -1236,6 +1236,14 @@ extension WSClient {
         ])
     }
 
+    func requestEvoListCycleHistory(project: String, workspace: String) {
+        send([
+            "type": "evo_list_cycle_history",
+            "project": project,
+            "workspace": workspace
+        ])
+    }
+
     func requestEvidenceSnapshot(project: String, workspace: String) {
         send([
             "type": "evidence_get_snapshot",

@@ -153,6 +153,7 @@ class WSClient: NSObject, ObservableObject {
     var onEvoAgentProfile: ((EvolutionAgentProfileV2) -> Void)?
     var onEvoBlockingRequired: ((EvolutionBlockingRequiredV2) -> Void)?
     var onEvoBlockersUpdated: ((EvolutionBlockersUpdatedV2) -> Void)?
+    var onEvoCycleHistory: ((String, String, [EvolutionCycleHistoryItemV2]) -> Void)?
     var onEvidenceSnapshot: ((EvidenceSnapshotV2) -> Void)?
     var onEvidenceRebuildPrompt: ((EvidenceRebuildPromptV2) -> Void)?
     var onEvidenceItemChunk: ((EvidenceItemChunkV2) -> Void)?

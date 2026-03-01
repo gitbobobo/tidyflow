@@ -26,6 +26,8 @@ impl EvolutionManager {
             verify_limit,
             stage_statuses,
             stage_tool_call_counts,
+            terminal_reason_code,
+            rate_limit_error_message,
         ) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
@@ -43,6 +45,8 @@ impl EvolutionManager {
                 entry.verify_iteration_limit,
                 entry.stage_statuses.clone(),
                 entry.stage_tool_call_counts.clone(),
+                entry.terminal_reason_code.clone(),
+                entry.rate_limit_error_message.clone(),
             )
         };
 
@@ -66,6 +70,8 @@ impl EvolutionManager {
                 verify_iteration_limit: verify_limit,
                 agents,
                 active_agents: active_agents(&stage_statuses),
+                terminal_reason_code,
+                rate_limit_error_message,
             },
         )
         .await;

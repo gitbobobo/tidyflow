@@ -236,6 +236,18 @@ extension WSClient {
                 }
             }
             return true
+        case "evo_cycle_history":
+            if let project = json["project"] as? String,
+               let workspace = json["workspace"] as? String {
+                let cycles = (json["cycles"] as? [[String: Any]] ?? [])
+                    .compactMap { EvolutionCycleHistoryItemV2.from(json: $0) }
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles)
+                } else {
+                    onEvoCycleHistory?(project, workspace, cycles)
+                }
+            }
+            return true
         case "evo_error":
             let message = json["message"] as? String ?? "evolution error"
             if let handler = evolutionMessageHandler {
