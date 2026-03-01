@@ -1,4 +1,3 @@
-
 use super::CodexAppServerClient;
 
 #[test]

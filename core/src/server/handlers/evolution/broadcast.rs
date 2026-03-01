@@ -54,7 +54,12 @@ impl EvolutionManager {
             )
         };
 
-        let agents = build_agents(&stage_statuses, &stage_tool_call_counts, &stage_started_ats, &stage_duration_ms);
+        let agents = build_agents(
+            &stage_statuses,
+            &stage_tool_call_counts,
+            &stage_started_ats,
+            &stage_duration_ms,
+        );
 
         self.broadcast(
             ctx,

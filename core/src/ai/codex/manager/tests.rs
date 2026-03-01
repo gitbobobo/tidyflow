@@ -1,4 +1,3 @@
-
 use super::{AcpContentEncodingMode, AppServerRequestError, CodexAppServerManager};
 use serde_json::json;
 

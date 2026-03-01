@@ -111,22 +111,20 @@ fn sanitize_ai_config_options(
 fn ordered_lanes_from_agent_presence(
     agent_presence: &HashSet<PlanImplementationAgent>,
 ) -> Vec<ImplementLane> {
-    let has_general = agent_presence.contains(&PlanImplementationAgent::ImplementGeneral);
-    let has_visual = agent_presence.contains(&PlanImplementationAgent::ImplementVisual);
-    let has_advanced = agent_presence.contains(&PlanImplementationAgent::ImplementAdvanced);
-    if has_general && has_visual {
-        return vec![ImplementLane::General, ImplementLane::Visual];
+    let mut lanes = Vec::with_capacity(3);
+    if agent_presence.contains(&PlanImplementationAgent::ImplementGeneral) {
+        lanes.push(ImplementLane::General);
     }
-    if has_general {
-        return vec![ImplementLane::General];
+    if agent_presence.contains(&PlanImplementationAgent::ImplementVisual) {
+        lanes.push(ImplementLane::Visual);
     }
-    if has_visual {
-        return vec![ImplementLane::Visual];
+    if agent_presence.contains(&PlanImplementationAgent::ImplementAdvanced) {
+        lanes.push(ImplementLane::Advanced);
     }
-    if has_advanced {
-        return vec![ImplementLane::Advanced];
+    if lanes.is_empty() {
+        lanes.push(ImplementLane::General);
     }
-    vec![ImplementLane::General]
+    lanes
 }
 
 fn parse_non_empty_string(value: &serde_json::Value) -> Option<String> {
@@ -2052,13 +2050,24 @@ impl EvolutionManager {
                     }
                 }
                 "implement_visual" => {
-                    entry
-                        .stage_statuses
-                        .insert("implement_advanced".to_string(), "skipped".to_string());
-                    entry
-                        .stage_tool_call_counts
-                        .insert("implement_advanced".to_string(), 0);
-                    next_stage = "verify".to_string();
+                    let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
+                        .ok()
+                        .and_then(|dir| {
+                            Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
+                        })
+                        .unwrap_or_else(|| vec![ImplementLane::Visual]);
+                    let has_advanced = lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
+                    if has_advanced {
+                        next_stage = "implement_advanced".to_string();
+                    } else {
+                        entry
+                            .stage_statuses
+                            .insert("implement_advanced".to_string(), "skipped".to_string());
+                        entry
+                            .stage_tool_call_counts
+                            .insert("implement_advanced".to_string(), 0);
+                        next_stage = "verify".to_string();
+                    }
                 }
                 "implement_advanced" => next_stage = "verify".to_string(),
                 "verify" => next_stage = "judge".to_string(),
@@ -3150,6 +3159,45 @@ mod tests {
     }
 
     #[test]
+    fn resolve_implement_lanes_should_keep_general_and_advanced_on_first_iteration() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/advanced.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_advanced",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 0)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Advanced]);
+    }
+
+    #[test]
     fn resolve_implement_lanes_should_map_only_general_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
@@ -3303,6 +3351,58 @@ mod tests {
         let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
             .expect("lane resolve should succeed");
         assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Visual]);
+    }
+
+    #[test]
+    fn resolve_implement_lanes_should_map_general_then_advanced_on_reimplementation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/advanced.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_advanced",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
+                "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "criteria_judgement": []
+            }),
+        );
+        let lanes = EvolutionManager::resolve_implement_lanes(dir.path(), 1)
+            .expect("lane resolve should succeed");
+        assert_eq!(lanes, vec![ImplementLane::General, ImplementLane::Advanced]);
     }
 
     #[test]

@@ -324,7 +324,12 @@ impl EvolutionManager {
         let mut workspace_items: Vec<EvolutionWorkspaceItem> = Vec::new();
 
         for w in state.workspaces.values() {
-            let agents = build_agents(&w.stage_statuses, &w.stage_tool_call_counts, &w.stage_started_ats, &w.stage_duration_ms);
+            let agents = build_agents(
+                &w.stage_statuses,
+                &w.stage_tool_call_counts,
+                &w.stage_started_ats,
+                &w.stage_duration_ms,
+            );
 
             workspace_items.push(EvolutionWorkspaceItem {
                 project: w.project.clone(),
@@ -415,19 +420,10 @@ impl EvolutionManager {
                 Err(_) => continue,
             };
 
-            let status = json["status"]
-                .as_str()
-                .unwrap_or("unknown")
-                .to_string();
+            let status = json["status"].as_str().unwrap_or("unknown").to_string();
             let global_loop_round = json["global_loop_round"].as_u64().unwrap_or(0) as u32;
-            let created_at = json["created_at"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            let updated_at = json["updated_at"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
+            let created_at = json["created_at"].as_str().unwrap_or("").to_string();
+            let updated_at = json["updated_at"].as_str().unwrap_or("").to_string();
             let terminal_reason_code = json["terminal_reason_code"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -444,11 +440,10 @@ impl EvolutionManager {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
-                let stage_json: serde_json::Value =
-                    match serde_json::from_str(&stage_content) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+                let stage_json: serde_json::Value = match serde_json::from_str(&stage_content) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
 
                 let stage_status = stage_json["status"]
                     .as_str()
@@ -459,14 +454,8 @@ impl EvolutionManager {
                     continue;
                 }
 
-                let agent = stage_json["agent"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                let ai_tool = stage_json["ai_tool"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let agent = stage_json["agent"].as_str().unwrap_or("").to_string();
+                let ai_tool = stage_json["ai_tool"].as_str().unwrap_or("").to_string();
                 let duration_ms = stage_json["timing"]["duration_ms"].as_u64();
 
                 stages.push(EvolutionCycleStageHistoryEntry {
