@@ -32,6 +32,173 @@ enum StartupPhase: Equatable {
     case failed(message: String)
 }
 
+enum EvolutionControlAction: String, Equatable {
+    case start
+    case stop
+    case resume
+}
+
+struct EvolutionPendingActionState: Equatable {
+    let action: EvolutionControlAction
+    let requestedAt: Date
+    let requestedLoopRoundLimit: Int?
+
+    init(
+        action: EvolutionControlAction,
+        requestedAt: Date = Date(),
+        requestedLoopRoundLimit: Int? = nil
+    ) {
+        self.action = action
+        self.requestedAt = requestedAt
+        self.requestedLoopRoundLimit = requestedLoopRoundLimit
+    }
+
+    func resolvedLoopRoundLimit(fallback: Int) -> Int {
+        max(1, requestedLoopRoundLimit ?? fallback)
+    }
+}
+
+struct EvolutionControlCapability: Equatable {
+    let canStart: Bool
+    let canStop: Bool
+    let canResume: Bool
+    let isStartPending: Bool
+    let isStopPending: Bool
+    let isResumePending: Bool
+    let startReason: String?
+    let stopReason: String?
+    let resumeReason: String?
+
+    static func evaluate(
+        workspaceReady: Bool,
+        currentStatus: String?,
+        pendingAction: EvolutionPendingActionState?
+    ) -> EvolutionControlCapability {
+        guard workspaceReady else {
+            return EvolutionControlCapability(
+                canStart: false,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false,
+                startReason: "请先选择工作空间",
+                stopReason: "请先选择工作空间",
+                resumeReason: "请先选择工作空间"
+            )
+        }
+
+        if let pendingAction {
+            let pendingReason = "操作进行中，请稍候"
+            return EvolutionControlCapability(
+                canStart: false,
+                canStop: false,
+                canResume: false,
+                isStartPending: pendingAction.action == .start,
+                isStopPending: pendingAction.action == .stop,
+                isResumePending: pendingAction.action == .resume,
+                startReason: pendingReason,
+                stopReason: pendingReason,
+                resumeReason: pendingReason
+            )
+        }
+
+        guard let status = normalizedStatus(currentStatus) else {
+            return EvolutionControlCapability(
+                canStart: true,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false,
+                startReason: nil,
+                stopReason: "当前无可停止的循环",
+                resumeReason: "当前状态不可恢复"
+            )
+        }
+
+        switch status {
+        case "queued", "running":
+            return EvolutionControlCapability(
+                canStart: false,
+                canStop: true,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false,
+                startReason: "当前循环未结束，无法启动新一轮",
+                stopReason: nil,
+                resumeReason: "当前状态不可恢复"
+            )
+        case "interrupted", "stopped":
+            return EvolutionControlCapability(
+                canStart: false,
+                canStop: false,
+                canResume: true,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false,
+                startReason: "当前循环未结束，无法启动新一轮",
+                stopReason: "当前无可停止的循环",
+                resumeReason: nil
+            )
+        case "completed", "failed_exhausted", "failed_system":
+            return EvolutionControlCapability(
+                canStart: true,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false,
+                startReason: nil,
+                stopReason: "当前无可停止的循环",
+                resumeReason: "当前状态不可恢复"
+            )
+        default:
+            return EvolutionControlCapability(
+                canStart: false,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false,
+                startReason: "当前状态不可启动",
+                stopReason: "当前无可停止的循环",
+                resumeReason: "当前状态不可恢复"
+            )
+        }
+    }
+
+    static func shouldClearPendingAction(
+        _ pendingAction: EvolutionPendingActionState,
+        currentStatus: String?
+    ) -> Bool {
+        let normalized = normalizedStatus(currentStatus)
+        switch pendingAction.action {
+        case .start:
+            return normalized != nil
+        case .stop:
+            guard let normalized else { return false }
+            return [
+                "interrupted",
+                "stopped",
+                "completed",
+                "failed_exhausted",
+                "failed_system",
+            ].contains(normalized)
+        case .resume:
+            guard let normalized else { return false }
+            return normalized == "queued" || normalized == "running"
+        }
+    }
+
+    private static func normalizedStatus(_ status: String?) -> String? {
+        guard let status else { return nil }
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
+    }
+}
+
 class AppState: ObservableObject {
     private static let perfTerminalAutoDetachEnabled: Bool = {
         switch ProcessInfo.processInfo.environment["PERF_TERMINAL_AUTO_DETACH"]?.lowercased() {
@@ -318,8 +485,8 @@ class AppState: ObservableObject {
     var evolutionPendingProfileReloadWorkspaces: Set<String> = []
     /// Evolution：profile 请求兜底定时器，防止某个列表事件丢失导致一直不拉配置。
     var evolutionProfileReloadFallbackTimers: [String: DispatchWorkItem] = [:]
-    /// Evolution：记录某工作空间等待重试的动作（start/resume）。
-    var evolutionPendingActionByWorkspace: [String: String] = [:]
+    /// Evolution：记录某工作空间等待重试/等待确认的动作。
+    @Published var evolutionPendingActionByWorkspace: [String: EvolutionPendingActionState] = [:]
     /// Evidence：等待中的重建提示词请求（按 workspace key 聚合）
     var evidencePromptCompletionByWorkspace: [String: (_ prompt: EvidenceRebuildPromptV2?, _ errorMessage: String?) -> Void] = [:]
     /// Evidence：分块读取上下文（按 workspace key，仅串行读取）
