@@ -41,6 +41,7 @@
 		B3A00001 /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00011 /* CommandPaletteView.swift */; };
 		B3A00002 /* KeybindingHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00012 /* KeybindingHandler.swift */; };
 		B3A00003 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00013 /* TabStripView.swift */; };
+		9E0EB284897F99A8F3DAEABA /* VerticalSplitDivider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F600ABAC380887DE8711B161 /* VerticalSplitDivider.swift */; };
 		B3A00004 /* TabContentHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A00014 /* TabContentHostView.swift */; };
 		AF3CFDB4A7BE4CDD8CCE5640 /* AITabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */; };
 		AIC00002 /* MessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00001 /* MessageListView.swift */; };
@@ -218,6 +219,7 @@
 		B3A00011 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
 		B3A00012 /* KeybindingHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeybindingHandler.swift; sourceTree = "<group>"; };
 		B3A00013 /* TabStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripView.swift; sourceTree = "<group>"; };
+		F600ABAC380887DE8711B161 /* VerticalSplitDivider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerticalSplitDivider.swift; sourceTree = "<group>"; };
 		B3A00014 /* TabContentHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentHostView.swift; sourceTree = "<group>"; };
 		3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AITabView.swift; sourceTree = "<group>"; };
 		AIC00001 /* MessageListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MessageListView.swift"; sourceTree = "<group>"; };
@@ -398,6 +400,7 @@
 				AIC00019 /* AIChatEmptyStateView.swift */,
 
 				B3A00013 /* TabStripView.swift */,
+				F600ABAC380887DE8711B161 /* VerticalSplitDivider.swift */,
 				TST00012 /* ToastOverlayView.swift */,
 				2AEE0BAD2F2F0BAA009B67A9 /* TopToolbarView.swift */,
 			);
@@ -828,6 +831,7 @@
 				B3A00001 /* CommandPaletteView.swift in Sources */,
 				B3A00002 /* KeybindingHandler.swift in Sources */,
 				B3A00003 /* TabStripView.swift in Sources */,
+				9E0EB284897F99A8F3DAEABA /* VerticalSplitDivider.swift in Sources */,
 				B3A00004 /* TabContentHostView.swift in Sources */,
 				AF3CFDB4A7BE4CDD8CCE5640 /* AITabView.swift in Sources */,
 				AIC00002 /* MessageListView.swift in Sources */,
@@ -1154,6 +1158,7 @@
 					"TabContentHostView.swift",
 					"TabModels.swift",
 					"TabStripView.swift",
+				"VerticalSplitDivider.swift",
 					"TerminalStore.swift",
 					"TidyFlowApp.swift",
 					"ToastManager.swift",
@@ -1284,6 +1289,7 @@
 					"TabContentHostView.swift",
 					"TabModels.swift",
 					"TabStripView.swift",
+				"VerticalSplitDivider.swift",
 					"TerminalStore.swift",
 					"TidyFlowApp.swift",
 					"ToastManager.swift",

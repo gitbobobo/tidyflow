@@ -2,85 +2,112 @@ import SwiftUI
 
 struct TabStripView: View {
     @EnvironmentObject var appState: AppState
-    
+
+    /// 收起模式：仅显示 Tab 图标（类似 VSCode 底部状态条）
+    var collapsed: Bool = false
+
     var body: some View {
         HStack(spacing: 0) {
             // 使用全局工作空间键来访问 tabs（区分不同项目的同名工作空间）
             if let globalKey = appState.currentGlobalWorkspaceKey,
                let tabs = appState.workspaceTabs[globalKey] {
-                
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
-                        ForEach(tabs) { tab in
-                            TabItemView(
-                                tab: tab,
-                                isActive: appState.activeTabIdByWorkspace[globalKey] == tab.id,
-                                workspaceKey: globalKey,
-                                onClose: {
-                                    appState.closeTab(workspaceKey: globalKey, tabId: tab.id)
-                                },
-                                onActivate: {
-                                    appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
-                                }
-                            )
-                        }
-                    }
-                    .padding(.leading, 1)
+
+                if collapsed {
+                    // 收起模式：紧凑图标，点击展开面板并激活对应 Tab
+                    collapsedContent(tabs: tabs, globalKey: globalKey)
+                } else {
+                    // 展开模式：完整 Tab 栏
+                    expandedContent(tabs: tabs, globalKey: globalKey)
                 }
-                
-                // 新建终端按钮（根据是否有自定义命令显示不同UI）
-                NewTerminalButton(globalKey: globalKey)
-                    .environmentObject(appState)
-                    .padding(.horizontal, 4)
-
-                WorkspaceSpecialPageButton(
-                    iconName: "bubble.left.and.bubble.right",
-                    helpText: "AI Chat",
-                    isSelected: appState.workspaceSpecialPageByWorkspace[globalKey] == .aiChat,
-                    onTap: {
-                        appState.toggleWorkspaceSpecialPage(workspaceKey: globalKey, page: .aiChat)
-                    }
-                )
-                .padding(.horizontal, 4)
-
 
             } else {
                 Spacer()
             }
         }
-        .frame(height: 34)
+        .frame(height: collapsed ? 28 : 34)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(
             Divider(), alignment: .bottom
         )
     }
-}
 
-private struct WorkspaceSpecialPageButton: View {
-    let iconName: String
-    let helpText: String
-    let isSelected: Bool
-    let onTap: () -> Void
+    // MARK: - 收起模式内容
 
-    var body: some View {
-        Button(action: onTap) {
-            Image(systemName: iconName)
-                .font(.system(size: 12))
-                .foregroundColor(isSelected ? .primary : .secondary)
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(
-                            isSelected
-                                ? Color.accentColor.opacity(0.2)
-                                : Color.clear
-                        )
-                )
+    @ViewBuilder
+    private func collapsedContent(tabs: [TabModel], globalKey: String) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(tabs) { tab in
+                    let isActive = appState.activeTabIdByWorkspace[globalKey] == tab.id
+                    Button {
+                        appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            appState.tabPanelExpanded = true
+                        }
+                    } label: {
+                        let effectiveIconName = (tab.kind == .terminal && tab.commandIcon != nil) ? tab.commandIcon! : tab.kind.iconName
+                        CommandIconView(iconName: effectiveIconName, size: 11)
+                            .foregroundColor(isActive ? .primary : .secondary)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(isActive ? Color(NSColor.controlBackgroundColor) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.borderless)
+                    .help(tab.title)
+                }
+            }
+            .padding(.leading, 6)
+        }
+
+        // 收起模式下的新建终端按钮
+        Button {
+            appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
+            withAnimation(.easeInOut(duration: 0.2)) {
+                appState.tabPanelExpanded = true
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
         }
         .buttonStyle(.borderless)
-        .help(helpText)
+        .help("tab.newTerminal.tooltip".localized)
+        .padding(.horizontal, 6)
+    }
+
+    // MARK: - 展开模式内容
+
+    @ViewBuilder
+    private func expandedContent(tabs: [TabModel], globalKey: String) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(tabs) { tab in
+                    TabItemView(
+                        tab: tab,
+                        isActive: appState.activeTabIdByWorkspace[globalKey] == tab.id,
+                        workspaceKey: globalKey,
+                        onClose: {
+                            appState.closeTab(workspaceKey: globalKey, tabId: tab.id)
+                        },
+                        onActivate: {
+                            appState.activateTab(workspaceKey: globalKey, tabId: tab.id)
+                        }
+                    )
+                }
+            }
+            .padding(.leading, 1)
+        }
+
+        // 新建终端按钮（根据是否有自定义命令显示不同UI）
+        NewTerminalButton(globalKey: globalKey)
+            .environmentObject(appState)
+            .padding(.horizontal, 4)
     }
 }
+
+// WorkspaceSpecialPageButton 已移除：macOS 端 AI 聊天常驻显示，不再需要切换按钮
 
 struct TabItemView: View {
     @EnvironmentObject var appState: AppState

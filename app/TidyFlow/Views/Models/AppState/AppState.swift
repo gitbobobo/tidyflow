@@ -103,6 +103,13 @@ class AppState: ObservableObject {
     // Right Sidebar State
     @Published var rightSidebarCollapsed: Bool = false
 
+    #if os(macOS)
+    /// Tab 面板是否展开（false 时仅显示底部收起的 Tab 条）
+    @Published var tabPanelExpanded: Bool = false
+    /// Tab 面板展开时的高度（会话内记忆，不持久化）
+    @Published var tabPanelHeight: CGFloat = 0
+    #endif
+
     // UX-1: Project Tree State
     @Published var projects: [ProjectModel] = []
     @Published var selectedProjectId: UUID?

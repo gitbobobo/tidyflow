@@ -34,6 +34,12 @@ extension AppState {
         activeTabIdByWorkspace[workspaceKey] = tabId
         // 切回普通 Tab 时，退出工作空间级页面
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+        #if os(macOS)
+        // macOS 端激活 Tab 时自动展开 Tab 面板
+        if !tabPanelExpanded {
+            tabPanelExpanded = true
+        }
+        #endif
     }
     
     func closeTab(workspaceKey: String, tabId: UUID) {
@@ -162,6 +168,12 @@ extension AppState {
         activeTabIdByWorkspace[workspaceKey] = newTab.id
         // 打开普通 Tab 后，退出工作空间级页面
         workspaceSpecialPageByWorkspace.removeValue(forKey: workspaceKey)
+        #if os(macOS)
+        // macOS 端添加 Tab 时自动展开 Tab 面板
+        if !tabPanelExpanded {
+            tabPanelExpanded = true
+        }
+        #endif
 
         // 记录工作空间首次打开终端的时间（用于自动快捷键排序）
         if kind == .terminal && workspaceTerminalOpenTime[workspaceKey] == nil {

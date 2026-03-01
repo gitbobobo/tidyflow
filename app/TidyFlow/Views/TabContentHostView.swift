@@ -11,9 +11,8 @@ struct TabContentHostView: View {
                 if let specialPage = appState.workspaceSpecialPageByWorkspace[globalKey] {
                     switch specialPage {
                     case .aiChat:
-                        AITabView()
-                            .environmentObject(appState)
-                            .environmentObject(appState.fileCache)
+                        // macOS 端 AI 聊天已常驻在 CenterContentView 上方，此处不再渲染
+                        EmptyView()
                     case .evolution:
                         // Mac 端进化页面已移至右侧面板，此处不再渲染
                         EmptyView()
