@@ -249,6 +249,8 @@
 "tab.closeAll" = "Close All [⌘K W]";
 "tab.newTerminal" = "New Terminal";
 "tab.newTerminal.tooltip" = "New Terminal (⌘T)";
+"tab.panel.expand.tooltip" = "Expand Bottom Panel";
+"tab.panel.collapse.tooltip" = "Collapse Bottom Panel";
 
 /* Tab Content */
 "tabContent.selectOrAdd" = "Select or Add a Project";

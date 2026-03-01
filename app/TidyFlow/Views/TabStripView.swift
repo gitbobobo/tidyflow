@@ -61,6 +61,9 @@ struct TabStripView: View {
             .padding(.leading, 6)
         }
 
+        panelToggleButton
+            .padding(.horizontal, 2)
+
         // 收起模式下的新建终端按钮
         Button {
             appState.addTab(workspaceKey: globalKey, kind: .terminal, title: "Terminal", payload: "")
@@ -104,6 +107,28 @@ struct TabStripView: View {
         NewTerminalButton(globalKey: globalKey)
             .environmentObject(appState)
             .padding(.horizontal, 4)
+
+        panelToggleButton
+            .padding(.trailing, 6)
+    }
+
+    private var panelToggleButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if appState.tabPanelExpanded {
+                    appState.tabPanelExpanded = false
+                    appState.tabPanelHeight = 0
+                } else {
+                    appState.tabPanelExpanded = true
+                }
+            }
+        } label: {
+            Image(systemName: appState.tabPanelExpanded ? "chevron.down" : "chevron.up")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(appState.tabPanelExpanded ? "tab.panel.collapse.tooltip".localized : "tab.panel.expand.tooltip".localized)
     }
 }
 

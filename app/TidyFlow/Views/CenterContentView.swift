@@ -34,6 +34,7 @@ struct CenterContentView: View {
 
                         // 可拖拽分割线
                         VerticalSplitDivider(
+                            isResizable: appState.tabPanelExpanded,
                             onDrag: { delta in
                                 handleDividerDrag(delta: delta, totalHeight: totalHeight)
                             },
@@ -124,6 +125,10 @@ struct CenterContentView: View {
     // MARK: - 分割线拖拽
 
     private func handleDividerDrag(delta: CGFloat, totalHeight: CGFloat) {
+        guard appState.tabPanelExpanded else {
+            resetDividerDragSession()
+            return
+        }
         let maxTabHeight = maxTabPanelHeight(totalHeight: totalHeight)
         guard maxTabHeight > 0 else {
             appState.tabPanelExpanded = false

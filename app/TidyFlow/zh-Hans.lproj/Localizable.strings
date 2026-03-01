@@ -251,6 +251,8 @@
 "tab.closeAll" = "全部关闭 [⌘K W]";
 "tab.newTerminal" = "新建终端";
 "tab.newTerminal.tooltip" = "新建终端 (⌘T)";
+"tab.panel.expand.tooltip" = "展开底部面板";
+"tab.panel.collapse.tooltip" = "折叠底部面板";
 
 /* Tab 内容 */
 "tabContent.selectOrAdd" = "选择或添加项目开始";
