@@ -18,7 +18,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `STAGE_FILE_PATH`（即 `stage.direction.json`）
 - `DIRECTION_LIFECYCLE_SCAN_PATH`
 - `CYCLE_FILE_PATH`（仅同步方向与验收字段）
-- `handoff.md`（追加本阶段摘要；文件不存在则创建）
+- `handoff.md` 交接文档
 
 `direction.lifecycle_scan.json` 最小要求：
 - 顶层包含：`$schema_version`、`cycle_id`、`project_type`、`ui_capability`、`domains`、`updated_at`
@@ -64,7 +64,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 必须写入：
 - `STAGE_FILE_PATH`（即 `stage.plan.json`）
 - `PLAN_EXECUTION_PATH`
-- `handoff.md`
+- `handoff.md` 交接文档
 
 `plan.execution.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`selected_direction_type`、`goal`、`scope`、`work_items`、`verification_plan`、`updated_at`
