@@ -100,6 +100,8 @@ impl EvolutionManager {
                     llm_defined_acceptance_criteria: Vec::new(),
                     last_judge_result: None,
                     terminal_reason_code: None,
+                    rate_limit_resume_at: None,
+                    rate_limit_error_message: None,
                     stage_profiles,
                     stage_statuses,
                     stage_sessions: HashMap::new(),
@@ -260,6 +262,8 @@ impl EvolutionManager {
             };
             entry.stop_requested = false;
             entry.status = "queued".to_string();
+            entry.rate_limit_resume_at = None;
+            entry.rate_limit_error_message = None;
         }
 
         self.broadcast(

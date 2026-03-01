@@ -637,7 +637,7 @@ impl EvolutionManager {
     ) -> Result<(), String> {
         match stage {
             "plan" => Self::validate_plan_artifact(cycle_dir),
-            "implement_visual" | "implement_advanced" => {
+            "implement_general" | "implement_visual" | "implement_advanced" => {
                 Self::validate_implement_artifact(cycle_dir, verify_iteration)
             }
             "verify" => Self::validate_verify_artifact(cycle_dir, verify_iteration),
@@ -1309,7 +1309,12 @@ impl EvolutionManager {
     fn supports_validation_reminder(stage: &str) -> bool {
         matches!(
             stage,
-            "implement_visual" | "implement_advanced" | "verify" | "judge"
+            "plan"
+                | "implement_general"
+                | "implement_visual"
+                | "implement_advanced"
+                | "verify"
+                | "judge"
         )
     }
 
@@ -2201,6 +2206,8 @@ impl EvolutionManager {
                     entry.status = "queued".to_string();
                     entry.last_judge_result = None;
                     entry.terminal_reason_code = None;
+                    entry.rate_limit_resume_at = None;
+                    entry.rate_limit_error_message = None;
                     entry.llm_defined_acceptance_criteria.clear();
                     entry.stage_sessions.clear();
                     entry.stage_session_history.clear();
@@ -2527,11 +2534,11 @@ mod tests {
             "judge",
             "evo_stage_output_invalid: z"
         ));
-        assert!(!EvolutionManager::should_retry_validation_with_reminder(
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
             "plan",
             "evo_stage_output_invalid: x"
         ));
-        assert!(!EvolutionManager::should_retry_validation_with_reminder(
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
             "implement_general",
             "evo_stage_output_invalid: x"
         ));
@@ -2719,6 +2726,27 @@ mod tests {
         let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1)
             .expect_err("missing failure_backlog should fail");
         assert!(err.contains("failure_backlog"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_validate_implement_general() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_empty_implement_result_triplet(dir.path());
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            serde_json::json!({
+                "failure_backlog": [],
+                "backlog_coverage_summary": {
+                    "total": 0,
+                    "done": 0,
+                    "blocked": 0,
+                    "not_done": 0
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1)
+            .expect_err("missing backlog_coverage should fail");
+        assert!(err.contains("backlog_coverage"));
     }
 
     #[test]

@@ -275,6 +275,10 @@ impl EvolutionManager {
             "chat_map_file": "chat.map.json",
             "handoff_file": "handoff.md",
             "terminal_reason_code": entry.terminal_reason_code.clone(),
+            "rate_limit_recovery": {
+                "resume_at": entry.rate_limit_resume_at.clone(),
+                "last_error": entry.rate_limit_error_message.clone(),
+            },
             "created_at": entry.created_at.clone(),
             "updated_at": Utc::now().to_rfc3339(),
         });
