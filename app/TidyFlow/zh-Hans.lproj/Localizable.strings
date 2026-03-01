@@ -382,6 +382,15 @@
 "evolution.page.blocker.submitSelected" = "提交已勾选项";
 "evolution.page.blocker.noTasks" = "暂无阻塞任务";
 "evolution.page.session.noMessages" = "暂无消息";
+"evolution.page.pipeline.rounds" = "轮";
+"evolution.page.pipeline.running" = "正在运行";
+"evolution.page.pipeline.standby" = "待命队列";
+"evolution.page.pipeline.completed" = "已完成";
+"evolution.page.pipeline.history" = "历史循环";
+"evolution.page.pipeline.roundLabel" = "第 %d 轮";
+"evolution.page.pipeline.toolCalls" = "次调用";
+"evolution.page.pipeline.viewChat" = "查看聊天";
+"evolution.page.pipeline.loopable" = "可循环";
 
 "evolution.stage.direction" = "方向";
 "evolution.stage.plan" = "计划";

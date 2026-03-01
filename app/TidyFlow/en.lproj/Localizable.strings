@@ -380,6 +380,15 @@
 "evolution.page.blocker.submitSelected" = "Submit selected";
 "evolution.page.blocker.noTasks" = "No blockers";
 "evolution.page.session.noMessages" = "No messages";
+"evolution.page.pipeline.rounds" = " rounds";
+"evolution.page.pipeline.running" = "Running";
+"evolution.page.pipeline.standby" = "Standby";
+"evolution.page.pipeline.completed" = "Completed";
+"evolution.page.pipeline.history" = "Cycle History";
+"evolution.page.pipeline.roundLabel" = "Round %d";
+"evolution.page.pipeline.toolCalls" = " calls";
+"evolution.page.pipeline.viewChat" = "View Chat";
+"evolution.page.pipeline.loopable" = "Loopable";
 
 "evolution.stage.direction" = "Direction";
 "evolution.stage.plan" = "Plan";

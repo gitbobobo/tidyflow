@@ -15,8 +15,8 @@ struct TabContentHostView: View {
                             .environmentObject(appState)
                             .environmentObject(appState.fileCache)
                     case .evolution:
-                        EvolutionTabView()
-                            .environmentObject(appState)
+                        // Mac 端进化页面已移至右侧面板，此处不再渲染
+                        EmptyView()
                     case .evidence:
                         // Mac 端证据页面已移至右侧面板，此处不再渲染
                         EmptyView()

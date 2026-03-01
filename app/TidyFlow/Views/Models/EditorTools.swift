@@ -9,6 +9,7 @@ enum RightTool: String, CaseIterable {
     case git
     case sessions
     case evidence
+    case evolution
 }
 
 // MARK: - 外部编辑器（侧边栏与工具栏共用）
