@@ -6,8 +6,12 @@ struct CenterContentView: View {
 
     /// Tab 面板收起时的高度（仅显示 TabStripView 收起模式）
     private let collapsedTabStripHeight: CGFloat = 28
-    /// 面板最小高度
-    private let minPanelHeight: CGFloat = 100
+    /// 底部 Tab 面板最小高度
+    private let minTabPanelHeight: CGFloat = 100
+    /// 顶部聊天面板最小高度（保证输入框可见）
+    private let minChatPanelHeight: CGFloat = 220
+    /// 分割线热区高度，需要与 VerticalSplitDivider 保持一致
+    private let splitDividerHeight: CGFloat = 8
     /// 拖拽开始时记录的 Tab 面板高度
     @State private var dragStartTabPanelHeight: CGFloat = 0
 
@@ -22,18 +26,26 @@ struct CenterContentView: View {
                             .environmentObject(appState)
                             .environmentObject(appState.aiChatStore)
                             .environmentObject(appState.fileCache)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(maxWidth: .infinity, minHeight: minChatPanelHeight, maxHeight: .infinity)
 
                         // 可拖拽分割线
                         VerticalSplitDivider(
                             onDrag: { delta in
                                 handleDividerDrag(delta: delta, totalHeight: totalHeight)
                             },
+                            onDragEnd: {
+                                finalizeDividerDrag(totalHeight: totalHeight)
+                            },
                             onDoubleTap: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     appState.tabPanelExpanded.toggle()
-                                    if appState.tabPanelExpanded && appState.tabPanelHeight < minPanelHeight {
-                                        appState.tabPanelHeight = totalHeight * 0.5
+                                    if appState.tabPanelExpanded {
+                                        appState.tabPanelHeight = clampedTabPanelHeightValue(
+                                            totalHeight * 0.5,
+                                            totalHeight: totalHeight
+                                        )
+                                    } else {
+                                        appState.tabPanelHeight = 0
                                     }
                                 }
                             }
@@ -108,27 +120,63 @@ struct CenterContentView: View {
     // MARK: - 分割线拖拽
 
     private func handleDividerDrag(delta: CGFloat, totalHeight: CGFloat) {
+        let maxTabHeight = maxTabPanelHeight(totalHeight: totalHeight)
+        guard maxTabHeight > 0 else {
+            appState.tabPanelExpanded = false
+            appState.tabPanelHeight = 0
+            dragStartTabPanelHeight = 0
+            return
+        }
         if dragStartTabPanelHeight == 0 {
-            dragStartTabPanelHeight = appState.tabPanelExpanded ? appState.tabPanelHeight : 0
+            dragStartTabPanelHeight = appState.tabPanelExpanded
+                ? clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
+                : 0
         }
         // delta 正值 = 向下拖 = Tab 面板变小，负值 = 向上拖 = Tab 面板变大
         let newHeight = dragStartTabPanelHeight - delta
 
-        if newHeight < minPanelHeight / 2 {
+        if newHeight < minEffectiveTabPanelHeight(totalHeight: totalHeight) / 2 {
             // 拖到足够小时收起
             appState.tabPanelExpanded = false
             appState.tabPanelHeight = 0
             dragStartTabPanelHeight = 0
         } else {
             appState.tabPanelExpanded = true
-            appState.tabPanelHeight = newHeight
-            // 不重置 dragStartTabPanelHeight，因为 DragGesture 的 translation 是相对于起始点的累计值
+            appState.tabPanelHeight = clampedTabPanelHeightValue(newHeight, totalHeight: totalHeight)
+            // 不重置 dragStartTabPanelHeight，因为 DragGesture 的 translation 是相对于起始点的累计值。
         }
+    }
+
+    /// 拖拽结束后重置基线，并将状态高度归一化到当前布局范围内。
+    private func finalizeDividerDrag(totalHeight: CGFloat) {
+        dragStartTabPanelHeight = 0
+        guard appState.tabPanelExpanded else { return }
+        let normalized = clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
+        if normalized <= 0 {
+            appState.tabPanelExpanded = false
+            appState.tabPanelHeight = 0
+        } else {
+            appState.tabPanelHeight = normalized
+        }
+    }
+
+    private func minEffectiveTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        min(minTabPanelHeight, maxTabPanelHeight(totalHeight: totalHeight))
+    }
+
+    private func maxTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        max(0, totalHeight - minChatPanelHeight - splitDividerHeight)
+    }
+
+    private func clampedTabPanelHeightValue(_ value: CGFloat, totalHeight: CGFloat) -> CGFloat {
+        let maxTabHeight = maxTabPanelHeight(totalHeight: totalHeight)
+        guard maxTabHeight > 0 else { return 0 }
+        let minTabHeight = minEffectiveTabPanelHeight(totalHeight: totalHeight)
+        return min(max(value, minTabHeight), maxTabHeight)
     }
 
     /// 限制 Tab 面板高度在合理范围内
     private func clampedTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
-        let maxTabHeight = totalHeight - minPanelHeight - 8 // 8 = 分割线热区
-        return min(max(appState.tabPanelHeight, minPanelHeight), maxTabHeight)
+        clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
     }
 }

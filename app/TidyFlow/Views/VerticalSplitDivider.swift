@@ -5,6 +5,8 @@ import SwiftUI
 struct VerticalSplitDivider: View {
     /// 拖拽偏移回调（正值向下，负值向上）
     var onDrag: (CGFloat) -> Void
+    /// 拖拽结束回调
+    var onDragEnd: (() -> Void)? = nil
     /// 双击回调（可用于折叠/展开）
     var onDoubleTap: (() -> Void)? = nil
 
@@ -45,6 +47,7 @@ struct VerticalSplitDivider: View {
                 }
                 .onEnded { _ in
                     isDragging = false
+                    onDragEnd?()
                 }
         )
         .simultaneousGesture(
