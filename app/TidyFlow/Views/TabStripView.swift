@@ -43,16 +43,6 @@ struct TabStripView: View {
                 )
                 .padding(.horizontal, 4)
 
-                WorkspaceSpecialPageButton(
-                    iconName: "point.3.connected.trianglepath.dotted",
-                    helpText: "Evolution",
-                    isSelected: appState.workspaceSpecialPageByWorkspace[globalKey] == .evolution,
-                    onTap: {
-                        appState.toggleWorkspaceSpecialPage(workspaceKey: globalKey, page: .evolution)
-                    }
-                )
-                .padding(.horizontal, 4)
-
 
             } else {
                 Spacer()

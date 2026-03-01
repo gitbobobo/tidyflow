@@ -17,7 +17,7 @@ struct CapsuleSegmentedControl: View {
 
     var body: some View {
         GeometryReader { geo in
-            let tools: [RightTool] = [.explorer, .search, .git, .sessions, .evidence]
+            let tools: [RightTool] = [.explorer, .search, .git, .sessions, .evidence, .evolution]
             let segmentW = max(0, geo.size.width) / CGFloat(tools.count)
             let fullH = max(24, geo.size.height - 4)
 

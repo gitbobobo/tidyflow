@@ -844,13 +844,12 @@ private struct MessageBubble: View, Equatable {
         if isUser {
             return Color.blue
         } else {
-            return Color.secondary.opacity(0.10)
+            return .clear
         }
     }
 
     private var bubbleBorderColor: Color {
-        if isUser { return .clear }
-        return Color.secondary.opacity(0.12)
+        return .clear
     }
 
     /// 流式阶段的文本规范化：兼顾可读性与抖动控制。
