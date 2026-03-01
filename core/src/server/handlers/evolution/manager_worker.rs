@@ -10,6 +10,7 @@ use crate::server::handlers::ai::{ensure_agent, resolve_directory};
 const RATE_LIMIT_WAIT_SLICE_MS: i64 = 3_000;
 const RATE_LIMIT_WAIT_MIN_MS: i64 = 200;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: i64 = 60;
+const SESSION_RECOVERY_FALLBACK_WAIT_SECS: i64 = 15;
 
 fn is_terminal_status(status: &str) -> bool {
     matches!(status, "completed" | "failed_exhausted" | "failed_system")
@@ -32,6 +33,34 @@ fn is_rate_limit_error_text(text: &str) -> bool {
         || text.contains("频率限制")
         || text.contains("请求过多")
         || text.contains("速率限制")
+}
+
+fn is_retryable_session_error_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+
+    // 明确排除：这类属于确定性失败，不应该进入自动重试
+    if lower.contains("context window")
+        || lower.contains("evo_stage_output_invalid")
+        || lower.contains("evo_llm_output_unparseable")
+    {
+        return false;
+    }
+
+    lower.contains("stage stream error: unknown error")
+        || lower.contains("stage stream timeout")
+        || lower.contains("stdout closed")
+        || lower.contains("request timeout")
+        || lower.contains("connection reset")
+        || lower.contains("connection aborted")
+        || lower.contains("broken pipe")
+        || lower.contains("transport error")
+        || lower.contains("network error")
+        || lower.contains("service unavailable")
+        || text.contains("连接超时")
+        || text.contains("连接重置")
+        || text.contains("连接中断")
+        || text.contains("网络错误")
+        || text.contains("服务不可用")
 }
 
 fn looks_like_datetime_head(bytes: &[u8], start: usize) -> bool {
@@ -360,6 +389,47 @@ impl EvolutionManager {
         true
     }
 
+    async fn handle_retryable_session_error(
+        &self,
+        key: &str,
+        stage: &str,
+        err: &str,
+        ctx: &HandlerContext,
+    ) -> bool {
+        if !is_retryable_session_error_text(err) {
+            return false;
+        }
+
+        let resume_at = Utc::now() + chrono::Duration::seconds(SESSION_RECOVERY_FALLBACK_WAIT_SECS);
+        let resume_at_rfc3339 = resume_at.to_rfc3339();
+
+        {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get_mut(key) else {
+                return true;
+            };
+            entry.status = "queued".to_string();
+            entry
+                .stage_statuses
+                .insert(stage.to_string(), "pending".to_string());
+            entry.rate_limit_resume_at = Some(resume_at_rfc3339.clone());
+            entry.rate_limit_error_message = Some(truncate_error_message(err, 800));
+        }
+
+        self.persist_stage_file(key, stage, "retrying", Some(err), None)
+            .await
+            .ok();
+        self.persist_cycle_file(key).await.ok();
+        self.broadcast_cycle_update(key, ctx, "system").await;
+        self.broadcast_scheduler(ctx).await;
+
+        warn!(
+            "evolution stage session error scheduled for retry: key={}, stage={}, resume_at={}, error={}",
+            key, stage, resume_at_rfc3339, err
+        );
+        true
+    }
+
     pub(super) async fn run_workspace(
         &self,
         key: String,
@@ -533,6 +603,12 @@ impl EvolutionManager {
                     {
                         continue;
                     }
+                    if self
+                        .handle_retryable_session_error(&key, &stage, &err, &ctx)
+                        .await
+                    {
+                        continue;
+                    }
                     error!(
                         "evolution stage failed: key={}, stage={}, error={}",
                         key, stage, err
@@ -575,7 +651,8 @@ mod tests {
 
     use super::{
         extract_rate_limit_resume_at_from_messages, extract_rate_limit_resume_at_from_text,
-        is_rate_limit_error_text, is_round_limit_exceeded, is_terminal_status,
+        is_rate_limit_error_text, is_retryable_session_error_text, is_round_limit_exceeded,
+        is_terminal_status,
     };
 
     #[test]
@@ -603,6 +680,25 @@ mod tests {
             "API Error: 429 限额将在 2026-03-01 02:49:41 重置"
         ));
         assert!(!is_rate_limit_error_text("stage stream timeout"));
+    }
+
+    #[test]
+    fn retryable_session_error_detection_should_match_stream_and_transport_errors() {
+        assert!(is_retryable_session_error_text(
+            "stage stream error: Unknown error"
+        ));
+        assert!(is_retryable_session_error_text(
+            "Kimi ACP server stdout closed"
+        ));
+        assert!(is_retryable_session_error_text(
+            "stage stream timeout (idle 180s, tool_call_count=60)"
+        ));
+        assert!(!is_retryable_session_error_text(
+            "stage stream error: Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying."
+        ));
+        assert!(!is_retryable_session_error_text(
+            "evo_stage_output_invalid: backlog_coverage 未完整覆盖 failure_backlog"
+        ));
     }
 
     #[test]
