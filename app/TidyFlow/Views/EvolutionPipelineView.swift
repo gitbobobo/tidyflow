@@ -11,7 +11,7 @@ struct EvolutionPipelineView: View {
 
     // MARK: - 本地状态
 
-    @State private var loopRoundLimit: Int = 3
+    @State private var loopRoundLimit: Int = 1
     @State private var isSessionViewerPresented: Bool = false
     @State private var isBlockerSheetPresented: Bool = false
     @State private var isHandoffSheetPresented: Bool = false
@@ -23,10 +23,6 @@ struct EvolutionPipelineView: View {
     @State private var cycleHistories: [PipelineCycleHistory] = []
     /// 上次记录的轮次
     @State private var lastRecordedRound: Int = 0
-    /// 运行计时器
-    @State private var runningElapsed: TimeInterval = 0
-    @State private var runningStartDate: Date? = nil
-    @State private var timerActive: Bool = false
     /// 当前循环的开始时间
     @State private var cycleStartDate: Date = Date()
     /// 当前选中的循环
@@ -220,6 +216,7 @@ struct EvolutionPipelineView: View {
                             .tag(count)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(maxWidth: 100)
                 .controlSize(.small)
@@ -283,7 +280,20 @@ struct EvolutionPipelineView: View {
         return Group {
             if !runningAgents.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
+                    HStack {
+                        sectionLabel("evolution.page.pipeline.running".localized, icon: "bolt.fill", color: .orange)
+                        Spacer()
+                        // 总耗时（累加各代理耗时）
+                        if let total = totalDurationText {
+                            HStack(spacing: 3) {
+                                Image(systemName: "timer")
+                                    .font(.system(size: 9))
+                                Text(total)
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            }
+                            .foregroundColor(.secondary)
+                        }
+                    }
 
                     ForEach(runningAgents, id: \.stage) { agent in
                         runningAgentCard(agent)
@@ -333,13 +343,13 @@ struct EvolutionPipelineView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                 }
 
-                // 运行时间
+                // 运行时间（使用核心返回的 started_at）
                 HStack(spacing: 4) {
                     Image(systemName: "clock")
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text(formatElapsedTime())
+                        Text(formatElapsedTimeFrom(agent.startedAt))
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                     }
                 }
@@ -372,20 +382,19 @@ struct EvolutionPipelineView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.orange.opacity(0.3), lineWidth: 1.5)
         )
-        .onAppear {
-            if runningStartDate == nil {
-                runningStartDate = Date()
-            }
-        }
     }
 
     // MARK: - 待命队列（横向胶囊）
 
     private var standbySection: some View {
         let standbyAgents = computeStandbyAgents()
+        // 进入报告阶段后隐藏待命队列
+        let isInReportPhase = (currentItem?.agents ?? []).contains {
+            normalizedStageKey($0.stage) == "report" && normalizedStageStatus($0.status) == "running"
+        }
 
         return Group {
-            if !standbyAgents.isEmpty {
+            if !standbyAgents.isEmpty && !isInReportPhase {
                 VStack(alignment: .leading, spacing: 6) {
                     sectionLabel("evolution.page.pipeline.standby".localized, icon: "clock", color: .secondary)
 
@@ -443,15 +452,12 @@ struct EvolutionPipelineView: View {
             standbySection
 
         case .currentCycle:
-            // 本轮循环：显示控制区域 + 运行中代理 + 待命 + 紧凑已完成条
+            // 本轮循环：显示控制区域 + 运行中代理 + 待命
             controlSection
             // 仅在终止或异常时显示原因
             terminalReasonBanner
             runningAgentSection
             standbySection
-            if !completedTimeline.isEmpty {
-                currentCycleCompactBar
-            }
 
         case .history(let id):
             // 历史循环：只读查看紧凑条形
@@ -1128,16 +1134,50 @@ struct EvolutionPipelineView: View {
 
     // MARK: - 时间格式化
 
-    private func formatElapsedTime() -> String {
-        guard let start = runningStartDate else { return "0s" }
-        let elapsed = Date().timeIntervalSince(start)
-        if elapsed < 60 {
-            return "\(Int(elapsed))s"
-        } else {
-            let minutes = Int(elapsed) / 60
-            let seconds = Int(elapsed) % 60
-            return "\(minutes)m\(String(format: "%02d", seconds))s"
+    /// 根据核心返回的 started_at（RFC3339）计算实时耗时
+    private func formatElapsedTimeFrom(_ startedAtRFC3339: String?) -> String {
+        guard let str = startedAtRFC3339,
+              let date = Self.rfc3339Formatter.date(from: str) ?? Self.rfc3339FallbackFormatter.date(from: str) else {
+            return "0s"
         }
+        let elapsed = Date().timeIntervalSince(date)
+        return Self.formatDuration(elapsed)
+    }
+
+    /// 将毫秒数格式化为可读时长
+    private static func formatDurationMs(_ ms: UInt64) -> String {
+        formatDuration(TimeInterval(ms) / 1000.0)
+    }
+
+    private static func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        if total < 60 {
+            return "\(total)s"
+        } else {
+            let minutes = total / 60
+            let secs = total % 60
+            return "\(minutes)m\(String(format: "%02d", secs))s"
+        }
+    }
+
+    private static let rfc3339Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let rfc3339FallbackFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// 计算所有已完成代理的总耗时（核心累加）
+    private var totalDurationText: String? {
+        guard let agents = currentItem?.agents else { return nil }
+        let totalMs = agents.compactMap(\.durationMs).reduce(0, +)
+        guard totalMs > 0 else { return nil }
+        return Self.formatDurationMs(totalMs)
     }
 
     // MARK: - 数据逻辑
@@ -1208,15 +1248,8 @@ struct EvolutionPipelineView: View {
             }
         }
 
-        // 更新运行计时器
-        let hasRunning = agents.contains { normalizedStageStatus($0.status) == "running" }
-        if hasRunning && runningStartDate == nil {
-            runningStartDate = Date()
-        } else if !hasRunning {
-            runningStartDate = nil
-        }
-
         // 有运行中代理或已完成代理时，自动切换到本轮循环
+        let hasRunning = agents.contains { normalizedStageStatus($0.status) == "running" }
         if (hasRunning || !completedTimeline.isEmpty) && selectedCycle == .newCycle {
             withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
         }
@@ -1226,7 +1259,6 @@ struct EvolutionPipelineView: View {
         completedTimeline.removeAll()
         cycleHistories.removeAll()
         lastRecordedRound = 0
-        runningStartDate = nil
         cycleStartDate = Date()
         selectedCycle = .newCycle
     }

@@ -1221,6 +1221,10 @@ struct EvolutionAgentInfoV2 {
     let status: String
     let toolCallCount: Int
     let latestMessage: String?
+    /// 代理开始运行的 RFC3339 时间戳
+    let startedAt: String?
+    /// 代理运行耗时（毫秒），仅在完成后填充
+    let durationMs: UInt64?
 
     static func from(json: [String: Any]) -> EvolutionAgentInfoV2? {
         guard let stage = json["stage"] as? String,
@@ -1228,12 +1232,16 @@ struct EvolutionAgentInfoV2 {
               let status = json["status"] as? String else { return nil }
         let toolCallCount = Int(parseInt64(json["tool_call_count"]))
         let latestMessage = parseOptionalString(json["latest_message"])
+        let startedAt = parseOptionalString(json["started_at"])
+        let durationMs: UInt64? = (json["duration_ms"] as? NSNumber).map { $0.uint64Value }
         return EvolutionAgentInfoV2(
             stage: stage,
             agent: agent,
             status: status,
             toolCallCount: toolCallCount,
-            latestMessage: latestMessage
+            latestMessage: latestMessage,
+            startedAt: startedAt,
+            durationMs: durationMs
         )
     }
 }
