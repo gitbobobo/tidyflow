@@ -27,6 +27,17 @@ struct EvolutionPipelineView: View {
     @State private var runningElapsed: TimeInterval = 0
     @State private var runningStartDate: Date? = nil
     @State private var timerActive: Bool = false
+    /// 当前循环的开始时间
+    @State private var cycleStartDate: Date = Date()
+    /// 当前选中的循环
+    @State private var selectedCycle: CycleSelection = .newCycle
+
+    /// 循环选择类型
+    enum CycleSelection: Equatable {
+        case newCycle
+        case currentCycle
+        case history(id: String)
+    }
 
     private struct EvolutionPipelineBlockerDraft {
         var selected: Bool
@@ -57,7 +68,7 @@ struct EvolutionPipelineView: View {
         "verify", "judge",
     ]
 
-    private let loopRoundOptions = [3, 5, 10, 20]
+    private let loopRoundOptions = [1, 3, 5, 10, 20]
 
     // MARK: - 代理颜色映射
 
@@ -89,11 +100,13 @@ struct EvolutionPipelineView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        controlSection
-                        runningAgentSection
-                        standbySection
-                        completedTimelineSection
-                        cycleHistorySection
+                        // 上方内容区：根据选中的循环显示不同内容
+                        cycleDetailArea
+
+                        Divider()
+
+                        // 下方循环列表：可选中切换
+                        cycleListArea
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -124,6 +137,9 @@ struct EvolutionPipelineView: View {
         }
         .onReceive(appState.$evolutionBlockingRequired) { value in
             syncBlockerSheetState(value)
+        }
+        .onReceive(appState.$evolutionCycleHistories) { _ in
+            syncCycleHistoriesFromAPI()
         }
         #if os(macOS)
         .sheet(isPresented: $isSessionViewerPresented) {
@@ -416,118 +432,591 @@ struct EvolutionPipelineView: View {
         )
     }
 
-    // MARK: - 已完成时间线
+    // MARK: - 上方内容区（根据选中循环切换）
 
-    private var completedTimelineSection: some View {
-        return Group {
+    @ViewBuilder
+    private var cycleDetailArea: some View {
+        switch selectedCycle {
+        case .newCycle:
+            // 新循环：显示控制区域 + 初始待命队列
+            controlSection
+            standbySection
+
+        case .currentCycle:
+            // 本轮循环：显示控制区域 + 运行中代理 + 待命 + 紧凑已完成条
+            controlSection
+            // 仅在终止或异常时显示原因
+            terminalReasonBanner
+            runningAgentSection
+            standbySection
             if !completedTimeline.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    sectionLabel("evolution.page.pipeline.completed".localized, icon: "checkmark.circle.fill", color: .green)
+                currentCycleCompactBar
+            }
 
-                    ForEach(Array(completedTimeline.enumerated()), id: \.element.id) { index, entry in
-                        HStack(spacing: 8) {
-                            // 时间线竖线 + 节点
-                            VStack(spacing: 0) {
-                                if index > 0 {
-                                    Rectangle()
-                                        .fill(stageColor(entry.stage).opacity(0.3))
-                                        .frame(width: 2, height: 8)
-                                }
-                                Circle()
-                                    .fill(stageColor(entry.stage))
-                                    .frame(width: 8, height: 8)
-                                if index < completedTimeline.count - 1 {
-                                    Rectangle()
-                                        .fill(stageColor(entry.stage).opacity(0.3))
-                                        .frame(width: 2, height: 8)
-                                }
-                            }
-
-                            Image(systemName: stageIconName(entry.stage))
-                                .font(.system(size: 10))
-                                .foregroundColor(stageColor(entry.stage))
-                                .frame(width: 16)
-
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(stageDisplayName(entry.stage))
-                                    .font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1)
-                                HStack(spacing: 4) {
-                                    Text(entry.agent)
-                                        .font(.system(size: 9))
-                                        .foregroundColor(.secondary)
-                                    if entry.toolCallCount > 0 {
-                                        Text("·")
-                                            .foregroundColor(.secondary)
-                                        Text("\(entry.toolCallCount)" + "evolution.page.pipeline.toolCalls".localized)
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                            }
-
-                            Spacer()
-
-                            Text(entry.completedAt)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.secondary.opacity(0.7))
-
-                            // 查看聊天按钮
-                            if normalizedStageKey(entry.stage) != "auto_commit" {
-                                Button {
-                                    openStageChat(stage: entry.stage)
-                                } label: {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 8))
-                                        .foregroundColor(.secondary)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                        .padding(.vertical, 3)
-                        .padding(.horizontal, 8)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .top).combined(with: .opacity),
-                            removal: .opacity
-                        ))
-                    }
-                }
-                .animation(.easeInOut(duration: 0.4), value: completedTimeline.count)
+        case .history(let id):
+            // 历史循环：只读查看紧凑条形
+            if let cycle = cycleHistories.first(where: { $0.id == id }) {
+                historyCycleCompactView(cycle)
             }
         }
     }
 
-    // MARK: - 历史循环汇总
+    // MARK: - 循环状态指示条
 
-    private var cycleHistorySection: some View {
-        return Group {
-            if !cycleHistories.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionLabel("evolution.page.pipeline.history".localized, icon: "clock.arrow.circlepath", color: .indigo)
+    /// 循环状态指示条：显示当前循环的整体状态和异常原因
+    @ViewBuilder
+    private var cycleStatusBanner: some View {
+        if let item = currentItem {
+            let statusInfo = cycleStatusInfo(item.status)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: statusInfo.icon)
+                        .font(.system(size: 10))
+                        .foregroundColor(statusInfo.color)
+                    Text("evolution.page.pipeline.cycleStatus".localized)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(statusInfo.label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(statusInfo.color)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(statusInfo.color.opacity(0.12)))
+                }
 
-                    ForEach(cycleHistories) { cycle in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.round))
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.secondary)
-
-                            // 彩色横线：每个代理为一段
-                            HStack(spacing: 2) {
-                                ForEach(cycle.stages, id: \.self) { stage in
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(stageColor(stage))
-                                        .frame(height: 6)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .clipShape(Capsule())
-                        }
-                        .padding(.horizontal, 8)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                // 终止原因
+                if let reason = item.terminalReasonCode, !reason.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.orange)
+                        Text("evolution.page.pipeline.terminalReason".localized + ": ")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text(localizedTerminalReason(reason))
+                            .font(.system(size: 9))
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
                     }
                 }
-                .animation(.easeInOut(duration: 0.5), value: cycleHistories.count)
+
+                // 限流错误信息
+                if let rateLimitMsg = item.rateLimitErrorMessage, !rateLimitMsg.isEmpty {
+                    HStack(alignment: .top, spacing: 4) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.system(size: 9))
+                            .foregroundColor(.yellow)
+                        Text("evolution.page.pipeline.rateLimitError".localized + ": ")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text(rateLimitMsg)
+                            .font(.system(size: 9))
+                            .foregroundColor(.primary)
+                            .lineLimit(3)
+                    }
+                }
             }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(statusInfo.color.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(statusInfo.color.opacity(0.2), lineWidth: 1)
+            )
+        }
+    }
+
+    /// 根据循环状态返回颜色、图标和标签
+    private func cycleStatusInfo(_ status: String) -> (color: Color, icon: String, label: String) {
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "running":
+            return (.green, "play.circle.fill", "evolution.status.running".localized)
+        case "queued":
+            return (.blue, "clock.fill", "evolution.status.queued".localized)
+        case "completed", "done", "success":
+            return (.green, "checkmark.circle.fill", "evolution.status.completed".localized)
+        case "interrupted":
+            return (.orange, "pause.circle.fill", "evolution.status.interrupted".localized)
+        case "failed_exhausted":
+            return (.red, "xmark.circle.fill", "evolution.status.failedExhausted".localized)
+        case "failed_system":
+            return (.red, "exclamationmark.triangle.fill", "evolution.status.failedSystem".localized)
+        case "idle":
+            return (.secondary, "moon.fill", "evolution.status.idle".localized)
+        default:
+            return (.secondary, "questionmark.circle", status)
+        }
+    }
+
+    /// 将终止原因码转为本地化描述
+    private func localizedTerminalReason(_ code: String) -> String {
+        let key = "evolution.terminalReason.\(code)"
+        let localized = key.localized
+        // 若没有对应翻译则返回原始码
+        return localized == key ? code : localized
+    }
+
+    // MARK: - 下方循环列表（可选中切换）
+
+    private var cycleListArea: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // 新循环
+            cycleListRow(
+                icon: "plus.circle.fill",
+                color: .blue,
+                title: "evolution.page.pipeline.newCycle".localized,
+                isSelected: selectedCycle == .newCycle
+            ) {
+                withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .newCycle }
+            }
+
+            // 本轮循环（有运行数据时才显示）
+            if !completedTimeline.isEmpty || hasRunningAgents {
+                cycleListRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    color: .green,
+                    title: "evolution.page.pipeline.currentCycle".localized,
+                    isSelected: selectedCycle == .currentCycle,
+                    badge: currentCycleBadge,
+                    stageEntries: completedTimeline.map { entry in
+                        PipelineCycleStageEntry(id: entry.id, stage: entry.stage, agent: entry.agent, aiToolName: entry.aiToolName, durationSeconds: 0)
+                    }
+                ) {
+                    withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
+                }
+            }
+
+            // 历史循环
+            ForEach(cycleHistories) { cycle in
+                cycleListRow(
+                    icon: "clock.arrow.circlepath",
+                    color: .indigo,
+                    title: relativeTimeString(from: cycle.startDate),
+                    isSelected: selectedCycle == .history(id: cycle.id),
+                    stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
+                        PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
+                    } : cycle.stageEntries
+                ) {
+                    withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .history(id: cycle.id) }
+                }
+            }
+        }
+    }
+
+    private var hasRunningAgents: Bool {
+        (currentItem?.agents ?? []).contains { normalizedStageStatus($0.status) == "running" }
+    }
+
+    private var currentCycleBadge: String? {
+        if hasRunningAgents { return "evolution.page.pipeline.running".localized }
+        if let item = currentItem {
+            let normalized = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            switch normalized {
+            case "interrupted":
+                return "evolution.status.interrupted".localized
+            case "failed_exhausted":
+                return "evolution.status.failedExhausted".localized
+            case "failed_system":
+                return "evolution.status.failedSystem".localized
+            case "completed", "done", "success":
+                return "evolution.status.completed".localized
+            default:
+                break
+            }
+        }
+        return nil
+    }
+
+    /// 循环列表行
+    private func cycleListRow(
+        icon: String,
+        color: Color,
+        title: String,
+        isSelected: Bool,
+        badge: String? = nil,
+        stageEntries: [PipelineCycleStageEntry]? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 10))
+                        .foregroundColor(isSelected ? color : .secondary)
+
+                    Text(title)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                        .foregroundColor(isSelected ? .primary : .secondary)
+
+                    Spacer()
+
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(color.opacity(0.8)))
+                    }
+
+                    if isSelected {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(color)
+                    }
+                }
+
+                // 分段彩色线条
+                if let entries = stageEntries, !entries.isEmpty {
+                    HStack(spacing: 2) {
+                        ForEach(entries) { entry in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(stageColor(entry.stage))
+                                .frame(height: 4)
+                                .help(stageTooltip(stage: entry.stage, agent: entry.agent, aiTool: entry.aiToolName, duration: entry.durationSeconds > 0 ? entry.formattedDuration : nil))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .clipShape(Capsule())
+                    .padding(.leading, 16)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? color.opacity(0.08) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isSelected ? color.opacity(0.25) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 终止/异常原因提示（仅在终止或异常时显示）
+
+    @ViewBuilder
+    private var terminalReasonBanner: some View {
+        if let item = currentItem {
+            let normalized = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let isTerminal = ["interrupted", "failed_exhausted", "failed_system", "completed", "done", "success"].contains(normalized)
+            if isTerminal {
+                let statusInfo = cycleStatusInfo(item.status)
+                VStack(alignment: .leading, spacing: 4) {
+                    // 终止原因
+                    if let reason = item.terminalReasonCode, !reason.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: statusInfo.icon)
+                                .font(.system(size: 9))
+                                .foregroundColor(statusInfo.color)
+                            Text(localizedTerminalReason(reason))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.primary)
+                                .lineLimit(2)
+                        }
+                    }
+
+                    // 限流错误信息
+                    if let rateLimitMsg = item.rateLimitErrorMessage, !rateLimitMsg.isEmpty {
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "clock.badge.exclamationmark")
+                                .font(.system(size: 9))
+                                .foregroundColor(.yellow)
+                            Text(rateLimitMsg)
+                                .font(.system(size: 9))
+                                .foregroundColor(.primary)
+                                .lineLimit(3)
+                        }
+                    }
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(statusInfo.color.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(statusInfo.color.opacity(0.2), lineWidth: 1)
+                )
+            }
+        }
+    }
+
+    // MARK: - 本轮循环紧凑已完成条
+
+    private var currentCycleCompactBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionLabel("evolution.page.pipeline.completedAgents".localized, icon: "checkmark.circle.fill", color: .green)
+            HStack(spacing: 2) {
+                ForEach(completedTimeline) { entry in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(stageColor(entry.stage))
+                        .frame(height: 6)
+                        .help(stageTooltip(stage: entry.stage, agent: entry.agent, aiTool: entry.aiToolName, duration: nil))
+                        .onTapGesture {
+                            if normalizedStageKey(entry.stage) != "auto_commit" {
+                                openStageChat(stage: entry.stage)
+                            }
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .clipShape(Capsule())
+        }
+    }
+
+    // MARK: - 历史循环紧凑视图
+
+    private func historyCycleCompactView(_ cycle: PipelineCycleHistory) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 标题
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12))
+                    .foregroundColor(.indigo)
+                Text(relativeTimeString(from: cycle.startDate))
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.round))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.secondary.opacity(0.1)))
+            }
+
+            // 彩色分段线条
+            HStack(spacing: 2) {
+                let entries = cycle.stageEntries.isEmpty
+                    ? cycle.stages.map { PipelineCycleStageEntry(id: UUID().uuidString, stage: $0, agent: "", durationSeconds: 0) }
+                    : cycle.stageEntries
+                ForEach(entries) { entry in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(stageColor(entry.stage))
+                        .frame(height: 6)
+                        .help(stageTooltip(stage: entry.stage, agent: entry.agent, aiTool: entry.aiToolName, duration: entry.durationSeconds > 0 ? entry.formattedDuration : nil))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .clipShape(Capsule())
+
+            // 终止原因（如有）
+            if let reason = cycle.terminalReasonCode, !reason.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(localizedTerminalReason(reason))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// 生成阶段悬停提示文本
+    private func stageTooltip(stage: String, agent: String, aiTool: String, duration: String?) -> String {
+        var parts = [stageDisplayName(stage)]
+        if !agent.isEmpty {
+            parts.append("evolution.page.pipeline.agentLabel".localized + ": \(agent)")
+        }
+        if !aiTool.isEmpty {
+            parts.append("AI: \(aiTool)")
+        }
+        if let duration {
+            parts.append("evolution.page.pipeline.durationLabel".localized + ": \(duration)")
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - 本轮循环已完成时间线（上方详情）
+
+    private var currentCycleTimelineDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("evolution.page.pipeline.completedAgents".localized, icon: "checkmark.circle.fill", color: .green)
+
+            ForEach(Array(completedTimeline.enumerated()), id: \.element.id) { index, entry in
+                HStack(spacing: 8) {
+                    VStack(spacing: 0) {
+                        if index > 0 {
+                            Rectangle()
+                                .fill(stageColor(entry.stage).opacity(0.3))
+                                .frame(width: 2, height: 8)
+                        }
+                        Circle()
+                            .fill(stageColor(entry.stage))
+                            .frame(width: 8, height: 8)
+                        if index < completedTimeline.count - 1 {
+                            Rectangle()
+                                .fill(stageColor(entry.stage).opacity(0.3))
+                                .frame(width: 2, height: 8)
+                        }
+                    }
+
+                    Image(systemName: stageIconName(entry.stage))
+                        .font(.system(size: 10))
+                        .foregroundColor(stageColor(entry.stage))
+                        .frame(width: 16)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(stageDisplayName(entry.stage))
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(entry.agent)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                            if entry.toolCallCount > 0 {
+                                Text("·")
+                                    .foregroundColor(.secondary)
+                                Text("\(entry.toolCallCount)" + "evolution.page.pipeline.toolCalls".localized)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    Spacer()
+
+                    Text(entry.completedAt)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.7))
+
+                    if normalizedStageKey(entry.stage) != "auto_commit" {
+                        Button {
+                            openStageChat(stage: entry.stage)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 8))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .padding(.vertical, 3)
+                .padding(.horizontal, 8)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity
+                ))
+            }
+        }
+        .animation(.easeInOut(duration: 0.4), value: completedTimeline.count)
+    }
+
+    // MARK: - 历史循环详情（上方详情）
+
+    private func historyCycleDetailView(_ cycle: PipelineCycleHistory) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 标题
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12))
+                    .foregroundColor(.indigo)
+                Text(relativeTimeString(from: cycle.startDate))
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.round))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.secondary.opacity(0.1)))
+            }
+
+            // 彩色分段线条
+            HStack(spacing: 2) {
+                let entries = cycle.stageEntries.isEmpty
+                    ? cycle.stages.map { PipelineCycleStageEntry(id: UUID().uuidString, stage: $0, agent: "", durationSeconds: 0) }
+                    : cycle.stageEntries
+                ForEach(entries) { entry in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(stageColor(entry.stage))
+                        .frame(height: 6)
+                        .help(entry.agent.isEmpty
+                            ? stageDisplayName(entry.stage)
+                            : "\(stageDisplayName(entry.stage)) · \(entry.formattedDuration)")
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .clipShape(Capsule())
+
+            // 阶段时间线
+            ForEach(Array((cycle.stageEntries.isEmpty
+                ? cycle.stages.enumerated().map { (i, s) in
+                    PipelineCycleStageEntry(id: "\(i)", stage: s, agent: "", durationSeconds: 0)
+                }
+                : cycle.stageEntries).enumerated()), id: \.element.id
+            ) { index, entry in
+                HStack(spacing: 8) {
+                    VStack(spacing: 0) {
+                        if index > 0 {
+                            Rectangle()
+                                .fill(stageColor(entry.stage).opacity(0.3))
+                                .frame(width: 2, height: 8)
+                        }
+                        Circle()
+                            .fill(stageColor(entry.stage))
+                            .frame(width: 8, height: 8)
+                        if index < (cycle.stageEntries.isEmpty ? cycle.stages.count : cycle.stageEntries.count) - 1 {
+                            Rectangle()
+                                .fill(stageColor(entry.stage).opacity(0.3))
+                                .frame(width: 2, height: 8)
+                        }
+                    }
+
+                    Image(systemName: stageIconName(entry.stage))
+                        .font(.system(size: 10))
+                        .foregroundColor(stageColor(entry.stage))
+                        .frame(width: 16)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(stageDisplayName(entry.stage))
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        if !entry.agent.isEmpty {
+                            Text(entry.agent)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if entry.durationSeconds > 0 {
+                        Text(entry.formattedDuration)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
+                }
+                .padding(.vertical, 3)
+                .padding(.horizontal, 8)
+            }
+        }
+    }
+
+    /// 相对时间格式化
+    private func relativeTimeString(from date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "evolution.page.pipeline.justNow".localized
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return String(format: "evolution.page.pipeline.minutesAgo".localized, minutes)
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return String(format: "evolution.page.pipeline.hoursAgo".localized, hours)
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MM-dd HH:mm"
+            return formatter.string(from: date)
         }
     }
 
@@ -688,15 +1177,14 @@ struct EvolutionPipelineView: View {
     private func updateTimeline() {
         guard let item = currentItem else { return }
 
-        // 检测轮次变化，如果轮次增加，将当前时间线归档为历史
+        // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
         if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 && !completedTimeline.isEmpty {
-            let stages = completedTimeline.map(\.stage)
-            cycleHistories.append(PipelineCycleHistory(
-                id: UUID().uuidString,
-                round: lastRecordedRound,
-                stages: stages
-            ))
             completedTimeline.removeAll()
+            cycleStartDate = Date()
+            // 从工作空间文件夹重新加载历史数据
+            if let ws = workspace {
+                appState.requestEvolutionCycleHistory(project: project, workspace: ws)
+            }
         }
         lastRecordedRound = item.globalLoopRound
 
@@ -727,6 +1215,11 @@ struct EvolutionPipelineView: View {
         } else if !hasRunning {
             runningStartDate = nil
         }
+
+        // 有运行中代理或已完成代理时，自动切换到本轮循环
+        if (hasRunning || !completedTimeline.isEmpty) && selectedCycle == .newCycle {
+            withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
+        }
     }
 
     private func resetLocalTimeline() {
@@ -734,6 +1227,42 @@ struct EvolutionPipelineView: View {
         cycleHistories.removeAll()
         lastRecordedRound = 0
         runningStartDate = nil
+        cycleStartDate = Date()
+        selectedCycle = .newCycle
+    }
+
+    /// 将 API 返回的历史循环数据同步到本地视图模型
+    private func syncCycleHistoriesFromAPI() {
+        guard let ws = workspace else { return }
+        let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(ws))
+        guard let apiCycles = appState.evolutionCycleHistories[key] else { return }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackFormatter = ISO8601DateFormatter()
+
+        cycleHistories = apiCycles.map { cycle in
+            let startDate = isoFormatter.date(from: cycle.createdAt)
+                ?? fallbackFormatter.date(from: cycle.createdAt)
+                ?? Date()
+            let entries = cycle.stages.map { stage in
+                PipelineCycleStageEntry(
+                    id: "\(cycle.cycleID)_\(stage.stage)",
+                    stage: normalizedStageKey(stage.stage),
+                    agent: stage.agent,
+                    aiToolName: stage.aiTool,
+                    durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+                )
+            }
+            return PipelineCycleHistory(
+                id: cycle.cycleID,
+                round: cycle.globalLoopRound,
+                stages: cycle.stages.map { normalizedStageKey($0.stage) },
+                startDate: startDate,
+                stageEntries: entries,
+                terminalReasonCode: cycle.terminalReasonCode
+            )
+        }
     }
 
     // MARK: - Stage Chat
@@ -993,10 +1522,16 @@ struct EvolutionPipelineView: View {
             profiles: profiles
         )
         resetLocalTimeline()
+        // 启动后自动切换到本轮循环
+        withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
     }
 
     private func refreshData() {
         appState.requestEvolutionSnapshot()
+        // 从工作空间文件夹加载历史循环数据
+        if let ws = workspace {
+            appState.requestEvolutionCycleHistory(project: project, workspace: ws)
+        }
     }
 
     private func syncStartOptions() {
@@ -1070,12 +1605,68 @@ struct PipelineTimelineEntry: Identifiable, Equatable {
     let agent: String
     let toolCallCount: Int
     let completedAt: String
+    let aiToolName: String
+    /// 记录完成时的绝对时间，用于计算运行时长
+    let completedDate: Date
+
+    init(id: String, stage: String, agent: String, toolCallCount: Int, completedAt: String, aiToolName: String = "", completedDate: Date = Date()) {
+        self.id = id
+        self.stage = stage
+        self.agent = agent
+        self.toolCallCount = toolCallCount
+        self.completedAt = completedAt
+        self.aiToolName = aiToolName
+        self.completedDate = completedDate
+    }
+}
+
+/// 历史循环中每个阶段的记录
+struct PipelineCycleStageEntry: Identifiable, Equatable {
+    let id: String
+    let stage: String
+    let agent: String
+    let aiToolName: String
+    /// 运行时长（秒）
+    let durationSeconds: TimeInterval
+
+    init(id: String, stage: String, agent: String, aiToolName: String = "", durationSeconds: TimeInterval) {
+        self.id = id
+        self.stage = stage
+        self.agent = agent
+        self.aiToolName = aiToolName
+        self.durationSeconds = durationSeconds
+    }
+
+    var formattedDuration: String {
+        if durationSeconds < 60 {
+            return "\(Int(durationSeconds))s"
+        } else {
+            let minutes = Int(durationSeconds) / 60
+            let seconds = Int(durationSeconds) % 60
+            return "\(minutes)m\(String(format: "%02d", seconds))s"
+        }
+    }
 }
 
 struct PipelineCycleHistory: Identifiable, Equatable {
     let id: String
     let round: Int
     let stages: [String]
+    /// 循环开始时间
+    let startDate: Date
+    /// 每个阶段的详细记录（含运行时长）
+    let stageEntries: [PipelineCycleStageEntry]
+    /// 终止原因码
+    let terminalReasonCode: String?
+
+    init(id: String, round: Int, stages: [String], startDate: Date, stageEntries: [PipelineCycleStageEntry], terminalReasonCode: String? = nil) {
+        self.id = id
+        self.round = round
+        self.stages = stages
+        self.startDate = startDate
+        self.stageEntries = stageEntries
+        self.terminalReasonCode = terminalReasonCode
+    }
 }
 
 // MARK: - 横向换行布局（待命胶囊专用）

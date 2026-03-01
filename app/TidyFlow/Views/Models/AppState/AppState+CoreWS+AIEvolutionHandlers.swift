@@ -706,6 +706,12 @@ extension AppState {
         }
     }
 
+    func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(projectName: project, workspaceName: normalizedWorkspace)
+        evolutionCycleHistories[key] = cycles
+    }
+
     func handleEvidenceSnapshot(_ snapshot: EvidenceSnapshotV2) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(snapshot.workspace)
         let key = globalWorkspaceKey(projectName: snapshot.project, workspaceName: normalizedWorkspace)

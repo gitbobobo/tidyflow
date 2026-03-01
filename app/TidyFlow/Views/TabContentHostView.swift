@@ -2433,6 +2433,12 @@ struct EvolutionTabView: View {
             return "evolution.status.failed".localized
         case "completed", "done", "success", "succeeded", "已完成", "完成":
             return "evolution.status.completed".localized
+        case "interrupted":
+            return "evolution.status.interrupted".localized
+        case "failed_exhausted":
+            return "evolution.status.failedExhausted".localized
+        case "failed_system":
+            return "evolution.status.failedSystem".localized
         default:
             return status
         }

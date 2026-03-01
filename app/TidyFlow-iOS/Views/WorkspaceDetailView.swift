@@ -1311,6 +1311,23 @@ struct MobileEvolutionView: View {
                         )
                             .lineLimit(1)
                     }
+                    // 终止原因
+                    if let reason = item.terminalReasonCode, !reason.isEmpty {
+                        LabeledContent("evolution.page.pipeline.terminalReason".localized) {
+                            Text(mobileLocalizedTerminalReason(reason))
+                                .foregroundColor(.red)
+                                .lineLimit(2)
+                        }
+                    }
+                    // 限流错误信息
+                    if let rateLimitMsg = item.rateLimitErrorMessage, !rateLimitMsg.isEmpty {
+                        LabeledContent("evolution.page.pipeline.rateLimitError".localized) {
+                            Text(rateLimitMsg)
+                                .foregroundColor(.orange)
+                                .lineLimit(3)
+                                .font(.caption)
+                        }
+                    }
                 } else {
                     Text("evolution.page.workspace.notStarted".localized)
                         .foregroundColor(.secondary)
@@ -1587,6 +1604,8 @@ struct MobileEvolutionView: View {
                     }
                 }
             }
+            // 历史循环
+            mobileCycleHistorySection
         }
         .navigationTitle("evolution.page.title".localized)
         .navigationBarTitleDisplayMode(.inline)
@@ -1605,6 +1624,7 @@ struct MobileEvolutionView: View {
             appState.openEvolution(project: project, workspace: workspace)
             loadProfiles()
             syncStartOptionsFromItem()
+            appState.requestEvolutionCycleHistory(project: project, workspace: workspace)
         }
         .onReceive(appState.$evolutionStageProfilesByWorkspace) { _ in
             loadProfiles()
@@ -1756,6 +1776,12 @@ struct MobileEvolutionView: View {
             return .blue
         case "stopped", "已停止", "error", "failed":
             return .red
+        case "interrupted":
+            return .orange
+        case "failed_exhausted", "failed_system":
+            return .red
+        case "completed", "done", "success":
+            return .green
         default:
             return .secondary
         }
@@ -2132,6 +2158,12 @@ struct MobileEvolutionView: View {
             return "evolution.status.failed".localized
         case "completed", "done", "success", "succeeded", "已完成", "完成":
             return "evolution.status.completed".localized
+        case "interrupted":
+            return "evolution.status.interrupted".localized
+        case "failed_exhausted":
+            return "evolution.status.failedExhausted".localized
+        case "failed_system":
+            return "evolution.status.failedSystem".localized
         default:
             return status
         }
@@ -2161,6 +2193,13 @@ struct MobileEvolutionView: View {
         }
     }
 
+    /// 将终止原因码转为本地化描述
+    private func mobileLocalizedTerminalReason(_ code: String) -> String {
+        let key = "evolution.terminalReason.\(code)"
+        let localized = key.localized
+        return localized == key ? code : localized
+    }
+
     private func stageDisplayName(_ stage: String) -> String {
         let trimmed = stage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "evolution.stage.unnamed".localized }
@@ -2187,6 +2226,102 @@ struct MobileEvolutionView: View {
             return "evolution.stage.autoCommit".localized
         default:
             return trimmed
+        }
+    }
+
+    // MARK: - 历史循环紧凑条形
+
+    private func mobileStageColor(_ stage: String) -> Color {
+        switch normalizedStageKey(stage) {
+        case "direction": return .cyan
+        case "plan": return .blue
+        case "implement_general": return .orange
+        case "implement_visual": return .pink
+        case "implement_advanced": return .purple
+        case "verify": return .green
+        case "judge": return .yellow
+        case "report": return .mint
+        case "auto_commit": return .gray
+        default: return .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var mobileCycleHistorySection: some View {
+        let key = appState.globalWorkspaceKey(project: project, workspace: appState.normalizeEvolutionWorkspaceName(workspace))
+        if let cycles = appState.evolutionCycleHistories[key], !cycles.isEmpty {
+            Section("evolution.page.pipeline.historyCycles".localized) {
+                ForEach(cycles, id: \.cycleID) { cycle in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(mobileCycleTimeLabel(cycle.createdAt))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        // 紧凑彩色条
+                        HStack(spacing: 2) {
+                            ForEach(Array(cycle.stages.enumerated()), id: \.offset) { _, stage in
+                                let durationSec = stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+                                let durationText = durationSec > 0 ? mobileStageDuration(durationSec) : ""
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(mobileStageColor(stage.stage))
+                                    .frame(height: 6)
+                                    .overlay {
+                                        Color.clear
+                                            .contentShape(Rectangle())
+                                            .contextMenu {
+                                                Text(stageDisplayName(stage.stage))
+                                                if !stage.agent.isEmpty {
+                                                    Text("evolution.page.pipeline.agentLabel".localized + ": \(stage.agent)")
+                                                }
+                                                if !stage.aiTool.isEmpty {
+                                                    Text("AI: \(stage.aiTool)")
+                                                }
+                                                if !durationText.isEmpty {
+                                                    Text("evolution.page.pipeline.durationLabel".localized + ": \(durationText)")
+                                                }
+                                            }
+                                    }
+                            }
+                        }
+                        .clipShape(Capsule())
+
+                        // 终止原因
+                        if let reason = cycle.terminalReasonCode, !reason.isEmpty {
+                            Text(mobileLocalizedTerminalReason(reason))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    private func mobileCycleTimeLabel(_ isoString: String) -> String {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackFormatter = ISO8601DateFormatter()
+        guard let date = isoFormatter.date(from: isoString) ?? fallbackFormatter.date(from: isoString) else {
+            return isoString
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func mobileStageDuration(_ seconds: TimeInterval) -> String {
+        if seconds < 60 {
+            return "\(Int(seconds))s"
+        } else {
+            let minutes = Int(seconds) / 60
+            let secs = Int(seconds) % 60
+            return "\(minutes)m\(String(format: "%02d", secs))s"
         }
     }
 }

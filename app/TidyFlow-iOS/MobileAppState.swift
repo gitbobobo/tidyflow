@@ -229,6 +229,7 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionHandoffContent: String?
     @Published var evolutionHandoffLoading: Bool = false
     @Published var evolutionHandoffError: String?
+    @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
     private var pendingHandoffReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
@@ -787,6 +788,11 @@ final class MobileAppState: ObservableObject {
         evolutionHandoffError = nil
         pendingHandoffReadPath = path
         wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+    }
+
+    func requestEvolutionCycleHistory(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoListCycleHistory(project: project, workspace: normalizedWorkspace)
     }
 
     func workspacesForProject(_ project: String) -> [WorkspaceInfo] {
@@ -1559,7 +1565,7 @@ final class MobileAppState: ObservableObject {
         }
     }
 
-    private func normalizeEvolutionWorkspaceName(_ workspace: String) -> String {
+    func normalizeEvolutionWorkspaceName(_ workspace: String) -> String {
         let trimmed = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.caseInsensitiveCompare("(default)") == .orderedSame ||
             trimmed.caseInsensitiveCompare("default") == .orderedSame {
@@ -3973,6 +3979,13 @@ final class MobileAppState: ObservableObject {
             }
         }
 
+        wsClient.onEvoCycleHistory = { [weak self] project, workspace, cycles in
+            guard let self else { return }
+            let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(workspace)
+            let key = self.globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+            self.evolutionCycleHistories[key] = cycles
+        }
+
         wsClient.onEvidenceSnapshot = { [weak self] ev in
             guard let self else { return }
             let normalizedWorkspace = self.normalizeEvolutionWorkspaceName(ev.workspace)
@@ -4798,7 +4811,7 @@ final class MobileAppState: ObservableObject {
         "\(project):\(workspace):"
     }
 
-    private func globalWorkspaceKey(project: String, workspace: String) -> String {
+    func globalWorkspaceKey(project: String, workspace: String) -> String {
         "\(project):\(workspace)"
     }
 

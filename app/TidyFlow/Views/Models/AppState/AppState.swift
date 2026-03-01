@@ -249,6 +249,7 @@ class AppState: ObservableObject {
     @Published var evolutionHandoffContent: String?
     @Published var evolutionHandoffLoading: Bool = false
     @Published var evolutionHandoffError: String?
+    @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
     var pendingHandoffReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]

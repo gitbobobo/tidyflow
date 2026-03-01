@@ -187,6 +187,7 @@ final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {
     func handleEvolutionAgentProfile(_ ev: EvolutionAgentProfileV2) { appState?.handleEvolutionAgentProfile(ev) }
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) { appState?.handleEvolutionBlockingRequired(ev) }
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) { appState?.handleEvolutionBlockersUpdated(ev) }
+    func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) { appState?.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles) }
     func handleEvolutionError(_ message: String) { appState?.handleEvolutionError(message) }
 }
 

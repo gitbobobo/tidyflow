@@ -13,6 +13,11 @@ extension AppState {
         wsClient.requestEvoGetAgentProfile(project: project, workspace: normalizedWorkspace)
     }
 
+    func requestEvolutionCycleHistory(project: String, workspace: String) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        wsClient.requestEvoListCycleHistory(project: project, workspace: normalizedWorkspace)
+    }
+
     // MARK: - Handoff 文档预览
 
     func requestEvolutionHandoff(project: String, workspace: String, cycleID: String) {
