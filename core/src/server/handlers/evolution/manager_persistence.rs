@@ -416,9 +416,9 @@ impl EvolutionManager {
         );
 
         Ok(format!(
-            "{}\n\n---\n\n## 程序注入上下文（请直接使用，禁止自行推断路径）\n```json\n{}\n```\n",
+            "{}\n\n---\n\n## 注入上下文(JSON)\n```json\n{}\n```\n",
             prompt_body,
-            serde_json::to_string_pretty(&context).unwrap_or_else(|_| "{}".to_string())
+            serde_json::to_string(&context).unwrap_or_else(|_| "{}".to_string())
         ))
     }
 }
