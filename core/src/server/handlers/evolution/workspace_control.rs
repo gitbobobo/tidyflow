@@ -111,6 +111,8 @@ impl EvolutionManager {
                     stage_session_history: HashMap::new(),
                     stage_tool_call_counts,
                     stage_seen_tool_calls,
+                    stage_started_ats: HashMap::new(),
+                    stage_duration_ms: HashMap::new(),
                 },
             );
             round
@@ -322,7 +324,7 @@ impl EvolutionManager {
         let mut workspace_items: Vec<EvolutionWorkspaceItem> = Vec::new();
 
         for w in state.workspaces.values() {
-            let agents = build_agents(&w.stage_statuses, &w.stage_tool_call_counts);
+            let agents = build_agents(&w.stage_statuses, &w.stage_tool_call_counts, &w.stage_started_ats, &w.stage_duration_ms);
 
             workspace_items.push(EvolutionWorkspaceItem {
                 project: w.project.clone(),

@@ -2214,6 +2214,8 @@ impl EvolutionManager {
                     entry.stage_statuses.clear();
                     entry.stage_tool_call_counts.clear();
                     entry.stage_seen_tool_calls.clear();
+                    entry.stage_started_ats.clear();
+                    entry.stage_duration_ms.clear();
                     for s in STAGES {
                         entry
                             .stage_statuses

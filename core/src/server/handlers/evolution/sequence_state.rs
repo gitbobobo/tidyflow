@@ -7,6 +7,30 @@ impl EvolutionManager {
             entry
                 .stage_statuses
                 .insert(stage.to_string(), status.to_string());
+
+            // 记录代理开始运行时间
+            if status == "running" {
+                entry
+                    .stage_started_ats
+                    .entry(stage.to_string())
+                    .or_insert_with(|| chrono::Utc::now().to_rfc3339());
+            }
+
+            // 代理完成时计算耗时
+            if status == "done" || status == "failed" || status == "skipped" {
+                if let Some(started_at_str) = entry.stage_started_ats.get(stage) {
+                    if let Ok(started_at) = chrono::DateTime::parse_from_rfc3339(started_at_str) {
+                        let elapsed = chrono::Utc::now()
+                            .signed_duration_since(started_at)
+                            .num_milliseconds();
+                        if elapsed > 0 {
+                            entry
+                                .stage_duration_ms
+                                .insert(stage.to_string(), elapsed as u64);
+                        }
+                    }
+                }
+            }
         }
     }
 

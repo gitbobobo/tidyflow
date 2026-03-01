@@ -1730,6 +1730,12 @@ pub struct EvolutionAgentInfo {
     pub tool_call_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_message: Option<String>,
+    /// 代理开始运行的 RFC3339 时间戳
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    /// 代理运行耗时（毫秒），仅在完成后填充
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 /// Evolution 调度器信息

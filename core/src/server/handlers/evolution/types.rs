@@ -37,6 +37,10 @@ pub(super) struct WorkspaceRunState {
     pub(super) stage_session_history: HashMap<String, Vec<StageSession>>,
     pub(super) stage_tool_call_counts: HashMap<String, u32>,
     pub(super) stage_seen_tool_calls: HashMap<String, HashSet<String>>,
+    /// 各代理开始运行的 RFC3339 时间戳
+    pub(super) stage_started_ats: HashMap<String, String>,
+    /// 各代理运行耗时（毫秒），仅在完成后填充
+    pub(super) stage_duration_ms: HashMap<String, u64>,
 }
 
 #[derive(Clone)]

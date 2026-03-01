@@ -26,6 +26,8 @@ impl EvolutionManager {
             verify_limit,
             stage_statuses,
             stage_tool_call_counts,
+            stage_started_ats,
+            stage_duration_ms,
             terminal_reason_code,
             rate_limit_error_message,
         ) = {
@@ -45,12 +47,14 @@ impl EvolutionManager {
                 entry.verify_iteration_limit,
                 entry.stage_statuses.clone(),
                 entry.stage_tool_call_counts.clone(),
+                entry.stage_started_ats.clone(),
+                entry.stage_duration_ms.clone(),
                 entry.terminal_reason_code.clone(),
                 entry.rate_limit_error_message.clone(),
             )
         };
 
-        let agents = build_agents(&stage_statuses, &stage_tool_call_counts);
+        let agents = build_agents(&stage_statuses, &stage_tool_call_counts, &stage_started_ats, &stage_duration_ms);
 
         self.broadcast(
             ctx,

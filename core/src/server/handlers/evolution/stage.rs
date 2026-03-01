@@ -21,6 +21,8 @@ fn runtime_extra_stages(stage_statuses: &HashMap<String, String>) -> Vec<String>
 pub(super) fn build_agents(
     stage_statuses: &HashMap<String, String>,
     stage_tool_call_counts: &HashMap<String, u32>,
+    stage_started_ats: &HashMap<String, String>,
+    stage_duration_ms: &HashMap<String, u64>,
 ) -> Vec<EvolutionAgentInfo> {
     let extra_stages = runtime_extra_stages(stage_statuses);
     let mut agents = Vec::with_capacity(STAGES.len() + extra_stages.len());
@@ -38,6 +40,8 @@ pub(super) fn build_agents(
             status,
             tool_call_count,
             latest_message: None,
+            started_at: stage_started_ats.get(stage).cloned(),
+            duration_ms: stage_duration_ms.get(stage).copied(),
         });
     }
 
@@ -53,6 +57,8 @@ pub(super) fn build_agents(
             status,
             tool_call_count,
             latest_message: None,
+            started_at: stage_started_ats.get(&stage).cloned(),
+            duration_ms: stage_duration_ms.get(&stage).copied(),
         });
     }
 
@@ -165,7 +171,7 @@ mod tests {
         statuses.insert("auto_commit".to_string(), "running".to_string());
         let counts: HashMap<String, u32> = HashMap::new();
 
-        let agents = build_agents(&statuses, &counts);
+        let agents = build_agents(&statuses, &counts, &HashMap::new(), &HashMap::new());
         assert!(
             agents.iter().any(|agent| agent.stage == "auto_commit"),
             "运行时额外阶段应出现在 agents 列表中"
