@@ -250,8 +250,10 @@ extension WSClient {
             return true
         case "evo_error":
             let message = json["message"] as? String ?? "evolution error"
+            let project = json["project"] as? String
+            let workspace = json["workspace"] as? String
             if let handler = evolutionMessageHandler {
-                handler.handleEvolutionError(message)
+                handler.handleEvolutionError(message, project: project, workspace: workspace)
             } else {
                 onEvoError?(message)
             }

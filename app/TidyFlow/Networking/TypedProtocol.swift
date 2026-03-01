@@ -179,7 +179,7 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2)
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2])
-    func handleEvolutionError(_ message: String)
+    func handleEvolutionError(_ message: String, project: String?, workspace: String?)
 }
 
 extension EvolutionMessageHandler {
@@ -190,7 +190,7 @@ extension EvolutionMessageHandler {
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {}
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {}
-    func handleEvolutionError(_ message: String) {}
+    func handleEvolutionError(_ message: String, project: String?, workspace: String?) {}
 }
 
 protocol EvidenceMessageHandler: AnyObject {
