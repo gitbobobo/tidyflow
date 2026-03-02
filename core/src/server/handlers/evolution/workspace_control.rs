@@ -7,8 +7,8 @@ use uuid::Uuid;
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::resolve_directory;
 use crate::server::protocol::{
-    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionWorkspaceItem,
-    ServerMessage,
+    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionSessionExecutionEntry,
+    EvolutionWorkspaceItem, ServerMessage,
 };
 
 use super::stage::{active_agents, build_agents};
@@ -20,6 +20,135 @@ use super::{
 
 fn initial_global_loop_round() -> u32 {
     1
+}
+
+fn is_terminal_execution_status(status: &str) -> bool {
+    matches!(
+        status,
+        "done" | "failed" | "blocked" | "skipped" | "stopped" | "interrupted" | "completed"
+    )
+}
+
+fn non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
+    v.and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_stage_session_executions(
+    stage_name: &str,
+    stage_json: &serde_json::Value,
+) -> Vec<EvolutionSessionExecutionEntry> {
+    let stage_status = stage_json["status"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+    let stage_agent = stage_json["agent"].as_str().unwrap_or("").to_string();
+    let stage_ai_tool = stage_json["ai_tool"].as_str().unwrap_or("").to_string();
+    let stage_timing = &stage_json["timing"];
+    let stage_started_at = non_empty_string(stage_timing.get("started_at"));
+    let stage_completed_at = non_empty_string(stage_timing.get("completed_at"));
+    let stage_duration_ms = stage_timing["duration_ms"].as_u64();
+    let stage_tool_call_count = stage_json["tool_call_count"]
+        .as_u64()
+        .map(|v| v as u32)
+        .unwrap_or(0);
+
+    let mut executions = Vec::new();
+    let metadata_executions = stage_json
+        .get("system_metadata")
+        .and_then(|v| v.get("session_executions"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    for item in metadata_executions {
+        let session_id = non_empty_string(item.get("session_id"));
+        let Some(session_id) = session_id else {
+            continue;
+        };
+        let status = non_empty_string(item.get("status")).unwrap_or_else(|| stage_status.clone());
+        if !is_terminal_execution_status(&status) {
+            continue;
+        }
+        let stage = non_empty_string(item.get("stage")).unwrap_or_else(|| stage_name.to_string());
+        let agent = non_empty_string(item.get("agent")).unwrap_or_else(|| stage_agent.clone());
+        let ai_tool =
+            non_empty_string(item.get("ai_tool")).unwrap_or_else(|| stage_ai_tool.clone());
+        let started_at = non_empty_string(item.get("started_at"))
+            .or_else(|| stage_started_at.clone())
+            .unwrap_or_default();
+        let completed_at =
+            non_empty_string(item.get("completed_at")).or_else(|| stage_completed_at.clone());
+        let duration_ms = item
+            .get("duration_ms")
+            .and_then(|v| v.as_u64())
+            .or(stage_duration_ms);
+        let tool_call_count = item
+            .get("tool_call_count")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(stage_tool_call_count);
+
+        executions.push(EvolutionSessionExecutionEntry {
+            stage,
+            agent,
+            ai_tool,
+            session_id,
+            status,
+            started_at,
+            completed_at,
+            duration_ms,
+            tool_call_count,
+        });
+    }
+
+    if !executions.is_empty() {
+        return executions;
+    }
+
+    if !is_terminal_execution_status(&stage_status) {
+        return Vec::new();
+    }
+
+    let mut session_ids: Vec<String> = Vec::new();
+    if let Some(outputs) = stage_json.get("outputs").and_then(|v| v.as_array()) {
+        for output in outputs {
+            if let Some(value) = non_empty_string(output.get("session_id")) {
+                if !session_ids.iter().any(|sid| sid == &value) {
+                    session_ids.push(value);
+                }
+            }
+            if let Some(items) = output.get("session_ids").and_then(|v| v.as_array()) {
+                for item in items {
+                    if let Some(value) = non_empty_string(Some(item)) {
+                        if !session_ids.iter().any(|sid| sid == &value) {
+                            session_ids.push(value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if session_ids.is_empty() {
+        return Vec::new();
+    }
+
+    session_ids
+        .into_iter()
+        .map(|session_id| EvolutionSessionExecutionEntry {
+            stage: stage_name.to_string(),
+            agent: stage_agent.clone(),
+            ai_tool: stage_ai_tool.clone(),
+            session_id,
+            status: stage_status.clone(),
+            started_at: stage_started_at.clone().unwrap_or_default(),
+            completed_at: stage_completed_at.clone(),
+            duration_ms: stage_duration_ms,
+            tool_call_count: stage_tool_call_count,
+        })
+        .collect()
 }
 
 impl EvolutionManager {
@@ -111,6 +240,7 @@ impl EvolutionManager {
                     stage_session_history: HashMap::new(),
                     stage_tool_call_counts,
                     stage_seen_tool_calls,
+                    session_executions: Vec::new(),
                     stage_started_ats: HashMap::new(),
                     stage_duration_ms: HashMap::new(),
                 },
@@ -342,6 +472,7 @@ impl EvolutionManager {
                 verify_iteration: w.verify_iteration,
                 verify_iteration_limit: w.verify_iteration_limit,
                 agents,
+                executions: w.session_executions.clone(),
                 active_agents: active_agents(&w.stage_statuses),
                 terminal_reason_code: w.terminal_reason_code.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
@@ -431,6 +562,7 @@ impl EvolutionManager {
 
             // 读取各阶段文件
             let mut stages: Vec<EvolutionCycleStageHistoryEntry> = Vec::new();
+            let mut executions: Vec<EvolutionSessionExecutionEntry> = Vec::new();
             for stage_name in STAGES.iter() {
                 let stage_file = path.join(format!("stage.{}.json", stage_name));
                 if !stage_file.exists() {
@@ -444,6 +576,8 @@ impl EvolutionManager {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
+
+                executions.extend(parse_stage_session_executions(stage_name, &stage_json));
 
                 let stage_status = stage_json["status"]
                     .as_str()
@@ -467,8 +601,26 @@ impl EvolutionManager {
                 });
             }
 
-            // 只包含有已完成阶段的循环
-            if stages.is_empty() {
+            executions.sort_by(|lhs, rhs| {
+                let lhs_has_started = !lhs.started_at.is_empty();
+                let rhs_has_started = !rhs.started_at.is_empty();
+                match (lhs_has_started, rhs_has_started) {
+                    (true, true) => lhs
+                        .started_at
+                        .cmp(&rhs.started_at)
+                        .then_with(|| lhs.stage.cmp(&rhs.stage))
+                        .then_with(|| lhs.session_id.cmp(&rhs.session_id)),
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    (false, false) => lhs
+                        .stage
+                        .cmp(&rhs.stage)
+                        .then_with(|| lhs.session_id.cmp(&rhs.session_id)),
+                }
+            });
+
+            // 只包含有已完成阶段或已结束会话的循环
+            if stages.is_empty() && executions.is_empty() {
                 continue;
             }
 
@@ -479,6 +631,7 @@ impl EvolutionManager {
                 created_at,
                 updated_at,
                 terminal_reason_code,
+                executions,
                 stages,
             });
         }
@@ -495,10 +648,79 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::initial_global_loop_round;
+    use super::{initial_global_loop_round, parse_stage_session_executions};
 
     #[test]
     fn start_round_should_reset_to_one() {
         assert_eq!(initial_global_loop_round(), 1);
+    }
+
+    #[test]
+    fn parse_stage_session_executions_should_prefer_metadata() {
+        let stage_json = serde_json::json!({
+            "status": "done",
+            "agent": "VerifyAgent",
+            "ai_tool": "codex",
+            "timing": {
+                "started_at": "2026-03-01T00:00:00Z",
+                "completed_at": "2026-03-01T00:00:05Z",
+                "duration_ms": 5000
+            },
+            "system_metadata": {
+                "session_executions": [
+                    {
+                        "stage": "verify",
+                        "agent": "VerifyAgent",
+                        "ai_tool": "codex",
+                        "session_id": "sess-1",
+                        "status": "done",
+                        "started_at": "2026-03-01T00:00:00Z",
+                        "completed_at": "2026-03-01T00:00:05Z",
+                        "duration_ms": 5000,
+                        "tool_call_count": 3
+                    },
+                    {
+                        "stage": "verify",
+                        "agent": "VerifyAgent",
+                        "ai_tool": "codex",
+                        "session_id": "sess-running",
+                        "status": "running",
+                        "started_at": "2026-03-01T00:01:00Z"
+                    }
+                ]
+            }
+        });
+
+        let executions = parse_stage_session_executions("verify", &stage_json);
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].session_id, "sess-1");
+        assert_eq!(executions[0].duration_ms, Some(5000));
+        assert_eq!(executions[0].tool_call_count, 3);
+    }
+
+    #[test]
+    fn parse_stage_session_executions_should_fallback_to_outputs() {
+        let stage_json = serde_json::json!({
+            "status": "done",
+            "agent": "VerifyAgent",
+            "ai_tool": "codex",
+            "timing": {
+                "started_at": "2026-03-01T00:00:00Z",
+                "completed_at": "2026-03-01T00:00:08Z",
+                "duration_ms": 8000
+            },
+            "outputs": [
+                {
+                    "type": "chat_session",
+                    "session_id": "sess-last",
+                    "session_ids": ["sess-old", "sess-last"]
+                }
+            ]
+        });
+
+        let executions = parse_stage_session_executions("verify", &stage_json);
+        assert_eq!(executions.len(), 2);
+        assert_eq!(executions[0].stage, "verify");
+        assert_eq!(executions[0].duration_ms, Some(8000));
     }
 }
