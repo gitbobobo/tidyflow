@@ -713,6 +713,12 @@ extension AppState {
             aiTool: aiTool,
             sessionId: ev.sessionID
         )
+        wsClient.requestAISessionSubscribe(
+            project: ev.project,
+            workspace: normalizedWorkspace,
+            aiTool: aiTool.rawValue,
+            sessionId: ev.sessionID
+        )
         wsClient.requestAISessionMessages(
             projectName: ev.project,
             workspaceName: normalizedWorkspace,

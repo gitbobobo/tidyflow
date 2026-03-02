@@ -1314,6 +1314,14 @@ final class MobileAppState: ObservableObject {
         let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionId.isEmpty else { return }
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        if let request = subAgentViewerRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         let source = (sourceToolName ?? "task").trimmingCharacters(in: .whitespacesAndNewlines)
         subAgentViewerTitle = source.isEmpty ? "子会话 · \(trimmedSessionId)" : "子会话(\(source)) · \(trimmedSessionId)"
         subAgentViewerLoading = true
@@ -1326,6 +1334,12 @@ final class MobileAppState: ObservableObject {
         )
         subAgentViewerStore.clearAll()
         subAgentViewerStore.setCurrentSessionId(trimmedSessionId)
+        wsClient.requestAISessionSubscribe(
+            project: project,
+            workspace: normalizedWorkspace,
+            aiTool: aiTool.rawValue,
+            sessionId: trimmedSessionId
+        )
         wsClient.requestAISessionStatus(
             projectName: project,
             workspaceName: normalizedWorkspace,
@@ -1342,6 +1356,14 @@ final class MobileAppState: ObservableObject {
     }
 
     func clearSubAgentSessionViewer() {
+        if let request = subAgentViewerRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         subAgentViewerRequest = nil
         subAgentViewerTitle = ""
         subAgentViewerLoading = false
@@ -1602,7 +1624,7 @@ final class MobileAppState: ObservableObject {
     private func consumeEvolutionReplayMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
         guard let request = evolutionReplayRequest else { return false }
         guard request.project == ev.projectName,
-              request.workspace == ev.workspaceName,
+              normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(ev.workspaceName),
               request.aiTool == ev.aiTool,
               request.sessionId == ev.sessionId else { return false }
         evolutionReplayMessages = ev.toChatMessages()
@@ -1614,7 +1636,7 @@ final class MobileAppState: ObservableObject {
     private func consumeSubAgentViewerMessagesIfNeeded(_ ev: AISessionMessagesV2) -> Bool {
         guard let request = subAgentViewerRequest else { return false }
         guard request.project == ev.projectName,
-              request.workspace == ev.workspaceName,
+              normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(ev.workspaceName),
               request.aiTool == ev.aiTool,
               request.sessionId == ev.sessionId else { return false }
         subAgentViewerStore.setCurrentSessionId(ev.sessionId)
@@ -1715,7 +1737,7 @@ final class MobileAppState: ObservableObject {
     ) -> Bool {
         guard let request = subAgentViewerRequest else { return false }
         return request.project == project &&
-            request.workspace == workspace &&
+            normalizeEvolutionWorkspaceName(request.workspace) == normalizeEvolutionWorkspaceName(workspace) &&
             request.aiTool == aiTool &&
             request.sessionId == sessionId
     }

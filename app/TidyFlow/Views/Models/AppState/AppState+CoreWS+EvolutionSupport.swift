@@ -223,6 +223,14 @@ extension AppState {
     }
 
     func openEvolutionStageChat(project: String, workspace: String, cycleId: String, stage: String) {
+        if let request = evolutionReplayRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         evolutionReplayTitle = "\(workspace) · \(stage) · \(cycleId)"
         evolutionReplayLoading = true
         evolutionReplayError = nil
@@ -232,6 +240,14 @@ extension AppState {
     }
 
     func clearEvolutionReplay() {
+        if let request = evolutionReplayRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         evolutionReplayRequest = nil
         evolutionReplayLoading = false
         evolutionReplayError = nil
@@ -249,6 +265,14 @@ extension AppState {
         let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionId.isEmpty else { return }
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        if let request = subAgentViewerRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         let source = (sourceToolName ?? "task").trimmingCharacters(in: .whitespacesAndNewlines)
         subAgentViewerTitle = source.isEmpty ? "子会话 · \(trimmedSessionId)" : "子会话(\(source)) · \(trimmedSessionId)"
         subAgentViewerLoading = true
@@ -261,6 +285,12 @@ extension AppState {
         )
         subAgentViewerStore.clearAll()
         subAgentViewerStore.setCurrentSessionId(trimmedSessionId)
+        wsClient.requestAISessionSubscribe(
+            project: project,
+            workspace: normalizedWorkspace,
+            aiTool: aiTool.rawValue,
+            sessionId: trimmedSessionId
+        )
         wsClient.requestAISessionStatus(
             projectName: project,
             workspaceName: normalizedWorkspace,
@@ -277,6 +307,14 @@ extension AppState {
     }
 
     func clearSubAgentSessionViewer() {
+        if let request = subAgentViewerRequest {
+            wsClient.requestAISessionUnsubscribe(
+                project: request.project,
+                workspace: request.workspace,
+                aiTool: request.aiTool.rawValue,
+                sessionId: request.sessionId
+            )
+        }
         subAgentViewerRequest = nil
         subAgentViewerLoading = false
         subAgentViewerError = nil
