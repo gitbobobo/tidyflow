@@ -156,6 +156,8 @@ impl AiAgent for AcpAgent {
             let mut buffered_plan_history: Vec<AcpPlanSnapshot> = Vec::new();
             let mut buffered_plan_revision: u64 = 0;
             let mut assistant_opened = false;
+            let mut current_chunk_part_type: Option<String> = None;
+            let mut current_chunk_part_id: Option<String> = None;
             let mut tool_part_ids = HashMap::<String, String>::new();
             let mut tool_states_by_part = HashMap::<String, Value>::new();
             let mut follow_terminal_ids = HashMap::<String, String>::new();
@@ -345,6 +347,10 @@ impl AiAgent for AcpAgent {
                                     &buffered_plan_history,
                                 ),
                             }));
+                            Self::break_stream_chunk_part_sequence(
+                                &mut current_chunk_part_type,
+                                &mut current_chunk_part_id,
+                            );
                             continue;
                         }
 
@@ -493,6 +499,10 @@ impl AiAgent for AcpAgent {
                                     }
                                 }
                             }
+                            Self::break_stream_chunk_part_sequence(
+                                &mut current_chunk_part_type,
+                                &mut current_chunk_part_id,
+                            );
                             continue;
                         }
 
@@ -519,6 +529,10 @@ impl AiAgent for AcpAgent {
                                             part,
                                         }));
                                     }
+                                    Self::break_stream_chunk_part_sequence(
+                                        &mut current_chunk_part_type,
+                                        &mut current_chunk_part_id,
+                                    );
                                     continue;
                                 }
                                 "text" | "reasoning" => {
@@ -553,6 +567,10 @@ impl AiAgent for AcpAgent {
                                             ..Default::default()
                                         },
                                     }));
+                                    Self::break_stream_chunk_part_sequence(
+                                        &mut current_chunk_part_type,
+                                        &mut current_chunk_part_id,
+                                    );
                                     continue;
                                 }
                             }
@@ -581,7 +599,12 @@ impl AiAgent for AcpAgent {
                                 selection_hint: None,
                             }));
                         }
-                        let part_id = format!("{}-{}", assistant_message_id, part_type);
+                        let part_id = Self::resolve_stream_chunk_part_id(
+                            &assistant_message_id,
+                            part_type,
+                            &mut current_chunk_part_type,
+                            &mut current_chunk_part_id,
+                        );
                         let _ = tx.send(Ok(AiEvent::PartDelta {
                             message_id: assistant_message_id.clone(),
                             part_id,

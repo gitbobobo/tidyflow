@@ -24,6 +24,48 @@ fn map_update_to_output_should_follow_acp_mapping_contract() {
 }
 
 #[test]
+fn stream_chunk_part_id_should_reuse_only_within_same_sequence() {
+    let assistant_message_id = "assistant-message";
+    let mut part_type: Option<String> = None;
+    let mut part_id: Option<String> = None;
+
+    let first_reasoning = AcpAgent::resolve_stream_chunk_part_id(
+        assistant_message_id,
+        "reasoning",
+        &mut part_type,
+        &mut part_id,
+    );
+    assert!(first_reasoning.starts_with("assistant-message-reasoning-"));
+
+    let second_reasoning = AcpAgent::resolve_stream_chunk_part_id(
+        assistant_message_id,
+        "reasoning",
+        &mut part_type,
+        &mut part_id,
+    );
+    assert_eq!(first_reasoning, second_reasoning);
+
+    let text_part = AcpAgent::resolve_stream_chunk_part_id(
+        assistant_message_id,
+        "text",
+        &mut part_type,
+        &mut part_id,
+    );
+    assert!(text_part.starts_with("assistant-message-text-"));
+    assert_ne!(first_reasoning, text_part);
+
+    AcpAgent::break_stream_chunk_part_sequence(&mut part_type, &mut part_id);
+    let third_reasoning = AcpAgent::resolve_stream_chunk_part_id(
+        assistant_message_id,
+        "reasoning",
+        &mut part_type,
+        &mut part_id,
+    );
+    assert!(third_reasoning.starts_with("assistant-message-reasoning-"));
+    assert_ne!(first_reasoning, third_reasoning);
+}
+
+#[test]
 fn terminal_update_detection_should_cover_common_variants() {
     assert!(AcpAgent::is_terminal_update("turn_complete", ""));
     assert!(AcpAgent::is_terminal_update("session_idle", ""));

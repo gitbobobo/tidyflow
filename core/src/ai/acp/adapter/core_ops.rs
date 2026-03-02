@@ -1233,6 +1233,31 @@ impl AcpAgent {
         (exact, false)
     }
 
+    pub(super) fn break_stream_chunk_part_sequence(
+        current_chunk_part_type: &mut Option<String>,
+        current_chunk_part_id: &mut Option<String>,
+    ) {
+        *current_chunk_part_type = None;
+        *current_chunk_part_id = None;
+    }
+
+    pub(super) fn resolve_stream_chunk_part_id(
+        assistant_message_id: &str,
+        part_type: &str,
+        current_chunk_part_type: &mut Option<String>,
+        current_chunk_part_id: &mut Option<String>,
+    ) -> String {
+        if current_chunk_part_type.as_deref() == Some(part_type) {
+            if let Some(part_id) = current_chunk_part_id.as_ref() {
+                return part_id.clone();
+            }
+        }
+        let part_id = format!("{}-{}-{}", assistant_message_id, part_type, Uuid::new_v4());
+        *current_chunk_part_type = Some(part_type.to_string());
+        *current_chunk_part_id = Some(part_id.clone());
+        part_id
+    }
+
     pub(super) fn push_chunk_message(
         messages: &mut Vec<AiMessage>,
         message_id_prefix: &str,
