@@ -396,6 +396,96 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertTrue(stages.contains("implement_advanced"))
     }
 
+    func testEvolutionWorkspaceItemParsesSessionExecutions() {
+        let json: [String: Any] = [
+            "project": "tidyflow",
+            "workspace": "default",
+            "cycle_id": "cycle-1",
+            "status": "running",
+            "current_stage": "verify",
+            "global_loop_round": 1,
+            "loop_round_limit": 3,
+            "verify_iteration": 0,
+            "verify_iteration_limit": 5,
+            "agents": [],
+            "executions": [
+                [
+                    "stage": "verify",
+                    "agent": "VerifyAgent",
+                    "ai_tool": "codex",
+                    "session_id": "sess-1",
+                    "status": "done",
+                    "started_at": "2026-03-01T00:00:00Z",
+                    "completed_at": "2026-03-01T00:00:05Z",
+                    "duration_ms": 5000,
+                    "tool_call_count": 2
+                ]
+            ],
+            "active_agents": []
+        ]
+
+        let item = EvolutionWorkspaceItemV2.from(json: json)
+        XCTAssertNotNil(item)
+        XCTAssertEqual(item?.executions.count, 1)
+        XCTAssertEqual(item?.executions.first?.sessionID, "sess-1")
+        XCTAssertEqual(item?.executions.first?.durationMs, 5000)
+        XCTAssertEqual(item?.executions.first?.toolCallCount, 2)
+    }
+
+    func testEvolutionCycleHistoryParsesExecutionsAndFallbackStages() {
+        let withExecutions: [String: Any] = [
+            "cycle_id": "cycle-1",
+            "status": "completed",
+            "global_loop_round": 1,
+            "created_at": "2026-03-01T00:00:00Z",
+            "updated_at": "2026-03-01T00:10:00Z",
+            "executions": [
+                [
+                    "stage": "verify",
+                    "agent": "VerifyAgent",
+                    "ai_tool": "codex",
+                    "session_id": "sess-1",
+                    "status": "done",
+                    "started_at": "2026-03-01T00:00:00Z",
+                    "duration_ms": 1000
+                ]
+            ],
+            "stages": [
+                [
+                    "stage": "verify",
+                    "agent": "VerifyAgent",
+                    "ai_tool": "codex",
+                    "status": "done",
+                    "duration_ms": 1000
+                ]
+            ]
+        ]
+        let parsedWithExecutions = EvolutionCycleHistoryItemV2.from(json: withExecutions)
+        XCTAssertEqual(parsedWithExecutions?.executions.count, 1)
+        XCTAssertEqual(parsedWithExecutions?.stages.count, 1)
+
+        let fallbackStagesOnly: [String: Any] = [
+            "cycle_id": "cycle-2",
+            "status": "completed",
+            "global_loop_round": 1,
+            "created_at": "2026-03-01T00:00:00Z",
+            "updated_at": "2026-03-01T00:10:00Z",
+            "stages": [
+                [
+                    "stage": "plan",
+                    "agent": "PlanAgent",
+                    "ai_tool": "codex",
+                    "status": "done",
+                    "duration_ms": 2000
+                ]
+            ]
+        ]
+        let parsedFallback = EvolutionCycleHistoryItemV2.from(json: fallbackStagesOnly)
+        XCTAssertEqual(parsedFallback?.executions.count, 0)
+        XCTAssertEqual(parsedFallback?.stages.count, 1)
+        XCTAssertEqual(parsedFallback?.stages.first?.stage, "plan")
+    }
+
     func testAIProtocolPartInfoParsesToolCallExtendedFields() {
         let json: [String: Any] = [
             "id": "tool-1",
