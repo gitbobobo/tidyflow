@@ -1050,6 +1050,8 @@ impl EvolutionManager {
         let session = agent.create_session(&directory, &title).await?;
         self.set_stage_session(key, stage, &ai_tool, &session.id)
             .await;
+        self.record_session_execution_started(key, stage, &ai_tool, &session.id)
+            .await;
         self.persist_chat_map(key).await.ok();
         self.persist_stage_file(key, stage, "running", None, None)
             .await
@@ -1062,7 +1064,7 @@ impl EvolutionManager {
         let mode = profile.mode.clone();
         let config_overrides = sanitize_ai_config_options(&profile.config_options);
 
-        let stream = agent
+        let stream = match agent
             .send_message_with_config(
                 &directory,
                 &session.id,
@@ -1074,24 +1076,45 @@ impl EvolutionManager {
                 mode.clone(),
                 config_overrides.clone(),
             )
-            .await?;
-        self.consume_stage_stream(
-            key,
-            project,
-            workspace,
-            cycle_id,
-            stage,
-            &ai_tool,
-            &session.id,
-            &directory,
-            &agent,
-            stream,
-            model.clone(),
-            mode.clone(),
-            config_overrides.clone(),
-            ctx,
-        )
-        .await?;
+            .await
+        {
+            Ok(stream) => stream,
+            Err(err) => {
+                let tool_call_count = self.stage_tool_call_count(key, stage).await;
+                self.finalize_session_execution(key, stage, &session.id, "failed", tool_call_count)
+                    .await;
+                return Err(err);
+            }
+        };
+        if let Err(err) = self
+            .consume_stage_stream(
+                key,
+                project,
+                workspace,
+                cycle_id,
+                stage,
+                &ai_tool,
+                &session.id,
+                &directory,
+                &agent,
+                stream,
+                model.clone(),
+                mode.clone(),
+                config_overrides.clone(),
+                ctx,
+            )
+            .await
+        {
+            let status = if err.starts_with("evo_human_blocking_required") {
+                "blocked"
+            } else {
+                "failed"
+            };
+            let tool_call_count = self.stage_tool_call_count(key, stage).await;
+            self.finalize_session_execution(key, stage, &session.id, status, tool_call_count)
+                .await;
+            return Err(err);
+        }
 
         Ok(StageRunContext {
             ai_tool,
@@ -1511,6 +1534,15 @@ impl EvolutionManager {
                             }
                         }
                         crate::ai::AiEvent::QuestionAsked { request } => {
+                            let tool_call_count = self.stage_tool_call_count(key, stage).await;
+                            self.finalize_session_execution(
+                                key,
+                                stage,
+                                session_id,
+                                "blocked",
+                                tool_call_count,
+                            )
+                            .await;
                             self.block_current_stage_by_question(
                                 key, project, workspace, cycle_id, stage, &request, ctx,
                             )
@@ -1726,10 +1758,16 @@ impl EvolutionManager {
         &self,
         key: &str,
         stage: &str,
+        session_id: Option<&str>,
         error_message: &str,
         ctx: &HandlerContext,
     ) {
         self.set_stage_status(key, stage, "failed").await;
+        if let Some(session_id) = session_id {
+            let tool_call_count = self.stage_tool_call_count(key, stage).await;
+            self.finalize_session_execution(key, stage, session_id, "failed", tool_call_count)
+                .await;
+        }
         self.persist_stage_file(key, stage, "failed", Some(error_message), None)
             .await
             .ok();
@@ -1824,19 +1862,48 @@ impl EvolutionManager {
         let mut reminder_attempts: u32 = 0;
         loop {
             if stage == "judge" {
-                judge_pass = self.resolve_judge_result(key, cycle_id).await?;
+                judge_pass = match self.resolve_judge_result(key, cycle_id).await {
+                    Ok(value) => value,
+                    Err(err) => {
+                        let tool_call_count = self.stage_tool_call_count(key, stage).await;
+                        self.finalize_session_execution(
+                            key,
+                            stage,
+                            &run_ctx.session_id,
+                            "failed",
+                            tool_call_count,
+                        )
+                        .await;
+                        return Err(err);
+                    }
+                };
             }
 
             match self.validate_stage_outputs(key, stage, cycle_id).await {
                 Ok(()) => break,
                 Err(validation_err) => {
                     if !Self::should_retry_validation_with_reminder(stage, &validation_err) {
+                        let tool_call_count = self.stage_tool_call_count(key, stage).await;
+                        self.finalize_session_execution(
+                            key,
+                            stage,
+                            &run_ctx.session_id,
+                            "failed",
+                            tool_call_count,
+                        )
+                        .await;
                         return Err(validation_err);
                     }
 
                     if reminder_attempts >= VALIDATION_REMINDER_MAX_RETRIES {
-                        self.finalize_stage_failed(key, stage, &validation_err, ctx)
-                            .await;
+                        self.finalize_stage_failed(
+                            key,
+                            stage,
+                            Some(&run_ctx.session_id),
+                            &validation_err,
+                            ctx,
+                        )
+                        .await;
                         return Err(validation_err);
                     }
 
@@ -1879,8 +1946,14 @@ impl EvolutionManager {
                         );
 
                         if reminder_attempts >= VALIDATION_REMINDER_MAX_RETRIES {
-                            self.finalize_stage_failed(key, stage, &combined_err, ctx)
-                                .await;
+                            self.finalize_stage_failed(
+                                key,
+                                stage,
+                                Some(&run_ctx.session_id),
+                                &combined_err,
+                                ctx,
+                            )
+                            .await;
                             return Err(combined_err);
                         }
                     }
@@ -1913,6 +1986,15 @@ impl EvolutionManager {
             };
         if has_stage_blocker {
             self.set_stage_status(key, stage, "blocked").await;
+            let tool_call_count = self.stage_tool_call_count(key, stage).await;
+            self.finalize_session_execution(
+                key,
+                stage,
+                &run_ctx.session_id,
+                "blocked",
+                tool_call_count,
+            )
+            .await;
             self.persist_stage_file(
                 key,
                 stage,
@@ -1939,6 +2021,9 @@ impl EvolutionManager {
             }
         }
 
+        let tool_call_count = self.stage_tool_call_count(key, stage).await;
+        self.finalize_session_execution(key, stage, &run_ctx.session_id, "done", tool_call_count)
+            .await;
         self.set_stage_status(key, stage, "done").await;
         self.persist_stage_file(
             key,
@@ -2320,6 +2405,7 @@ impl EvolutionManager {
                     entry.llm_defined_acceptance_criteria.clear();
                     entry.stage_sessions.clear();
                     entry.stage_session_history.clear();
+                    entry.session_executions.clear();
                     entry.stage_statuses.clear();
                     entry.stage_tool_call_counts.clear();
                     entry.stage_seen_tool_calls.clear();

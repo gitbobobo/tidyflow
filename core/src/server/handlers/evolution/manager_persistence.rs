@@ -23,7 +23,10 @@ fn merge_stage_payload(
     status: &str,
     error_message: Option<&str>,
     judge_result: Option<bool>,
+    ai_tool: Option<&str>,
+    stage_duration_ms: Option<u64>,
     chat_sessions: serde_json::Value,
+    session_executions: serde_json::Value,
     now_rfc3339: &str,
 ) -> serde_json::Value {
     let mut payload = existing.unwrap_or_else(|| serde_json::json!({}));
@@ -54,6 +57,12 @@ fn merge_stage_payload(
         "status".to_string(),
         serde_json::Value::String(status.to_string()),
     );
+    if let Some(ai_tool) = ai_tool.filter(|v| !v.trim().is_empty()) {
+        obj.insert(
+            "ai_tool".to_string(),
+            serde_json::Value::String(ai_tool.to_string()),
+        );
+    }
 
     if !obj.get("inputs").map(|v| v.is_array()).unwrap_or(false) {
         obj.insert(
@@ -137,8 +146,29 @@ fn merge_stage_payload(
                 "completed_at".to_string(),
                 serde_json::Value::String(now_rfc3339.to_string()),
             );
-            if !timing_obj.contains_key("duration_ms") {
-                timing_obj.insert("duration_ms".to_string(), serde_json::json!(0));
+            let duration_ms = stage_duration_ms
+                .or_else(|| timing_obj.get("duration_ms").and_then(|v| v.as_u64()))
+                .or_else(|| {
+                    timing_obj
+                        .get("started_at")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.trim())
+                        .filter(|v| !v.is_empty())
+                        .and_then(|started| {
+                            let start = chrono::DateTime::parse_from_rfc3339(started).ok()?;
+                            let end = chrono::DateTime::parse_from_rfc3339(now_rfc3339).ok()?;
+                            let elapsed = end.signed_duration_since(start).num_milliseconds();
+                            if elapsed >= 0 {
+                                Some(elapsed as u64)
+                            } else {
+                                None
+                            }
+                        })
+                });
+            if let Some(duration_ms) = duration_ms {
+                timing_obj.insert("duration_ms".to_string(), serde_json::json!(duration_ms));
+            } else if !timing_obj.contains_key("duration_ms") {
+                timing_obj.insert("duration_ms".to_string(), serde_json::Value::Null);
             }
         } else {
             if !timing_obj.contains_key("completed_at") {
@@ -173,6 +203,7 @@ fn merge_stage_payload(
         .unwrap_or_else(|| serde_json::json!({}));
     if let Some(system_obj) = system_metadata.as_object_mut() {
         system_obj.insert("chat_sessions".to_string(), chat_sessions);
+        system_obj.insert("session_executions".to_string(), session_executions);
         system_obj.insert(
             "updated_at".to_string(),
             serde_json::Value::String(now_rfc3339.to_string()),
@@ -316,6 +347,43 @@ impl EvolutionManager {
                 }
             ])
         };
+        let stage_session_executions: Vec<serde_json::Value> = entry
+            .session_executions
+            .iter()
+            .filter(|item| item.stage == stage)
+            .map(|item| {
+                serde_json::json!({
+                    "stage": item.stage,
+                    "agent": item.agent,
+                    "ai_tool": item.ai_tool,
+                    "session_id": item.session_id,
+                    "status": item.status,
+                    "started_at": item.started_at,
+                    "completed_at": item.completed_at,
+                    "duration_ms": item.duration_ms,
+                    "tool_call_count": item.tool_call_count,
+                })
+            })
+            .collect();
+        let latest_ai_tool = entry
+            .stage_session_history
+            .get(stage)
+            .and_then(|items| items.last())
+            .map(|item| item.ai_tool.as_str());
+        let stage_duration_ms = entry.stage_duration_ms.get(stage).copied().or_else(|| {
+            if status != "done" {
+                return None;
+            }
+            let started_at = entry.stage_started_ats.get(stage)?;
+            let started = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
+            let now = chrono::DateTime::parse_from_rfc3339(&Utc::now().to_rfc3339()).ok()?;
+            let elapsed = now.signed_duration_since(started).num_milliseconds();
+            if elapsed >= 0 {
+                Some(elapsed as u64)
+            } else {
+                None
+            }
+        });
 
         let stage_file_path = cycle_dir.join(format!("stage.{}.json", stage));
         let existing = std::fs::read_to_string(&stage_file_path)
@@ -329,7 +397,10 @@ impl EvolutionManager {
             status,
             error_message,
             judge_result,
+            latest_ai_tool,
+            stage_duration_ms,
             outputs,
+            serde_json::Value::Array(stage_session_executions),
             &now,
         );
 
@@ -476,10 +547,16 @@ mod tests {
             "done",
             None,
             Some(false),
+            Some("codex"),
+            Some(1234),
             serde_json::json!([{
                 "type": "chat_session",
                 "session_id": "session-1",
                 "session_ids": ["session-1"]
+            }]),
+            serde_json::json!([{
+                "session_id": "session-1",
+                "status": "done"
             }]),
             "2026-02-27T00:00:00Z",
         );
@@ -491,6 +568,35 @@ mod tests {
             merged["system_metadata"]["chat_sessions"][0]["session_id"],
             "session-1"
         );
+        assert_eq!(
+            merged["system_metadata"]["session_executions"][0]["session_id"],
+            "session-1"
+        );
+        assert_eq!(merged["timing"]["duration_ms"], serde_json::json!(1234));
+    }
+
+    #[test]
+    fn merge_stage_payload_should_overwrite_null_duration_when_done() {
+        let existing = serde_json::json!({
+            "timing": {
+                "started_at": "2026-02-27T00:00:00Z",
+                "duration_ms": null
+            }
+        });
+        let merged = merge_stage_payload(
+            Some(existing),
+            "cycle-a",
+            "verify",
+            "done",
+            None,
+            None,
+            Some("codex"),
+            Some(3210),
+            serde_json::json!([]),
+            serde_json::json!([]),
+            "2026-02-27T00:00:03Z",
+        );
+        assert_eq!(merged["timing"]["duration_ms"], serde_json::json!(3210));
     }
 
     #[test]
