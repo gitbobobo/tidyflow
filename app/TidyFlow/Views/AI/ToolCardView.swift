@@ -56,6 +56,14 @@ struct ToolCardView: View {
     }
 
     @State private var expandedSections: Set<String> = []
+    @State private var isCardExpanded: Bool = false
+
+    /// 是否有可展开的内容（头部之外）
+    private var hasExpandableContent: Bool {
+        let hasSummary = !(presentation.summary?.isEmpty ?? true) && !isTodoTool
+        let hasSections = !presentation.sections.isEmpty
+        return hasSummary || hasSections || shouldShowQuestionPromptValue
+    }
 
     private struct CachedRenderModel {
         let invocation: AIToolInvocationState?
@@ -421,27 +429,29 @@ struct ToolCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
 
-            if let summary = presentation.summary, !summary.isEmpty, !isTodoTool {
-                Text(summary)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            if isCardExpanded {
+                if let summary = presentation.summary, !summary.isEmpty, !isTodoTool {
+                    Text(summary)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
-            if shouldShowQuestionPromptValue {
-                ToolQuestionPromptView(
-                    items: questionPromptItems,
-                    interactive: questionPromptInteractive,
-                    answeredSelections: questionAnsweredSelections,
-                    onReply: onQuestionReply,
-                    onReject: onQuestionReject,
-                    onReplyAsMessage: onQuestionReplyAsMessage
-                )
-                .id(pendingQuestion?.id ?? "question-prompt-\(callID ?? "")")
-            }
+                if shouldShowQuestionPromptValue {
+                    ToolQuestionPromptView(
+                        items: questionPromptItems,
+                        interactive: questionPromptInteractive,
+                        answeredSelections: questionAnsweredSelections,
+                        onReply: onQuestionReply,
+                        onReject: onQuestionReject,
+                        onReplyAsMessage: onQuestionReplyAsMessage
+                    )
+                    .id(pendingQuestion?.id ?? "question-prompt-\(callID ?? "")")
+                }
 
-            ForEach(presentation.sections) { section in
-                sectionBlock(section)
+                ForEach(presentation.sections) { section in
+                    sectionBlock(section)
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -452,6 +462,16 @@ struct ToolCardView: View {
                 .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
         )
         .cornerRadius(10)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture {
+            guard hasExpandableContent else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isCardExpanded.toggle()
+            }
+        }
+        .onChange(of: shouldShowQuestionPromptValue) { _, newValue in
+            if newValue { isCardExpanded = true }
+        }
     }
 
     @ViewBuilder
@@ -528,6 +548,12 @@ struct ToolCardView: View {
                     .foregroundColor(.red)
             } else {
                 statusIcon
+            }
+            if hasExpandableContent {
+                Image(systemName: isCardExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .animation(.easeInOut(duration: 0.2), value: isCardExpanded)
             }
         }
     }
