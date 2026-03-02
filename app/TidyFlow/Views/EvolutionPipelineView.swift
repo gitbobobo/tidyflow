@@ -149,13 +149,6 @@ struct EvolutionPipelineView: View {
         .onReceive(appState.$evolutionCycleHistories) { _ in
             syncCycleHistoriesFromAPI()
         }
-        #if os(macOS)
-        .sheet(isPresented: $isSessionViewerPresented) {
-            EvolutionSessionDrawerView(isSessionViewerPresented: $isSessionViewerPresented)
-                .environmentObject(appState)
-                .frame(minWidth: 400, minHeight: 500)
-        }
-        #endif
         .sheet(isPresented: $isBlockerSheetPresented) {
             blockerSheet
         }
@@ -1422,7 +1415,8 @@ struct EvolutionPipelineView: View {
             cycleId: item.cycleID,
             stage: stage
         )
-        isSessionViewerPresented = true
+        // macOS 端不再弹出 sheet，handleEvolutionStageChatOpened 会直接
+        // 将会话加载到主聊天区，由左侧侧边栏高亮显示
     }
 
     private func canOpenStageChat(stage: String, status: String) -> Bool {

@@ -1583,15 +1583,6 @@ struct EvolutionTabView: View {
                     .padding(.vertical, 16)
                 }
             }
-            
-            #if os(macOS)
-            if isSessionViewerPresented {
-                EvolutionSessionDrawerView(isSessionViewerPresented: $isSessionViewerPresented)
-                    .frame(width: 380)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-                    .animation(.easeInOut(duration: 0.25), value: isSessionViewerPresented)
-            }
-            #endif
         }
         #if os(iOS)
         .sheet(isPresented: $isSessionViewerPresented) {
@@ -2530,7 +2521,9 @@ struct EvolutionTabView: View {
             stage: stage
         )
         viewerStage = stage
+        #if os(iOS)
         isSessionViewerPresented = true
+        #endif
     }
 
     private func startCurrentWorkspace() {

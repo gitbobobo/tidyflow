@@ -673,6 +673,10 @@ extension AppState {
         if aiChatTool != aiTool {
             aiChatTool = aiTool
         }
+        // 同步侧边栏筛选，确保会话列表高亮当前进化会话
+        if sessionPanelFilterTool != aiTool {
+            sessionPanelFilterTool = aiTool
+        }
         let targetStore = aiStore(for: aiTool)
         targetStore.setAbortPendingSessionId(nil)
         targetStore.setCurrentSessionId(ev.sessionID)

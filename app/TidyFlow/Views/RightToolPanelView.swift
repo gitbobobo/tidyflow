@@ -17,7 +17,7 @@ struct CapsuleSegmentedControl: View {
 
     var body: some View {
         GeometryReader { geo in
-            let tools: [RightTool] = [.explorer, .search, .git, .sessions, .evidence, .evolution]
+            let tools: [RightTool] = [.explorer, .search, .git, .evidence, .evolution]
             let segmentW = max(0, geo.size.width) / CGFloat(tools.count)
             let fullH = max(24, geo.size.height - 4)
 
@@ -102,8 +102,8 @@ struct InspectorContentView: View {
                     NativeGitPanelView()
                         .environmentObject(appState)
                 case .sessions:
-                    SessionsPanelView()
-                        .environmentObject(appState)
+                    // 会话列表已移至聊天界面左侧侧边栏，右侧面板不再显示
+                    EmptyView()
                 case .evidence:
                     EvidenceTabView()
                         .environmentObject(appState)

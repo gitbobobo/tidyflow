@@ -48,6 +48,7 @@
 		AIC00004 /* AIChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00003 /* AIChatModels.swift */; };
 		AIC00007 /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00005 /* SessionListView.swift */; };
 		AIC00024 /* SessionsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00023 /* SessionsPanelView.swift */; };
+		AIC00026 /* AIChatSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00025 /* AIChatSidebarView.swift */; };
 		AIC00008 /* ChatInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00006 /* ChatInputView.swift */; };
 		AIC0000A /* ToolCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00009 /* ToolCardView.swift */; };
 		AIC0001B /* ToolQuestionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC0001C /* ToolQuestionPromptView.swift */; };
@@ -227,6 +228,7 @@
 		AIC00003 /* AIChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatModels.swift; sourceTree = "<group>"; };
 		AIC00005 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/SessionListView.swift"; sourceTree = "<group>"; };
 		AIC00023 /* SessionsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/SessionsPanelView.swift"; sourceTree = "<group>"; };
+		AIC00025 /* AIChatSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatSidebarView.swift"; sourceTree = "<group>"; };
 		AIC00006 /* ChatInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ChatInputView.swift"; sourceTree = "<group>"; };
 		AIC00009 /* ToolCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ToolCardView.swift"; sourceTree = "<group>"; };
 			AIC0001C /* ToolQuestionPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/ToolQuestionPromptView.swift"; sourceTree = "<group>"; };
@@ -388,6 +390,7 @@
 					AIC00017 /* MarkdownTextView.swift */,
 					AIC00005 /* SessionListView.swift */,
 					AIC00023 /* SessionsPanelView.swift */,
+					AIC00025 /* AIChatSidebarView.swift */,
 				AIC00006 /* ChatInputView.swift */,
 				AIC00009 /* ToolCardView.swift */,
 				AIC0001C /* ToolQuestionPromptView.swift */,
@@ -843,6 +846,7 @@
 				AIC00004 /* AIChatModels.swift in Sources */,
 				AIC00007 /* SessionListView.swift in Sources */,
 				AIC00024 /* SessionsPanelView.swift in Sources */,
+				AIC00026 /* AIChatSidebarView.swift in Sources */,
 				AIC00008 /* ChatInputView.swift in Sources */,
 				AIC0000A /* ToolCardView.swift in Sources */,
 					AIC0001B /* ToolQuestionPromptView.swift in Sources */,

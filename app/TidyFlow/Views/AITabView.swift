@@ -133,18 +133,6 @@ struct AITabView: View {
         .onChange(of: aiChatStore.lastUserEchoMessageId) { _, _ in
             // user echo 到达时不再需要清空输入——已在发送时立即清空。
         }
-        .onChange(of: appState.sessionPanelAction) { _, action in
-            guard let action else { return }
-            appState.sessionPanelAction = nil
-            switch action {
-            case .loadSession(let session):
-                loadSession(session)
-            case .deleteSession(let session):
-                deleteSession(session)
-            case .createNewSession:
-                createNewSession()
-            }
-        }
         .onReceive(aiChatStore.$messages) { messages in
             observeCodexPlanProposal(messages)
         }
@@ -241,6 +229,23 @@ struct AITabView: View {
     }
 
     private var mainPane: some View {
+        HStack(spacing: 0) {
+            // 左侧：会话列表侧边栏
+            AIChatSidebarView(
+                onSelect: { session in loadSession(session) },
+                onDelete: { session in deleteSession(session) }
+            )
+            .environmentObject(appState)
+
+            Divider()
+
+            // 右侧：聊天内容
+            chatContent
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var chatContent: some View {
         VStack(spacing: 0) {
             toolbar
             if let aiChatHintMessage, !aiChatHintMessage.isEmpty {
