@@ -560,6 +560,81 @@ fn compose_prompt_parts_should_encode_image_audio_by_mode() {
 }
 
 #[test]
+fn compose_prompt_parts_should_keep_image_base64_under_64kb() {
+    let mut img = image::RgbaImage::new(320, 320);
+    for (x, y, pixel) in img.enumerate_pixels_mut() {
+        let r = ((x * 31 + y * 17) % 256) as u8;
+        let g = ((x * 13 + y * 29) % 256) as u8;
+        let b = ((x * 7 + y * 43) % 256) as u8;
+        *pixel = image::Rgba([r, g, b, 255]);
+    }
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("encode png");
+
+    let parts = AcpAgent::compose_prompt_parts(
+        "/tmp/workspace",
+        "图片限流测试",
+        None,
+        Some(vec![AiImagePart {
+            filename: "large.png".to_string(),
+            mime: "image/png".to_string(),
+            data: png,
+        }]),
+        None,
+        AcpContentEncodingMode::New,
+        true,
+        false,
+        false,
+        false,
+    );
+
+    let image = parts
+        .iter()
+        .find(|part| part.get("type").and_then(|v| v.as_str()) == Some("image"))
+        .expect("image part should exist");
+    let data = image
+        .get("data")
+        .and_then(|v| v.as_str())
+        .expect("image data should exist");
+    assert!(data.len() < 64 * 1024);
+}
+
+#[test]
+fn compose_prompt_parts_should_fallback_when_oversized_image_unencodable() {
+    let oversized_invalid = vec![0_u8; 49 * 1024];
+
+    let parts = AcpAgent::compose_prompt_parts(
+        "/tmp/workspace",
+        "图片降级测试",
+        None,
+        Some(vec![AiImagePart {
+            filename: "bad.bin".to_string(),
+            mime: "image/png".to_string(),
+            data: oversized_invalid,
+        }]),
+        None,
+        AcpContentEncodingMode::New,
+        true,
+        false,
+        false,
+        false,
+    );
+
+    assert!(!parts
+        .iter()
+        .any(|part| part.get("type").and_then(|v| v.as_str()) == Some("image")));
+    let text = parts
+        .iter()
+        .find(|part| part.get("type").and_then(|v| v.as_str()) == Some("text"))
+        .and_then(|part| part.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(text.contains("图片附件："));
+}
+
+#[test]
 fn compose_prompt_parts_should_embed_resource_text_and_blob_when_supported() {
     let temp = tempfile::tempdir().expect("temp dir");
     let text_path = temp.path().join("a.txt");

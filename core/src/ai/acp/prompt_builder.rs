@@ -3,7 +3,11 @@ use crate::ai::codex::manager::AcpContentEncodingMode;
 use crate::ai::{AiAudioPart, AiImagePart};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
+use image::ImageReader;
 use serde_json::Value;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 use url::Url;
@@ -16,6 +20,8 @@ struct ResolvedPromptFileRef {
     name: String,
     mime: String,
 }
+
+const ACP_IMAGE_BASE64_MAX_BYTES: usize = 64 * 1024;
 
 fn strip_file_ref_location_suffix(file_ref: &str) -> String {
     let trimmed = file_ref.trim();
@@ -172,6 +178,64 @@ fn build_embedded_resource_part(
     )))
 }
 
+fn base64_len(bytes: &[u8]) -> usize {
+    bytes.len().div_ceil(3) * 4
+}
+
+fn encode_jpeg_with_quality(img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
+    let mut out = Vec::<u8>::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut out, quality);
+    encoder
+        .encode_image(img)
+        .map_err(|e| format!("JPEG 编码失败：{}", e))?;
+    Ok(out)
+}
+
+fn ensure_image_base64_under_limit(
+    mime: &str,
+    data: &[u8],
+) -> Result<Option<(String, String)>, String> {
+    if base64_len(data) <= ACP_IMAGE_BASE64_MAX_BYTES {
+        return Ok(Some((mime.to_string(), BASE64.encode(data))));
+    }
+
+    let reader = ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|e| format!("图片格式识别失败：{}", e))?;
+    let decoded = reader
+        .decode()
+        .map_err(|e| format!("图片解码失败：{}", e))?;
+    let (orig_w, orig_h) = (decoded.width(), decoded.height());
+    if orig_w == 0 || orig_h == 0 {
+        return Ok(None);
+    }
+
+    let scales = [1.0_f32, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2];
+    let qualities = [82_u8, 70, 58, 46, 36, 28];
+
+    for scale in scales {
+        let width = ((orig_w as f32 * scale).round() as u32).max(1);
+        let height = ((orig_h as f32 * scale).round() as u32).max(1);
+        let resized = if width == orig_w && height == orig_h {
+            decoded.clone()
+        } else {
+            decoded.resize(width, height, FilterType::Lanczos3)
+        };
+
+        for quality in qualities {
+            let jpg = match encode_jpeg_with_quality(&resized, quality) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+            if base64_len(&jpg) <= ACP_IMAGE_BASE64_MAX_BYTES {
+                return Ok(Some(("image/jpeg".to_string(), BASE64.encode(jpg))));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 pub(crate) fn compose_prompt_parts(
     directory: &str,
     message: &str,
@@ -247,13 +311,35 @@ pub(crate) fn compose_prompt_parts(
     if let Some(images) = image_parts {
         if !images.is_empty() {
             if supports_image {
+                let mut unresolved_images = Vec::<String>::new();
                 for img in images {
                     let mime = normalize_attachment_mime(&img.mime);
-                    prompt_parts.push(AcpClient::build_prompt_image_part(
-                        encoding_mode,
-                        mime,
-                        BASE64.encode(img.data),
-                    ));
+                    match ensure_image_base64_under_limit(&mime, &img.data) {
+                        Ok(Some((final_mime, encoded))) => {
+                            prompt_parts.push(AcpClient::build_prompt_image_part(
+                                encoding_mode,
+                                final_mime,
+                                encoded,
+                            ));
+                        }
+                        Ok(None) => {
+                            warn!(
+                                "ACP image dropped because base64 exceeds 64KB after optimization: filename={}, mime={}",
+                                img.filename, mime
+                            );
+                            unresolved_images.push(format!("{} ({})", img.filename, img.mime));
+                        }
+                        Err(err) => {
+                            warn!(
+                                "ACP image optimization failed, fallback to text block: filename={}, mime={}, error={}",
+                                img.filename, mime, err
+                            );
+                            unresolved_images.push(format!("{} ({})", img.filename, img.mime));
+                        }
+                    }
+                }
+                if !unresolved_images.is_empty() {
+                    fallback_blocks.push(format!("图片附件：\n{}", unresolved_images.join("\n")));
                 }
             } else {
                 let names = images
