@@ -1822,6 +1822,21 @@ struct MobileEvolutionView: View {
             status == "完成"
     }
 
+    private func isExecutionCompletedStatus(_ status: String) -> Bool {
+        let normalized = normalizedStageStatus(status)
+        if normalized.isEmpty {
+            return false
+        }
+        if normalized == "running" ||
+            normalized == "pending" ||
+            normalized == "queued" ||
+            normalized == "in_progress" ||
+            normalized == "processing" {
+            return false
+        }
+        return true
+    }
+
     private func stageOrder(for stage: String) -> Int {
         let normalized = normalizedStageKey(stage)
         if let index = evolutionStageOrder.firstIndex(of: normalized) {
@@ -2234,6 +2249,55 @@ struct MobileEvolutionView: View {
 
     // MARK: - 历史循环紧凑条形
 
+    private struct MobileCycleBarEntry: Identifiable {
+        let id: String
+        let stage: String
+        let agent: String
+        let aiTool: String
+        let durationMs: UInt64?
+    }
+
+    private func mobileCycleBarEntries(_ cycle: EvolutionCycleHistoryItemV2) -> [MobileCycleBarEntry] {
+        let executionEntries = cycle.executions
+            .filter { isExecutionCompletedStatus($0.status) }
+            .sorted { lhs, rhs in
+                switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                case (false, false):
+                    if lhs.startedAt != rhs.startedAt {
+                        return lhs.startedAt < rhs.startedAt
+                    }
+                case (false, true):
+                    return true
+                case (true, false):
+                    return false
+                case (true, true):
+                    break
+                }
+                return lhs.sessionID < rhs.sessionID
+            }
+            .map { execution in
+                MobileCycleBarEntry(
+                    id: execution.sessionID + "|" + execution.startedAt,
+                    stage: execution.stage,
+                    agent: execution.agent,
+                    aiTool: execution.aiTool,
+                    durationMs: execution.durationMs
+                )
+            }
+        if !executionEntries.isEmpty {
+            return executionEntries
+        }
+        return cycle.stages.map { stage in
+            MobileCycleBarEntry(
+                id: "\(cycle.cycleID)_\(stage.stage)",
+                stage: stage.stage,
+                agent: stage.agent,
+                aiTool: stage.aiTool,
+                durationMs: stage.durationMs
+            )
+        }
+    }
+
     private func mobileStageColor(_ stage: String) -> Color {
         switch normalizedStageKey(stage) {
         case "direction": return .cyan
@@ -2255,6 +2319,7 @@ struct MobileEvolutionView: View {
         if let cycles = appState.evolutionCycleHistories[key], !cycles.isEmpty {
             Section("evolution.page.pipeline.historyCycles".localized) {
                 ForEach(cycles, id: \.cycleID) { cycle in
+                    let entries = mobileCycleBarEntries(cycle)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
@@ -2267,21 +2332,21 @@ struct MobileEvolutionView: View {
                         }
                         // 紧凑彩色条
                         HStack(spacing: 2) {
-                            ForEach(Array(cycle.stages.enumerated()), id: \.offset) { _, stage in
-                                let durationText = mobileTooltipDuration(stage.durationMs)
+                            ForEach(entries) { entry in
+                                let durationText = mobileTooltipDuration(entry.durationMs)
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(mobileStageColor(stage.stage))
+                                    .fill(mobileStageColor(entry.stage))
                                     .frame(height: 6)
                                     .overlay {
                                         Color.clear
                                             .contentShape(Rectangle())
                                             .contextMenu {
-                                                Text(stageDisplayName(stage.stage))
-                                                if !stage.agent.isEmpty {
-                                                    Text("evolution.page.pipeline.agentLabel".localized + ": \(stage.agent)")
+                                                Text(stageDisplayName(entry.stage))
+                                                if !entry.agent.isEmpty {
+                                                    Text("evolution.page.pipeline.agentLabel".localized + ": \(entry.agent)")
                                                 }
-                                                if !stage.aiTool.isEmpty {
-                                                    Text("AI: \(stage.aiTool)")
+                                                if !entry.aiTool.isEmpty {
+                                                    Text("AI: \(entry.aiTool)")
                                                 }
                                                 Text("evolution.page.pipeline.durationLabel".localized + ": \(durationText)")
                                             }

@@ -18,10 +18,8 @@ struct EvolutionPipelineView: View {
     @State private var isHandoffSheetPresented: Bool = false
     @State private var blockerDrafts: [String: EvolutionPipelineBlockerDraft] = [:]
 
-    /// 已完成代理的时间线记录（本轮）
+    /// 已完成会话的时间线记录（本轮）
     @State private var completedTimeline: [PipelineTimelineEntry] = []
-    /// 已添加到时间线的执行标识符（stage|startedAt），用于允许同一阶段多次出现
-    @State private var addedExecutionKeys: Set<String> = []
     /// 历史循环汇总（每轮结束后的合并记录）
     @State private var cycleHistories: [PipelineCycleHistory] = []
     /// 上次记录的轮次
@@ -1251,8 +1249,13 @@ struct EvolutionPipelineView: View {
 
     /// 计算所有已完成代理的总耗时（核心累加）
     private var totalDurationText: String? {
-        guard let agents = currentItem?.agents else { return nil }
-        let totalMs = agents.compactMap(\.durationMs).reduce(0, +)
+        let executionDurations = (currentItem?.executions ?? [])
+            .filter { isExecutionCompletedStatus($0.status) }
+            .compactMap(\.durationMs)
+        let totalMs = executionDurations.isEmpty
+            ? (currentItem?.agents ?? []).compactMap(\.durationMs)
+                .reduce(0, +)
+            : executionDurations.reduce(0, +)
         guard totalMs > 0 else { return nil }
         return Self.formatDurationMs(totalMs)
     }
@@ -1297,7 +1300,6 @@ struct EvolutionPipelineView: View {
         // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
         if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 && !completedTimeline.isEmpty {
             completedTimeline.removeAll()
-            addedExecutionKeys.removeAll()
             cycleStartDate = Date()
             // 从工作空间文件夹重新加载历史数据
             if let ws = workspace {
@@ -1306,33 +1308,38 @@ struct EvolutionPipelineView: View {
         }
         lastRecordedRound = item.globalLoopRound
 
-        // 更新已完成代理
-        let agents = item.agents
-        let completedAgents = agents.filter { isCompletedStatus(normalizedStageStatus($0.status)) }
-
-        for agent in completedAgents {
-            let key = normalizedStageKey(agent.stage)
-            let execKey = "\(key)|\(agent.startedAt ?? "")"
-            if !addedExecutionKeys.contains(execKey) {
-                addedExecutionKeys.insert(execKey)
-                let formatter = DateFormatter()
-                formatter.dateFormat = "HH:mm"
-                completedTimeline.append(PipelineTimelineEntry(
-                    id: UUID().uuidString,
-                    stage: key,
-                    agent: agent.agent,
-                    toolCallCount: agent.toolCallCount,
-                    completedAt: formatter.string(from: Date()),
-                    durationSeconds: agent.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-                ))
+        let sortedExecutions = item.executions
+            .filter { isExecutionCompletedStatus($0.status) }
+            .sorted { lhs, rhs in
+                switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                case (false, false):
+                    if lhs.startedAt != rhs.startedAt {
+                        return lhs.startedAt < rhs.startedAt
+                    }
+                case (false, true):
+                    return true
+                case (true, false):
+                    return false
+                case (true, true):
+                    break
+                }
+                return lhs.sessionID < rhs.sessionID
             }
+        completedTimeline = sortedExecutions.map { execution in
+            PipelineTimelineEntry(
+                id: execution.sessionID + "|" + execution.startedAt,
+                stage: normalizedStageKey(execution.stage),
+                agent: execution.agent,
+                toolCallCount: execution.toolCallCount,
+                completedAt: pipelineTimeLabel(from: execution.completedAt),
+                aiToolName: execution.aiTool,
+                durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+            )
         }
-
     }
 
     private func resetLocalTimeline() {
         completedTimeline.removeAll()
-        addedExecutionKeys.removeAll()
         cycleHistories.removeAll()
         lastRecordedRound = 0
         cycleStartDate = Date()
@@ -1353,19 +1360,50 @@ struct EvolutionPipelineView: View {
             let startDate = isoFormatter.date(from: cycle.createdAt)
                 ?? fallbackFormatter.date(from: cycle.createdAt)
                 ?? Date()
-            let entries = cycle.stages.map { stage in
-                PipelineCycleStageEntry(
-                    id: "\(cycle.cycleID)_\(stage.stage)",
-                    stage: normalizedStageKey(stage.stage),
-                    agent: stage.agent,
-                    aiToolName: stage.aiTool,
-                    durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
-                )
-            }
+            let entries: [PipelineCycleStageEntry] = {
+                let executionEntries = cycle.executions
+                    .filter { isExecutionCompletedStatus($0.status) }
+                    .sorted { lhs, rhs in
+                        switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                        case (false, false):
+                            if lhs.startedAt != rhs.startedAt {
+                                return lhs.startedAt < rhs.startedAt
+                            }
+                        case (false, true):
+                            return true
+                        case (true, false):
+                            return false
+                        case (true, true):
+                            break
+                        }
+                        return lhs.sessionID < rhs.sessionID
+                    }
+                    .map { execution in
+                        PipelineCycleStageEntry(
+                            id: "\(cycle.cycleID)_\(execution.sessionID)_\(execution.startedAt)",
+                            stage: normalizedStageKey(execution.stage),
+                            agent: execution.agent,
+                            aiToolName: execution.aiTool,
+                            durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+                        )
+                    }
+                if !executionEntries.isEmpty {
+                    return executionEntries
+                }
+                return cycle.stages.map { stage in
+                    PipelineCycleStageEntry(
+                        id: "\(cycle.cycleID)_\(stage.stage)",
+                        stage: normalizedStageKey(stage.stage),
+                        agent: stage.agent,
+                        aiToolName: stage.aiTool,
+                        durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
+                    )
+                }
+            }()
             return PipelineCycleHistory(
                 id: cycle.cycleID,
                 round: cycle.globalLoopRound,
-                stages: cycle.stages.map { normalizedStageKey($0.stage) },
+                stages: entries.map(\.stage),
                 startDate: startDate,
                 stageEntries: entries,
                 terminalReasonCode: cycle.terminalReasonCode
@@ -1718,6 +1756,28 @@ struct EvolutionPipelineView: View {
 
     private func isCompletedStatus(_ status: String) -> Bool {
         ["completed", "done", "success", "succeeded", "已完成", "完成"].contains(status)
+    }
+
+    private func isExecutionCompletedStatus(_ status: String) -> Bool {
+        let normalized = normalizedStageStatus(status)
+        if normalized.isEmpty {
+            return false
+        }
+        if ["running", "pending", "queued", "in_progress", "processing"].contains(normalized) {
+            return false
+        }
+        return true
+    }
+
+    private func pipelineTimeLabel(from isoString: String?) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        guard let isoString = trimmedNonEmptyText(isoString),
+              let date = Self.rfc3339Formatter.date(from: isoString)
+                ?? Self.rfc3339FallbackFormatter.date(from: isoString) else {
+            return formatter.string(from: Date())
+        }
+        return formatter.string(from: date)
     }
 
     private func stageDisplayName(_ stage: String) -> String {
