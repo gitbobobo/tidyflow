@@ -73,6 +73,7 @@
 		BGT00001 /* BackgroundTaskViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BGT00011 /* BackgroundTaskViews.swift */; };
 		C595D88A861FB6AAAFD09E1D /* MessagePacker in Frameworks */ = {isa = PBXBuildFile; productRef = MSGPK002 /* MessagePacker */; };
 		SWTERM01 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = SWTERM02 /* SwiftTerm */; };
+		TXTL001 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = TXTL002 /* Textual */; };
 		D3900001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900011 /* AppConfig.swift */; };
 		D3900002 /* CoreProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900012 /* CoreProcessManager.swift */; };
 		D3900003 /* PortAllocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3900013 /* PortAllocator.swift */; };
@@ -330,6 +331,7 @@
 			files = (
 				MSGPK001 /* MessagePacker in Frameworks */,
 				SWTERM01 /* SwiftTerm in Frameworks */,
+				TXTL001 /* Textual in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -633,6 +635,7 @@
 			packageProductDependencies = (
 				MSGPK002 /* MessagePacker */,
 				SWTERM02 /* SwiftTerm */,
+				TXTL002 /* Textual */,
 			);
 			productName = TidyFlow;
 			productReference = A1000010 /* TidyFlow-Debug.app */;
@@ -707,6 +710,7 @@
 			packageReferences = (
 				MSGPK003 /* XCRemoteSwiftPackageReference "MessagePacker" */,
 				SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				TXTL003 /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			productRefGroup = A100000F /* Products */;
 			projectDirPath = "";
@@ -1011,7 +1015,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1071,7 +1075,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -1188,7 +1192,7 @@
 				"INFOPLIST_FILE[sdk=iphone*]" = "TidyFlow-iOS/Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1319,7 +1323,7 @@
 				"INFOPLIST_FILE[sdk=iphone*]" = "TidyFlow-iOS/Info.plist";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1346,8 +1350,8 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1362,8 +1366,8 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1379,8 +1383,8 @@
 				CODE_SIGN_ENTITLEMENTS = TidyFlowE2ETests/TidyFlowE2ETests.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.e2e.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1398,8 +1402,8 @@
 				CODE_SIGN_ENTITLEMENTS = TidyFlowE2ETests/TidyFlowE2ETests.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_BUNDLE_IDENTIFIER = cn.tidyflow.e2e.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1469,6 +1473,14 @@
 				minimumVersion = 1.1.6;
 			};
 		};
+		TXTL003 /* XCRemoteSwiftPackageReference "textual" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/textual";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1481,6 +1493,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = SWTERM03 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		TXTL002 /* Textual */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = TXTL003 /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
