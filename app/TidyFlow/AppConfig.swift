@@ -65,6 +65,8 @@ enum AppConfig {
     /// Auto-restart configuration
     static let autoRestartLimit: Int = 3
     static let autoRestartBackoffs: [TimeInterval] = [0.2, 0.5, 1.2]
+    /// Core 启动后等待端口可达的最长时间（秒）
+    static let coreReadyTimeout: TimeInterval = 90
 
     /// Generate WebSocket URL for a given port
     static func makeWsURL(host: String = coreHost, port: Int, token: String? = nil, secure: Bool = false) -> URL {

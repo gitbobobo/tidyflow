@@ -487,7 +487,7 @@ class CoreProcessManager: ObservableObject {
             self.launchedBindAddress = bindAddress
             let pid = proc.processIdentifier
             TFLog.core.info("Process started with PID: \(pid, privacy: .public) on port \(port, privacy: .public)")
-            waitForCoreReady(proc: proc, port: port, pid: pid, remainingChecks: 60)
+            waitForCoreReady(proc: proc, port: port, pid: pid, launchedAt: Date())
         } catch {
             let msg = "Failed to start: \(error.localizedDescription)"
             TFLog.core.error("\(msg, privacy: .public)")
@@ -590,7 +590,7 @@ class CoreProcessManager: ObservableObject {
     }
 
     /// 等待 Core 端口可连接后再回调 ready，避免“进程已启动但 WS 尚未监听”导致首连失败。
-    private func waitForCoreReady(proc: Process, port: Int, pid: Int32, remainingChecks: Int) {
+    private func waitForCoreReady(proc: Process, port: Int, pid: Int32, launchedAt: Date) {
         guard process === proc, proc.isRunning else { return }
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -599,18 +599,25 @@ class CoreProcessManager: ObservableObject {
                 guard let self = self else { return }
                 guard self.process === proc, proc.isRunning else { return }
 
-                if reachable || remainingChecks <= 0 {
-                    if !reachable {
-                        TFLog.core.warning("Core port not reachable in time, proceed with ready callback: \(port, privacy: .public)")
-                    }
+                if reachable {
                     self.status = .running(port: port, pid: pid)
                     self.isStarting = false
                     self.onCoreReady?(port)
                     return
                 }
 
+                let elapsed = Date().timeIntervalSince(launchedAt)
+                if elapsed >= AppConfig.coreReadyTimeout {
+                    TFLog.core.error(
+                        "Core port not reachable within \(AppConfig.coreReadyTimeout, privacy: .public)s: \(port, privacy: .public)"
+                    )
+                    // 触发 terminationHandler 走启动重试路径，避免卡在启动页。
+                    proc.terminate()
+                    return
+                }
+
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                    self?.waitForCoreReady(proc: proc, port: port, pid: pid, remainingChecks: remainingChecks - 1)
+                    self?.waitForCoreReady(proc: proc, port: port, pid: pid, launchedAt: launchedAt)
                 }
             }
         }
