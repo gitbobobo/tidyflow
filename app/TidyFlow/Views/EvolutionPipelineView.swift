@@ -686,6 +686,9 @@ struct EvolutionPipelineView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
+            // 计算总耗时
+            let totalDuration: TimeInterval = stageEntries?.reduce(0) { $0 + $1.durationSeconds } ?? 0
+            
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
@@ -697,6 +700,17 @@ struct EvolutionPipelineView: View {
                         .foregroundColor(isSelected ? .primary : .secondary)
 
                     Spacer()
+                    
+                    // 总耗时
+                    if totalDuration > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 8))
+                            Text(Self.formatDuration(totalDuration))
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundColor(.secondary)
+                    }
 
                     if let badge {
                         Text(badge)
