@@ -605,12 +605,20 @@ private struct MessageBubble: View, Equatable {
         switch part.kind {
         case .text:
             if let text = part.text {
-                if isUser,
-                   let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: true) {
-                    Text(normalizedText)
-                        .textSelection(.enabled)
-                        .font(.system(size: 13))
-                        .foregroundColor(.white)
+                if isUser, message.isStreaming,
+                   let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
+                    MarkdownTextView(
+                        text: normalizedText,
+                        baseFontSize: 13,
+                        textColor: .white
+                    )
+                } else if isUser,
+                          let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
+                    MarkdownTextView(
+                        text: markdownText,
+                        baseFontSize: 13,
+                        textColor: .white
+                    )
                 } else if message.isStreaming,
                           let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
                     MarkdownTextView(
