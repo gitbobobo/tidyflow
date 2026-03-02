@@ -1088,25 +1088,16 @@ final class AIChatStore: ObservableObject {
     // MARK: - Streaming Batch Apply
 
     func enqueueMessageUpdated(messageId: String, role: String) {
-        if let sessionId = currentSessionId {
-            suppressedActiveToolSessions.remove(sessionId)
-        }
         pendingStreamEvents.append(.messageUpdated(messageId: messageId, role: role))
         scheduleStreamFlushIfNeeded()
     }
 
     func enqueuePartUpdated(messageId: String, part: AIProtocolPartInfo) {
-        if let sessionId = currentSessionId {
-            suppressedActiveToolSessions.remove(sessionId)
-        }
         pendingStreamEvents.append(.partUpdated(messageId: messageId, part: part))
         scheduleStreamFlushIfNeeded()
     }
 
     func enqueuePartDelta(messageId: String, partId: String, partType: String, field: String, delta: String) {
-        if let sessionId = currentSessionId {
-            suppressedActiveToolSessions.remove(sessionId)
-        }
         pendingStreamEvents.append(
             .partDelta(messageId: messageId, partId: partId, partType: partType, field: field, delta: delta)
         )
@@ -1704,25 +1695,34 @@ final class AIChatStore: ObservableObject {
     }
 
     private func recomputeIsStreaming() {
+        let newValue: Bool
         if normalizeStreamingAssistantIfNeeded() != nil {
-            isStreaming = true
-            return
+            newValue = true
+        } else {
+            let hasRunningTool = hasActiveAssistantTool()
+            if hasRunningTool,
+               let sessionId = currentSessionId,
+               !suppressedActiveToolSessions.contains(sessionId) {
+                newValue = true
+            } else {
+                newValue = false
+            }
         }
-
-        let hasRunningTool = hasActiveAssistantTool()
-        if hasRunningTool,
-           let sessionId = currentSessionId,
-           !suppressedActiveToolSessions.contains(sessionId) {
-            isStreaming = true
-            return
-        }
-
-        isStreaming = false
+        guard isStreaming != newValue else { return }
+        isStreaming = newValue
     }
 
     /// 流式消息理论上只会有一条；若出现多条并存，统一收敛到最新 assistant，避免历史气泡残留“加载中”。
     @discardableResult
     private func normalizeStreamingAssistantIfNeeded() -> Int? {
+        // 快速路径：缓存的 streamingAssistantIndex 仍然有效时直接返回，避免 O(n) 扫描
+        if let idx = streamingAssistantIndex,
+           idx >= 0, idx < messages.count,
+           messages[idx].role == .assistant,
+           messages[idx].isStreaming {
+            return idx
+        }
+
         let latestStreamingIdx = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming })
         guard let latestStreamingIdx else {
             streamingAssistantIndex = nil
