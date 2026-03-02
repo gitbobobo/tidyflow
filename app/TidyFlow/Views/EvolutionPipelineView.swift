@@ -72,7 +72,7 @@ struct EvolutionPipelineView: View {
         "verify", "judge",
     ]
 
-    private let loopRoundOptions = [1, 3, 5, 10, 20]
+    private let loopRoundOptions = [1, 2, 3, 5, 10, 16, 20]
 
     // MARK: - 代理颜色映射
 
