@@ -7,13 +7,13 @@ use super::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::debug;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -68,6 +68,14 @@ impl ClaudeToolState {
 pub struct ClaudeCodeAgent {
     sessions: Arc<Mutex<HashMap<String, ClaudeSessionRecord>>>,
     active_aborters: Arc<Mutex<HashMap<String, mpsc::Sender<()>>>>,
+    /// 按 directory 缓存斜杠命令（从 init 事件动态获取）
+    slash_commands_by_directory: Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
+    /// 按 directory 缓存 agent 列表（从 init 事件动态获取）
+    agents_by_directory: Arc<Mutex<HashMap<String, Vec<AiAgentInfo>>>>,
+    /// 按 directory 缓存当前模型名（从 init 事件动态获取）
+    model_by_directory: Arc<Mutex<HashMap<String, String>>>,
+    /// 正在获取 init 元数据的 directory 集合（防止重复触发）
+    pending_init_dirs: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ClaudeCodeAgent {
@@ -75,6 +83,10 @@ impl ClaudeCodeAgent {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             active_aborters: Arc::new(Mutex::new(HashMap::new())),
+            slash_commands_by_directory: Arc::new(Mutex::new(HashMap::new())),
+            agents_by_directory: Arc::new(Mutex::new(HashMap::new())),
+            model_by_directory: Arc::new(Mutex::new(HashMap::new())),
+            pending_init_dirs: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -284,6 +296,156 @@ impl ClaudeCodeAgent {
         }
         None
     }
+
+    /// 确保指定 directory 的 init 元数据已开始获取。
+    /// 如果缓存为空且未在获取中，则后台 spawn 一次 `claude` 命令来拉取 init 事件。
+    fn ensure_init_metadata(&self, directory: &str) {
+        let dir_key = Self::normalize_directory(directory);
+
+        // 快速检查：如果 agents 缓存已有数据，说明已获取过
+        if let Ok(guard) = self.agents_by_directory.try_lock() {
+            if guard.contains_key(&dir_key) {
+                return;
+            }
+        }
+        if let Ok(guard) = self.pending_init_dirs.try_lock() {
+            if guard.contains(&dir_key) {
+                return;
+            }
+        }
+
+        let pending = self.pending_init_dirs.clone();
+        let agents_cache = self.agents_by_directory.clone();
+        let model_cache = self.model_by_directory.clone();
+        let slash_cache = self.slash_commands_by_directory.clone();
+        let dir_key_owned = dir_key.clone();
+        let directory_owned = directory.to_string();
+
+        tokio::spawn(async move {
+            {
+                let mut p = pending.lock().await;
+                if !p.insert(dir_key_owned.clone()) {
+                    return; // 已有其他任务在获取
+                }
+            }
+
+            let result = Self::fetch_init_event(&directory_owned).await;
+
+            match result {
+                Ok(value) => {
+                    // 提取 agents
+                    if let Some(arr) = value.get("agents").and_then(|v| v.as_array()) {
+                        let agents: Vec<AiAgentInfo> = arr
+                            .iter()
+                            .filter_map(|v| v.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|name| AiAgentInfo {
+                                name: name.to_lowercase(),
+                                description: None,
+                                mode: Some("primary".to_string()),
+                                color: None,
+                                default_provider_id: Some("anthropic".to_string()),
+                                default_model_id: Some("default".to_string()),
+                            })
+                            .collect();
+                        if !agents.is_empty() {
+                            agents_cache.lock().await.insert(dir_key_owned.clone(), agents);
+                        }
+                    }
+                    // 提取 model
+                    if let Some(m) = value.get("model").and_then(|v| v.as_str()) {
+                        let trimmed = m.trim();
+                        if !trimmed.is_empty() {
+                            model_cache
+                                .lock()
+                                .await
+                                .insert(dir_key_owned.clone(), trimmed.to_string());
+                        }
+                    }
+                    // 提取 slash_commands
+                    if let Some(cmds) = value.get("slash_commands").and_then(|v| v.as_array()) {
+                        let commands: Vec<AiSlashCommand> = cmds
+                            .iter()
+                            .filter_map(|v| v.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|name| AiSlashCommand {
+                                name: name.to_string(),
+                                description: String::new(),
+                                action: "agent".to_string(),
+                                input_hint: None,
+                            })
+                            .collect();
+                        if !commands.is_empty() {
+                            slash_cache
+                                .lock()
+                                .await
+                                .insert(dir_key_owned.clone(), commands);
+                        }
+                    }
+                    debug!("[claude init] metadata fetched for {}", dir_key_owned);
+                }
+                Err(e) => {
+                    warn!("[claude init] failed to fetch metadata: {}", e);
+                }
+            }
+
+            pending.lock().await.remove(&dir_key_owned);
+        });
+    }
+
+    /// 运行一次轻量 `claude` 命令，仅读取 init 事件后立即终止。
+    async fn fetch_init_event(directory: &str) -> Result<Value, String> {
+        let mut command = Command::new("claude");
+        command
+            .args([
+                "--print",
+                "-p",
+                "",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ])
+            .current_dir(directory)
+            .envs(Self::build_extended_env())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude for init: {}", e))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "claude stdout unavailable".to_string())?;
+
+        let mut lines = BufReader::new(stdout).lines();
+        let mut init_value: Option<Value> = None;
+
+        // 只读取到 init 事件就够了
+        while let Ok(Some(line)) = lines.next_line().await {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                let is_init = value.get("type").and_then(|v| v.as_str()) == Some("system")
+                    && value.get("subtype").and_then(|v| v.as_str()) == Some("init");
+                if is_init {
+                    init_value = Some(value);
+                    break;
+                }
+            }
+        }
+
+        // 拿到 init 后立即终止进程
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+
+        init_value.ok_or_else(|| "No init event received from claude".to_string())
+    }
 }
 
 impl Default for ClaudeCodeAgent {
@@ -407,6 +569,9 @@ impl AiAgent for ClaudeCodeAgent {
 
         let sessions = self.sessions.clone();
         let active_aborters = self.active_aborters.clone();
+        let slash_commands_cache = self.slash_commands_by_directory.clone();
+        let agents_cache = self.agents_by_directory.clone();
+        let model_cache = self.model_by_directory.clone();
         let directory = normalized_directory.clone();
         let session_id_owned = session_id.to_string();
         let message_owned = message.to_string();
@@ -522,6 +687,62 @@ impl AiAgent for ClaudeCodeAgent {
                                             &["session_id", "sessionId"],
                                         ) {
                                             parsed_claude_session_id = Some(stream_session_id);
+                                        }
+
+                                        // 从 init 事件中提取斜杠命令并缓存
+                                        if let Some(cmds) = value.get("slash_commands").and_then(|v| v.as_array()) {
+                                            let commands: Vec<AiSlashCommand> = cmds
+                                                .iter()
+                                                .filter_map(|v| v.as_str())
+                                                .filter(|s| !s.trim().is_empty())
+                                                .map(|name| AiSlashCommand {
+                                                    name: name.to_string(),
+                                                    description: String::new(),
+                                                    action: "agent".to_string(),
+                                                    input_hint: None,
+                                                })
+                                                .collect();
+                                            if !commands.is_empty() {
+                                                let dir_key = ClaudeCodeAgent::normalize_directory(&directory);
+                                                slash_commands_cache.lock().await.insert(dir_key, commands.clone());
+                                                let _ = tx.send(Ok(AiEvent::SlashCommandsUpdated {
+                                                    session_id: session_id_owned.clone(),
+                                                    commands,
+                                                }));
+                                            }
+                                        }
+
+                                        // 从 init 事件中提取 agents 列表并缓存
+                                        if let Some(agents_arr) = value.get("agents").and_then(|v| v.as_array()) {
+                                            let agents: Vec<AiAgentInfo> = agents_arr
+                                                .iter()
+                                                .filter_map(|v| v.as_str())
+                                                .filter(|s| !s.trim().is_empty())
+                                                .map(|name| {
+                                                    let lower = name.to_lowercase();
+                                                    AiAgentInfo {
+                                                        name: lower,
+                                                        description: None,
+                                                        mode: Some("primary".to_string()),
+                                                        color: None,
+                                                        default_provider_id: Some("anthropic".to_string()),
+                                                        default_model_id: Some("default".to_string()),
+                                                    }
+                                                })
+                                                .collect();
+                                            if !agents.is_empty() {
+                                                let dir_key = ClaudeCodeAgent::normalize_directory(&directory);
+                                                agents_cache.lock().await.insert(dir_key, agents);
+                                            }
+                                        }
+
+                                        // 从 init 事件中提取当前模型并缓存
+                                        if let Some(model_name) = value.get("model").and_then(|v| v.as_str()) {
+                                            let trimmed = model_name.trim();
+                                            if !trimmed.is_empty() {
+                                                let dir_key = ClaudeCodeAgent::normalize_directory(&directory);
+                                                model_cache.lock().await.insert(dir_key, trimmed.to_string());
+                                            }
                                         }
 
                                         for block in ClaudeCodeAgent::collect_content_blocks(&value) {
@@ -1005,46 +1226,57 @@ impl AiAgent for ClaudeCodeAgent {
             .and_then(|r| r.context_usage.clone()))
     }
 
-    async fn list_providers(&self, _directory: &str) -> Result<Vec<AiProviderInfo>, String> {
+    async fn list_providers(&self, directory: &str) -> Result<Vec<AiProviderInfo>, String> {
+        self.ensure_init_metadata(directory);
+        let dir_key = Self::normalize_directory(directory);
+        let mut models = vec![AiModelInfo {
+            id: "default".to_string(),
+            name: "Default".to_string(),
+            provider_id: "anthropic".to_string(),
+            supports_image_input: true,
+        }];
+        // 如果从 init 事件获取到了当前模型名，将其作为额外选项展示
+        if let Some(current_model) = self.model_by_directory.lock().await.get(&dir_key).cloned() {
+            if current_model != "default" {
+                models.push(AiModelInfo {
+                    id: current_model.clone(),
+                    name: current_model,
+                    provider_id: "anthropic".to_string(),
+                    supports_image_input: true,
+                });
+            }
+        }
+        // Claude CLI 支持通过别名切换模型
+        for (id, name) in [
+            ("sonnet", "Sonnet"),
+            ("opus", "Opus"),
+            ("haiku", "Haiku"),
+        ] {
+            if !models.iter().any(|m| m.id == id) {
+                models.push(AiModelInfo {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    provider_id: "anthropic".to_string(),
+                    supports_image_input: true,
+                });
+            }
+        }
         Ok(vec![AiProviderInfo {
             id: "anthropic".to_string(),
             name: "Anthropic".to_string(),
-            models: vec![
-                AiModelInfo {
-                    id: "default".to_string(),
-                    name: "Default".to_string(),
-                    provider_id: "anthropic".to_string(),
-                    supports_image_input: true,
-                },
-                AiModelInfo {
-                    id: "claude-sonnet-4".to_string(),
-                    name: "Claude Sonnet 4".to_string(),
-                    provider_id: "anthropic".to_string(),
-                    supports_image_input: true,
-                },
-                AiModelInfo {
-                    id: "claude-sonnet-4-5".to_string(),
-                    name: "Claude Sonnet 4.5".to_string(),
-                    provider_id: "anthropic".to_string(),
-                    supports_image_input: true,
-                },
-                AiModelInfo {
-                    id: "claude-opus-4".to_string(),
-                    name: "Claude Opus 4".to_string(),
-                    provider_id: "anthropic".to_string(),
-                    supports_image_input: true,
-                },
-                AiModelInfo {
-                    id: "claude-haiku-3-5".to_string(),
-                    name: "Claude Haiku 3.5".to_string(),
-                    provider_id: "anthropic".to_string(),
-                    supports_image_input: true,
-                },
-            ],
+            models,
         }])
     }
 
-    async fn list_agents(&self, _directory: &str) -> Result<Vec<AiAgentInfo>, String> {
+    async fn list_agents(&self, directory: &str) -> Result<Vec<AiAgentInfo>, String> {
+        self.ensure_init_metadata(directory);
+        let dir_key = Self::normalize_directory(directory);
+        if let Some(cached) = self.agents_by_directory.lock().await.get(&dir_key).cloned() {
+            if !cached.is_empty() {
+                return Ok(cached);
+            }
+        }
+        // fallback：尚未从 init 事件获取到时返回默认值
         Ok(vec![
             AiAgentInfo {
                 name: "agent".to_string(),
@@ -1067,14 +1299,22 @@ impl AiAgent for ClaudeCodeAgent {
 
     async fn list_slash_commands(
         &self,
-        _directory: &str,
+        directory: &str,
         _session_id: Option<&str>,
     ) -> Result<Vec<AiSlashCommand>, String> {
-        Ok(vec![AiSlashCommand {
+        self.ensure_init_metadata(directory);
+        // 客户端命令始终可用
+        let mut commands = vec![AiSlashCommand {
             name: "new".to_string(),
             description: "新建会话".to_string(),
             action: "client".to_string(),
             input_hint: None,
-        }])
+        }];
+        // 追加从 Claude CLI init 事件动态获取的命令
+        let dir_key = Self::normalize_directory(directory);
+        if let Some(cached) = self.slash_commands_by_directory.lock().await.get(&dir_key) {
+            commands.extend(cached.iter().cloned());
+        }
+        Ok(commands)
     }
 }
