@@ -7,13 +7,14 @@ use super::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -65,9 +66,38 @@ impl ClaudeToolState {
     }
 }
 
+/// 从 init 事件中提取的元数据
+struct ClaudeInitData {
+    session_id: Option<String>,
+    model: Option<String>,
+    agents: Vec<String>,
+    slash_commands: Vec<String>,
+}
+
+/// 持久 Claude 子进程的运行时句柄
+struct ClaudeProcessHandle {
+    /// 子进程 stdin，用于发送用户消息
+    stdin: Mutex<tokio::process::ChildStdin>,
+    /// stdout 行广播通道发送端
+    stdout_tx: broadcast::Sender<String>,
+    /// init 事件解析结果
+    init_data: Mutex<Option<ClaudeInitData>>,
+    /// init 完成信号（true = init 完成，可能成功也可能失败）
+    init_watch: watch::Sender<bool>,
+    /// 进程是否存活
+    alive: AtomicBool,
+    /// 启动阶段的错误（如认证失败）
+    startup_error: Mutex<Option<String>>,
+    /// 发送 kill 信号
+    kill_tx: Mutex<Option<mpsc::Sender<()>>>,
+}
+
 pub struct ClaudeCodeAgent {
     sessions: Arc<Mutex<HashMap<String, ClaudeSessionRecord>>>,
-    active_aborters: Arc<Mutex<HashMap<String, mpsc::Sender<()>>>>,
+    /// 按 runtime_key (directory::session_id) 存储持久进程句柄
+    processes: Arc<Mutex<HashMap<String, Arc<ClaudeProcessHandle>>>>,
+    /// 当前有活跃 turn 的 session（runtime_key 集合）
+    active_turns: Arc<Mutex<HashSet<String>>>,
     /// 按 directory 缓存斜杠命令（从 init 事件动态获取）
     slash_commands_by_directory: Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
     /// 按 directory 缓存 agent 列表（从 init 事件动态获取）
@@ -82,7 +112,8 @@ impl ClaudeCodeAgent {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            active_aborters: Arc::new(Mutex::new(HashMap::new())),
+            processes: Arc::new(Mutex::new(HashMap::new())),
+            active_turns: Arc::new(Mutex::new(HashSet::new())),
             slash_commands_by_directory: Arc::new(Mutex::new(HashMap::new())),
             agents_by_directory: Arc::new(Mutex::new(HashMap::new())),
             model_by_directory: Arc::new(Mutex::new(HashMap::new())),
@@ -297,6 +328,347 @@ impl ClaudeCodeAgent {
         None
     }
 
+    /// 构造发送到 claude stdin 的用户消息 JSON
+    fn build_user_message_json(text: &str, claude_session_id: Option<&str>) -> String {
+        serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": text,
+            },
+            "parent_tool_use_id": Value::Null,
+            "session_id": claude_session_id.unwrap_or(""),
+        })
+        .to_string()
+    }
+
+    /// 为指定会话启动一个持久 Claude 子进程
+    async fn spawn_persistent_process(
+        directory: &str,
+        resume_session_id: Option<&str>,
+        model_id: Option<&str>,
+        slash_commands_cache: Arc<Mutex<HashMap<String, Vec<AiSlashCommand>>>>,
+        agents_cache: Arc<Mutex<HashMap<String, Vec<AiAgentInfo>>>>,
+        model_cache: Arc<Mutex<HashMap<String, String>>>,
+    ) -> Result<Arc<ClaudeProcessHandle>, String> {
+        let mut args = vec![
+            "--print".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--input-format".to_string(),
+            "stream-json".to_string(),
+            "--verbose".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+        ];
+        if let Some(resume) = resume_session_id {
+            args.push("--resume".to_string());
+            args.push(resume.to_string());
+        }
+        if let Some(model) = model_id {
+            args.push("--model".to_string());
+            args.push(model.to_string());
+        }
+
+        info!(
+            "[claude] spawning persistent process: claude {} (dir={})",
+            args.join(" "),
+            directory
+        );
+
+        let mut command = Command::new("claude");
+        command
+            .args(&args)
+            .current_dir(directory)
+            .envs(Self::build_extended_env())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Failed to spawn `claude {}`: {}", args.join(" "), e))?;
+
+        info!("[claude] process spawned successfully, pid={:?}", child.id());
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Claude stdin unavailable".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Claude stdout unavailable".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "Claude stderr unavailable".to_string())?;
+
+        let (stdout_tx, _) = broadcast::channel::<String>(8192);
+        let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
+        let (init_watch, _) = watch::channel(false);
+
+        let handle = Arc::new(ClaudeProcessHandle {
+            stdin: Mutex::new(stdin),
+            stdout_tx: stdout_tx.clone(),
+            init_data: Mutex::new(None),
+            init_watch,
+            alive: AtomicBool::new(true),
+            startup_error: Mutex::new(None),
+            kill_tx: Mutex::new(Some(kill_tx)),
+        });
+
+        // 后台 stdout/stderr reader
+        let handle_ref = Arc::clone(&handle);
+        let dir_for_cache = Self::normalize_directory(directory);
+        tokio::spawn(async move {
+            info!("[claude reader] background reader started for {}", dir_for_cache);
+            let mut stdout_lines = BufReader::new(stdout).lines();
+            let mut stderr_lines = BufReader::new(stderr).lines();
+            let mut stdout_closed = false;
+            let mut stderr_closed = false;
+            let mut init_received = false;
+            let mut line_count: u64 = 0;
+
+            while !(stdout_closed && stderr_closed) {
+                tokio::select! {
+                    _ = kill_rx.recv() => {
+                        info!("[claude reader] kill signal received");
+                        let _ = child.start_kill();
+                        let _ = child.wait().await;
+                        handle_ref.alive.store(false, Ordering::SeqCst);
+                        return;
+                    }
+                    line = stdout_lines.next_line(), if !stdout_closed => {
+                        match line {
+                            Ok(Some(line)) => {
+                                line_count += 1;
+                                let trimmed = line.trim().to_string();
+                                if line_count <= 3 {
+                                    info!("[claude reader] stdout line #{}: len={} first_100={}", line_count, trimmed.len(), &trimmed[..trimmed.len().min(100)]);
+                                }
+                                if trimmed.is_empty() {
+                                    continue;
+                                }
+                                // 解析 init 事件
+                                if !init_received {
+                                    if let Ok(value) = serde_json::from_str::<Value>(&trimmed) {
+                                        let is_init = value.get("type").and_then(|v| v.as_str()) == Some("system")
+                                            && value.get("subtype").and_then(|v| v.as_str()) == Some("init");
+                                        if is_init {
+                                            init_received = true;
+                                            let session_id = value
+                                                .get("session_id")
+                                                .or_else(|| value.get("sessionId"))
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string());
+                                            let model = value
+                                                .get("model")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.trim().to_string());
+                                            let agents: Vec<String> = value
+                                                .get("agents")
+                                                .and_then(|v| v.as_array())
+                                                .map(|arr| {
+                                                    arr.iter()
+                                                        .filter_map(|v| v.as_str())
+                                                        .filter(|s| !s.is_empty())
+                                                        .map(|s| s.to_string())
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default();
+                                            let slash_commands: Vec<String> = value
+                                                .get("slash_commands")
+                                                .and_then(|v| v.as_array())
+                                                .map(|arr| {
+                                                    arr.iter()
+                                                        .filter_map(|v| v.as_str())
+                                                        .filter(|s| !s.is_empty())
+                                                        .map(|s| s.to_string())
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default();
+
+                                            // 更新 directory 级别缓存
+                                            if let Some(ref m) = model {
+                                                if !m.is_empty() {
+                                                    model_cache
+                                                        .lock()
+                                                        .await
+                                                        .insert(dir_for_cache.clone(), m.clone());
+                                                }
+                                            }
+                                            if !agents.is_empty() {
+                                                let agent_infos: Vec<AiAgentInfo> = agents
+                                                    .iter()
+                                                    .map(|name| AiAgentInfo {
+                                                        name: name.to_lowercase(),
+                                                        description: None,
+                                                        mode: Some("primary".to_string()),
+                                                        color: None,
+                                                        default_provider_id: Some(
+                                                            "anthropic".to_string(),
+                                                        ),
+                                                        default_model_id: Some(
+                                                            "default".to_string(),
+                                                        ),
+                                                    })
+                                                    .collect();
+                                                agents_cache
+                                                    .lock()
+                                                    .await
+                                                    .insert(dir_for_cache.clone(), agent_infos);
+                                            }
+                                            if !slash_commands.is_empty() {
+                                                let cmds: Vec<AiSlashCommand> = slash_commands
+                                                    .iter()
+                                                    .map(|name| AiSlashCommand {
+                                                        name: name.clone(),
+                                                        description: String::new(),
+                                                        action: "agent".to_string(),
+                                                        input_hint: None,
+                                                    })
+                                                    .collect();
+                                                slash_commands_cache
+                                                    .lock()
+                                                    .await
+                                                    .insert(dir_for_cache.clone(), cmds);
+                                            }
+
+                                            *handle_ref.init_data.lock().await =
+                                                Some(ClaudeInitData {
+                                                    session_id,
+                                                    model,
+                                                    agents,
+                                                    slash_commands,
+                                                });
+                                            let _ = handle_ref.init_watch.send(true);
+                                            debug!(
+                                                "[claude] init metadata received for {}",
+                                                dir_for_cache
+                                            );
+                                        }
+                                        // 检查启动阶段的错误
+                                        if let Some(err_msg) =
+                                            ClaudeCodeAgent::parse_error(&value)
+                                        {
+                                            *handle_ref.startup_error.lock().await =
+                                                Some(err_msg);
+                                            let _ = handle_ref.init_watch.send(true);
+                                        }
+                                    }
+                                }
+                                // 广播给订阅者（per-turn 解析任务）
+                                let _ = handle_ref.stdout_tx.send(trimmed);
+                            }
+                            Ok(None) => {
+                                info!("[claude reader] stdout closed (line_count={})", line_count);
+                                stdout_closed = true;
+                            }
+                            Err(e) => {
+                                warn!("[claude reader] stdout error: {}", e);
+                                stdout_closed = true;
+                            }
+                        }
+                    }
+                    line = stderr_lines.next_line(), if !stderr_closed => {
+                        match line {
+                            Ok(Some(line)) => {
+                                let trimmed = line.trim();
+                                if !trimmed.is_empty() {
+                                    info!("[claude stderr] {}", trimmed);
+                                }
+                            }
+                            Ok(None) => {
+                                info!("[claude reader] stderr closed");
+                                stderr_closed = true;
+                            }
+                            Err(_) => {
+                                stderr_closed = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 进程退出
+            let exit_status = child.wait().await;
+            info!("[claude reader] process exited: {:?}", exit_status);
+            handle_ref.alive.store(false, Ordering::SeqCst);
+            // 如果 init 还没收到，通知等待者
+            if !init_received {
+                *handle_ref.startup_error.lock().await =
+                    Some("Claude process exited before init".to_string());
+                let _ = handle_ref.init_watch.send(true);
+            }
+        });
+
+        Ok(handle)
+    }
+
+    /// 获取或创建指定会话的持久进程
+    async fn get_or_spawn_process(
+        &self,
+        directory: &str,
+        session_id: &str,
+        resume_session_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Result<Arc<ClaudeProcessHandle>, String> {
+        let key = Self::runtime_key(directory, session_id);
+
+        // 检查现有进程
+        {
+            let processes = self.processes.lock().await;
+            if let Some(handle) = processes.get(&key) {
+                if handle.alive.load(Ordering::SeqCst) {
+                    return Ok(Arc::clone(handle));
+                }
+            }
+        }
+
+        // 需要新建进程
+        let handle = Self::spawn_persistent_process(
+            directory,
+            resume_session_id,
+            model_id,
+            Arc::clone(&self.slash_commands_by_directory),
+            Arc::clone(&self.agents_by_directory),
+            Arc::clone(&self.model_by_directory),
+        )
+        .await?;
+
+        self.processes
+            .lock()
+            .await
+            .insert(key, Arc::clone(&handle));
+        Ok(handle)
+    }
+
+    /// 等待持久进程完成初始化，返回错误或成功
+    async fn wait_for_init(handle: &ClaudeProcessHandle) -> Result<(), String> {
+        let mut init_rx = handle.init_watch.subscribe();
+        if !*init_rx.borrow() {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                init_rx.wait_for(|v| *v),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) => {
+                    return Err("Claude process init channel closed".to_string());
+                }
+                Err(_) => {
+                    return Err("Claude process init timeout (30s)".to_string());
+                }
+            }
+        }
+        // 检查是否有启动错误
+        if let Some(ref err) = *handle.startup_error.lock().await {
+            return Err(err.clone());
+        }
+        Ok(())
+    }
+
     /// 确保指定 directory 的 init 元数据已开始获取。
     /// 如果缓存为空且未在获取中，则后台 spawn 一次 `claude` 命令来拉取 init 事件。
     fn ensure_init_metadata(&self, directory: &str) {
@@ -400,11 +772,13 @@ impl ClaudeCodeAgent {
             .args([
                 "--print",
                 "-p",
-                "",
+                "hello",
                 "--output-format",
                 "stream-json",
                 "--verbose",
                 "--dangerously-skip-permissions",
+                "--max-turns",
+                "1",
             ])
             .current_dir(directory)
             .envs(Self::build_extended_env())
@@ -461,10 +835,15 @@ impl AiAgent for ClaudeCodeAgent {
     }
 
     async fn stop(&self) -> Result<(), String> {
-        let aborters = self.active_aborters.lock().await.clone();
-        for (_, tx) in aborters {
-            let _ = tx.send(()).await;
+        let processes = self.processes.lock().await;
+        for (_, handle) in processes.iter() {
+            if let Some(kill_tx) = handle.kill_tx.lock().await.take() {
+                let _ = kill_tx.send(()).await;
+            }
         }
+        drop(processes);
+        self.processes.lock().await.clear();
+        self.active_turns.lock().await.clear();
         Ok(())
     }
 
@@ -561,22 +940,106 @@ impl AiAgent for ClaudeCodeAgent {
             part: AiPart::new_text(format!("{}-text", user_message_id), user_text.clone()),
         }));
 
-        let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
-        self.active_aborters
+        // 获取或创建持久进程
+        let model_id = model.as_ref().map(|m| m.model_id.clone());
+        let handle = self
+            .get_or_spawn_process(
+                &normalized_directory,
+                session_id,
+                resume_session_id.as_deref(),
+                model_id.as_deref(),
+            )
+            .await;
+        let handle = match handle {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = tx.send(Err(e));
+                let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
+                return Ok(Box::pin(UnboundedReceiverStream::new(rx)));
+            }
+        };
+
+        // 判断进程是否已初始化（已有进程 vs 新进程）
+        let already_init = *handle.init_watch.subscribe().borrow();
+
+        // 如果已初始化，可以用 claude_session_id 构建消息
+        let claude_session_id_before = if already_init {
+            handle
+                .init_data
+                .lock()
+                .await
+                .as_ref()
+                .and_then(|d| d.session_id.clone())
+        } else {
+            // 新进程还没 init，先用 resume_session_id 或空
+            resume_session_id.clone()
+        };
+
+        // 构造用户消息并写入 stdin（必须在等 init 前发送，因为 claude 需要 stdin 输入才输出 init）
+        let prompt = Self::compose_message(message, file_refs, image_parts, audio_parts);
+        let msg_json =
+            Self::build_user_message_json(&prompt, claude_session_id_before.as_deref());
+        {
+            let mut stdin = handle.stdin.lock().await;
+            let write_result = async {
+                stdin
+                    .write_all(msg_json.as_bytes())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(b"\n")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                stdin.flush().await.map_err(|e| e.to_string())
+            }
+            .await;
+
+            if let Err(e) = write_result {
+                handle.alive.store(false, Ordering::SeqCst);
+                self.processes.lock().await.remove(&key);
+                let _ = tx.send(Err(format!("Failed to write to Claude stdin: {}", e)));
+                let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
+                return Ok(Box::pin(UnboundedReceiverStream::new(rx)));
+            }
+        }
+
+        // 等待 init 完成（对新进程：stdin 已发送，claude 会先输出 init 再处理消息）
+        if let Err(e) = Self::wait_for_init(&handle).await {
+            let _ = tx.send(Err(e));
+            let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
+            return Ok(Box::pin(UnboundedReceiverStream::new(rx)));
+        }
+
+        // init 完成后更新 claude_session_id
+        let claude_session_id = handle
+            .init_data
             .lock()
             .await
-            .insert(key.clone(), abort_tx);
+            .as_ref()
+            .and_then(|d| d.session_id.clone());
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(record) = sessions.get_mut(session_id) {
+                if let Some(ref csid) = claude_session_id {
+                    record.claude_session_id = Some(csid.clone());
+                }
+            }
+        }
 
+        // 订阅 stdout 广播
+        let mut stdout_rx = handle.stdout_tx.subscribe();
+
+        // 标记当前 turn 为活跃
+        self.active_turns.lock().await.insert(key.clone());
+
+        // 启动 per-turn 解析任务
         let sessions = self.sessions.clone();
-        let active_aborters = self.active_aborters.clone();
-        let slash_commands_cache = self.slash_commands_by_directory.clone();
-        let agents_cache = self.agents_by_directory.clone();
-        let model_cache = self.model_by_directory.clone();
-        let directory = normalized_directory.clone();
+        let active_turns = self.active_turns.clone();
+        let processes = self.processes.clone();
         let session_id_owned = session_id.to_string();
-        let message_owned = message.to_string();
-        let model_id = model.as_ref().map(|m| m.model_id.clone());
-        let prompt = Self::compose_message(&message_owned, file_refs, image_parts, audio_parts);
+        let key_owned = key.clone();
+        let history_hint_owned = history_hint.clone();
+        let handle_alive = Arc::clone(&handle);
 
         tokio::spawn(async move {
             let assistant_message_id = format!("claude-assistant-{}", Uuid::new_v4());
@@ -585,112 +1048,32 @@ impl AiAgent for ClaudeCodeAgent {
             let mut assistant_opened = false;
             let mut assistant_text = String::new();
             let mut assistant_reasoning = String::new();
-            let mut parsed_claude_session_id = resume_session_id.clone();
+            let mut parsed_claude_session_id = claude_session_id;
             let mut tool_states: HashMap<String, ClaudeToolState> = HashMap::new();
-            let mut terminated_with_error = false;
             let mut last_usage_json: Option<Value> = None;
 
-            let mut command = Command::new("claude");
-            let mut args = vec![
-                "--dangerously-skip-permissions".to_string(),
-                "-p".to_string(),
-                prompt,
-                "--output-format".to_string(),
-                "stream-json".to_string(),
-                "--verbose".to_string(),
-            ];
-            if let Some(resume) = resume_session_id.as_ref() {
-                args.push("--resume".to_string());
-                args.push(resume.clone());
-            }
-            if let Some(model_id) = model_id.as_ref() {
-                args.push("--model".to_string());
-                args.push(model_id.clone());
-            }
+            loop {
+                match stdout_rx.recv().await {
+                    Ok(line) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
 
-            command
-                .args(&args)
-                .current_dir(&directory)
-                .envs(ClaudeCodeAgent::build_extended_env())
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-
-            let mut child = match command.spawn() {
-                Ok(child) => child,
-                Err(err) => {
-                    let _ = tx.send(Err(format!(
-                        "Failed to spawn `claude {}`: {}",
-                        args.join(" "),
-                        err
-                    )));
-                    active_aborters.lock().await.remove(&key);
-                    return;
-                }
-            };
-
-            let stdout = match child.stdout.take() {
-                Some(stdout) => stdout,
-                None => {
-                    let _ = tx.send(Err("Claude stdout unavailable".to_string()));
-                    let _ = child.start_kill();
-                    let _ = child.wait().await;
-                    active_aborters.lock().await.remove(&key);
-                    return;
-                }
-            };
-            let stderr = match child.stderr.take() {
-                Some(stderr) => stderr,
-                None => {
-                    let _ = tx.send(Err("Claude stderr unavailable".to_string()));
-                    let _ = child.start_kill();
-                    let _ = child.wait().await;
-                    active_aborters.lock().await.remove(&key);
-                    return;
-                }
-            };
-
-            let mut stdout_lines = BufReader::new(stdout).lines();
-            let mut stderr_lines = BufReader::new(stderr).lines();
-            let mut stdout_closed = false;
-            let mut stderr_closed = false;
-            let mut stderr_tail: VecDeque<String> = VecDeque::new();
-            const STDERR_TAIL_MAX: usize = 8;
-
-            while !(stdout_closed && stderr_closed) {
-                tokio::select! {
-                    _ = abort_rx.recv() => {
-                        let _ = child.start_kill();
-                        let _ = child.wait().await;
-                        let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
-                        active_aborters.lock().await.remove(&key);
-                        return;
-                    }
-                    line = stdout_lines.next_line(), if !stdout_closed => {
-                        match line {
-                            Ok(Some(line)) => {
-                                let trimmed = line.trim();
-                                if trimmed.is_empty() {
-                                    continue;
-                                }
-
-                                match serde_json::from_str::<Value>(trimmed) {
-                                    Ok(value) => {
-                                        if let Some(err_msg) = ClaudeCodeAgent::parse_error(&value) {
-                                            terminated_with_error = true;
-                                            let _ = tx.send(Err(err_msg));
-                                            break;
-                                        }
-
-                                        if let Some(stream_session_id) = ClaudeCodeAgent::first_string(
-                                            &value,
-                                            &["session_id", "sessionId"],
-                                        ) {
-                                            parsed_claude_session_id = Some(stream_session_id);
-                                        }
-
-                                        // 从 init 事件中提取斜杠命令并缓存
-                                        if let Some(cmds) = value.get("slash_commands").and_then(|v| v.as_array()) {
+                        match serde_json::from_str::<Value>(trimmed) {
+                            Ok(value) => {
+                                // 处理系统事件
+                                if value.get("type").and_then(|v| v.as_str()) == Some("system") {
+                                    let subtype = value
+                                        .get("subtype")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if subtype == "init" {
+                                        // 从 init 事件提取斜杠命令并推送到客户端
+                                        if let Some(cmds) = value
+                                            .get("slash_commands")
+                                            .and_then(|v| v.as_array())
+                                        {
                                             let commands: Vec<AiSlashCommand> = cmds
                                                 .iter()
                                                 .filter_map(|v| v.as_str())
@@ -703,324 +1086,341 @@ impl AiAgent for ClaudeCodeAgent {
                                                 })
                                                 .collect();
                                             if !commands.is_empty() {
-                                                let dir_key = ClaudeCodeAgent::normalize_directory(&directory);
-                                                slash_commands_cache.lock().await.insert(dir_key, commands.clone());
-                                                let _ = tx.send(Ok(AiEvent::SlashCommandsUpdated {
-                                                    session_id: session_id_owned.clone(),
-                                                    commands,
-                                                }));
+                                                let _ =
+                                                    tx.send(Ok(AiEvent::SlashCommandsUpdated {
+                                                        session_id: session_id_owned.clone(),
+                                                        commands,
+                                                    }));
                                             }
                                         }
-
-                                        // 从 init 事件中提取 agents 列表并缓存
-                                        if let Some(agents_arr) = value.get("agents").and_then(|v| v.as_array()) {
-                                            let agents: Vec<AiAgentInfo> = agents_arr
-                                                .iter()
-                                                .filter_map(|v| v.as_str())
-                                                .filter(|s| !s.trim().is_empty())
-                                                .map(|name| {
-                                                    let lower = name.to_lowercase();
-                                                    AiAgentInfo {
-                                                        name: lower,
-                                                        description: None,
-                                                        mode: Some("primary".to_string()),
-                                                        color: None,
-                                                        default_provider_id: Some("anthropic".to_string()),
-                                                        default_model_id: Some("default".to_string()),
-                                                    }
-                                                })
-                                                .collect();
-                                            if !agents.is_empty() {
-                                                let dir_key = ClaudeCodeAgent::normalize_directory(&directory);
-                                                agents_cache.lock().await.insert(dir_key, agents);
-                                            }
-                                        }
-
-                                        // 从 init 事件中提取当前模型并缓存
-                                        if let Some(model_name) = value.get("model").and_then(|v| v.as_str()) {
-                                            let trimmed = model_name.trim();
-                                            if !trimmed.is_empty() {
-                                                let dir_key = ClaudeCodeAgent::normalize_directory(&directory);
-                                                model_cache.lock().await.insert(dir_key, trimmed.to_string());
-                                            }
-                                        }
-
-                                        for block in ClaudeCodeAgent::collect_content_blocks(&value) {
-                                            let block_type = block
-                                                .get("type")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("")
-                                                .to_lowercase();
-
-                                            if block_type == "tool_use" {
-                                                let tool_call_id = ClaudeCodeAgent::first_string(
-                                                    block,
-                                                    &["id", "tool_use_id", "toolUseId", "call_id", "callId"],
-                                                )
-                                                .unwrap_or_else(|| Uuid::new_v4().to_string());
-                                                let input = block
-                                                    .get("input")
-                                                    .cloned()
-                                                    .or_else(|| block.get("arguments").cloned())
-                                                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-                                                let raw_name = ClaudeCodeAgent::first_string(
-                                                    block,
-                                                    &["name", "tool"],
-                                                )
-                                                .unwrap_or_else(|| "tool".to_string());
-                                                let tool_name =
-                                                    ClaudeCodeAgent::normalize_tool_name(&raw_name);
-                                                let part_id = format!(
-                                                    "claude-tool-{}-{}",
-                                                    assistant_message_id, tool_call_id
-                                                );
-                                                let state = ClaudeToolState {
-                                                    part_id,
-                                                    tool_call_id: tool_call_id.clone(),
-                                                    tool_name,
-                                                    status: "running".to_string(),
-                                                    input,
-                                                    output: None,
-                                                    error: None,
-                                                };
-                                                tool_states.insert(tool_call_id.clone(), state.clone());
-                                                if !assistant_opened {
-                                                    assistant_opened = true;
-                                                    let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                        message_id: assistant_message_id.clone(),
-                                                        role: "assistant".to_string(),
-                                                        selection_hint: None,
-                                                    }));
-                                                }
-                                                let _ = tx.send(Ok(AiEvent::PartUpdated {
-                                                    message_id: assistant_message_id.clone(),
-                                                    part: state.to_part(),
-                                                }));
-                                                continue;
-                                            }
-
-                                            if block_type == "tool_result" {
-                                                let tool_call_id = ClaudeCodeAgent::first_string(
-                                                    block,
-                                                    &["tool_use_id", "toolUseId", "id", "call_id", "callId"],
-                                                );
-                                                let Some(tool_call_id) = tool_call_id else {
-                                                    continue;
-                                                };
-                                                let output = block
-                                                    .get("content")
-                                                    .and_then(ClaudeCodeAgent::maybe_join_text)
-                                                    .or_else(|| block.get("output").and_then(ClaudeCodeAgent::maybe_join_text))
-                                                    .or_else(|| block.get("text").and_then(|v| v.as_str()).map(|s| s.to_string()));
-                                                let is_error = block
-                                                    .get("is_error")
-                                                    .and_then(|v| v.as_bool())
-                                                    .unwrap_or(false);
-                                                let entry = tool_states.entry(tool_call_id.clone()).or_insert_with(|| ClaudeToolState {
-                                                    part_id: format!(
-                                                        "claude-tool-{}-{}",
-                                                        assistant_message_id, tool_call_id
-                                                    ),
-                                                    tool_call_id: tool_call_id.clone(),
-                                                    tool_name: "tool".to_string(),
-                                                    status: "running".to_string(),
-                                                    input: Value::Object(serde_json::Map::new()),
-                                                    output: None,
-                                                    error: None,
-                                                });
-                                                if let Some(output) = output {
-                                                    entry.output = Some(output);
-                                                }
-                                                if is_error {
-                                                    entry.status = "error".to_string();
-                                                    entry.error = entry.output.clone();
-                                                } else {
-                                                    entry.status = "completed".to_string();
-                                                }
-                                                if !assistant_opened {
-                                                    assistant_opened = true;
-                                                    let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                        message_id: assistant_message_id.clone(),
-                                                        role: "assistant".to_string(),
-                                                        selection_hint: None,
-                                                    }));
-                                                }
-                                                let _ = tx.send(Ok(AiEvent::PartUpdated {
-                                                    message_id: assistant_message_id.clone(),
-                                                    part: entry.to_part(),
-                                                }));
-                                                continue;
-                                            }
-
-                                            if block_type.contains("thinking") || block_type.contains("reasoning") {
-                                                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                                                    if !assistant_opened {
-                                                        assistant_opened = true;
-                                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                            message_id: assistant_message_id.clone(),
-                                                            role: "assistant".to_string(),
-                                                            selection_hint: None,
-                                                        }));
-                                                    }
-                                                    assistant_reasoning.push_str(text);
-                                                    let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                        message_id: assistant_message_id.clone(),
-                                                        part_id: reasoning_part_id.clone(),
-                                                        part_type: "reasoning".to_string(),
-                                                        field: "text".to_string(),
-                                                        delta: text.to_string(),
-                                                    }));
-                                                }
-                                                continue;
-                                            }
-
-                                            if block_type.ends_with("delta") {
-                                                if let Some(text) = block
-                                                    .get("text")
-                                                    .and_then(|v| v.as_str())
-                                                    .or_else(|| block.get("delta").and_then(|v| v.as_str()))
-                                                {
-                                                    if !assistant_opened {
-                                                        assistant_opened = true;
-                                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                            message_id: assistant_message_id.clone(),
-                                                            role: "assistant".to_string(),
-                                                            selection_hint: None,
-                                                        }));
-                                                    }
-                                                    assistant_text.push_str(text);
-                                                    let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                        message_id: assistant_message_id.clone(),
-                                                        part_id: text_part_id.clone(),
-                                                        part_type: "text".to_string(),
-                                                        field: "text".to_string(),
-                                                        delta: text.to_string(),
-                                                    }));
-                                                }
-                                                continue;
-                                            }
-
-                                            if block_type == "text" {
-                                                if let Some(snapshot) = block.get("text").and_then(|v| v.as_str()) {
-                                                    if let Some(delta) =
-                                                        ClaudeCodeAgent::emit_snapshot_delta(&mut assistant_text, snapshot)
-                                                    {
-                                                        if !assistant_opened {
-                                                            assistant_opened = true;
-                                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                                message_id: assistant_message_id.clone(),
-                                                                role: "assistant".to_string(),
-                                                                selection_hint: None,
-                                                            }));
-                                                        }
-                                                        let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                            message_id: assistant_message_id.clone(),
-                                                            part_id: text_part_id.clone(),
-                                                            part_type: "text".to_string(),
-                                                            field: "text".to_string(),
-                                                            delta,
-                                                        }));
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        let event_type = value
-                                            .get("type")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_lowercase();
-                                        if event_type == "result" {
-                                            // 提取 usage 信息用于 context usage 上报
-                                            if let Some(usage) = value.get("usage") {
-                                                last_usage_json = Some(usage.clone());
-                                            }
-                                            if let Some(snapshot) = value.get("result").and_then(|v| v.as_str()) {
-                                                if let Some(delta) =
-                                                    ClaudeCodeAgent::emit_snapshot_delta(&mut assistant_text, snapshot)
-                                                {
-                                                    if !assistant_opened {
-                                                        assistant_opened = true;
-                                                        let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                                            message_id: assistant_message_id.clone(),
-                                                            role: "assistant".to_string(),
-                                                            selection_hint: None,
-                                                        }));
-                                                    }
-                                                    let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                        message_id: assistant_message_id.clone(),
-                                                        part_id: text_part_id.clone(),
-                                                        part_type: "text".to_string(),
-                                                        field: "text".to_string(),
-                                                        delta,
-                                                    }));
-                                                }
-                                            }
-                                        }
+                                        continue;
                                     }
-                                    Err(_) => {
+                                    continue;
+                                }
+
+                                // 错误检查
+                                if let Some(err_msg) = ClaudeCodeAgent::parse_error(&value) {
+                                    let _ = tx.send(Err(err_msg));
+                                    break;
+                                }
+
+                                // 提取 session ID
+                                if let Some(stream_session_id) = ClaudeCodeAgent::first_string(
+                                    &value,
+                                    &["session_id", "sessionId"],
+                                ) {
+                                    parsed_claude_session_id = Some(stream_session_id);
+                                }
+
+                                // 处理 content blocks
+                                for block in ClaudeCodeAgent::collect_content_blocks(&value) {
+                                    let block_type = block
+                                        .get("type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_lowercase();
+
+                                    if block_type == "tool_use" {
+                                        let tool_call_id = ClaudeCodeAgent::first_string(
+                                            block,
+                                            &[
+                                                "id",
+                                                "tool_use_id",
+                                                "toolUseId",
+                                                "call_id",
+                                                "callId",
+                                            ],
+                                        )
+                                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                                        let input = block
+                                            .get("input")
+                                            .cloned()
+                                            .or_else(|| block.get("arguments").cloned())
+                                            .unwrap_or_else(|| {
+                                                Value::Object(serde_json::Map::new())
+                                            });
+                                        let raw_name = ClaudeCodeAgent::first_string(
+                                            block,
+                                            &["name", "tool"],
+                                        )
+                                        .unwrap_or_else(|| "tool".to_string());
+                                        let tool_name =
+                                            ClaudeCodeAgent::normalize_tool_name(&raw_name);
+                                        let part_id = format!(
+                                            "claude-tool-{}-{}",
+                                            assistant_message_id, tool_call_id
+                                        );
+                                        let state = ClaudeToolState {
+                                            part_id,
+                                            tool_call_id: tool_call_id.clone(),
+                                            tool_name,
+                                            status: "running".to_string(),
+                                            input,
+                                            output: None,
+                                            error: None,
+                                        };
+                                        tool_states
+                                            .insert(tool_call_id.clone(), state.clone());
                                         if !assistant_opened {
                                             assistant_opened = true;
-                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                            let _ =
+                                                tx.send(Ok(AiEvent::MessageUpdated {
+                                                    message_id: assistant_message_id.clone(),
+                                                    role: "assistant".to_string(),
+                                                    selection_hint: None,
+                                                }));
+                                        }
+                                        let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            part: state.to_part(),
+                                        }));
+                                        continue;
+                                    }
+
+                                    if block_type == "tool_result" {
+                                        let tool_call_id = ClaudeCodeAgent::first_string(
+                                            block,
+                                            &[
+                                                "tool_use_id",
+                                                "toolUseId",
+                                                "id",
+                                                "call_id",
+                                                "callId",
+                                            ],
+                                        );
+                                        let Some(tool_call_id) = tool_call_id else {
+                                            continue;
+                                        };
+                                        let output = block
+                                            .get("content")
+                                            .and_then(ClaudeCodeAgent::maybe_join_text)
+                                            .or_else(|| {
+                                                block
+                                                    .get("output")
+                                                    .and_then(ClaudeCodeAgent::maybe_join_text)
+                                            })
+                                            .or_else(|| {
+                                                block
+                                                    .get("text")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string())
+                                            });
+                                        let is_error = block
+                                            .get("is_error")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+                                        let entry = tool_states
+                                            .entry(tool_call_id.clone())
+                                            .or_insert_with(|| ClaudeToolState {
+                                                part_id: format!(
+                                                    "claude-tool-{}-{}",
+                                                    assistant_message_id, tool_call_id
+                                                ),
+                                                tool_call_id: tool_call_id.clone(),
+                                                tool_name: "tool".to_string(),
+                                                status: "running".to_string(),
+                                                input: Value::Object(serde_json::Map::new()),
+                                                output: None,
+                                                error: None,
+                                            });
+                                        if let Some(output) = output {
+                                            entry.output = Some(output);
+                                        }
+                                        if is_error {
+                                            entry.status = "error".to_string();
+                                            entry.error = entry.output.clone();
+                                        } else {
+                                            entry.status = "completed".to_string();
+                                        }
+                                        if !assistant_opened {
+                                            assistant_opened = true;
+                                            let _ =
+                                                tx.send(Ok(AiEvent::MessageUpdated {
+                                                    message_id: assistant_message_id.clone(),
+                                                    role: "assistant".to_string(),
+                                                    selection_hint: None,
+                                                }));
+                                        }
+                                        let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                            message_id: assistant_message_id.clone(),
+                                            part: entry.to_part(),
+                                        }));
+                                        continue;
+                                    }
+
+                                    if block_type.contains("thinking")
+                                        || block_type.contains("reasoning")
+                                    {
+                                        if let Some(text) =
+                                            block.get("text").and_then(|v| v.as_str())
+                                        {
+                                            if !assistant_opened {
+                                                assistant_opened = true;
+                                                let _ = tx.send(Ok(
+                                                    AiEvent::MessageUpdated {
+                                                        message_id: assistant_message_id
+                                                            .clone(),
+                                                        role: "assistant".to_string(),
+                                                        selection_hint: None,
+                                                    },
+                                                ));
+                                            }
+                                            assistant_reasoning.push_str(text);
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
                                                 message_id: assistant_message_id.clone(),
-                                                role: "assistant".to_string(),
-                                                selection_hint: None,
+                                                part_id: reasoning_part_id.clone(),
+                                                part_type: "reasoning".to_string(),
+                                                field: "text".to_string(),
+                                                delta: text.to_string(),
                                             }));
                                         }
-                                        assistant_text.push_str(trimmed);
-                                        assistant_text.push('\n');
-                                        let _ = tx.send(Ok(AiEvent::PartDelta {
-                                            message_id: assistant_message_id.clone(),
-                                            part_id: text_part_id.clone(),
-                                            part_type: "text".to_string(),
-                                            field: "text".to_string(),
-                                            delta: format!("{}\n", trimmed),
-                                        }));
+                                        continue;
+                                    }
+
+                                    if block_type.ends_with("delta") {
+                                        if let Some(text) = block
+                                            .get("text")
+                                            .and_then(|v| v.as_str())
+                                            .or_else(|| {
+                                                block.get("delta").and_then(|v| v.as_str())
+                                            })
+                                        {
+                                            if !assistant_opened {
+                                                assistant_opened = true;
+                                                let _ = tx.send(Ok(
+                                                    AiEvent::MessageUpdated {
+                                                        message_id: assistant_message_id
+                                                            .clone(),
+                                                        role: "assistant".to_string(),
+                                                        selection_hint: None,
+                                                    },
+                                                ));
+                                            }
+                                            assistant_text.push_str(text);
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                message_id: assistant_message_id.clone(),
+                                                part_id: text_part_id.clone(),
+                                                part_type: "text".to_string(),
+                                                field: "text".to_string(),
+                                                delta: text.to_string(),
+                                            }));
+                                        }
+                                        continue;
+                                    }
+
+                                    if block_type == "text" {
+                                        if let Some(snapshot) =
+                                            block.get("text").and_then(|v| v.as_str())
+                                        {
+                                            if let Some(delta) =
+                                                ClaudeCodeAgent::emit_snapshot_delta(
+                                                    &mut assistant_text,
+                                                    snapshot,
+                                                )
+                                            {
+                                                if !assistant_opened {
+                                                    assistant_opened = true;
+                                                    let _ = tx.send(Ok(
+                                                        AiEvent::MessageUpdated {
+                                                            message_id: assistant_message_id
+                                                                .clone(),
+                                                            role: "assistant".to_string(),
+                                                            selection_hint: None,
+                                                        },
+                                                    ));
+                                                }
+                                                let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                    message_id: assistant_message_id.clone(),
+                                                    part_id: text_part_id.clone(),
+                                                    part_type: "text".to_string(),
+                                                    field: "text".to_string(),
+                                                    delta,
+                                                }));
+                                            }
+                                        }
                                     }
                                 }
+
+                                // 检查 result 事件（标志一轮对话结束）
+                                let event_type = value
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                if event_type == "result" {
+                                    if let Some(usage) = value.get("usage") {
+                                        last_usage_json = Some(usage.clone());
+                                    }
+                                    if let Some(snapshot) =
+                                        value.get("result").and_then(|v| v.as_str())
+                                    {
+                                        if let Some(delta) =
+                                            ClaudeCodeAgent::emit_snapshot_delta(
+                                                &mut assistant_text,
+                                                snapshot,
+                                            )
+                                        {
+                                            if !assistant_opened {
+                                                assistant_opened = true;
+                                                let _ = tx.send(Ok(
+                                                    AiEvent::MessageUpdated {
+                                                        message_id: assistant_message_id
+                                                            .clone(),
+                                                        role: "assistant".to_string(),
+                                                        selection_hint: None,
+                                                    },
+                                                ));
+                                            }
+                                            let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                message_id: assistant_message_id.clone(),
+                                                part_id: text_part_id.clone(),
+                                                part_type: "text".to_string(),
+                                                field: "text".to_string(),
+                                                delta,
+                                            }));
+                                        }
+                                    }
+                                    break;
+                                }
                             }
-                            Ok(None) => {
-                                stdout_closed = true;
-                            }
-                            Err(err) => {
-                                terminated_with_error = true;
-                                let _ = tx.send(Err(format!("Claude stdout read failed: {}", err)));
-                                break;
+                            Err(_) => {
+                                if !assistant_opened {
+                                    assistant_opened = true;
+                                    let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                        message_id: assistant_message_id.clone(),
+                                        role: "assistant".to_string(),
+                                        selection_hint: None,
+                                    }));
+                                }
+                                assistant_text.push_str(trimmed);
+                                assistant_text.push('\n');
+                                let _ = tx.send(Ok(AiEvent::PartDelta {
+                                    message_id: assistant_message_id.clone(),
+                                    part_id: text_part_id.clone(),
+                                    part_type: "text".to_string(),
+                                    field: "text".to_string(),
+                                    delta: format!("{}\n", trimmed),
+                                }));
                             }
                         }
                     }
-                    line = stderr_lines.next_line(), if !stderr_closed => {
-                        match line {
-                            Ok(Some(line)) => {
-                                let trimmed = line.trim();
-                                if !trimmed.is_empty() {
-                                    debug!("[claude stderr] {}", trimmed);
-                                    let snippet = if trimmed.chars().count() > 300 {
-                                        format!("{}...", trimmed.chars().take(300).collect::<String>())
-                                    } else {
-                                        trimmed.to_string()
-                                    };
-                                    if stderr_tail.len() >= STDERR_TAIL_MAX {
-                                        stderr_tail.pop_front();
-                                    }
-                                    stderr_tail.push_back(snippet);
-                                }
-                            }
-                            Ok(None) => {
-                                stderr_closed = true;
-                            }
-                            Err(err) => {
-                                terminated_with_error = true;
-                                let _ = tx.send(Err(format!("Claude stderr read failed: {}", err)));
-                                break;
-                            }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // 进程退出
+                        if !assistant_opened {
+                            let _ = tx.send(Err(
+                                "Claude process exited unexpectedly".to_string()
+                            ));
                         }
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("[claude] broadcast lagged by {} messages", n);
+                        continue;
                     }
                 }
             }
 
-            // 先构建助手消息并存入内存，再发送 Done，
-            // 避免客户端收到 Done 后立即 requestAISessionMessages 时助手消息尚未入库。
+            // 构建助手消息并存入内存
             let mut assistant_parts = Vec::<AiPart>::new();
             if !assistant_reasoning.is_empty() {
                 assistant_parts.push(AiPart {
@@ -1046,7 +1446,7 @@ impl AiAgent for ClaudeCodeAgent {
                     if let Some(real_session_id) = parsed_claude_session_id {
                         record.claude_session_id = Some(real_session_id);
                     }
-                    record.selection_hint = history_hint.clone();
+                    record.selection_hint = history_hint_owned.clone();
                     if let Some(usage_json) = last_usage_json {
                         if let Some(percent) = extract_context_remaining_percent(&usage_json) {
                             record.context_usage = Some(AiSessionContextUsage {
@@ -1060,45 +1460,30 @@ impl AiAgent for ClaudeCodeAgent {
                             role: "assistant".to_string(),
                             created_at: Some(ClaudeCodeAgent::now_ms()),
                             agent: None,
-                            model_provider_id: history_hint.model_provider_id.clone(),
-                            model_id: history_hint.model_id.clone(),
+                            model_provider_id: history_hint_owned.model_provider_id,
+                            model_id: history_hint_owned.model_id,
                             parts: assistant_parts,
                         });
                     }
                 }
             }
 
-            if !terminated_with_error {
-                match child.wait().await {
-                    Ok(status) if status.success() => {
-                        if !assistant_opened {
-                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
-                                message_id: assistant_message_id,
-                                role: "assistant".to_string(),
-                                selection_hint: None,
-                            }));
-                        }
-                        let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
-                    }
-                    Ok(status) => {
-                        if stderr_tail.is_empty() {
-                            let _ = tx.send(Err(format!("Claude exited with status: {}", status)));
-                        } else {
-                            let stderr_summary =
-                                stderr_tail.into_iter().collect::<Vec<_>>().join(" | ");
-                            let _ = tx.send(Err(format!(
-                                "Claude exited with status: {}. stderr: {}",
-                                status, stderr_summary
-                            )));
-                        }
-                    }
-                    Err(err) => {
-                        let _ = tx.send(Err(format!("Claude wait failed: {}", err)));
-                    }
-                }
+            if !assistant_opened {
+                let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                    message_id: assistant_message_id,
+                    role: "assistant".to_string(),
+                    selection_hint: None,
+                }));
             }
+            let _ = tx.send(Ok(AiEvent::Done { stop_reason: None }));
 
-            active_aborters.lock().await.remove(&key);
+            // 清理 turn 标记
+            active_turns.lock().await.remove(&key_owned);
+
+            // 如果进程已死，清理进程句柄
+            if !handle_alive.alive.load(Ordering::SeqCst) {
+                processes.lock().await.remove(&key_owned);
+            }
         });
 
         Ok(Box::pin(UnboundedReceiverStream::new(rx)))
@@ -1123,11 +1508,14 @@ impl AiAgent for ClaudeCodeAgent {
     }
 
     async fn delete_session(&self, directory: &str, session_id: &str) -> Result<(), String> {
-        let normalized = Self::normalize_directory(directory);
-        let key = Self::runtime_key(&normalized, session_id);
-        if let Some(aborter) = self.active_aborters.lock().await.remove(&key) {
-            let _ = aborter.send(()).await;
+        // 先终止进程
+        let key = Self::runtime_key(&Self::normalize_directory(directory), session_id);
+        if let Some(handle) = self.processes.lock().await.remove(&key) {
+            if let Some(kill_tx) = handle.kill_tx.lock().await.take() {
+                let _ = kill_tx.send(()).await;
+            }
         }
+        self.active_turns.lock().await.remove(&key);
         self.sessions.lock().await.remove(session_id);
         Ok(())
     }
@@ -1190,9 +1578,12 @@ impl AiAgent for ClaudeCodeAgent {
 
     async fn abort_session(&self, directory: &str, session_id: &str) -> Result<(), String> {
         let key = Self::runtime_key(directory, session_id);
-        if let Some(aborter) = self.active_aborters.lock().await.remove(&key) {
-            let _ = aborter.send(()).await;
+        if let Some(handle) = self.processes.lock().await.remove(&key) {
+            if let Some(kill_tx) = handle.kill_tx.lock().await.take() {
+                let _ = kill_tx.send(()).await;
+            }
         }
+        self.active_turns.lock().await.remove(&key);
         Ok(())
     }
 
@@ -1206,7 +1597,7 @@ impl AiAgent for ClaudeCodeAgent {
         session_id: &str,
     ) -> Result<AiSessionStatus, String> {
         let key = Self::runtime_key(directory, session_id);
-        if self.active_aborters.lock().await.contains_key(&key) {
+        if self.active_turns.lock().await.contains(&key) {
             Ok(AiSessionStatus::Busy)
         } else {
             Ok(AiSessionStatus::Idle)
