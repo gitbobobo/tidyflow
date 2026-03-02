@@ -14,8 +14,8 @@ use crate::server::protocol::{
 use super::stage::{active_agents, build_agents};
 use super::utils::{evolution_workspace_dir, workspace_key};
 use super::{
-    EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState, DEFAULT_VERIFY_LIMIT,
-    STAGES,
+    EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
+    BACKLOG_CONTRACT_VERSION_V2, DEFAULT_VERIFY_LIMIT, STAGES,
 };
 
 fn initial_global_loop_round() -> u32 {
@@ -227,6 +227,7 @@ impl EvolutionManager {
                     loop_round_limit: req.loop_round_limit.max(1),
                     verify_iteration: 0,
                     verify_iteration_limit: DEFAULT_VERIFY_LIMIT,
+                    backlog_contract_version: BACKLOG_CONTRACT_VERSION_V2,
                     created_at: now_rfc3339,
                     stop_requested: false,
                     llm_defined_acceptance_criteria: Vec::new(),

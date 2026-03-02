@@ -25,6 +25,7 @@ pub(super) struct WorkspaceRunState {
     pub(super) loop_round_limit: u32,
     pub(super) verify_iteration: u32,
     pub(super) verify_iteration_limit: u32,
+    pub(super) backlog_contract_version: u32,
     pub(super) created_at: String,
     pub(super) stop_requested: bool,
     pub(super) llm_defined_acceptance_criteria: Vec<serde_json::Value>,

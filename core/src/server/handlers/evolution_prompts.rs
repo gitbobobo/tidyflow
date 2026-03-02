@@ -20,11 +20,6 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `CYCLE_FILE_PATH`（仅同步方向与验收字段）
 - `handoff.md` 交接文档
 
-`handoff.md` 内容（供 PlanAgent 读取）：
-1. **方向决策摘要**：选定的 `direction_type` 与一句话理由
-2. **能力评估结论**：UI/测试/构建/运行时能力的评估结果（如 UI 是否可用、测试框架是否就绪）
-3. **机会点清单**：从 `direction.lifecycle_scan.json` 中提取的关键改进机会（最多 5 项）
-
 `direction.lifecycle_scan.json` 最小要求：
 - 顶层包含：`$schema_version`、`cycle_id`、`project_type`、`ui_capability`、`domains`、`updated_at`
 - `domains` 至少 1 项，每项包含：`domain`、`status`、`evidence_paths`、`findings`、`opportunities`
@@ -94,7 +89,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 必须写入：
 - `STAGE_FILE_PATH`（即 `stage.plan.json`）
 - `PLAN_EXECUTION_PATH`
-- `handoff.md` 交接文档
+- `handoff.md` 交接文档（追加）
 
 `plan.execution.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`selected_direction_type`、`goal`、`scope`、`work_items`、`verification_plan`、`updated_at`
@@ -141,13 +136,16 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - `stage.plan.json`
 - 对应既有实现结果（若存在）
 - 当 `VERIFY_ITERATION > 0`，还必须读取 `VERIFY_RESULT_PATH` 与 `JUDGE_RESULT_PATH`
+- 当 `BACKLOG_CONTRACT_VERSION >= 2` 且 `VERIFY_ITERATION > 0`，还必须读取：
+  - `MANAGED_FAILURE_BACKLOG_PATH`
+  - `MANAGED_BACKLOG_COVERAGE_PATH`
 - `handoff.md`
 
 必须写入：
 - `STAGE_FILE_PATH`（当前 lane 的 `stage.<lane>.json`）
 - 当前 lane 对应结果文件：
   - `IMPLEMENT_GENERAL_RESULT_PATH` 或 `IMPLEMENT_VISUAL_RESULT_PATH` 或 `IMPLEMENT_ADVANCED_RESULT_PATH`
-- `handoff.md`
+- `handoff.md`（追加）
 
 执行规则：
 - 仅处理 `plan.execution.json.work_items` 中分配给当前 lane 的任务。
@@ -157,9 +155,18 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 `implement_<lane>.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`summary`、`work_item_results`、`changed_files`、`commands_executed`、`quick_checks`、`updated_at`
 - 当 `VERIFY_ITERATION > 0`，额外强制：
-  - `failure_backlog`（每项 `id` 唯一，且 `implementation_agent` 必须是 `implement_general|implement_visual|implement_advanced|unknown`）
-  - `backlog_coverage`（与 `failure_backlog` 一一对应）
-  - `backlog_coverage_summary.total/done/blocked/not_done`（数字）
+  - 当 `BACKLOG_CONTRACT_VERSION >= 2`：必须提供 `backlog_resolution_updates` 数组，每项必须包含：
+    - `source_criteria_id`
+    - `source_check_id`
+    - `work_item_id`
+    - `implementation_agent`（必须等于当前 lane）
+    - `status`（只能是 `done|blocked|not_done`）
+    - `evidence`
+    - `notes`
+  - 当 `BACKLOG_CONTRACT_VERSION < 2`：沿用旧结构 `failure_backlog/backlog_coverage/backlog_coverage_summary`
+
+严格禁止：
+- 当 `BACKLOG_CONTRACT_VERSION >= 2`，禁止自行生成/改写 backlog 主键（如 `failure_backlog.id`、`failure_backlog_id`）；主键由系统托管。
 
 `stage.<lane>.json` 成功态：
 - `status="done"`
@@ -190,19 +197,22 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - `stage.plan.json`
 - `plan.execution.json`
 - 三个实现阶段文件与对应 result 文件（存在即读）
+- 当 `BACKLOG_CONTRACT_VERSION >= 2` 且 `VERIFY_ITERATION > 0`，必须读取：
+  - `MANAGED_FAILURE_BACKLOG_PATH`
+  - `MANAGED_BACKLOG_COVERAGE_PATH`
 - `handoff.md`
 
 必须写入：
 - `STAGE_FILE_PATH`（`stage.verify.json`）
 - `VERIFY_RESULT_PATH`
-- `handoff.md`
+- `handoff.md`（追加）
 
 `verify.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`summary`、`check_results`、`acceptance_evaluation`、`verification_overall`、`updated_at`
 - `acceptance_evaluation` 必须覆盖全部验收标准，状态只能是 `pass|fail|insufficient_evidence`
 - `verification_overall.result` 只能是 `pass|fail`
 - 当 `VERIFY_ITERATION > 0`，必须提供：
-  - `carryover_verification.items`（覆盖全部 backlog id）
+  - `carryover_verification.items`（覆盖全部 backlog id；当 `BACKLOG_CONTRACT_VERSION >= 2` 时以 `MANAGED_FAILURE_BACKLOG_PATH` 为准）
   - `carryover_verification.summary.total/covered/missing/blocked`（数字）
   - 若 `summary.missing > 0`，`verification_overall.result` 必须是 `fail`
 
@@ -230,12 +240,15 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 必须读取：
 - `CYCLE_FILE_PATH`
 - direction/plan/implement/verify 阶段文件与 result 文件
+- 当 `BACKLOG_CONTRACT_VERSION >= 2` 且 `VERIFY_ITERATION > 0`，必须读取：
+  - `MANAGED_FAILURE_BACKLOG_PATH`
+  - `MANAGED_BACKLOG_COVERAGE_PATH`
 - `handoff.md`
 
 必须写入：
 - `STAGE_FILE_PATH`（`stage.judge.json`）
 - `JUDGE_RESULT_PATH`
-- `handoff.md`
+- `handoff.md`（追加）
 
 `judge.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`verify_iteration_limit`、`criteria_judgement`、`overall_result`、`next_action`、`full_next_iteration_requirements`、`updated_at`
@@ -279,7 +292,6 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - `STAGE_FILE_PATH`（`stage.report.json`）
 - `report.result.json`
 - `report.md`
-- `handoff.md`
 
 `report.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`final_result`、`direction_summary`、`acceptance_summary`、`implementation_summary`、`verification_summary`、`updated_at`

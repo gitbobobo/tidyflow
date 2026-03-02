@@ -1,7 +1,8 @@
 use chrono::Utc;
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
@@ -28,6 +29,8 @@ const STAGE_STREAM_IDLE_TIMEOUT_SECS: u64 = 180;
 const STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS: u32 = 2;
 const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
+const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.json";
+const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.json";
 
 fn should_attempt_idle_recovery(stall_recovery_attempts: u32) -> bool {
     // 对所有 AI 工具统一启用 idle 超时恢复，避免不同工具行为不一致。
@@ -48,6 +51,14 @@ impl PlanImplementationAgent {
             "implement_visual" => Some(Self::ImplementVisual),
             "implement_advanced" => Some(Self::ImplementAdvanced),
             _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ImplementGeneral => "implement_general",
+            Self::ImplementVisual => "implement_visual",
+            Self::ImplementAdvanced => "implement_advanced",
         }
     }
 }
@@ -83,6 +94,82 @@ struct StageRunContext {
     model: Option<AiModelSelection>,
     mode: Option<String>,
     config_overrides: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedFailureBacklogFile {
+    #[serde(rename = "$schema_version", default = "default_schema_version")]
+    schema_version: String,
+    cycle_id: String,
+    verify_iteration: u32,
+    items: Vec<ManagedFailureBacklogItem>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedFailureBacklogItem {
+    id: String,
+    source_criteria_id: String,
+    source_check_id: String,
+    work_item_id: String,
+    implementation_agent: String,
+    #[serde(default)]
+    requirement_ref: String,
+    #[serde(default)]
+    description: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedBacklogCoverageFile {
+    #[serde(rename = "$schema_version", default = "default_schema_version")]
+    schema_version: String,
+    cycle_id: String,
+    verify_iteration: u32,
+    items: Vec<ManagedBacklogCoverageItem>,
+    summary: ManagedBacklogCoverageSummary,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedBacklogCoverageItem {
+    backlog_id: String,
+    source_criteria_id: String,
+    source_check_id: String,
+    work_item_id: String,
+    implementation_agent: String,
+    status: String,
+    #[serde(default)]
+    evidence: serde_json::Value,
+    #[serde(default)]
+    notes: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedBacklogCoverageSummary {
+    total: u64,
+    done: u64,
+    blocked: u64,
+    not_done: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BacklogResolutionUpdate {
+    source_criteria_id: String,
+    source_check_id: String,
+    work_item_id: String,
+    implementation_agent: String,
+    status: String,
+    #[serde(default)]
+    evidence: serde_json::Value,
+    #[serde(default)]
+    notes: String,
+}
+
+fn default_schema_version() -> String {
+    "1.0".to_string()
 }
 
 fn sanitize_ai_config_options(
@@ -382,6 +469,58 @@ fn as_failing_status(status: &str) -> bool {
     )
 }
 
+fn is_valid_implementation_agent(agent: &str) -> bool {
+    matches!(
+        agent.trim().to_ascii_lowercase().as_str(),
+        "implement_general" | "implement_visual" | "implement_advanced" | "unknown"
+    )
+}
+
+fn backlog_contract_version_from_cycle(cycle_dir: &Path) -> Result<u32, String> {
+    let cycle = read_json_file(cycle_dir, "cycle.json")?;
+    let version = cycle
+        .get("backlog_contract_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u32;
+    Ok(version)
+}
+
+fn managed_failure_backlog_path(cycle_dir: &Path) -> PathBuf {
+    cycle_dir.join(MANAGED_FAILURE_BACKLOG_FILE)
+}
+
+fn managed_backlog_coverage_path(cycle_dir: &Path) -> PathBuf {
+    cycle_dir.join(MANAGED_BACKLOG_COVERAGE_FILE)
+}
+
+fn normalize_backlog_status(status: &str) -> Option<&'static str> {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "done" => Some("done"),
+        "blocked" => Some("blocked"),
+        "not_done" | "notdone" | "missing" => Some("not_done"),
+        _ => None,
+    }
+}
+
+fn coverage_summary(items: &[ManagedBacklogCoverageItem]) -> ManagedBacklogCoverageSummary {
+    let total = items.len() as u64;
+    let done = items
+        .iter()
+        .filter(|item| item.status.eq_ignore_ascii_case("done"))
+        .count() as u64;
+    let blocked = items
+        .iter()
+        .filter(|item| item.status.eq_ignore_ascii_case("blocked"))
+        .count() as u64;
+    let not_done = total.saturating_sub(done).saturating_sub(blocked);
+    ManagedBacklogCoverageSummary {
+        total,
+        done,
+        blocked,
+        not_done,
+    }
+}
+
 impl EvolutionManager {
     fn validate_plan_artifact(cycle_dir: &Path) -> Result<(), String> {
         let value = read_json_file(cycle_dir, "plan.execution.json")?;
@@ -410,9 +549,495 @@ impl EvolutionManager {
         }
     }
 
+    fn preferred_agent_from_set(
+        agents: &HashSet<PlanImplementationAgent>,
+    ) -> Option<PlanImplementationAgent> {
+        if agents.contains(&PlanImplementationAgent::ImplementGeneral) {
+            return Some(PlanImplementationAgent::ImplementGeneral);
+        }
+        if agents.contains(&PlanImplementationAgent::ImplementVisual) {
+            return Some(PlanImplementationAgent::ImplementVisual);
+        }
+        if agents.contains(&PlanImplementationAgent::ImplementAdvanced) {
+            return Some(PlanImplementationAgent::ImplementAdvanced);
+        }
+        None
+    }
+
+    fn parse_check_to_work_items(
+        plan: &serde_json::Value,
+    ) -> Result<HashMap<String, Vec<(String, PlanImplementationAgent)>>, String> {
+        let work_items = plan
+            .pointer("/work_items")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "plan.execution.json 缺少 work_items".to_string())?;
+        let mut mapping: HashMap<String, Vec<(String, PlanImplementationAgent)>> = HashMap::new();
+        for (idx, item) in work_items.iter().enumerate() {
+            let obj = item
+                .as_object()
+                .ok_or_else(|| format!("work_items[{}] 必须是对象", idx))?;
+            let work_item_id = obj
+                .get("id")
+                .and_then(parse_non_empty_string)
+                .ok_or_else(|| format!("work_items[{}] 缺少 id", idx))?;
+            let agent = obj
+                .get("implementation_agent")
+                .and_then(|v| v.as_str())
+                .and_then(PlanImplementationAgent::parse)
+                .ok_or_else(|| format!("work_items[{}].implementation_agent 缺失或非法", idx))?;
+            let check_ids = obj
+                .get("linked_check_ids")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| format!("work_items[{}] 缺少 linked_check_ids", idx))?;
+            for (check_idx, check_id) in check_ids.iter().enumerate() {
+                let check_id = check_id
+                    .as_str()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "work_items[{}].linked_check_ids[{}] 必须是非空字符串",
+                            idx, check_idx
+                        )
+                    })?;
+                mapping
+                    .entry(check_id)
+                    .or_default()
+                    .push((work_item_id.clone(), agent));
+            }
+        }
+        Ok(mapping)
+    }
+
+    fn read_managed_failure_backlog(cycle_dir: &Path) -> Result<ManagedFailureBacklogFile, String> {
+        let path = managed_failure_backlog_path(cycle_dir);
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("读取 {} 失败: {}", MANAGED_FAILURE_BACKLOG_FILE, e))?;
+        serde_json::from_str::<ManagedFailureBacklogFile>(&content)
+            .map_err(|e| format!("解析 {} 失败: {}", MANAGED_FAILURE_BACKLOG_FILE, e))
+    }
+
+    fn write_managed_failure_backlog(
+        cycle_dir: &Path,
+        payload: &ManagedFailureBacklogFile,
+    ) -> Result<(), String> {
+        let value = serde_json::to_value(payload)
+            .map_err(|e| format!("序列化 {} 失败: {}", MANAGED_FAILURE_BACKLOG_FILE, e))?;
+        write_json(&managed_failure_backlog_path(cycle_dir), &value)
+    }
+
+    fn read_managed_backlog_coverage(
+        cycle_dir: &Path,
+    ) -> Result<ManagedBacklogCoverageFile, String> {
+        let path = managed_backlog_coverage_path(cycle_dir);
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("读取 {} 失败: {}", MANAGED_BACKLOG_COVERAGE_FILE, e))?;
+        serde_json::from_str::<ManagedBacklogCoverageFile>(&content)
+            .map_err(|e| format!("解析 {} 失败: {}", MANAGED_BACKLOG_COVERAGE_FILE, e))
+    }
+
+    fn write_managed_backlog_coverage(
+        cycle_dir: &Path,
+        payload: &ManagedBacklogCoverageFile,
+    ) -> Result<(), String> {
+        let value = serde_json::to_value(payload)
+            .map_err(|e| format!("序列化 {} 失败: {}", MANAGED_BACKLOG_COVERAGE_FILE, e))?;
+        write_json(&managed_backlog_coverage_path(cycle_dir), &value)
+    }
+
+    fn generate_managed_backlog_from_judge(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+    ) -> Result<(), String> {
+        let plan = read_json_file(cycle_dir, "plan.execution.json")?;
+        let tables = parse_plan_routing_tables(&plan)?;
+        let check_to_work_items = Self::parse_check_to_work_items(&plan)?;
+        let judge = read_json_file(cycle_dir, "judge.result.json")?;
+        let requirements = judge
+            .pointer("/full_next_iteration_requirements")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
+                    .to_string()
+            })?;
+        let cycle_id = read_json_file(cycle_dir, "cycle.json")?
+            .get("cycle_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let mut seen_selectors: HashSet<(String, String, String, String)> = HashSet::new();
+        let mut backlog_items: Vec<ManagedFailureBacklogItem> = Vec::new();
+
+        for (idx, requirement) in requirements.iter().enumerate() {
+            let requirement_ref = id_from_value(
+                requirement,
+                &[
+                    "id",
+                    "item_id",
+                    "criteria_id",
+                    "title",
+                    "check_id",
+                    "source_check_id",
+                ],
+            )
+            .unwrap_or_else(|| format!("requirement-{}", idx + 1));
+            let source_criteria_id = id_from_value(
+                requirement,
+                &["source_criteria_id", "criteria_id", "criterion_id"],
+            )
+            .unwrap_or_else(|| "unknown".to_string());
+
+            let mut source_check_id = id_from_value(
+                requirement,
+                &["source_check_id", "check_id", "linked_check_id"],
+            );
+            if source_check_id.is_none() {
+                source_check_id = tables
+                    .criteria_to_checks
+                    .get(&source_criteria_id)
+                    .and_then(|checks| checks.first().cloned());
+            }
+            let source_check_id = source_check_id.unwrap_or_else(|| "unknown".to_string());
+
+            let mut agent_set: HashSet<PlanImplementationAgent> = HashSet::new();
+            if let Some(agent) = requirement
+                .get("implementation_agent")
+                .and_then(|v| v.as_str())
+                .and_then(PlanImplementationAgent::parse)
+            {
+                agent_set.insert(agent);
+            } else {
+                if let Some(mapped) = tables.check_to_agents.get(&source_check_id) {
+                    agent_set.extend(mapped.iter().copied());
+                }
+                if let Some(checks) = tables.criteria_to_checks.get(&source_criteria_id) {
+                    for check_id in checks {
+                        if let Some(mapped) = tables.check_to_agents.get(check_id) {
+                            agent_set.extend(mapped.iter().copied());
+                        }
+                    }
+                }
+            }
+            let implementation_agent = Self::preferred_agent_from_set(&agent_set)
+                .map(|agent| agent.as_str().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let mut work_item_id = id_from_value(requirement, &["work_item_id"]);
+            if work_item_id.is_none() {
+                if let Some(mapped_items) = check_to_work_items.get(&source_check_id) {
+                    let preferred = mapped_items
+                        .iter()
+                        .find(|(_, agent)| agent.as_str() == implementation_agent)
+                        .or_else(|| mapped_items.first());
+                    work_item_id = preferred.map(|(id, _)| id.clone());
+                }
+            }
+            let work_item_id =
+                work_item_id.unwrap_or_else(|| format!("{}-wi", requirement_ref.clone()));
+
+            let selector = (
+                source_criteria_id.clone(),
+                source_check_id.clone(),
+                work_item_id.clone(),
+                implementation_agent.clone(),
+            );
+            if !seen_selectors.insert(selector) {
+                continue;
+            }
+
+            let now = Utc::now().to_rfc3339();
+            backlog_items.push(ManagedFailureBacklogItem {
+                id: Uuid::now_v7().to_string(),
+                source_criteria_id,
+                source_check_id,
+                work_item_id,
+                implementation_agent,
+                requirement_ref,
+                description: requirement
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                created_at: now.clone(),
+                updated_at: now,
+            });
+        }
+
+        let coverage_items: Vec<ManagedBacklogCoverageItem> = backlog_items
+            .iter()
+            .map(|item| ManagedBacklogCoverageItem {
+                backlog_id: item.id.clone(),
+                source_criteria_id: item.source_criteria_id.clone(),
+                source_check_id: item.source_check_id.clone(),
+                work_item_id: item.work_item_id.clone(),
+                implementation_agent: item.implementation_agent.clone(),
+                status: "not_done".to_string(),
+                evidence: serde_json::Value::Null,
+                notes: String::new(),
+                updated_at: Utc::now().to_rfc3339(),
+            })
+            .collect();
+        let summary = coverage_summary(&coverage_items);
+        let now = Utc::now().to_rfc3339();
+        Self::write_managed_failure_backlog(
+            cycle_dir,
+            &ManagedFailureBacklogFile {
+                schema_version: default_schema_version(),
+                cycle_id: cycle_id.clone(),
+                verify_iteration,
+                items: backlog_items,
+                updated_at: now.clone(),
+            },
+        )?;
+        Self::write_managed_backlog_coverage(
+            cycle_dir,
+            &ManagedBacklogCoverageFile {
+                schema_version: default_schema_version(),
+                cycle_id,
+                verify_iteration,
+                items: coverage_items,
+                summary,
+                updated_at: now,
+            },
+        )?;
+        Ok(())
+    }
+
+    fn sync_managed_backlog_for_implement_stage(
+        cycle_dir: &Path,
+        stage: &str,
+    ) -> Result<(), String> {
+        let Some(file_name) = Self::implement_result_file_for_stage(stage) else {
+            return Ok(());
+        };
+        let Some(lane) = Self::lane_for_stage(stage) else {
+            return Ok(());
+        };
+        let lane_name = lane.as_str();
+
+        let mut managed_backlog = Self::read_managed_failure_backlog(cycle_dir)?;
+        let mut managed_coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+        let mut lane_result = read_json_file(cycle_dir, file_name)?;
+        let updates = lane_result
+            .pointer("/backlog_resolution_updates")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| format!("{}.backlog_resolution_updates 缺失", file_name))?;
+
+        for (idx, item) in updates.iter().enumerate() {
+            let parsed =
+                serde_json::from_value::<BacklogResolutionUpdate>(item.clone()).map_err(|e| {
+                    format!(
+                        "{}.backlog_resolution_updates[{}] 非法: {}",
+                        file_name, idx, e
+                    )
+                })?;
+            if parsed.source_criteria_id.trim().is_empty()
+                || parsed.source_check_id.trim().is_empty()
+                || parsed.work_item_id.trim().is_empty()
+            {
+                return Err(format!(
+                    "{}.backlog_resolution_updates[{}] selector 字段不能为空",
+                    file_name, idx
+                ));
+            }
+            if parsed.implementation_agent.trim() != lane_name {
+                return Err(format!(
+                    "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
+                    file_name, idx, lane_name
+                ));
+            }
+            let Some(normalized_status) = normalize_backlog_status(&parsed.status) else {
+                return Err(format!(
+                    "{}.backlog_resolution_updates[{}].status 必须是 done|blocked|not_done",
+                    file_name, idx
+                ));
+            };
+
+            let matched_indexes = managed_backlog
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, backlog)| {
+                    backlog.source_criteria_id == parsed.source_criteria_id
+                        && backlog.source_check_id == parsed.source_check_id
+                        && backlog.work_item_id == parsed.work_item_id
+                        && backlog.implementation_agent == parsed.implementation_agent
+                })
+                .map(|(i, _)| i)
+                .collect::<Vec<usize>>();
+
+            if matched_indexes.is_empty() {
+                warn!(
+                    "evo_backlog_mapping_missing: cycle_dir={}, stage={}, selector=({}, {}, {}, {}), candidates=0",
+                    cycle_dir.display(),
+                    stage,
+                    parsed.source_criteria_id,
+                    parsed.source_check_id,
+                    parsed.work_item_id,
+                    parsed.implementation_agent
+                );
+                return Err(format!(
+                    "evo_backlog_mapping_missing: selector=({}, {}, {}, {}), candidates=0",
+                    parsed.source_criteria_id,
+                    parsed.source_check_id,
+                    parsed.work_item_id,
+                    parsed.implementation_agent
+                ));
+            }
+            if matched_indexes.len() > 1 {
+                warn!(
+                    "evo_backlog_mapping_ambiguous: cycle_dir={}, stage={}, selector=({}, {}, {}, {}), candidates={}",
+                    cycle_dir.display(),
+                    stage,
+                    parsed.source_criteria_id,
+                    parsed.source_check_id,
+                    parsed.work_item_id,
+                    parsed.implementation_agent,
+                    matched_indexes.len()
+                );
+                return Err(format!(
+                    "evo_backlog_mapping_ambiguous: selector=({}, {}, {}, {}), candidates={}",
+                    parsed.source_criteria_id,
+                    parsed.source_check_id,
+                    parsed.work_item_id,
+                    parsed.implementation_agent,
+                    matched_indexes.len()
+                ));
+            }
+            let backlog_id = managed_backlog.items[matched_indexes[0]].id.clone();
+            let coverage = managed_coverage
+                .items
+                .iter_mut()
+                .find(|coverage| coverage.backlog_id == backlog_id)
+                .ok_or_else(|| {
+                    format!(
+                        "managed.backlog_coverage 缺少 backlog_id={}（stage={}）",
+                        backlog_id, stage
+                    )
+                })?;
+            coverage.status = normalized_status.to_string();
+            coverage.evidence = parsed.evidence;
+            coverage.notes = parsed.notes;
+            coverage.updated_at = Utc::now().to_rfc3339();
+        }
+
+        managed_coverage.summary = coverage_summary(&managed_coverage.items);
+        managed_coverage.updated_at = Utc::now().to_rfc3339();
+        Self::write_managed_backlog_coverage(cycle_dir, &managed_coverage)?;
+
+        let lane_backlog = managed_backlog
+            .items
+            .iter()
+            .filter(|item| item.implementation_agent == lane_name)
+            .cloned()
+            .collect::<Vec<ManagedFailureBacklogItem>>();
+        let lane_ids: HashSet<String> = lane_backlog.iter().map(|item| item.id.clone()).collect();
+        let lane_coverage = managed_coverage
+            .items
+            .iter()
+            .filter(|item| lane_ids.contains(&item.backlog_id))
+            .cloned()
+            .collect::<Vec<ManagedBacklogCoverageItem>>();
+        let lane_summary = coverage_summary(&lane_coverage);
+
+        let lane_backlog_json = lane_backlog
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "id": item.id,
+                    "source_criteria_id": item.source_criteria_id,
+                    "source_check_id": item.source_check_id,
+                    "work_item_id": item.work_item_id,
+                    "implementation_agent": item.implementation_agent,
+                    "description": item.description,
+                    "requirement_ref": item.requirement_ref
+                })
+            })
+            .collect::<Vec<serde_json::Value>>();
+        let lane_coverage_json = lane_coverage
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "id": item.backlog_id,
+                    "item_id": item.backlog_id,
+                    "failure_backlog_id": item.backlog_id,
+                    "backlog_id": item.backlog_id,
+                    "source_criteria_id": item.source_criteria_id,
+                    "source_check_id": item.source_check_id,
+                    "work_item_id": item.work_item_id,
+                    "implementation_agent": item.implementation_agent,
+                    "status": item.status,
+                    "evidence": item.evidence,
+                    "notes": item.notes
+                })
+            })
+            .collect::<Vec<serde_json::Value>>();
+
+        let lane_obj = lane_result
+            .as_object_mut()
+            .ok_or_else(|| format!("{} 顶层必须是对象", file_name))?;
+        lane_obj.insert(
+            "failure_backlog".to_string(),
+            serde_json::Value::Array(lane_backlog_json),
+        );
+        lane_obj.insert(
+            "backlog_coverage".to_string(),
+            serde_json::Value::Array(lane_coverage_json),
+        );
+        lane_obj.insert(
+            "backlog_coverage_summary".to_string(),
+            serde_json::json!({
+                "total": lane_summary.total,
+                "done": lane_summary.done,
+                "blocked": lane_summary.blocked,
+                "not_done": lane_summary.not_done
+            }),
+        );
+        lane_obj.insert(
+            "updated_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+        write_json(&cycle_dir.join(file_name), &lane_result)?;
+        managed_backlog.updated_at = Utc::now().to_rfc3339();
+        Self::write_managed_failure_backlog(cycle_dir, &managed_backlog)?;
+        Ok(())
+    }
+
     fn collect_reimplementation_backlog(
         cycle_dir: &Path,
+        backlog_contract_version: u32,
     ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+        if backlog_contract_version >= 2 {
+            let backlog = Self::read_managed_failure_backlog(cycle_dir)?;
+            let coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+            let backlog_values = backlog
+                .items
+                .iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "id": item.id,
+                        "source_criteria_id": item.source_criteria_id,
+                        "source_check_id": item.source_check_id,
+                        "work_item_id": item.work_item_id,
+                        "implementation_agent": item.implementation_agent
+                    })
+                })
+                .collect::<Vec<serde_json::Value>>();
+            let coverage_values = coverage
+                .items
+                .iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "id": item.backlog_id,
+                        "item_id": item.backlog_id,
+                        "status": item.status
+                    })
+                })
+                .collect::<Vec<serde_json::Value>>();
+            return Ok((backlog_values, coverage_values));
+        }
+
         let mut all_backlog: Vec<serde_json::Value> = Vec::new();
         let mut all_coverage: Vec<serde_json::Value> = Vec::new();
         for lane in [
@@ -460,11 +1085,57 @@ impl EvolutionManager {
         Ok((all_backlog, all_coverage))
     }
 
-    fn validate_implement_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
+    fn validate_implement_artifact(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+        backlog_contract_version: u32,
+    ) -> Result<(), String> {
         if verify_iteration == 0 {
             return Ok(());
         }
-        let (backlog, coverage) = Self::collect_reimplementation_backlog(cycle_dir)?;
+        if backlog_contract_version >= 2 {
+            let backlog = Self::read_managed_failure_backlog(cycle_dir)?;
+            let coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+            let mut backlog_ids = HashSet::new();
+            for (idx, item) in backlog.items.iter().enumerate() {
+                if item.id.trim().is_empty() {
+                    return Err(format!(
+                        "managed.failure_backlog.items[{}].id 不能为空",
+                        idx
+                    ));
+                }
+                if !is_valid_implementation_agent(&item.implementation_agent) {
+                    return Err(format!(
+                        "managed.failure_backlog.items[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
+                        idx
+                    ));
+                }
+                backlog_ids.insert(item.id.clone());
+            }
+            let mut coverage_ids = HashSet::new();
+            for (idx, item) in coverage.items.iter().enumerate() {
+                if item.backlog_id.trim().is_empty() {
+                    return Err(format!(
+                        "managed.backlog_coverage.items[{}].backlog_id 不能为空",
+                        idx
+                    ));
+                }
+                let Some(_) = normalize_backlog_status(&item.status) else {
+                    return Err(format!(
+                        "managed.backlog_coverage.items[{}].status 必须是 done|blocked|not_done",
+                        idx
+                    ));
+                };
+                coverage_ids.insert(item.backlog_id.clone());
+            }
+            if backlog_ids != coverage_ids {
+                return Err("backlog_coverage 未完整覆盖 failure_backlog".to_string());
+            }
+            return Ok(());
+        }
+
+        let (backlog, coverage) =
+            Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
         for (idx, item) in backlog.iter().enumerate() {
             let Some(obj) = item.as_object() else {
                 return Err(format!("failure_backlog[{}] 必须是对象", idx));
@@ -476,10 +1147,7 @@ impl EvolutionManager {
                 .ok_or_else(|| {
                     format!("failure_backlog[{}].implementation_agent 缺失或非法", idx)
                 })?;
-            if !matches!(
-                agent.as_str(),
-                "implement_general" | "implement_visual" | "implement_advanced" | "unknown"
-            ) {
+            if !is_valid_implementation_agent(agent.as_str()) {
                 return Err(format!(
                     "failure_backlog[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
                     idx
@@ -503,12 +1171,17 @@ impl EvolutionManager {
         Ok(())
     }
 
-    fn validate_verify_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
+    fn validate_verify_artifact(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+        backlog_contract_version: u32,
+    ) -> Result<(), String> {
         if verify_iteration == 0 {
             return Ok(());
         }
         let verify_value = read_json_file(cycle_dir, "verify.result.json")?;
-        let (backlog, _) = Self::collect_reimplementation_backlog(cycle_dir)?;
+        let (backlog, _) =
+            Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
         let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
         let backlog_set: HashSet<String> = backlog_ids.iter().cloned().collect();
 
@@ -569,7 +1242,11 @@ impl EvolutionManager {
         Ok(())
     }
 
-    fn validate_judge_artifact(cycle_dir: &Path, verify_iteration: u32) -> Result<(), String> {
+    fn validate_judge_artifact(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+        _backlog_contract_version: u32,
+    ) -> Result<(), String> {
         if verify_iteration == 0 {
             return Ok(());
         }
@@ -641,14 +1318,25 @@ impl EvolutionManager {
         stage: &str,
         cycle_dir: &Path,
         verify_iteration: u32,
+        backlog_contract_version: u32,
     ) -> Result<(), String> {
         match stage {
             "plan" => Self::validate_plan_artifact(cycle_dir),
             "implement_general" | "implement_visual" | "implement_advanced" => {
-                Self::validate_implement_artifact(cycle_dir, verify_iteration)
+                Self::validate_implement_artifact(
+                    cycle_dir,
+                    verify_iteration,
+                    backlog_contract_version,
+                )
             }
-            "verify" => Self::validate_verify_artifact(cycle_dir, verify_iteration),
-            "judge" => Self::validate_judge_artifact(cycle_dir, verify_iteration),
+            "verify" => Self::validate_verify_artifact(
+                cycle_dir,
+                verify_iteration,
+                backlog_contract_version,
+            ),
+            "judge" => {
+                Self::validate_judge_artifact(cycle_dir, verify_iteration, backlog_contract_version)
+            }
             _ => Ok(()),
         }
     }
@@ -984,6 +1672,7 @@ impl EvolutionManager {
         cycle_dir: &Path,
         stage: &str,
         verify_iteration: u32,
+        backlog_contract_version: u32,
         status: &str,
     ) -> Result<(), String> {
         let Some(file_name) = Self::implement_result_file_for_stage(stage) else {
@@ -994,6 +1683,8 @@ impl EvolutionManager {
             "stage": stage,
             "status": status,
             "verify_iteration": verify_iteration,
+            "backlog_contract_version": backlog_contract_version,
+            "backlog_resolution_updates": [],
             "failure_backlog": [],
             "backlog_coverage": [],
             "backlog_coverage_summary": {
@@ -1010,6 +1701,7 @@ impl EvolutionManager {
     fn ensure_implement_result_placeholders(
         cycle_dir: &Path,
         verify_iteration: u32,
+        backlog_contract_version: u32,
         selected_lanes: &[ImplementLane],
     ) -> Result<(), String> {
         for lane in [
@@ -1025,6 +1717,7 @@ impl EvolutionManager {
                 cycle_dir,
                 stage,
                 verify_iteration,
+                backlog_contract_version,
                 "skipped",
             )?;
         }
@@ -1690,14 +2383,28 @@ impl EvolutionManager {
     ) -> Result<(), String> {
         let validation_ctx = {
             let state = self.state.lock().await;
-            state
-                .workspaces
-                .get(key)
-                .map(|entry| (entry.workspace_root.clone(), entry.verify_iteration))
+            state.workspaces.get(key).map(|entry| {
+                (
+                    entry.workspace_root.clone(),
+                    entry.verify_iteration,
+                    entry.backlog_contract_version,
+                )
+            })
         };
-        if let Some((workspace_root, verify_iteration)) = validation_ctx {
+        if let Some((workspace_root, verify_iteration, backlog_contract_version)) = validation_ctx {
             let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-            Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration)
+            let contract_version = if backlog_contract_version == 0 {
+                backlog_contract_version_from_cycle(&cycle_dir)?
+            } else {
+                backlog_contract_version
+            };
+            if verify_iteration > 0
+                && contract_version >= 2
+                && Self::lane_for_stage(stage).is_some()
+            {
+                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage)?;
+            }
+            Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration, contract_version)
                 .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
         }
         Ok(())
@@ -1785,7 +2492,7 @@ impl EvolutionManager {
         round: u32,
         ctx: &HandlerContext,
     ) -> Result<bool, String> {
-        let (verify_iteration, workspace_root, stage_profile) = {
+        let (verify_iteration, backlog_contract_version, workspace_root, stage_profile) = {
             let state = self.state.lock().await;
             let entry = state
                 .workspaces
@@ -1793,6 +2500,7 @@ impl EvolutionManager {
                 .ok_or_else(|| "workspace state missing".to_string())?;
             (
                 entry.verify_iteration,
+                entry.backlog_contract_version,
                 entry.workspace_root.clone(),
                 profile_for_stage(&entry.stage_profiles, stage),
             )
@@ -1801,7 +2509,12 @@ impl EvolutionManager {
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let implement_lanes = if Self::lane_for_stage(stage).is_some() {
             let lanes = Self::resolve_implement_lanes(&cycle_dir, verify_iteration)?;
-            Self::ensure_implement_result_placeholders(&cycle_dir, verify_iteration, &lanes)?;
+            Self::ensure_implement_result_placeholders(
+                &cycle_dir,
+                verify_iteration,
+                backlog_contract_version,
+                &lanes,
+            )?;
             Some(lanes)
         } else {
             None
@@ -1818,6 +2531,7 @@ impl EvolutionManager {
                     &cycle_dir,
                     stage,
                     verify_iteration,
+                    backlog_contract_version,
                     "skipped",
                 )?;
                 self.persist_cycle_file(key).await.ok();
@@ -2016,6 +2730,7 @@ impl EvolutionManager {
                     &cycle_dir,
                     stage,
                     verify_iteration,
+                    backlog_contract_version,
                     "done",
                 )?;
             }
@@ -2183,6 +2898,31 @@ impl EvolutionManager {
                             entry
                                 .stage_tool_call_counts
                                 .insert(stage_name.to_string(), 0);
+                        }
+                        if entry.backlog_contract_version >= 2 {
+                            match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
+                                Ok(cycle_dir) => {
+                                    if let Err(err) = Self::generate_managed_backlog_from_judge(
+                                        &cycle_dir,
+                                        entry.verify_iteration,
+                                    ) {
+                                        warn!(
+                                            "managed backlog generation failed (project={}, workspace={}, cycle_id={}, verify_iteration={}): {}",
+                                            entry.project,
+                                            entry.workspace,
+                                            entry.cycle_id,
+                                            entry.verify_iteration,
+                                            err
+                                        );
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        "managed backlog generation skipped: resolve cycle dir failed (project={}, workspace={}, cycle_id={}): {}",
+                                        entry.project, entry.workspace, entry.cycle_id, err
+                                    );
+                                }
+                            }
                         }
                         let lanes = match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
                             Ok(cycle_dir) => match Self::resolve_implement_lanes(
@@ -2693,6 +3433,51 @@ mod tests {
         }
     }
 
+    fn write_managed_backlog_files(
+        dir: &Path,
+        cycle_id: &str,
+        verify_iteration: u32,
+        backlog: Vec<serde_json::Value>,
+        coverage: Vec<serde_json::Value>,
+    ) {
+        write_json(
+            &dir.join("managed.failure_backlog.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": cycle_id,
+                "verify_iteration": verify_iteration,
+                "items": backlog,
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+        let total = coverage.len() as u64;
+        let done = coverage
+            .iter()
+            .filter(|item| item.get("status").and_then(|v| v.as_str()) == Some("done"))
+            .count() as u64;
+        let blocked = coverage
+            .iter()
+            .filter(|item| item.get("status").and_then(|v| v.as_str()) == Some("blocked"))
+            .count() as u64;
+        let not_done = total.saturating_sub(done).saturating_sub(blocked);
+        write_json(
+            &dir.join("managed.backlog_coverage.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": cycle_id,
+                "verify_iteration": verify_iteration,
+                "items": coverage,
+                "summary": {
+                    "total": total,
+                    "done": done,
+                    "blocked": blocked,
+                    "not_done": not_done
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+    }
+
     #[test]
     fn parse_judge_result_json_schema() {
         let value = serde_json::json!({
@@ -2928,7 +3713,7 @@ mod tests {
                 }
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1)
+        let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1, 1)
             .expect_err("missing failure_backlog should fail");
         assert!(err.contains("failure_backlog"));
     }
@@ -2949,7 +3734,7 @@ mod tests {
                 }
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1)
+        let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 1)
             .expect_err("missing backlog_coverage should fail");
         assert!(err.contains("backlog_coverage"));
     }
@@ -2968,7 +3753,7 @@ mod tests {
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
-        let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1)
+        let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1, 1)
             .expect_err("coverage mismatch should fail");
         assert!(err.contains("数量不一致"));
     }
@@ -3000,7 +3785,7 @@ mod tests {
                 }
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1)
+        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
             .expect_err("verify missing backlog items should fail");
         assert!(err.contains("缺少 backlog 项"));
     }
@@ -3028,7 +3813,7 @@ mod tests {
                 ]
             }),
         );
-        let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1)
+        let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 1)
             .expect_err("judge requirements missing should fail");
         assert!(err.contains("未覆盖 verify 未通过项"));
     }
@@ -3051,7 +3836,7 @@ mod tests {
                 "linked_check_ids": ["v-1"]
             })]),
         );
-        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
             .expect_err("missing implementation_agent should fail");
         assert!(err.contains("implementation_agent"));
     }
@@ -3075,7 +3860,7 @@ mod tests {
                 "linked_check_ids": ["v-1"]
             })]),
         );
-        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
             .expect_err("invalid implementation_agent should fail");
         assert!(err.contains("implementation_agent"));
     }
@@ -3098,7 +3883,7 @@ mod tests {
                 "implementation_agent": "implement_general"
             })]),
         );
-        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
             .expect_err("missing linked_check_ids should fail");
         assert!(err.contains("linked_check_ids"));
     }
@@ -3122,7 +3907,7 @@ mod tests {
                 "linked_check_ids": ["v-404"]
             })]),
         );
-        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0)
+        let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
             .expect_err("unknown linked_check_ids should fail");
         assert!(err.contains("未知 check_id"));
     }
@@ -3562,8 +4347,302 @@ mod tests {
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
-        let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1)
+        let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1, 1)
             .expect_err("invalid failure_backlog implementation_agent should fail");
         assert!(err.contains("implementation_agent"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_accept_v2_managed_backlog() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            1,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "ac-1",
+                "description": "",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "status": "done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
+            .expect("v2 managed backlog should pass validation");
+    }
+
+    #[test]
+    fn sync_managed_backlog_should_reject_selector_missing() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            1,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "ac-1",
+                "description": "",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "status": "not_done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            serde_json::json!({
+                "backlog_resolution_updates": [{
+                    "source_criteria_id": "ac-404",
+                    "source_check_id": "v-404",
+                    "work_item_id": "w-x",
+                    "implementation_agent": "implement_general",
+                    "status": "done",
+                    "evidence": {"proof": "x"},
+                    "notes": "x"
+                }]
+            }),
+        );
+        let err = EvolutionManager::sync_managed_backlog_for_implement_stage(
+            dir.path(),
+            "implement_general",
+        )
+        .expect_err("missing selector should fail");
+        assert!(err.contains("evo_backlog_mapping_missing"));
+    }
+
+    #[test]
+    fn sync_managed_backlog_should_reject_selector_ambiguous() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            1,
+            vec![
+                serde_json::json!({
+                    "id": "fb-1",
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "requirement_ref": "ac-1",
+                    "description": "",
+                    "created_at": "2026-03-02T00:00:00Z",
+                    "updated_at": "2026-03-02T00:00:00Z"
+                }),
+                serde_json::json!({
+                    "id": "fb-2",
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "requirement_ref": "ac-1",
+                    "description": "",
+                    "created_at": "2026-03-02T00:00:00Z",
+                    "updated_at": "2026-03-02T00:00:00Z"
+                }),
+            ],
+            vec![
+                serde_json::json!({
+                    "backlog_id": "fb-1",
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "status": "not_done",
+                    "evidence": null,
+                    "notes": "",
+                    "updated_at": "2026-03-02T00:00:00Z"
+                }),
+                serde_json::json!({
+                    "backlog_id": "fb-2",
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "status": "not_done",
+                    "evidence": null,
+                    "notes": "",
+                    "updated_at": "2026-03-02T00:00:00Z"
+                }),
+            ],
+        );
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            serde_json::json!({
+                "backlog_resolution_updates": [{
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "status": "done",
+                    "evidence": {"proof": "x"},
+                    "notes": "x"
+                }]
+            }),
+        );
+        let err = EvolutionManager::sync_managed_backlog_for_implement_stage(
+            dir.path(),
+            "implement_general",
+        )
+        .expect_err("ambiguous selector should fail");
+        assert!(err.contains("evo_backlog_mapping_ambiguous"));
+    }
+
+    #[test]
+    fn sync_managed_backlog_should_fill_result_and_validate() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            1,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "ac-1",
+                "description": "",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "status": "not_done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            serde_json::json!({
+                "backlog_resolution_updates": [{
+                    "source_criteria_id": "ac-1",
+                    "source_check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "implementation_agent": "implement_general",
+                    "status": "done",
+                    "evidence": {"proof": "done"},
+                    "notes": "resolved"
+                }]
+            }),
+        );
+        EvolutionManager::sync_managed_backlog_for_implement_stage(dir.path(), "implement_general")
+            .expect("sync should succeed");
+        let result = super::read_json_file(dir.path(), "implement_general.result.json")
+            .expect("implement result should be readable");
+        assert_eq!(
+            result["backlog_coverage_summary"]["total"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            result["backlog_coverage_summary"]["done"],
+            serde_json::json!(1)
+        );
+        EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
+            .expect("v2 validation should pass");
+    }
+
+    #[test]
+    fn generate_managed_backlog_should_create_files_on_judge_fail() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("cycle.json"),
+            serde_json::json!({
+                "cycle_id": "c-1"
+            }),
+        );
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [{
+                    "criteria_id": "ac-1",
+                    "check_id": "v-1",
+                    "work_item_id": "w-1",
+                    "title": "need fix"
+                }]
+            }),
+        );
+        EvolutionManager::generate_managed_backlog_from_judge(dir.path(), 1)
+            .expect("managed backlog generation should succeed");
+        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.json")
+            .expect("managed backlog should exist");
+        let coverage = super::read_json_file(dir.path(), "managed.backlog_coverage.json")
+            .expect("managed coverage should exist");
+        assert_eq!(
+            backlog["items"]
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0),
+            1
+        );
+        assert_eq!(
+            coverage["items"][0]["status"].as_str().unwrap_or_default(),
+            "not_done"
+        );
     }
 }

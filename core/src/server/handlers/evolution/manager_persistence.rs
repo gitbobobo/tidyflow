@@ -222,6 +222,7 @@ fn build_prompt_context(
     round: u32,
     verify_iteration: u32,
     verify_iteration_limit: u32,
+    backlog_contract_version: u32,
     cycle_dir: &Path,
     stage_file: &Path,
     workspace_root: &str,
@@ -234,8 +235,11 @@ fn build_prompt_context(
         "CURRENT_STAGE": stage,
         "VERIFY_ITERATION": verify_iteration,
         "VERIFY_ITERATION_LIMIT": verify_iteration_limit,
+        "BACKLOG_CONTRACT_VERSION": backlog_contract_version,
         "CYCLE_DIR": cycle_dir,
         "CYCLE_FILE_PATH": cycle_dir.join("cycle.json"),
+        "MANAGED_FAILURE_BACKLOG_PATH": cycle_dir.join("managed.failure_backlog.json"),
+        "MANAGED_BACKLOG_COVERAGE_PATH": cycle_dir.join("managed.backlog_coverage.json"),
         "PLAN_EXECUTION_PATH": cycle_dir.join("plan.execution.json"),
         "IMPLEMENT_GENERAL_RESULT_PATH": cycle_dir.join("implement_general.result.json"),
         "IMPLEMENT_VISUAL_RESULT_PATH": cycle_dir.join("implement_visual.result.json"),
@@ -286,6 +290,7 @@ impl EvolutionManager {
             "pipeline": STAGES,
             "verify_iteration": entry.verify_iteration,
             "verify_iteration_limit": entry.verify_iteration_limit,
+            "backlog_contract_version": entry.backlog_contract_version,
             "global_loop_round": entry.global_loop_round,
             "loop_round_limit": entry.loop_round_limit,
             "interrupt": {
@@ -459,7 +464,7 @@ impl EvolutionManager {
         let prompt_body = prompt_template_for_stage(stage)
             .ok_or_else(|| format!("unknown stage prompt template: {}", stage))?;
 
-        let (verify_iteration, verify_iteration_limit, workspace_root) = {
+        let (verify_iteration, verify_iteration_limit, backlog_contract_version, workspace_root) = {
             let state = self.state.lock().await;
             let Some(entry) = state.workspaces.get(key) else {
                 return Err("workspace state missing".to_string());
@@ -467,6 +472,7 @@ impl EvolutionManager {
             (
                 entry.verify_iteration,
                 entry.verify_iteration_limit,
+                entry.backlog_contract_version,
                 entry.workspace_root.clone(),
             )
         };
@@ -481,6 +487,7 @@ impl EvolutionManager {
             round,
             verify_iteration,
             verify_iteration_limit,
+            backlog_contract_version,
             &cycle_dir,
             &stage_file,
             &workspace_root,
@@ -611,9 +618,31 @@ mod tests {
             1,
             1,
             5,
+            2,
             cycle_dir,
             &stage_file,
             "/tmp/workspace",
+        );
+        assert_eq!(
+            context
+                .get("BACKLOG_CONTRACT_VERSION")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default(),
+            2
+        );
+        assert_eq!(
+            context
+                .get("MANAGED_FAILURE_BACKLOG_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/managed.failure_backlog.json"
+        );
+        assert_eq!(
+            context
+                .get("MANAGED_BACKLOG_COVERAGE_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/managed.backlog_coverage.json"
         );
         assert_eq!(
             context

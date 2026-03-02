@@ -236,6 +236,7 @@ mod tests {
                     loop_round_limit: 1,
                     verify_iteration: 0,
                     verify_iteration_limit: 1,
+                    backlog_contract_version: 2,
                     created_at: "2026-03-01T00:00:00Z".to_string(),
                     stop_requested: false,
                     llm_defined_acceptance_criteria: Vec::new(),
