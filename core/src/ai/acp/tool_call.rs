@@ -228,9 +228,28 @@ fn tool_locations_to_json(locations: &[AiToolCallLocation]) -> Value {
     )
 }
 
+/// 从 Kimi ACP 的嵌套数组格式中提取文本。
+/// 格式: `[{"content": {"text": "...", "type": "text"}, "type": "content"}, ...]`
+fn extract_text_from_content_array(arr: &[Value]) -> Option<String> {
+    let mut parts = Vec::new();
+    for item in arr {
+        let item_obj = item.as_object()?;
+        if let Some(inner) = item_obj.get("content").and_then(|v| v.as_object()) {
+            if let Some(text) = inner.get("text").and_then(|v| v.as_str()) {
+                parts.push(text);
+            }
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    normalize_non_empty_token(&parts.join(""))
+}
+
 pub(crate) fn extract_tool_output_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => normalize_non_empty_token(text),
+        Value::Array(arr) => extract_text_from_content_array(arr),
         Value::Object(obj) => {
             let pick_str = |keys: &[&str]| -> Option<String> {
                 keys.iter().find_map(|key| {
@@ -278,6 +297,12 @@ pub(crate) fn parse_tool_call_update_content(
         .or_else(|| content.get("tool_kind"))
         .and_then(|v| v.as_str())
         .and_then(normalize_non_empty_token);
+    let tool_title = content
+        .get("title")
+        .or_else(|| content.get("label"))
+        .and_then(|v| v.as_str())
+        .and_then(normalize_non_empty_token);
+    // 工具名优先从 toolName/name 提取，回退到 title 中冒号前的部分（如 "ReadFile: path" → "ReadFile"）
     let tool_name = content
         .get("toolName")
         .or_else(|| content.get("tool_name"))
@@ -285,12 +310,17 @@ pub(crate) fn parse_tool_call_update_content(
         .and_then(|v| v.as_str())
         .and_then(normalize_non_empty_token)
         .or_else(|| tool_kind.clone())
+        .or_else(|| {
+            tool_title.as_ref().map(|title| {
+                title
+                    .split(':')
+                    .next()
+                    .unwrap_or(title)
+                    .trim()
+                    .to_string()
+            })
+        })
         .unwrap_or_else(|| "unknown".to_string());
-    let tool_title = content
-        .get("title")
-        .or_else(|| content.get("label"))
-        .and_then(|v| v.as_str())
-        .and_then(normalize_non_empty_token);
     let status = Some(normalize_tool_status(
         content
             .get("status")
@@ -302,19 +332,50 @@ pub(crate) fn parse_tool_call_update_content(
             "unknown"
         },
     ));
-    let raw_input = content
+    let is_terminal_status = status
+        .as_deref()
+        .map(|s| s == "completed" || s == "error")
+        .unwrap_or(false);
+
+    let mut raw_input = content
         .get("rawInput")
         .or_else(|| content.get("raw_input"))
         .or_else(|| content.get("input"))
         .cloned()
         .filter(|v| !v.is_null());
     let nested_content = content.get("content").cloned().filter(|v| !v.is_null());
-    let raw_output = content
+
+    // Kimi ACP 格式: content 是数组 [{"content": {"text": "...", "type": "text"}, "type": "content"}]
+    // 进行中时数组文本是工具输入参数，完成时是工具输出结果
+    let array_text: Option<String> = nested_content
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .and_then(|arr| extract_text_from_content_array(arr));
+
+    if raw_input.is_none() && !is_terminal_status {
+        if let Some(ref text) = array_text {
+            raw_input = Some(Value::String(text.clone()));
+        }
+    }
+
+    let explicit_output = content
         .get("rawOutput")
         .or_else(|| content.get("raw_output"))
         .cloned()
-        .filter(|v| !v.is_null())
-        .or_else(|| nested_content.clone());
+        .filter(|v| !v.is_null());
+    let raw_output = explicit_output.or_else(|| {
+        if nested_content.as_ref().map(|v| v.is_array()).unwrap_or(false) {
+            // 数组格式：仅在终态时作为 raw_output
+            if is_terminal_status {
+                nested_content.clone()
+            } else {
+                None
+            }
+        } else {
+            nested_content.clone()
+        }
+    });
+
     let locations = parse_tool_call_locations(content).or_else(|| {
         raw_output
             .as_ref()
@@ -353,7 +414,19 @@ pub(crate) fn parse_tool_call_update_content(
         .or_else(|| content.get("delta"))
         .and_then(|v| v.as_str())
         .and_then(normalize_non_empty_token)
-        .or_else(|| nested_content.as_ref().and_then(extract_tool_output_text));
+        .or_else(|| {
+            if is_terminal_status {
+                // 终态时从数组内容或嵌套对象中提取输出
+                array_text
+                    .clone()
+                    .or_else(|| nested_content.as_ref().and_then(extract_tool_output_text))
+            } else {
+                nested_content
+                    .as_ref()
+                    .filter(|v| v.is_object())
+                    .and_then(extract_tool_output_text)
+            }
+        });
 
     Some(ParsedToolCallUpdate {
         tool_call_id,
@@ -633,4 +706,164 @@ pub(crate) fn merge_tool_state(previous: Option<&Value>, parsed: &ParsedToolCall
     }
 
     Value::Object(merged_obj)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_extract_text_from_content_array() {
+        let arr = vec![json!({"content": {"text": "hello", "type": "text"}, "type": "content"})];
+        assert_eq!(extract_text_from_content_array(&arr), Some("hello".into()));
+
+        let arr = vec![json!({"content": {"text": "", "type": "text"}, "type": "content"})];
+        assert_eq!(extract_text_from_content_array(&arr), None);
+
+        let arr = vec![
+            json!({"content": {"text": "part1", "type": "text"}, "type": "content"}),
+            json!({"content": {"text": "part2", "type": "text"}, "type": "content"}),
+        ];
+        assert_eq!(
+            extract_text_from_content_array(&arr),
+            Some("part1part2".into())
+        );
+    }
+
+    #[test]
+    fn test_kimi_tool_call_initial() {
+        // Kimi ACP 初始 tool_call 格式
+        let update = json!({
+            "content": [{"content": {"text": "", "type": "text"}, "type": "content"}],
+            "status": "in_progress",
+            "title": "ReadFile",
+            "toolCallId": "abc/tool_123",
+            "sessionUpdate": "tool_call"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call").unwrap();
+        assert_eq!(parsed.tool_name, "ReadFile");
+        assert_eq!(parsed.tool_call_id.as_deref(), Some("abc/tool_123"));
+        assert_eq!(parsed.tool_title.as_deref(), Some("ReadFile"));
+        assert_eq!(parsed.status.as_deref(), Some("running"));
+        assert!(parsed.raw_input.is_none()); // 空文本不算输入
+        assert!(parsed.raw_output.is_none());
+    }
+
+    #[test]
+    fn test_kimi_tool_call_update_in_progress() {
+        // Kimi ACP 进行中 tool_call_update：累积输入参数
+        let update = json!({
+            "content": [{"content": {"text": "{\"path\": \"CHANGELOG.md\"}", "type": "text"}, "type": "content"}],
+            "status": "in_progress",
+            "title": "ReadFile: CHANGELOG.md",
+            "toolCallId": "abc/tool_123",
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "ReadFile");
+        assert_eq!(parsed.tool_title.as_deref(), Some("ReadFile: CHANGELOG.md"));
+        assert_eq!(parsed.status.as_deref(), Some("running"));
+        // 进行中时内容作为 raw_input
+        assert_eq!(
+            parsed.raw_input,
+            Some(Value::String("{\"path\": \"CHANGELOG.md\"}".into()))
+        );
+        // 进行中时不应有 raw_output
+        assert!(parsed.raw_output.is_none());
+        assert!(parsed.output_delta.is_none());
+    }
+
+    #[test]
+    fn test_kimi_tool_call_update_completed() {
+        // Kimi ACP 完成的 tool_call_update：包含工具输出
+        let output_text = "     1\t# 变更日志\n     2\t\n";
+        let update = json!({
+            "content": [{"content": {"text": output_text, "type": "text"}, "type": "content"}],
+            "status": "completed",
+            "toolCallId": "abc/tool_123",
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.status.as_deref(), Some("completed"));
+        // 完成时内容作为 raw_output
+        assert!(parsed.raw_output.is_some());
+        // normalize_non_empty_token 会 trim 两端空白
+        assert!(parsed.output_delta.is_some());
+        assert!(parsed.output_delta.as_ref().unwrap().contains("变更日志"));
+        // 完成时不设置 raw_input
+        assert!(parsed.raw_input.is_none());
+    }
+
+    #[test]
+    fn test_kimi_tool_call_merge_full_flow() {
+        // 模拟 Kimi 工具调用的完整流程
+        let initial = json!({
+            "content": [{"content": {"text": "", "type": "text"}, "type": "content"}],
+            "status": "in_progress",
+            "title": "ReadFile",
+            "toolCallId": "abc/tool_123",
+            "sessionUpdate": "tool_call"
+        });
+        let p1 = parse_tool_call_update_event(&initial, "tool_call").unwrap();
+        let state = merge_tool_state(None, &p1);
+
+        // 进行中更新：累积输入
+        let update_progress = json!({
+            "content": [{"content": {"text": "{\"path\": \"file.txt\"}", "type": "text"}, "type": "content"}],
+            "status": "in_progress",
+            "title": "ReadFile: file.txt",
+            "toolCallId": "abc/tool_123",
+            "sessionUpdate": "tool_call_update"
+        });
+        let p2 = parse_tool_call_update_event(&update_progress, "tool_call_update").unwrap();
+        let state = merge_tool_state(Some(&state), &p2);
+        assert_eq!(
+            state.get("input").and_then(|v| v.as_str()),
+            Some("{\"path\": \"file.txt\"}")
+        );
+        assert!(state.get("output").is_none());
+
+        // 完成更新：包含输出
+        let update_done = json!({
+            "content": [{"content": {"text": "file content here", "type": "text"}, "type": "content"}],
+            "status": "completed",
+            "toolCallId": "abc/tool_123",
+            "sessionUpdate": "tool_call_update"
+        });
+        let p3 = parse_tool_call_update_event(&update_done, "tool_call_update").unwrap();
+        let state = merge_tool_state(Some(&state), &p3);
+        assert_eq!(state.get("status").and_then(|v| v.as_str()), Some("completed"));
+        assert_eq!(
+            state.get("output").and_then(|v| v.as_str()),
+            Some("file content here")
+        );
+        // 输入应保留（完成更新没有覆盖）
+        assert_eq!(
+            state.get("input").and_then(|v| v.as_str()),
+            Some("{\"path\": \"file.txt\"}")
+        );
+    }
+
+    #[test]
+    fn test_extract_tool_output_text_array() {
+        let val = json!([{"content": {"text": "output text", "type": "text"}, "type": "content"}]);
+        assert_eq!(
+            extract_tool_output_text(&val),
+            Some("output text".into())
+        );
+    }
+
+    #[test]
+    fn test_tool_name_from_title_with_colon() {
+        let update = json!({
+            "content": [{"content": {"text": "x", "type": "text"}, "type": "content"}],
+            "status": "in_progress",
+            "title": "WriteFile: /path/to/file.txt",
+            "toolCallId": "id1",
+            "sessionUpdate": "tool_call_update"
+        });
+        let parsed = parse_tool_call_update_event(&update, "tool_call_update").unwrap();
+        assert_eq!(parsed.tool_name, "WriteFile");
+    }
 }
