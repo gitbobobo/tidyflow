@@ -100,7 +100,13 @@ extension GitCacheState {
             gitStatusCache[key] = cache
             return
         }
-        var cache = gitStatusCache[key] ?? GitStatusCache.empty()
+        let existing = gitStatusCache[key]
+        // 已经在加载中时跳过冗余的 @Published 写入，避免不必要的 objectWillChange
+        if existing?.isLoading == true {
+            wsClient?.requestGitStatus(project: projectName, workspace: workspaceKey)
+            return
+        }
+        var cache = existing ?? GitStatusCache.empty()
         cache.isLoading = true
         cache.error = nil
         gitStatusCache[key] = cache

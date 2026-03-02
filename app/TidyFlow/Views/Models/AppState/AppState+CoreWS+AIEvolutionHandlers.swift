@@ -440,7 +440,7 @@ extension AppState {
             )
         }
         setAIProviders(providers, for: ev.aiTool)
-        isAILoadingModels = false
+        if isAILoadingModels { isAILoadingModels = false }
         markEvolutionProviderListLoaded(
             project: ev.projectName,
             workspace: ev.workspaceName,
@@ -479,7 +479,7 @@ extension AppState {
             )
         }
         setAIAgents(agents, for: ev.aiTool)
-        isAILoadingAgents = false
+        if isAILoadingAgents { isAILoadingAgents = false }
         markEvolutionAgentListLoaded(
             project: ev.projectName,
             workspace: ev.workspaceName,
@@ -754,8 +754,8 @@ extension AppState {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(snapshot.workspace)
         let key = globalWorkspaceKey(projectName: snapshot.project, workspaceName: normalizedWorkspace)
         evidenceSnapshotsByWorkspace[key] = snapshot
-        evidenceLoadingByWorkspace[key] = false
-        evidenceErrorByWorkspace[key] = nil
+        if evidenceLoadingByWorkspace[key] != false { evidenceLoadingByWorkspace[key] = false }
+        if evidenceErrorByWorkspace[key] != nil { evidenceErrorByWorkspace[key] = nil }
     }
 
     func handleEvidenceRebuildPrompt(_ prompt: EvidenceRebuildPromptV2) {

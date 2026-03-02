@@ -215,7 +215,6 @@ struct FileListContent: View {
 struct FileRowView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
-    @EnvironmentObject var fileCache: FileCacheState
     let workspaceKey: String
     let item: FileEntry
     let depth: Int

@@ -122,7 +122,13 @@ extension GitCacheState {
             gitBranchCache[workspaceKey] = cache
             return
         }
-        var cache = gitBranchCache[workspaceKey] ?? GitBranchCache.empty()
+        // 已经在加载中时跳过冗余的 @Published 写入
+        let existing = gitBranchCache[workspaceKey]
+        if existing?.isLoading == true {
+            wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey)
+            return
+        }
+        var cache = existing ?? GitBranchCache.empty()
         cache.isLoading = true
         cache.error = nil
         gitBranchCache[workspaceKey] = cache
