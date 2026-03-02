@@ -12,6 +12,14 @@ fn normalize_non_empty_token(raw: &str) -> Option<String> {
     }
 }
 
+fn preserve_non_empty_text_chunk(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.to_string())
+    }
+}
+
 fn build_acp_content_source(content: &serde_json::Map<String, Value>) -> Value {
     serde_json::json!({
         "vendor": "acp",
@@ -56,7 +64,7 @@ pub(crate) fn extract_update(event: &Value) -> Option<(String, String, String)> 
         .and_then(|obj| {
             obj.get("text")
                 .and_then(|v| v.as_str())
-                .and_then(normalize_non_empty_token)
+                .and_then(preserve_non_empty_text_chunk)
                 .or_else(|| tool_call::extract_tool_output_text(&Value::Object(obj.clone())))
         })
         .unwrap_or_default();

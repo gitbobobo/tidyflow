@@ -75,6 +75,20 @@ fn terminal_update_detection_should_cover_common_variants() {
 }
 
 #[test]
+fn extract_update_should_preserve_text_chunk_newlines() {
+    let update = json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+            "type": "text",
+            "text": "\n| 文件 | 大小 |\n"
+        }
+    });
+    let (_session_update, _content_type, text) =
+        AcpAgent::extract_update(&update).expect("update should parse");
+    assert_eq!(text, "\n| 文件 | 大小 |\n");
+}
+
+#[test]
 fn extract_available_commands_should_parse_common_shapes_and_input_hint() {
     let update = json!({
         "availableCommands": [
