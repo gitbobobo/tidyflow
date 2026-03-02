@@ -1246,6 +1246,50 @@ struct EvolutionAgentInfoV2 {
     }
 }
 
+struct EvolutionSessionExecutionEntryV2 {
+    let stage: String
+    let agent: String
+    let aiTool: String
+    let sessionID: String
+    let status: String
+    let startedAt: String
+    let completedAt: String?
+    let durationMs: UInt64?
+    let toolCallCount: Int
+
+    static func from(json: [String: Any]) -> EvolutionSessionExecutionEntryV2? {
+        guard let stage = parseOptionalString(json["stage"]),
+              let sessionID = parseOptionalString(json["session_id"] ?? json["sessionId"]) else { return nil }
+        let agent = parseOptionalString(json["agent"]) ?? ""
+        let aiTool = parseOptionalString(json["ai_tool"] ?? json["aiTool"]) ?? ""
+        let status = parseOptionalString(json["status"]) ?? "unknown"
+        let startedAt = parseOptionalString(json["started_at"] ?? json["startedAt"]) ?? ""
+        let completedAt = parseOptionalString(json["completed_at"] ?? json["completedAt"])
+        let durationMs: UInt64? = {
+            if let v = json["duration_ms"] as? UInt64 { return v }
+            if let v = json["duration_ms"] as? Int { return UInt64(v) }
+            if let v = json["duration_ms"] as? Double { return UInt64(v) }
+            if let v = json["durationMs"] as? UInt64 { return v }
+            if let v = json["durationMs"] as? Int { return UInt64(v) }
+            if let v = json["durationMs"] as? Double { return UInt64(v) }
+            return nil
+        }()
+        let toolCallCount = Int(parseInt64(json["tool_call_count"] ?? json["toolCallCount"]))
+
+        return EvolutionSessionExecutionEntryV2(
+            stage: stage,
+            agent: agent,
+            aiTool: aiTool,
+            sessionID: sessionID,
+            status: status,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            durationMs: durationMs,
+            toolCallCount: toolCallCount
+        )
+    }
+}
+
 struct EvolutionSchedulerInfoV2 {
     let activationState: String
     let maxParallelWorkspaces: Int
@@ -1281,6 +1325,7 @@ struct EvolutionWorkspaceItemV2 {
     let verifyIteration: Int
     let verifyIterationLimit: Int
     let agents: [EvolutionAgentInfoV2]
+    let executions: [EvolutionSessionExecutionEntryV2]
     let activeAgents: [String]
     let terminalReasonCode: String?
     let rateLimitErrorMessage: String?
@@ -1297,6 +1342,8 @@ struct EvolutionWorkspaceItemV2 {
               let currentStage = json["current_stage"] as? String else { return nil }
 
         let agents = (json["agents"] as? [[String: Any]] ?? []).compactMap { EvolutionAgentInfoV2.from(json: $0) }
+        let executions = (json["executions"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
         let activeAgents = json["active_agents"] as? [String] ?? []
         return EvolutionWorkspaceItemV2(
             project: project,
@@ -1309,6 +1356,7 @@ struct EvolutionWorkspaceItemV2 {
             verifyIteration: Int(parseInt64(json["verify_iteration"])),
             verifyIterationLimit: Int(parseInt64(json["verify_iteration_limit"])),
             agents: agents,
+            executions: executions,
             activeAgents: activeAgents,
             terminalReasonCode: json["terminal_reason_code"] as? String,
             rateLimitErrorMessage: json["rate_limit_error_message"] as? String
@@ -1423,6 +1471,7 @@ struct EvolutionCycleHistoryItemV2 {
     let createdAt: String
     let updatedAt: String
     let terminalReasonCode: String?
+    let executions: [EvolutionSessionExecutionEntryV2]
     let stages: [EvolutionCycleStageHistoryEntryV2]
 
     static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
@@ -1432,6 +1481,8 @@ struct EvolutionCycleHistoryItemV2 {
         let createdAt = parseOptionalString(json["created_at"]) ?? ""
         let updatedAt = parseOptionalString(json["updated_at"]) ?? ""
         let terminalReasonCode = parseOptionalString(json["terminal_reason_code"])
+        let executions = (json["executions"] as? [[String: Any]] ?? [])
+            .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
         let stages = (json["stages"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionCycleStageHistoryEntryV2.from(json: $0) }
         return EvolutionCycleHistoryItemV2(
@@ -1441,6 +1492,7 @@ struct EvolutionCycleHistoryItemV2 {
             createdAt: createdAt,
             updatedAt: updatedAt,
             terminalReasonCode: terminalReasonCode,
+            executions: executions,
             stages: stages
         )
     }
