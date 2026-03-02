@@ -20,14 +20,44 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `CYCLE_FILE_PATH`（仅同步方向与验收字段）
 - `handoff.md` 交接文档
 
+`handoff.md` 内容（供 PlanAgent 读取）：
+1. **方向决策摘要**：选定的 `direction_type` 与一句话理由
+2. **能力评估结论**：UI/测试/构建/运行时能力的评估结果（如 UI 是否可用、测试框架是否就绪）
+3. **机会点清单**：从 `direction.lifecycle_scan.json` 中提取的关键改进机会（最多 5 项）
+
 `direction.lifecycle_scan.json` 最小要求：
 - 顶层包含：`$schema_version`、`cycle_id`、`project_type`、`ui_capability`、`domains`、`updated_at`
 - `domains` 至少 1 项，每项包含：`domain`、`status`、`evidence_paths`、`findings`、`opportunities`
-- `opportunities[*].mapped_direction_type` 只能是 `feature|performance|bugfix|architecture|ui`
+- `opportunities[*].mapped_direction_type` 只能是以下之一：
+  - `feature`（新功能）
+  - `performance`（性能优化）
+  - `bugfix`（缺陷修复）
+  - `architecture`（架构调整）
+  - `ui`（界面设计）
+  - `ux`（用户体验）
+  - `security`（安全加固）
+  - `reliability`（可靠性提升）
+  - `testing`（测试改进）
+  - `tech-debt`（技术债务）
+  - `refactor`（代码重构）
+  - `devx`（开发者体验）
+  - `cicd`（交付流水线）
+  - `observability`（可观测性）
+  - `docs`（文档完善）
+  - `deps`（依赖管理）
+  - `compliance`（合规性）
+  - `a11y`（无障碍访问）
+  - `i18n`（国际化）
+  - `compatibility`（兼容性）
+  - `data`（数据治理）
+  - `infra`（基础设施）
+  - `scalability`（扩展性）
+  - `analytics`（数据分析）
+  - `onboarding`（用户引导）
 
 `cycle.json` 只允许更新：
-- `direction.selected_type`（5 选 1）
-- `direction.candidate_scores`（必须恰好 5 项：`feature|performance|bugfix|architecture|ui`，`score` 在 `0..1`，按降序）
+- `direction.selected_type`（从上述方向类型中选择 1 个）
+- `direction.candidate_scores`（至少 3 项，最多 5 项，从上述方向类型中选择，`score` 在 `0..1`，按降序排列）
 - `direction.final_reason`
 - `llm_defined_acceptance.criteria`（非空；每项至少有 `criteria_id` 与可验证描述）
 - `updated_at`
@@ -70,7 +100,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 - 顶层：`$schema_version`、`cycle_id`、`selected_direction_type`、`goal`、`scope`、`work_items`、`verification_plan`、`updated_at`
 - `work_items` 非空，每项至少含：
   - `id`（唯一）
-  - `implementation_agent`（`implement_general|implement_visual|implement_advanced`）
+  - `implementation_agent`（只能是 `implement_general` 或 `implement_visual`
   - `linked_check_ids`（非空，且必须引用 `verification_plan.checks[].id`）
 - `verification_plan.checks` 非空，每项必须有唯一 `id`
 - `verification_plan.acceptance_mapping` 非空，每项必须有：
