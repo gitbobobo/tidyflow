@@ -425,6 +425,57 @@ fn read_json_file(cycle_dir: &Path, file_name: &str) -> Result<serde_json::Value
         .map_err(|e| format!("解析 {} 失败: {}", file_name, e))
 }
 
+/// 从 judge.result.json 的 full_next_iteration_requirements 中提取需求项列表。
+/// 兼容三种格式：
+/// 1. 直接数组 `[...]`
+/// 2. 对象 `{"items": [...]}`
+/// 3. 对象 `{"acceptance_failures": [...], "carryover_failures": [...]}`
+fn extract_judge_requirements(judge: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    let fnir = judge.pointer("/full_next_iteration_requirements")?;
+
+    // 格式 1: 直接数组
+    if let Some(arr) = fnir.as_array() {
+        return Some(arr.clone());
+    }
+
+    // 格式 2: {"items": [...]}
+    if let Some(arr) = fnir.pointer("/items").and_then(|v| v.as_array()) {
+        return Some(arr.clone());
+    }
+
+    // 格式 3: {"acceptance_failures": [...], "carryover_failures": [...]}
+    let mut items = Vec::new();
+    for key in &["acceptance_failures", "carryover_failures"] {
+        if let Some(arr) = fnir.get(*key).and_then(|v| v.as_array()) {
+            for item in arr {
+                // check_ids (数组) 展开为每个 check_id 一条独立项
+                if let Some(check_ids) = item.get("check_ids").and_then(|v| v.as_array()) {
+                    if check_ids.is_empty() {
+                        items.push(item.clone());
+                    } else {
+                        for cid in check_ids {
+                            let mut expanded = item.clone();
+                            if let Some(obj) = expanded.as_object_mut() {
+                                obj.remove("check_ids");
+                                obj.insert("check_id".to_string(), cid.clone());
+                            }
+                            items.push(expanded);
+                        }
+                    }
+                } else {
+                    items.push(item.clone());
+                }
+            }
+        }
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
 fn id_from_value(item: &serde_json::Value, keys: &[&str]) -> Option<String> {
     if let Some(value) = item.as_str() {
         let normalized = value.trim();
@@ -653,18 +704,10 @@ impl EvolutionManager {
         let tables = parse_plan_routing_tables(&plan)?;
         let check_to_work_items = Self::parse_check_to_work_items(&plan)?;
         let judge = read_json_file(cycle_dir, "judge.result.json")?;
-        let requirements = judge
-            .pointer("/full_next_iteration_requirements")
-            .and_then(|v| {
-                // 兼容两种格式：直接数组 [...] 或对象 {"items": [...]}
-                v.as_array().or_else(|| {
-                    v.pointer("/items").and_then(|inner| inner.as_array())
-                })
-            })
-            .ok_or_else(|| {
-                "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
-                    .to_string()
-            })?;
+        let requirements = extract_judge_requirements(&judge).ok_or_else(|| {
+            "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
+                .to_string()
+        })?;
         let cycle_id = read_json_file(cycle_dir, "cycle.json")?
             .get("cycle_id")
             .and_then(|v| v.as_str())
@@ -1258,20 +1301,12 @@ impl EvolutionManager {
         let judge_value = read_json_file(cycle_dir, "judge.result.json")?;
         let verify_value = read_json_file(cycle_dir, "verify.result.json")?;
 
-        let requirements = judge_value
-            .pointer("/full_next_iteration_requirements")
-            .and_then(|v| {
-                // 兼容两种格式：直接数组 [...] 或对象 {"items": [...]}
-                v.as_array().or_else(|| {
-                    v.pointer("/items").and_then(|inner| inner.as_array())
-                })
-            })
-            .ok_or_else(|| {
-                "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
-                    .to_string()
-            })?;
+        let requirements = extract_judge_requirements(&judge_value).ok_or_else(|| {
+            "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
+                .to_string()
+        })?;
         let requirement_ids = collect_unique_ids(
-            requirements,
+            &requirements,
             &["id", "item_id", "criteria_id", "title"],
             "full_next_iteration_requirements",
         )?;
@@ -4720,6 +4755,85 @@ mod tests {
                 .map(|items| items.len())
                 .unwrap_or(0),
             1
+        );
+    }
+
+    #[test]
+    fn generate_managed_backlog_from_judge_with_acceptance_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        write_json(
+            &dir.path().join("cycle.json"),
+            serde_json::json!({ "cycle_id": "c-3" }),
+        );
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        // judge 使用 {"acceptance_failures": [...], "carryover_failures": [...]} 格式
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": {
+                    "carryover_failures": [],
+                    "acceptance_failures": [
+                        {
+                            "type": "criteria_gap",
+                            "criteria_id": "ac-1",
+                            "check_ids": ["v-1", "v-2"],
+                            "required_items": ["fix compilation errors"]
+                        }
+                    ],
+                    "notes": "fix all errors"
+                }
+            }),
+        );
+        EvolutionManager::generate_managed_backlog_from_judge(dir.path(), 1)
+            .expect("managed backlog generation should succeed with acceptance_failures format");
+        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.json")
+            .expect("managed backlog should exist");
+        // check_ids 有 2 个元素，应展开为 2 条 backlog 项
+        assert_eq!(
+            backlog["items"]
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0),
+            2
+        );
+        let coverage = super::read_json_file(dir.path(), "managed.backlog_coverage.json")
+            .expect("managed coverage should exist");
+        assert_eq!(
+            coverage["items"]
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0),
+            2
         );
     }
 }
