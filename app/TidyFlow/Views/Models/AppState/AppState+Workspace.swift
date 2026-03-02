@@ -75,4 +75,45 @@ extension AppState {
         }
         return workspace.root
     }
+
+    /// 指定工作空间是否存在流式聊天活动（会话 busy 或当前本地流式态）。
+    func hasWorkspaceStreamingChat(projectName: String, workspaceName: String) -> Bool {
+        let project = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspace = workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !project.isEmpty, !workspace.isEmpty else { return false }
+
+        let prefix = "\(project)::\(workspace)::"
+        for tool in AIChatTool.allCases {
+            if let statuses = aiSessionStatusesByTool[tool],
+               statuses.contains(where: { $0.key.hasPrefix(prefix) && $0.value.isBusy }) {
+                return true
+            }
+        }
+
+        if selectedProjectName == project, selectedWorkspaceKey == workspace {
+            for tool in AIChatTool.allCases {
+                let store = aiStore(for: tool)
+                if store.isStreaming || store.awaitingUserEcho {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// 指定工作空间是否处于自主进化循环活跃状态。
+    func hasWorkspaceActiveEvolutionLoop(projectName: String, workspaceName: String) -> Bool {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspaceName)
+        guard let item = evolutionItem(project: projectName, workspace: normalizedWorkspace) else {
+            return false
+        }
+        let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["queued", "running", "pending", "in_progress", "processing"].contains(status)
+    }
+
+    /// 指定工作空间当前用于侧边栏展示的后台任务图标。
+    func workspaceActiveTaskIconName(projectName: String, workspaceName: String) -> String? {
+        let key = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
+        return taskManager.sidebarActiveTaskIconName(for: key)
+    }
 }

@@ -886,6 +886,30 @@ final class MobileAppState: ObservableObject {
         tasksForWorkspace(project: project, workspace: workspace).filter { $0.status.isActive }
     }
 
+    func hasWorkspaceStreamingChat(project: String, workspace: String) -> Bool {
+        let prefix = "\(project)::\(workspace)::"
+        for tool in AIChatTool.allCases {
+            if let statuses = aiSessionStatusesByTool[tool],
+               statuses.contains(where: { $0.key.hasPrefix(prefix) && $0.value.isBusy }) {
+                return true
+            }
+        }
+        if aiActiveProject == project, aiActiveWorkspace == workspace {
+            return aiIsStreaming || aiIsSendingPending || aiAbortPendingSessionId != nil
+        }
+        return false
+    }
+
+    func hasWorkspaceActiveEvolutionLoop(project: String, workspace: String) -> Bool {
+        guard let item = evolutionItem(project: project, workspace: workspace) else { return false }
+        let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["queued", "running", "pending", "in_progress", "processing"].contains(status)
+    }
+
+    func activeTaskIconForWorkspace(project: String, workspace: String) -> String? {
+        runningTasksForWorkspace(project: project, workspace: workspace).first?.icon
+    }
+
     func canCancelTask(_ task: MobileWorkspaceTask) -> Bool {
         task.status.isActive
     }

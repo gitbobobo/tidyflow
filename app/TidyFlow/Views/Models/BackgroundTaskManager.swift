@@ -384,6 +384,20 @@ class BackgroundTaskManager: ObservableObject {
         completedQueues[key] ?? []
     }
 
+    /// 侧边栏活动图标：优先展示运行中的任务图标，其次展示等待中的任务图标。
+    func sidebarActiveTaskIconName(for key: String) -> String? {
+        if let blocking = runningBlockingTask[key] {
+            return blocking.taskIconName
+        }
+        if let nonBlocking = runningNonBlockingTasks[key]?.first {
+            return nonBlocking.taskIconName
+        }
+        if let pending = pendingQueues[key]?.first {
+            return pending.taskIconName
+        }
+        return nil
+    }
+
     // MARK: - 系统通知
 
     /// 发送 macOS 系统通知（仅在应用不在前台时调用）

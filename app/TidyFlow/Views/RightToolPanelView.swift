@@ -165,6 +165,55 @@ struct PanelHeaderView: View {
 
 // MARK: - 树行组件（资源管理器文件树与左侧项目树共用）
 
+struct TreeRowActivityIndicator: Identifiable {
+    let id: String
+    let iconName: String
+    let color: Color
+}
+
+private struct TreeRowActivityIndicatorsView: View {
+    let indicators: [TreeRowActivityIndicator]
+
+    var body: some View {
+        indicatorIcons(maskStyle: false)
+            .overlay {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: indicators.isEmpty)) { timeline in
+                    GeometryReader { proxy in
+                        let cycle = timeline.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: 1.8) / 1.8
+                        let width = max(8, proxy.size.width * 0.45)
+                        let offset = (cycle * 1.6 - 0.3) * proxy.size.width
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                Color.white.opacity(0.85),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(width: width, height: proxy.size.height * 1.6)
+                        .rotationEffect(.degrees(16))
+                        .offset(x: offset, y: -proxy.size.height * 0.3)
+                    }
+                }
+                .mask(indicatorIcons(maskStyle: true))
+                .allowsHitTesting(false)
+            }
+    }
+
+    @ViewBuilder
+    private func indicatorIcons(maskStyle: Bool) -> some View {
+        HStack(spacing: 4) {
+            ForEach(indicators) { indicator in
+                CommandIconView(iconName: indicator.iconName, size: 11)
+                    .foregroundColor(maskStyle ? .white : indicator.color)
+                    .frame(width: 12, height: 12)
+            }
+        }
+    }
+}
+
 /// 可复用的树行：展开指示器 + 图标 + 标题，无数量/状态等尾部信息
 /// - Parameter selectedBackgroundColor: 选中时的背景色；为 nil 时使用系统 accentColor（如左侧项目树）；可传入更淡的颜色用于资源管理器等
 struct TreeRowView<CustomIcon: View>: View {
@@ -181,6 +230,8 @@ struct TreeRowView<CustomIcon: View>: View {
     var trailingText: String? = nil
     /// 尾部图标（如符号链接指示）
     var trailingIcon: String? = nil
+    /// 尾部活动图标（如聊天流式/进化循环/后台任务）
+    var activityIndicators: [TreeRowActivityIndicator] = []
     /// 标题文字颜色；nil 表示使用默认 .primary
     var titleColor: Color? = nil
     /// 尾部文字颜色；nil 表示使用默认 .secondary
@@ -223,6 +274,9 @@ struct TreeRowView<CustomIcon: View>: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            if !activityIndicators.isEmpty {
+                TreeRowActivityIndicatorsView(indicators: activityIndicators)
+            }
             if isLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -268,6 +322,7 @@ extension TreeRowView where CustomIcon == EmptyView {
         selectedBackgroundColor: Color? = nil,
         trailingText: String? = nil,
         trailingIcon: String? = nil,
+        activityIndicators: [TreeRowActivityIndicator] = [],
         titleColor: Color? = nil,
         trailingTextColor: Color? = nil,
         isLoading: Bool = false,
@@ -283,6 +338,7 @@ extension TreeRowView where CustomIcon == EmptyView {
         self.selectedBackgroundColor = selectedBackgroundColor
         self.trailingText = trailingText
         self.trailingIcon = trailingIcon
+        self.activityIndicators = activityIndicators
         self.titleColor = titleColor
         self.trailingTextColor = trailingTextColor
         self.isLoading = isLoading
@@ -305,6 +361,7 @@ extension TreeRowView {
         selectedBackgroundColor: Color? = nil,
         trailingText: String? = nil,
         trailingIcon: String? = nil,
+        activityIndicators: [TreeRowActivityIndicator] = [],
         titleColor: Color? = nil,
         trailingTextColor: Color? = nil,
         isLoading: Bool = false,
@@ -321,6 +378,7 @@ extension TreeRowView {
         self.selectedBackgroundColor = selectedBackgroundColor
         self.trailingText = trailingText
         self.trailingIcon = trailingIcon
+        self.activityIndicators = activityIndicators
         self.titleColor = titleColor
         self.trailingTextColor = trailingTextColor
         self.isLoading = isLoading

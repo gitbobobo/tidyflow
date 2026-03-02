@@ -28,15 +28,25 @@ struct ProjectListView: View {
                                     project: project.name,
                                     workspace: workspace.name
                                 )) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(workspace.name)
-                                            .font(.body)
-                                        HStack(spacing: 8) {
-                                            Text(workspace.branch)
-                                            Text(workspace.status)
+                                    HStack(spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(workspace.name)
+                                                .font(.body)
+                                            HStack(spacing: 8) {
+                                                Text(workspace.branch)
+                                                Text(workspace.status)
+                                            }
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
                                         }
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        Spacer(minLength: 8)
+                                        let indicators = workspaceActivityIndicators(
+                                            project: project.name,
+                                            workspace: workspace.name
+                                        )
+                                        if !indicators.isEmpty {
+                                            MobileWorkspaceActivityIconsView(indicators: indicators)
+                                        }
                                     }
                                     .padding(.vertical, 2)
                                 }
@@ -71,6 +81,69 @@ struct ProjectListView: View {
         }
         .onAppear {
             appState.refreshProjectTree()
+        }
+    }
+
+    private func workspaceActivityIndicators(project: String, workspace: String) -> [MobileWorkspaceActivityIndicator] {
+        var items: [MobileWorkspaceActivityIndicator] = []
+        if appState.hasWorkspaceStreamingChat(project: project, workspace: workspace) {
+            items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
+        }
+        if appState.hasWorkspaceActiveEvolutionLoop(project: project, workspace: workspace) {
+            items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "person.crop.circle.badge.brain", color: .purple))
+        }
+        if let taskIcon = appState.activeTaskIconForWorkspace(project: project, workspace: workspace) {
+            items.append(MobileWorkspaceActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))
+        }
+        return items
+    }
+}
+
+private struct MobileWorkspaceActivityIndicator: Identifiable {
+    let id: String
+    let iconName: String
+    let color: Color
+}
+
+private struct MobileWorkspaceActivityIconsView: View {
+    let indicators: [MobileWorkspaceActivityIndicator]
+
+    var body: some View {
+        indicatorIcons(maskStyle: false)
+            .overlay {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: indicators.isEmpty)) { timeline in
+                    GeometryReader { proxy in
+                        let cycle = timeline.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: 1.8) / 1.8
+                        let width = max(8, proxy.size.width * 0.45)
+                        let offset = (cycle * 1.6 - 0.3) * proxy.size.width
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                Color.white.opacity(0.85),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(width: width, height: proxy.size.height * 1.6)
+                        .rotationEffect(.degrees(16))
+                        .offset(x: offset, y: -proxy.size.height * 0.3)
+                    }
+                }
+                .mask(indicatorIcons(maskStyle: true))
+                .allowsHitTesting(false)
+            }
+    }
+
+    @ViewBuilder
+    private func indicatorIcons(maskStyle: Bool) -> some View {
+        HStack(spacing: 4) {
+            ForEach(indicators) { indicator in
+                MobileCommandIconView(iconName: indicator.iconName, size: 11)
+                    .foregroundColor(maskStyle ? .white : indicator.color)
+                    .frame(width: 12, height: 12)
+            }
         }
     }
 }

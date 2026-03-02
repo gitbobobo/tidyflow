@@ -384,11 +384,6 @@ struct WorkspaceRowView: View {
         }
     }
 
-    /// 当前工作空间是否有活跃的后台任务
-    private var hasActiveTask: Bool {
-        taskManager.activeTaskCount(for: globalWorkspaceKey) > 0
-    }
-
     /// 当前工作空间是否正在删除中
     private var isDeleting: Bool {
         appState.deletingWorkspaces.contains(globalWorkspaceKey)
@@ -397,6 +392,21 @@ struct WorkspaceRowView: View {
     /// 该工作空间是否有未读完成的后台任务（侧边栏铃铛提示）
     private var hasUnseenCompletion: Bool {
         taskManager.workspaceKeysWithUnseenCompletion.contains(globalWorkspaceKey)
+    }
+
+    /// 右侧活动图标：聊天流式 / 自主进化 / 后台任务（可并存）
+    private var workspaceActivityIndicators: [TreeRowActivityIndicator] {
+        var items: [TreeRowActivityIndicator] = []
+        if appState.hasWorkspaceStreamingChat(projectName: projectName, workspaceName: workspace.name) {
+            items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
+        }
+        if appState.hasWorkspaceActiveEvolutionLoop(projectName: projectName, workspaceName: workspace.name) {
+            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "person.crop.circle.badge.brain", color: .purple))
+        }
+        if let taskIcon = appState.workspaceActiveTaskIconName(projectName: projectName, workspaceName: workspace.name) {
+            items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))
+        }
+        return items
     }
 
     var body: some View {
@@ -412,7 +422,8 @@ struct WorkspaceRowView: View {
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
                     trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
-                    isLoading: hasActiveTask || isDeleting,
+                    activityIndicators: workspaceActivityIndicators,
+                    isLoading: isDeleting,
                     customIconView: terminalCountBadge,
                     onTap: {
                         if !isDeleting {
@@ -431,7 +442,8 @@ struct WorkspaceRowView: View {
                     isSelected: isSelected,
                     trailingText: shortcutDisplayText,
                     trailingIcon: hasUnseenCompletion ? "bell.fill" : nil,
-                    isLoading: hasActiveTask || isDeleting,
+                    activityIndicators: workspaceActivityIndicators,
+                    isLoading: isDeleting,
                     onTap: {
                         if !isDeleting {
                             appState.selectWorkspace(projectId: projectId, workspaceName: workspace.name)
