@@ -56,6 +56,7 @@ fn is_retryable_session_error_text(text: &str) -> bool {
         || lower.contains("transport error")
         || lower.contains("network error")
         || lower.contains("service unavailable")
+        || lower.contains("pre-flight check")
         || text.contains("连接超时")
         || text.contains("连接重置")
         || text.contains("连接中断")
@@ -706,6 +707,9 @@ mod tests {
         ));
         assert!(!is_retryable_session_error_text(
             "evo_stage_output_invalid: backlog_coverage 未完整覆盖 failure_backlog"
+        ));
+        assert!(is_retryable_session_error_text(
+            r#"Claude exited with status: exit status: 1. stderr: {"level":"warn","message":"[BashTool] Pre-flight check is taking longer than expected. Run with ANTHROPIC_LOG=debug to check for failed or slow API requests."}"#
         ));
     }
 
