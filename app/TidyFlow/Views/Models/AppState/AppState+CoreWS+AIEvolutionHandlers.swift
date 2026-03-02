@@ -137,17 +137,23 @@ extension AppState {
     func handleAISessionList(_ ev: AISessionListV2) {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
-        let sessions = ev.sessions.map {
-            AISessionInfo(
-                projectName: $0.projectName,
-                workspaceName: $0.workspaceName,
-                aiTool: ev.aiTool,
-                id: $0.id,
-                title: $0.title,
-                updatedAt: $0.updatedAt
-            )
+        // 会话列表 map + sort 移至后台
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sessions = ev.sessions.map {
+                AISessionInfo(
+                    projectName: $0.projectName,
+                    workspaceName: $0.workspaceName,
+                    aiTool: ev.aiTool,
+                    id: $0.id,
+                    title: $0.title,
+                    updatedAt: $0.updatedAt
+                )
+            }
+            let sorted = sessions.sorted { $0.updatedAt > $1.updatedAt }
+            DispatchQueue.main.async { [weak self] in
+                self?.setAISessions(sorted, for: ev.aiTool)
+            }
         }
-        setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: ev.aiTool)
     }
 
     func handleAISessionMessages(_ ev: AISessionMessagesV2) {
@@ -175,39 +181,45 @@ extension AppState {
         TFLog.app.info(
             "AI session_messages accepted: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), messages_count=\(ev.messages.count)"
         )
-        let mapped = ev.toChatMessages()
-        let restoredQuestions = Self.rebuildPendingQuestionRequests(
-            sessionId: ev.sessionId,
-            messages: ev.messages
-        )
-        store.replaceMessages(mapped)
-        store.replaceQuestionRequests(restoredQuestions)
-        let inferredHint = inferAISessionSelectionHintFromMessages(ev.messages)
-        let effectiveHint = mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
-        sendAISelectionPipelineLog(
-            event: "session_messages_received",
-            tool: ev.aiTool,
-            sessionId: ev.sessionId,
-            primaryHint: ev.selectionHint,
-            inferredHint: inferredHint,
-            effectiveHint: effectiveHint,
-            messagesCount: ev.messages.count
-        )
-        applyAISessionSelectionHint(
-            effectiveHint,
-            sessionId: ev.sessionId,
-            for: ev.aiTool,
-            trigger: "session_messages"
-        )
-        wsClient.requestAISessionConfigOptions(
-            projectName: ev.projectName,
-            workspaceName: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        )
-        TFLog.app.info(
-            "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
-        )
+        // 将重型数据转换移至后台线程，避免阻塞主线程造成卡顿
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let mapped = ev.toChatMessages()
+            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                sessionId: ev.sessionId,
+                messages: ev.messages
+            )
+            let inferredHint = self?.inferAISessionSelectionHintFromMessages(ev.messages)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                store.replaceMessages(mapped)
+                store.replaceQuestionRequests(restoredQuestions)
+                let effectiveHint = self.mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
+                self.sendAISelectionPipelineLog(
+                    event: "session_messages_received",
+                    tool: ev.aiTool,
+                    sessionId: ev.sessionId,
+                    primaryHint: ev.selectionHint,
+                    inferredHint: inferredHint,
+                    effectiveHint: effectiveHint,
+                    messagesCount: ev.messages.count
+                )
+                self.applyAISessionSelectionHint(
+                    effectiveHint,
+                    sessionId: ev.sessionId,
+                    for: ev.aiTool,
+                    trigger: "session_messages"
+                )
+                self.wsClient.requestAISessionConfigOptions(
+                    projectName: ev.projectName,
+                    workspaceName: ev.workspaceName,
+                    aiTool: ev.aiTool,
+                    sessionId: ev.sessionId
+                )
+                TFLog.app.info(
+                    "AI session_messages applied: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), mapped_messages_count=\(mapped.count), restored_question_count=\(restoredQuestions.count)"
+                )
+            }
+        }
     }
 
     func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
@@ -539,25 +551,32 @@ extension AppState {
     }
 
     func handleEvolutionSnapshot(_ snapshot: EvolutionSnapshotV2) {
-        evolutionScheduler = snapshot.scheduler
-        let items = snapshot.workspaceItems.sorted {
-            ($0.project, $0.workspace) < ($1.project, $1.workspace)
-        }
-        evolutionWorkspaceItems = items
-        var itemStatusByWorkspace: [String: String] = [:]
-        for item in items {
-            let key = globalWorkspaceKey(
-                projectName: item.project,
-                workspaceName: normalizeEvolutionWorkspaceName(item.workspace)
-            )
-            itemStatusByWorkspace[key] = item.status
-        }
-        for (key, pendingAction) in evolutionPendingActionByWorkspace {
-            if EvolutionControlCapability.shouldClearPendingAction(
-                pendingAction,
-                currentStatus: itemStatusByWorkspace[key]
-            ) {
-                evolutionPendingActionByWorkspace.removeValue(forKey: key)
+        // 排序和字典构建移至后台线程
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let items = snapshot.workspaceItems.sorted {
+                ($0.project, $0.workspace) < ($1.project, $1.workspace)
+            }
+            var itemStatusByWorkspace: [String: String] = [:]
+            for item in items {
+                let key = self.globalWorkspaceKey(
+                    projectName: item.project,
+                    workspaceName: self.normalizeEvolutionWorkspaceName(item.workspace)
+                )
+                itemStatusByWorkspace[key] = item.status
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.evolutionScheduler = snapshot.scheduler
+                self.evolutionWorkspaceItems = items
+                for (key, pendingAction) in self.evolutionPendingActionByWorkspace {
+                    if EvolutionControlCapability.shouldClearPendingAction(
+                        pendingAction,
+                        currentStatus: itemStatusByWorkspace[key]
+                    ) {
+                        self.evolutionPendingActionByWorkspace.removeValue(forKey: key)
+                    }
+                }
             }
         }
     }
@@ -791,6 +810,10 @@ extension AppState {
             return
         }
 
+        // 预分配容量，减少大证据文件的重复内存拷贝
+        if request.content.isEmpty, chunk.totalSizeBytes > 0 {
+            request.content.reserveCapacity(Int(chunk.totalSizeBytes))
+        }
         request.content.append(contentsOf: chunk.content)
 
         if chunk.eof {

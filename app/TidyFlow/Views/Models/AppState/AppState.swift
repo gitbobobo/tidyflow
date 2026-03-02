@@ -259,10 +259,10 @@ class AppState: ObservableObject {
 
     // Debug Panel State (Cmd+Shift+D)
     @Published var debugPanelPresented: Bool = false
-    /// 最近一次收到的 WS v6 包络序号（用于调试）
-    @Published var wsLastEnvelopeSeq: UInt64 = 0
+    /// 最近一次收到的 WS v6 包络序号（仅调试用，无视图观察，去掉 @Published 避免每条 WS 消息触发全局刷新）
+    var wsLastEnvelopeSeq: UInt64 = 0
     /// 最近一次收到的 WS v6 包络摘要（domain/action/kind）
-    @Published var wsLastEnvelopeSummary: String = ""
+    var wsLastEnvelopeSummary: String = ""
 
     // 远程终端追踪
     @Published var remoteTerminals: [RemoteTerminalInfo] = []
@@ -404,7 +404,8 @@ class AppState: ObservableObject {
     }
     @Published var isAILoadingModels: Bool = false
     @Published var isAILoadingAgents: Bool = false
-    @Published var aiToolBadges: [AIChatTool: AIToolBadgeState] = [:]
+    /// 内部 badge 状态，无视图直接观察，去掉 @Published 避免不必要的 objectWillChange
+    var aiToolBadges: [AIChatTool: AIToolBadgeState] = [:]
     /// AI 会话状态缓存（按工具分桶；key: "projectName::workspaceName::sessionId"）
     @Published var aiSessionStatusesByTool: [AIChatTool: [String: AISessionStatusSnapshot]] = [:]
     // Evolution 状态
@@ -428,7 +429,8 @@ class AppState: ObservableObject {
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
-    @Published var aiChatOneShotHintByWorkspace: [String: String] = [:]
+    /// 内部 one-shot hint，无视图直接观察
+    var aiChatOneShotHintByWorkspace: [String: String] = [:]
     @Published var subAgentViewerTitle: String = ""
     @Published var subAgentViewerMessages: [AIChatMessage] = []
     @Published var subAgentViewerLoading: Bool = false

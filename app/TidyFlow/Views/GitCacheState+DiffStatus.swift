@@ -8,18 +8,23 @@ extension GitCacheState {
 
     func handleGitDiffResult(_ result: GitDiffResult) {
         let key = diffCacheKey(workspace: result.workspace, path: result.path, mode: result.mode)
-        let parsedLines = DiffParser.parse(result.text)
-        let cache = DiffCache(
-            text: result.text,
-            parsedLines: parsedLines,
-            isLoading: false,
-            error: nil,
-            isBinary: result.isBinary,
-            truncated: result.truncated,
-            code: result.code,
-            updatedAt: Date()
-        )
-        diffCache[key] = cache
+        // Diff 文本解析移至后台线程，避免大文件阻塞 UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let parsedLines = DiffParser.parse(result.text)
+            let cache = DiffCache(
+                text: result.text,
+                parsedLines: parsedLines,
+                isLoading: false,
+                error: nil,
+                isBinary: result.isBinary,
+                truncated: result.truncated,
+                code: result.code,
+                updatedAt: Date()
+            )
+            DispatchQueue.main.async {
+                self?.diffCache[key] = cache
+            }
+        }
     }
 
     func fetchGitDiff(workspaceKey: String, path: String, mode: DiffMode) {
