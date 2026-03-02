@@ -291,7 +291,7 @@ impl AcpAgent {
         let mut cursor: Option<String> = None;
 
         for _ in 0..max_pages {
-            let (page, next_cursor) = self.client.session_list_page(cursor.as_deref()).await?;
+            let (page, next_cursor) = self.client.session_list_page(directory, cursor.as_deref()).await?;
             let (selected, used_fallback) = Self::select_sessions_for_directory(page, &expected);
             if used_fallback {
                 warn!(

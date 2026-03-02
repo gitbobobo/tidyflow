@@ -338,12 +338,16 @@ impl AcpClient {
 
     pub async fn session_list_page(
         &self,
+        directory: &str,
         cursor: Option<&str>,
     ) -> Result<(Vec<AcpSessionSummary>, Option<String>), String> {
-        let params = match cursor {
-            Some(value) if !value.is_empty() => serde_json::json!({ "cursor": value }),
-            _ => serde_json::json!({}),
-        };
+        let cwd = Self::normalize_cwd_for_request(directory)?;
+        let mut params = serde_json::json!({ "cwd": cwd });
+        if let Some(value) = cursor {
+            if !value.is_empty() {
+                params["cursor"] = Value::String(value.to_string());
+            }
+        }
         let result = self
             .send_request_with_auth_retry("session/list", Some(params))
             .await?;
