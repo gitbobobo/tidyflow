@@ -655,7 +655,12 @@ impl EvolutionManager {
         let judge = read_json_file(cycle_dir, "judge.result.json")?;
         let requirements = judge
             .pointer("/full_next_iteration_requirements")
-            .and_then(|v| v.as_array())
+            .and_then(|v| {
+                // 兼容两种格式：直接数组 [...] 或对象 {"items": [...]}
+                v.as_array().or_else(|| {
+                    v.pointer("/items").and_then(|inner| inner.as_array())
+                })
+            })
             .ok_or_else(|| {
                 "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
                     .to_string()
@@ -1255,7 +1260,12 @@ impl EvolutionManager {
 
         let requirements = judge_value
             .pointer("/full_next_iteration_requirements")
-            .and_then(|v| v.as_array())
+            .and_then(|v| {
+                // 兼容两种格式：直接数组 [...] 或对象 {"items": [...]}
+                v.as_array().or_else(|| {
+                    v.pointer("/items").and_then(|inner| inner.as_array())
+                })
+            })
             .ok_or_else(|| {
                 "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
                     .to_string()
@@ -4643,6 +4653,73 @@ mod tests {
         assert_eq!(
             coverage["items"][0]["status"].as_str().unwrap_or_default(),
             "not_done"
+        );
+    }
+
+    #[test]
+    fn generate_managed_backlog_from_judge_with_items_object() {
+        let dir = tempfile::tempdir().unwrap();
+        write_json(
+            &dir.path().join("cycle.json"),
+            serde_json::json!({
+                "cycle_id": "c-2"
+            }),
+        );
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        // judge 使用 {"items": [...]} 对象格式（而非直接数组）
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": {
+                    "items": [{
+                        "criteria_id": "ac-1",
+                        "check_id": "v-1",
+                        "work_item_id": "w-1",
+                        "title": "need fix"
+                    }]
+                }
+            }),
+        );
+        EvolutionManager::generate_managed_backlog_from_judge(dir.path(), 1)
+            .expect("managed backlog generation should succeed with items object format");
+        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.json")
+            .expect("managed backlog should exist");
+        assert_eq!(
+            backlog["items"]
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0),
+            1
         );
     }
 }
