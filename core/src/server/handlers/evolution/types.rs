@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::server::protocol::{
-    EvolutionSchedulerInfo, EvolutionStageProfileInfo, EvolutionWorkspaceItem,
+    EvolutionSchedulerInfo, EvolutionSessionExecutionEntry, EvolutionStageProfileInfo,
+    EvolutionWorkspaceItem,
 };
 
 pub(super) struct EvolutionState {
@@ -37,6 +38,8 @@ pub(super) struct WorkspaceRunState {
     pub(super) stage_session_history: HashMap<String, Vec<StageSession>>,
     pub(super) stage_tool_call_counts: HashMap<String, u32>,
     pub(super) stage_seen_tool_calls: HashMap<String, HashSet<String>>,
+    /// 会话级执行轨迹（同阶段可多次会话）
+    pub(super) session_executions: Vec<EvolutionSessionExecutionEntry>,
     /// 各代理开始运行的 RFC3339 时间戳
     pub(super) stage_started_ats: HashMap<String, String>,
     /// 各代理运行耗时（毫秒），仅在完成后填充

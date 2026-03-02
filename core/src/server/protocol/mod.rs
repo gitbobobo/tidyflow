@@ -1427,6 +1427,8 @@ pub enum ServerMessage {
         verify_iteration: u32,
         verify_iteration_limit: u32,
         agents: Vec<EvolutionAgentInfo>,
+        #[serde(default)]
+        executions: Vec<EvolutionSessionExecutionEntry>,
         active_agents: Vec<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         terminal_reason_code: Option<String>,
@@ -1738,6 +1740,23 @@ pub struct EvolutionAgentInfo {
     pub duration_ms: Option<u64>,
 }
 
+/// Evolution 会话级执行信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionSessionExecutionEntry {
+    pub stage: String,
+    pub agent: String,
+    pub ai_tool: String,
+    pub session_id: String,
+    pub status: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub tool_call_count: u32,
+}
+
 /// Evolution 调度器信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionSchedulerInfo {
@@ -1760,6 +1779,8 @@ pub struct EvolutionWorkspaceItem {
     pub verify_iteration: u32,
     pub verify_iteration_limit: u32,
     pub agents: Vec<EvolutionAgentInfo>,
+    #[serde(default)]
+    pub executions: Vec<EvolutionSessionExecutionEntry>,
     pub active_agents: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_reason_code: Option<String>,
@@ -1809,6 +1830,8 @@ pub struct EvolutionCycleHistoryItem {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_reason_code: Option<String>,
+    #[serde(default)]
+    pub executions: Vec<EvolutionSessionExecutionEntry>,
     pub stages: Vec<EvolutionCycleStageHistoryEntry>,
 }
 
