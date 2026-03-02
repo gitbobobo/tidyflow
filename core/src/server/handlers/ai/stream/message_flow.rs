@@ -377,6 +377,19 @@ pub(crate) async fn handle_ai_chat_send(
         let target_conn_ids =
             ai_session_subscriber_conn_ids(&ai_state_cloned, &abort_key, origin_conn_id).await;
         emit_state.set_broadcast_targets(target_conn_ids);
+        let _ = emit_server_message_with_state(
+            &output_tx,
+            task_broadcast_tx,
+            origin_conn_id,
+            ServerMessage::AIChatPending {
+                project_name: project_name.clone(),
+                workspace_name: workspace_name.clone(),
+                ai_tool: ai_tool.clone(),
+                session_id: session_id.clone(),
+            },
+            &mut emit_state,
+        )
+        .await;
         let mut stream = match agent
             .send_message_with_config(
                 &directory,

@@ -690,6 +690,8 @@ final class AIChatStore: ObservableObject {
     @Published var awaitingUserEcho: Bool = false
     @Published var lastUserEchoMessageId: String?
     @Published var pendingToolQuestions: [String: AIQuestionRequestInfo] = [:]
+    /// 已发送请求、等待服务端首个内容到达期间为 true；首个内容到达或会话结束/出错时清除。
+    @Published var hasPendingFirstContent: Bool = false
 
     /// 工作空间快照缓存（key: "projectName/workspaceName"）
     var snapshotCache: [String: AIChatSnapshot] = [:]
@@ -771,6 +773,7 @@ final class AIChatStore: ObservableObject {
         messages = []
         abortPendingSessionId = nil
         awaitingUserEcho = false
+        hasPendingFirstContent = false
         lastUserEchoMessageId = nil
         isStreaming = false
         messageIndexByMessageId = [:]
@@ -789,6 +792,7 @@ final class AIChatStore: ObservableObject {
         flushPendingStreamEvents()
         messages = []
         awaitingUserEcho = false
+        hasPendingFirstContent = false
         lastUserEchoMessageId = nil
         isStreaming = false
         messageIndexByMessageId = [:]
@@ -808,6 +812,7 @@ final class AIChatStore: ObservableObject {
         messages = newMessages
         abortPendingSessionId = nil
         awaitingUserEcho = false
+        hasPendingFirstContent = false
         lastUserEchoMessageId = nil
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
@@ -923,6 +928,7 @@ final class AIChatStore: ObservableObject {
             suppressedActiveToolSessions.remove(sessionId)
         }
         awaitingUserEcho = true
+        hasPendingFirstContent = true
         lastUserEchoMessageId = nil
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = messages.count
@@ -933,6 +939,7 @@ final class AIChatStore: ObservableObject {
             suppressedActiveToolSessions.remove(sessionId)
         }
         awaitingUserEcho = false
+        hasPendingFirstContent = true
         lastUserEchoMessageId = nil
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
@@ -1109,6 +1116,11 @@ final class AIChatStore: ObservableObject {
         streamFlushWorkItem = nil
         guard !pendingStreamEvents.isEmpty else { return }
 
+        // 首批内容到达，清除 pending 态
+        if hasPendingFirstContent {
+            hasPendingFirstContent = false
+        }
+
         let events = pendingStreamEvents
         pendingStreamEvents.removeAll(keepingCapacity: true)
         var latestMessageIndex: Int?
@@ -1240,6 +1252,7 @@ final class AIChatStore: ObservableObject {
             awaitingUserEchoBaselineIndex = nil
             lastUserEchoMessageId = "done-\(sessionId)-\(UUID().uuidString)"
         }
+        hasPendingFirstContent = false
         userPlaceholderMessageIdsPendingServerPart = []
         isStreaming = false
         pendingToolQuestions = [:]
@@ -1258,6 +1271,7 @@ final class AIChatStore: ObservableObject {
         clearAbortPendingIfMatches(sessionId)
         suppressActiveToolStreaming(for: sessionId)
         awaitingUserEcho = false
+        hasPendingFirstContent = false
         awaitingUserEchoBaselineIndex = nil
         pendingUserEchoAssistantMessageId = nil
         userPlaceholderMessageIdsPendingServerPart = []
@@ -1443,11 +1457,19 @@ final class AIChatStore: ObservableObject {
     }
 
     private func hasUnboundAssistantPlaceholder() -> Bool {
-        messages.contains { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }
+        if messages.contains(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
+            return true
+        }
+        // 无实体占位时，使用 hasPendingFirstContent 标志作为回退，保证角色推断正确
+        return hasPendingFirstContent
     }
 
     private func hasUnboundUserPlaceholder() -> Bool {
-        messages.contains { $0.role == .user && $0.messageId == nil }
+        if messages.contains(where: { $0.role == .user && $0.messageId == nil }) {
+            return true
+        }
+        // 无实体占位时，使用 hasPendingFirstContent + awaitingUserEcho 标志作为回退
+        return hasPendingFirstContent && awaitingUserEcho
     }
 
     private func hasUnboundSlashUserPlaceholder() -> Bool {

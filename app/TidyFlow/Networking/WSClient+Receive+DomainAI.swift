@@ -95,6 +95,15 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_chat_pending":
+            if let ev = AIChatPendingV2.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAIChatPending(ev)
+                } else {
+                    onAIChatPending?(ev)
+                }
+            }
+            return true
         case "ai_chat_error":
             if let ev = AIChatErrorV2.from(json: json) {
                 if let handler = aiMessageHandler {

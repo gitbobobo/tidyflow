@@ -183,6 +183,7 @@ final class MobileAppState: ObservableObject {
     @Published var aiCurrentSessionId: String?
     @Published var aiChatMessages: [AIChatMessage] = []
     @Published var aiIsStreaming: Bool = false
+    @Published var aiIsSendingPending: Bool = false
     @Published var aiAbortPendingSessionId: String?
     @Published var aiSessions: [AISessionInfo] = [] {
         didSet {
@@ -1746,6 +1747,7 @@ final class MobileAppState: ObservableObject {
         aiChatStore.setCurrentSessionId(nil)
         aiChatMessages = []
         aiIsStreaming = false
+        aiIsSendingPending = false
         aiMessageIndexByMessageId = [:]
         aiPartIndexByPartId = [:]
     }
@@ -1873,6 +1875,7 @@ final class MobileAppState: ObservableObject {
         aiChatStore.addSubscription(session.id)
         aiChatMessages = []
         aiIsStreaming = false
+        aiIsSendingPending = false
         aiMessageIndexByMessageId = [:]
         aiPartIndexByPartId = [:]
 
@@ -1928,6 +1931,7 @@ final class MobileAppState: ObservableObject {
             aiChatStore.setCurrentSessionId(nil)
             aiChatMessages = []
             aiIsStreaming = false
+            aiIsSendingPending = false
             aiMessageIndexByMessageId = [:]
             aiPartIndexByPartId = [:]
         }
@@ -1996,16 +2000,9 @@ final class MobileAppState: ObservableObject {
         let aiTool = aiChatTool
         let configOverrides = aiConfigOverrides(for: aiTool)
 
-        // 先渲染用户消息与 assistant 占位，确保发送后即时反馈
-        aiChatMessages.append(
-            AIChatMessage(
-                role: .user,
-                parts: [AIChatPart(id: UUID().uuidString, kind: .text, text: text, toolName: nil, toolState: nil)],
-                isStreaming: false
-            )
-        )
-        aiChatMessages.append(AIChatMessage(role: .assistant, parts: [], isStreaming: true))
+        // 发送后设为 pending 态，等待服务端首个内容到达
         aiIsStreaming = true
+        aiIsSendingPending = true
 
         if let sessionId = aiCurrentSessionId {
             if let slash = slashCommand {
@@ -2101,6 +2098,7 @@ final class MobileAppState: ObservableObject {
             sessionId: sessionId
         )
         aiIsStreaming = false
+        aiIsSendingPending = false
 
         // 立即收敛本地 loading，避免等待服务端 done 期间界面残留
         for idx in aiChatMessages.indices.reversed() {
@@ -2239,6 +2237,7 @@ final class MobileAppState: ObservableObject {
             aiChatStore.setCurrentSessionId(nil)
             aiChatMessages = []
             aiIsStreaming = false
+            aiIsSendingPending = false
             aiMessageIndexByMessageId = [:]
             aiPartIndexByPartId = [:]
             return
@@ -2473,6 +2472,7 @@ final class MobileAppState: ObservableObject {
             }
             aiChatMessages = snapshot.messages
             aiIsStreaming = false
+            aiIsSendingPending = false
             aiSessions = snapshot.sessions
             aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
             aiPartIndexByPartId = snapshot.partIndexByPartId
@@ -2483,6 +2483,7 @@ final class MobileAppState: ObservableObject {
         aiChatStore.subscribedSessionIds = []
         aiChatMessages = []
         aiIsStreaming = false
+        aiIsSendingPending = false
         aiSessions = []
         aiMessageIndexByMessageId = [:]
         aiPartIndexByPartId = [:]
@@ -4170,6 +4171,7 @@ final class MobileAppState: ObservableObject {
             self.aiChatMessages = ev.toChatMessages()
             self.rebuildAIIndexes()
             self.aiIsStreaming = false
+            self.aiIsSendingPending = false
             let inferredHint = self.inferAISessionSelectionHintFromMessages(ev.messages)
             let effectiveHint = self.mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
             self.applyAISessionSelectionHint(
@@ -4202,6 +4204,7 @@ final class MobileAppState: ObservableObject {
                self.aiCurrentSessionId == ev.sessionId,
                ev.status.status.lowercased() == "idle" {
                 self.aiIsStreaming = false
+                self.aiIsSendingPending = false
             }
         }
 
@@ -4222,6 +4225,7 @@ final class MobileAppState: ObservableObject {
                self.aiCurrentSessionId == ev.sessionId,
                ev.status.status.lowercased() == "idle" {
                 self.aiIsStreaming = false
+                self.aiIsSendingPending = false
             }
         }
 
@@ -4233,6 +4237,9 @@ final class MobileAppState: ObservableObject {
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            // 首个内容到达，清除 pending 态
+            if self.aiIsSendingPending { self.aiIsSendingPending = false }
 
             if ev.role == "user" {
                 // user echo 到达，绑定占位消息的真实 messageId
@@ -4258,6 +4265,9 @@ final class MobileAppState: ObservableObject {
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
 
+            // 首个内容到达，清除 pending 态
+            if self.aiIsSendingPending { self.aiIsSendingPending = false }
+
             // 若 messageId 已绑定到 user 占位消息，跳过 assistant 流式处理
             if let idx = self.aiMessageIndexByMessageId[ev.messageId],
                idx < self.aiChatMessages.count,
@@ -4279,6 +4289,9 @@ final class MobileAppState: ObservableObject {
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
             if self.aiAbortPendingSessionId == ev.sessionId { return }
+
+            // 首个内容到达，清除 pending 态
+            if self.aiIsSendingPending { self.aiIsSendingPending = false }
 
             // 若 messageId 已绑定到 user 占位消息，跳过 assistant 流式处理
             if let idx = self.aiMessageIndexByMessageId[ev.messageId],
@@ -4313,6 +4326,7 @@ final class MobileAppState: ObservableObject {
                 self.aiAbortPendingSessionId = nil
             }
             self.aiIsStreaming = false
+            self.aiIsSendingPending = false
             self.aiClearAssistantStreaming()
             if let idx = self.aiChatMessages.lastIndex(where: {
                 $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty
@@ -4338,6 +4352,7 @@ final class MobileAppState: ObservableObject {
                 self.aiAbortPendingSessionId = nil
             }
             self.aiIsStreaming = false
+            self.aiIsSendingPending = false
             self.aiClearAssistantStreaming()
             if let idx = self.aiChatMessages.lastIndex(where: {
                 $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty
@@ -4590,6 +4605,12 @@ final class MobileAppState: ObservableObject {
         if let idx = aiChatMessages.lastIndex(where: { $0.role == .user && $0.messageId == nil }) {
             aiChatMessages[idx].messageId = messageId
             aiMessageIndexByMessageId[messageId] = idx
+        } else {
+            // 无占位时（无占位发送模式）直接创建用户消息
+            let newMsg = AIChatMessage(messageId: messageId, role: .user, parts: [], isStreaming: false)
+            aiChatMessages.append(newMsg)
+            let newIdx = aiChatMessages.count - 1
+            aiMessageIndexByMessageId[messageId] = newIdx
         }
     }
 

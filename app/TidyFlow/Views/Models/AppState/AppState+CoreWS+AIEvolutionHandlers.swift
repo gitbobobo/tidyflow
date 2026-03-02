@@ -400,6 +400,12 @@ extension AppState {
         markUnreadBadge(for: ev.aiTool)
     }
 
+    func handleAIChatPending(_ ev: AIChatPendingV2) {
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        // AIChatPending 仅用于确认服务端已收到请求；客户端 pending 态已在发送时由 beginAwaitingUserEcho 设置，无需额外操作。
+    }
+
     func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }

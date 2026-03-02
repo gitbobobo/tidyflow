@@ -16,6 +16,8 @@ struct ChatInputView: View {
     var autoFocusOnAppear: Bool = false
     /// 仅当已有 sessionId 时允许点击停止，避免会话创建竞态下误触。
     var canStopStreaming: Bool = true
+    /// 已发送、等待服务端首个内容到达期间为 true，此时显示 Loading 动画。
+    var isSendingPending: Bool = false
     var onSend: () -> Void
     var onStop: () -> Void
 
@@ -1147,7 +1149,18 @@ struct ChatInputView: View {
 
     private var sendOrStopButton: some View {
         Group {
-            if isStreaming {
+            if isSendingPending {
+                // 等待服务端确认，显示加载动画
+                ZStack {
+                    Circle()
+                        .fill(Color.gray.opacity(0.55))
+                        .frame(width: actionButtonDiameter, height: actionButtonDiameter)
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.6)
+                        .tint(.white)
+                }
+            } else if isStreaming {
                 Button(action: onStop) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: actionIconFontSize, weight: .bold))

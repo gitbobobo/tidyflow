@@ -138,6 +138,7 @@ protocol AIMessageHandler: AnyObject {
     func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2)
     func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2)
     func handleAIChatDone(_ ev: AIChatDoneV2)
+    func handleAIChatPending(_ ev: AIChatPendingV2)
     func handleAIChatError(_ ev: AIChatErrorV2)
     func handleAIQuestionAsked(_ ev: AIQuestionAskedV2)
     func handleAIQuestionCleared(_ ev: AIQuestionClearedV2)
@@ -160,6 +161,7 @@ extension AIMessageHandler {
     func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) {}
     func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) {}
     func handleAIChatDone(_ ev: AIChatDoneV2) {}
+    func handleAIChatPending(_ ev: AIChatPendingV2) {}
     func handleAIChatError(_ ev: AIChatErrorV2) {}
     func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) {}
     func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) {}

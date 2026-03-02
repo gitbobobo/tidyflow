@@ -269,6 +269,7 @@ struct MobileAIChatView: View {
                 isStreaming: appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil,
                 autoFocusOnAppear: true,
                 canStopStreaming: appState.aiCurrentSessionId != nil && appState.aiAbortPendingSessionId == nil,
+                isSendingPending: appState.aiIsSendingPending,
                 onSend: { sendMessage() },
                 onStop: { stopStreaming() },
                 providers: appState.aiProviders,

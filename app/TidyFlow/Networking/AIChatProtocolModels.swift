@@ -495,6 +495,22 @@ struct AIChatErrorV2 {
     }
 }
 
+/// 服务端收到 AIChatSend 后、启动 AI adapter 前立即发出，用于通知客户端进入 pending 态。
+struct AIChatPendingV2 {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String
+
+    static func from(json: [String: Any]) -> AIChatPendingV2? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
+              let sessionId = json["session_id"] as? String else { return nil }
+        return AIChatPendingV2(projectName: projectName, workspaceName: workspaceName, aiTool: aiTool, sessionId: sessionId)
+    }
+}
+
 struct AIQuestionOptionInfo {
     let optionID: String?
     let label: String

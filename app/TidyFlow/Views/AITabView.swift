@@ -425,6 +425,7 @@ struct AITabView: View {
             canStopStreaming: aiChatStore.currentSessionId != nil &&
                 aiChatStore.abortPendingSessionId == nil &&
                 (sessionBusy || localStreaming),
+            isSendingPending: aiChatStore.hasPendingFirstContent,
             onSend: {
                 sendMessage()
             },
@@ -1152,11 +1153,8 @@ struct AITabView: View {
         autocomplete.reset()
         if slashCommand == nil {
             aiChatStore.beginAwaitingUserEcho()
-            aiChatStore.insertUserPlaceholder(text: text, imageAttachments: images)
-            aiChatStore.appendAssistantPlaceholder()
         } else {
             aiChatStore.beginAwaitingAssistantOnly()
-            aiChatStore.appendAssistantPlaceholder()
         }
 
         // 发送请求已入队后立即清空输入区；消息展示以代理回传的 user message 为准。
@@ -1332,8 +1330,6 @@ struct AITabView: View {
 
         autocomplete.reset()
         aiChatStore.beginAwaitingUserEcho()
-        aiChatStore.insertUserPlaceholder(text: text)
-        aiChatStore.appendAssistantPlaceholder()
 
         inputText = ""
         imageAttachments = []

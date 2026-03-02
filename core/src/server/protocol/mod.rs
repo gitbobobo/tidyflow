@@ -1223,6 +1223,13 @@ pub enum ServerMessage {
         field: String,
         delta: String,
     },
+    #[serde(rename = "ai_chat_pending")]
+    AIChatPending {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+    },
     #[serde(rename = "ai_chat_done")]
     AIChatDone {
         project_name: String,

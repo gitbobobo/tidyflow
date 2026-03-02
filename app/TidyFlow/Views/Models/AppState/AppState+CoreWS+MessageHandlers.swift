@@ -163,6 +163,7 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) { appState?.handleAIChatPartUpdated(ev) }
     func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) { appState?.handleAIChatPartDelta(ev) }
     func handleAIChatDone(_ ev: AIChatDoneV2) { appState?.handleAIChatDone(ev) }
+    func handleAIChatPending(_ ev: AIChatPendingV2) { appState?.handleAIChatPending(ev) }
     func handleAIChatError(_ ev: AIChatErrorV2) { appState?.handleAIChatError(ev) }
     func handleAIQuestionAsked(_ ev: AIQuestionAskedV2) { appState?.handleAIQuestionAsked(ev) }
     func handleAIQuestionCleared(_ ev: AIQuestionClearedV2) { appState?.handleAIQuestionCleared(ev) }
