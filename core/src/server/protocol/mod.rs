@@ -12,6 +12,8 @@ pub mod terminal;
 
 #[cfg(test)]
 mod action_table_test;
+#[cfg(test)]
+mod ai_session_update_test;
 
 /// Protocol version: 6 (MessagePack binary encoding + domain/action envelope)
 pub const PROTOCOL_VERSION: u32 = 6;
@@ -1270,6 +1272,23 @@ pub enum ServerMessage {
         messages: Vec<ai::MessageInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         selection_hint: Option<ai::SessionSelectionHint>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        truncated: Option<bool>,
+    },
+    #[serde(rename = "ai_session_messages_update")]
+    AISessionMessagesUpdate {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        cache_revision: u64,
+        is_streaming: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection_hint: Option<ai::SessionSelectionHint>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        messages: Option<Vec<ai::MessageInfo>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ops: Option<Vec<ai::AiSessionCacheOpInfo>>,
     },
     #[serde(rename = "ai_session_status_result")]
     AISessionStatusResult {

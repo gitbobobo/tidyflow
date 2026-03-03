@@ -56,5 +56,6 @@ pub(in crate::server::ws) fn is_event_action(action: &str) -> bool {
         || action == "ai_chat_done"
         || action == "ai_chat_pending"
         || action == "ai_chat_error"
+        || action == "ai_session_messages_update"
         || action.starts_with("evo_")
 }

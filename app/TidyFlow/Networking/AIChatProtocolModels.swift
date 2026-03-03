@@ -53,6 +53,7 @@ struct AISessionMessagesV2 {
     let sessionId: String
     let messages: [AIProtocolMessageInfo]
     let selectionHint: AISessionSelectionHint?
+    let truncated: Bool
 
     static func from(json: [String: Any]) -> AISessionMessagesV2? {
         guard let projectName = json["project_name"] as? String,
@@ -61,13 +62,121 @@ struct AISessionMessagesV2 {
               let sessionId = json["session_id"] as? String else { return nil }
         let messages = (json["messages"] as? [[String: Any]] ?? []).compactMap { AIProtocolMessageInfo.from(json: $0) }
         let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
+        let truncated = parseBool(json["truncated"]) ?? false
         return AISessionMessagesV2(
             projectName: projectName,
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
             messages: messages,
-            selectionHint: selectionHint
+            selectionHint: selectionHint,
+            truncated: truncated
+        )
+    }
+}
+
+enum AIProtocolSessionCacheOp {
+    case messageUpdated(messageId: String, role: String)
+    case partUpdated(messageId: String, part: AIProtocolPartInfo)
+    case partDelta(messageId: String, partId: String, partType: String, field: String, delta: String)
+
+    static func from(json: [String: Any]) -> AIProtocolSessionCacheOp? {
+        if let payload = json["message_updated"] as? [String: Any] {
+            guard let messageId = parseOptionalString(payload["message_id"]),
+                  let role = parseOptionalString(payload["role"]) else { return nil }
+            return .messageUpdated(messageId: messageId, role: role)
+        }
+        if let payload = json["part_updated"] as? [String: Any] {
+            guard let messageId = parseOptionalString(payload["message_id"]),
+                  let partDict = payload["part"] as? [String: Any],
+                  let part = AIProtocolPartInfo.from(json: partDict) else { return nil }
+            return .partUpdated(messageId: messageId, part: part)
+        }
+        if let payload = json["part_delta"] as? [String: Any] {
+            guard let messageId = parseOptionalString(payload["message_id"]),
+                  let partId = parseOptionalString(payload["part_id"]),
+                  let partType = parseOptionalString(payload["part_type"]),
+                  let field = parseOptionalString(payload["field"]),
+                  let delta = payload["delta"] as? String else { return nil }
+            return .partDelta(
+                messageId: messageId,
+                partId: partId,
+                partType: partType,
+                field: field,
+                delta: delta
+            )
+        }
+
+        let type = parseOptionalString(json["type"] ?? json["kind"])?.lowercased()
+        if type == "message_updated" {
+            guard let messageId = parseOptionalString(json["message_id"]),
+                  let role = parseOptionalString(json["role"]) else { return nil }
+            return .messageUpdated(messageId: messageId, role: role)
+        }
+        if type == "part_updated" {
+            guard let messageId = parseOptionalString(json["message_id"]),
+                  let partDict = json["part"] as? [String: Any],
+                  let part = AIProtocolPartInfo.from(json: partDict) else { return nil }
+            return .partUpdated(messageId: messageId, part: part)
+        }
+        if type == "part_delta" {
+            guard let messageId = parseOptionalString(json["message_id"]),
+                  let partId = parseOptionalString(json["part_id"]),
+                  let partType = parseOptionalString(json["part_type"]),
+                  let field = parseOptionalString(json["field"]),
+                  let delta = json["delta"] as? String else { return nil }
+            return .partDelta(
+                messageId: messageId,
+                partId: partId,
+                partType: partType,
+                field: field,
+                delta: delta
+            )
+        }
+
+        return nil
+    }
+}
+
+struct AISessionMessagesUpdateV2 {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: AIChatTool
+    let sessionId: String
+    let cacheRevision: UInt64
+    let isStreaming: Bool
+    let selectionHint: AISessionSelectionHint?
+    let messages: [AIProtocolMessageInfo]?
+    let ops: [AIProtocolSessionCacheOp]?
+
+    static func from(json: [String: Any]) -> AISessionMessagesUpdateV2? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = parseAIChatTool(json["ai_tool"]),
+              let sessionId = json["session_id"] as? String else { return nil }
+        let cacheRevision = parseUInt64(json["cache_revision"])
+        let isStreaming = parseBool(json["is_streaming"]) ?? false
+        let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
+
+        let messages: [AIProtocolMessageInfo]? = {
+            guard let array = json["messages"] as? [[String: Any]] else { return nil }
+            return array.compactMap { AIProtocolMessageInfo.from(json: $0) }
+        }()
+        let ops: [AIProtocolSessionCacheOp]? = {
+            guard let array = json["ops"] as? [[String: Any]] else { return nil }
+            return array.compactMap { AIProtocolSessionCacheOp.from(json: $0) }
+        }()
+
+        return AISessionMessagesUpdateV2(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId,
+            cacheRevision: cacheRevision,
+            isStreaming: isStreaming,
+            selectionHint: selectionHint,
+            messages: messages,
+            ops: ops
         )
     }
 }

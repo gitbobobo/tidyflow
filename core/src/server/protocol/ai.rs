@@ -139,6 +139,27 @@ pub struct MessageInfo {
     pub parts: Vec<PartInfo>,
 }
 
+/// AI 会话缓存增量操作（用于 ai_session_messages_update 的 ops 模式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiSessionCacheOpInfo {
+    MessageUpdated {
+        message_id: String,
+        role: String,
+    },
+    PartUpdated {
+        message_id: String,
+        part: PartInfo,
+    },
+    PartDelta {
+        message_id: String,
+        part_id: String,
+        part_type: String,
+        field: String,
+        delta: String,
+    },
+}
+
 /// 历史会话最近一次输入选择提示（用于前端恢复输入框的 model/agent）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSelectionHint {
