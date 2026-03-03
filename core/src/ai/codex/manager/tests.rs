@@ -1,5 +1,6 @@
 use super::{AcpContentEncodingMode, AppServerRequestError, CodexAppServerManager};
 use serde_json::json;
+use std::path::Path;
 
 #[test]
 fn acp_initialize_payload_should_match_schema_fields() {
@@ -199,4 +200,42 @@ fn parse_rpc_error_should_keep_auth_required_code() {
         AppServerRequestError::Rpc(parsed).to_user_string(),
         "App-server error (code -32000): Authentication required"
     );
+}
+
+#[test]
+fn resolve_command_for_launch_should_accept_absolute_executable_path() {
+    let resolved = CodexAppServerManager::resolve_command_for_launch("/bin/zsh")
+        .expect("absolute executable should resolve");
+    assert_eq!(resolved, "/bin/zsh");
+}
+
+#[test]
+fn should_skip_candidate_path_should_filter_vscode_copilot_shim() {
+    let shim_path = Path::new(
+        "/Users/demo/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot",
+    );
+    assert!(CodexAppServerManager::should_skip_candidate_path(
+        "copilot", shim_path
+    ));
+
+    let normal_path = Path::new("/opt/homebrew/bin/copilot");
+    assert!(!CodexAppServerManager::should_skip_candidate_path(
+        "copilot",
+        normal_path
+    ));
+}
+
+#[test]
+fn resolve_command_from_override_should_return_none_for_invalid_path() {
+    let key = "TIDYFLOW_CODEX_BIN";
+    let previous = std::env::var(key).ok();
+    std::env::set_var(key, "/definitely/not/an/executable");
+    let resolved = CodexAppServerManager::resolve_command_from_override("codex");
+    assert!(resolved.is_none());
+
+    if let Some(previous) = previous {
+        std::env::set_var(key, previous);
+    } else {
+        std::env::remove_var(key);
+    }
 }

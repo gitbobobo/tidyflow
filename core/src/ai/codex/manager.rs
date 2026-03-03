@@ -2,6 +2,9 @@ use crate::ai::shared::request_id::request_id_key as shared_request_id_key;
 use crate::util::shell_launch::{build_login_zsh_exec_args, LOGIN_ZSH_PATH};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -11,6 +14,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 
 const REQUEST_TIMEOUT_SECS: u64 = 120;
+const VSCODE_COPILOT_CLI_SHIM_SEGMENT: &str = "/github.copilot-chat/copilotcli/";
+const VSCODE_COPILOT_DEBUG_SHIM_SEGMENT: &str = "/github.copilot-chat/debugcommand/";
 
 #[derive(Debug, Clone, Default)]
 pub struct AcpAgentCapabilities {
@@ -201,8 +206,14 @@ impl CodexAppServerManager {
         if !Path::new(LOGIN_ZSH_PATH).exists() {
             return Err(format!("zsh not found at {}", LOGIN_ZSH_PATH));
         }
-        let launch_args =
-            build_login_zsh_exec_args(&self.command, &self.command_args).map_err(|e| {
+        let resolved_command = Self::resolve_command_for_launch(&self.command).map_err(|e| {
+            format!(
+                "Failed to resolve executable for {} (command=`{}`): {}",
+                self.display_name, self.command, e
+            )
+        })?;
+        let launch_args = build_login_zsh_exec_args(&resolved_command, &self.command_args)
+            .map_err(|e| {
                 format!(
                     "Failed to build launch args for {}: {}",
                     self.display_name, e
@@ -222,17 +233,14 @@ impl CodexAppServerManager {
             self.display_name,
             self.working_dir.display()
         );
-        let mut child = command.spawn().map_err(|e| {
-            format!(
-                "Failed to spawn `{}`: {}",
-                if self.command_args.is_empty() {
-                    self.command.clone()
-                } else {
-                    format!("{} {}", self.command, self.command_args.join(" "))
-                },
-                e
-            )
-        })?;
+        let launched_command = if self.command_args.is_empty() {
+            resolved_command.clone()
+        } else {
+            format!("{} {}", resolved_command, self.command_args.join(" "))
+        };
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Failed to spawn `{}`: {}", launched_command, e))?;
 
         let stdin = child
             .stdin
@@ -895,6 +903,187 @@ impl CodexAppServerManager {
 
     fn request_id_key(id: &Value) -> String {
         shared_request_id_key(id)
+    }
+
+    /// 解析启动命令的可执行路径，避免 macOS App 环境 PATH 不完整导致 `command not found`。
+    /// 对 copilot 额外绕开 VSCode 插件 shim，避免进入交互安装流程。
+    fn resolve_command_for_launch(command: &str) -> Result<String, String> {
+        let trimmed = command.trim();
+        if trimmed.is_empty() {
+            return Err("empty command".to_string());
+        }
+
+        if let Some(path) = Self::resolve_command_from_override(trimmed) {
+            return Ok(path);
+        }
+
+        // 绝对/相对路径：直接校验可执行性。
+        if trimmed.contains('/') {
+            let direct = PathBuf::from(trimmed);
+            if Self::is_executable_file(&direct)
+                && !Self::should_skip_candidate_path(trimmed, &direct)
+            {
+                return Ok(trimmed.to_string());
+            }
+            return Err(format!("path is not executable: {}", trimmed));
+        }
+
+        for dir in Self::collect_command_search_dirs() {
+            let candidate = dir.join(trimmed);
+            if !Self::is_executable_file(&candidate) {
+                continue;
+            }
+            if Self::should_skip_candidate_path(trimmed, &candidate) {
+                continue;
+            }
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+
+        Err(format!(
+            "command `{}` not found in PATH/common install locations",
+            trimmed
+        ))
+    }
+
+    fn resolve_command_from_override(command: &str) -> Option<String> {
+        let key = format!(
+            "TIDYFLOW_{}_BIN",
+            command.trim().to_ascii_uppercase().replace('-', "_")
+        );
+        let value = std::env::var(&key).ok()?;
+        let path = PathBuf::from(value.trim());
+        if Self::is_executable_file(&path) {
+            Some(path.to_string_lossy().to_string())
+        } else {
+            warn!(
+                "Ignoring {} because path is not executable: {}",
+                key,
+                path.display()
+            );
+            None
+        }
+    }
+
+    fn collect_command_search_dirs() -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        if let Ok(path) = std::env::var("PATH") {
+            for entry in path.split(':') {
+                Self::push_search_dir(entry, &mut dirs, &mut seen);
+            }
+        }
+        if let Some(path) = Self::get_shell_path() {
+            for entry in path.split(':') {
+                Self::push_search_dir(entry, &mut dirs, &mut seen);
+            }
+        }
+
+        let home = dirs::home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !home.is_empty() {
+            Self::push_search_dir(&format!("{}/.local/bin", home), &mut dirs, &mut seen);
+            Self::push_search_dir(&format!("{}/.cargo/bin", home), &mut dirs, &mut seen);
+            Self::push_search_dir(&format!("{}/.opencode/bin", home), &mut dirs, &mut seen);
+            Self::push_search_dir(&format!("{}/.bun/bin", home), &mut dirs, &mut seen);
+            Self::append_versioned_node_bin_dirs(
+                &PathBuf::from(format!("{}/.nvm/versions/node", home)),
+                &mut dirs,
+                &mut seen,
+            );
+        }
+
+        Self::push_search_dir("/opt/homebrew/bin", &mut dirs, &mut seen);
+        Self::push_search_dir("/opt/homebrew/sbin", &mut dirs, &mut seen);
+        Self::push_search_dir("/usr/local/bin", &mut dirs, &mut seen);
+        Self::push_search_dir("/usr/local/sbin", &mut dirs, &mut seen);
+        Self::push_search_dir("/usr/bin", &mut dirs, &mut seen);
+        Self::push_search_dir("/bin", &mut dirs, &mut seen);
+
+        // npm global 常见安装位置：Homebrew Node 的 Cellar 版本目录。
+        Self::append_versioned_node_bin_dirs(
+            &PathBuf::from("/opt/homebrew/Cellar/node"),
+            &mut dirs,
+            &mut seen,
+        );
+        Self::append_versioned_node_bin_dirs(
+            &PathBuf::from("/usr/local/Cellar/node"),
+            &mut dirs,
+            &mut seen,
+        );
+
+        dirs
+    }
+
+    fn push_search_dir(raw: &str, dirs: &mut Vec<PathBuf>, seen: &mut HashSet<String>) {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let path = PathBuf::from(trimmed);
+        if !path.is_dir() {
+            return;
+        }
+        let key = path.to_string_lossy().to_string();
+        if seen.insert(key) {
+            dirs.push(path);
+        }
+    }
+
+    fn append_versioned_node_bin_dirs(
+        root: &Path,
+        dirs: &mut Vec<PathBuf>,
+        seen: &mut HashSet<String>,
+    ) {
+        let Ok(entries) = fs::read_dir(root) else {
+            return;
+        };
+        let mut versions: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|it| it.path()))
+            .filter(|path| path.is_dir())
+            .collect();
+        versions.sort();
+        versions.reverse();
+
+        for version_dir in versions {
+            let bin = version_dir.join("bin");
+            if !bin.is_dir() {
+                continue;
+            }
+            let key = bin.to_string_lossy().to_string();
+            if seen.insert(key) {
+                dirs.push(bin);
+            }
+        }
+    }
+
+    fn is_executable_file(path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            fs::metadata(path)
+                .map(|meta| meta.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    }
+
+    fn should_skip_candidate_path(command: &str, candidate: &Path) -> bool {
+        if !command.eq_ignore_ascii_case("copilot") {
+            return false;
+        }
+        let normalized = candidate
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        normalized.contains(VSCODE_COPILOT_CLI_SHIM_SEGMENT)
+            || normalized.contains(VSCODE_COPILOT_DEBUG_SHIM_SEGMENT)
     }
 
     /// 从登录 shell 获取用户的完整 PATH（包含 .zshrc/.bashrc 中配置的路径）
