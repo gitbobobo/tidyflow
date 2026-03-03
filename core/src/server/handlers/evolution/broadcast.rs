@@ -107,6 +107,39 @@ impl EvolutionManager {
     }
 
     pub(super) async fn broadcast(&self, ctx: &HandlerContext, message: ServerMessage) {
+        let sidebar_target = match &message {
+            ServerMessage::EvoWorkspaceStarted {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoWorkspaceStopped {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoWorkspaceResumed {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoStageChanged {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoCycleUpdated {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoJudgeResult {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoBlockingRequired {
+                project, workspace, ..
+            }
+            | ServerMessage::EvoBlockersUpdated {
+                project, workspace, ..
+            } => Some((project.clone(), workspace.clone())),
+            ServerMessage::EvoError {
+                project: Some(project),
+                workspace: Some(workspace),
+                ..
+            } => Some((project.clone(), workspace.clone())),
+            _ => None,
+        };
+
         let _ = crate::server::context::send_task_broadcast_event(
             &ctx.task_broadcast_tx,
             TaskBroadcastEvent {
@@ -116,5 +149,12 @@ impl EvolutionManager {
                 skip_when_single_receiver: false,
             },
         );
+
+        if let Some((project, workspace)) = sidebar_target {
+            crate::application::sidebar_status::notify_workspace_sidebar_if_evolution_changed(
+                ctx, &project, &workspace,
+            )
+            .await;
+        }
     }
 }

@@ -1,9 +1,26 @@
 use crate::server::context::HandlerContext;
 use crate::server::protocol::WorkspaceSidebarStatusInfo;
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
+use tracing::warn;
 
 const TASK_ICON_AI_COMMIT: &str = "sparkles";
 const TASK_ICON_AI_MERGE: &str = "cpu";
 const TASK_ICON_PROJECT_COMMAND_FALLBACK: &str = "terminal";
+
+static EVOLUTION_ACTIVE_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+
+fn evolution_active_cache() -> &'static Mutex<HashMap<String, bool>> {
+    EVOLUTION_ACTIVE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn should_broadcast_evolution_sidebar(previous: Option<bool>, current: bool) -> bool {
+    match previous {
+        Some(previous) => previous != current,
+        None => current,
+    }
+}
 
 pub async fn workspace_sidebar_status(
     ctx: &HandlerContext,
@@ -83,4 +100,69 @@ async fn workspace_chat_active(ctx: &HandlerContext, project: &str, workspace: &
         ai.session_statuses.clone()
     };
     store.has_busy_for_workspace(project, workspace)
+}
+
+/// 当 evolution 活跃状态切换时，主动广播最新 workspaces，驱动前端侧边栏即时刷新。
+pub async fn notify_workspace_sidebar_if_evolution_changed(
+    ctx: &HandlerContext,
+    project: &str,
+    workspace: &str,
+) {
+    let key = format!("{}:{}", project, workspace);
+    let evolution_active =
+        crate::server::handlers::evolution::has_active_workspace(project, workspace).await;
+
+    let should_broadcast = {
+        let mut cache = evolution_active_cache().lock().await;
+        let previous = cache.get(&key).copied();
+        let should_broadcast = should_broadcast_evolution_sidebar(previous, evolution_active);
+        if should_broadcast || previous.is_none() {
+            cache.insert(key.clone(), evolution_active);
+        }
+        should_broadcast
+    };
+
+    if !should_broadcast {
+        return;
+    }
+
+    let message = match crate::application::project::list_workspaces_message(ctx, project).await {
+        Ok(message) => message,
+        Err(error_message) => {
+            warn!(
+                "broadcast workspaces for sidebar failed: project={}, workspace={}, error={:?}",
+                project, workspace, error_message
+            );
+            return;
+        }
+    };
+
+    let _ = crate::server::context::send_task_broadcast_event(
+        &ctx.task_broadcast_tx,
+        crate::server::context::TaskBroadcastEvent {
+            origin_conn_id: "sidebar_status_evolution".to_string(),
+            message,
+            target_conn_ids: None,
+            skip_when_single_receiver: false,
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_broadcast_evolution_sidebar;
+
+    #[test]
+    fn broadcast_on_first_active_only() {
+        assert!(should_broadcast_evolution_sidebar(None, true));
+        assert!(!should_broadcast_evolution_sidebar(None, false));
+    }
+
+    #[test]
+    fn broadcast_on_value_change_only() {
+        assert!(!should_broadcast_evolution_sidebar(Some(true), true));
+        assert!(should_broadcast_evolution_sidebar(Some(true), false));
+        assert!(should_broadcast_evolution_sidebar(Some(false), true));
+        assert!(!should_broadcast_evolution_sidebar(Some(false), false));
+    }
 }
