@@ -2313,6 +2313,12 @@ struct MobileEvolutionView: View {
         let durationMs: UInt64?
     }
 
+    private struct MobileCycleBarSegment: Identifiable {
+        let entry: MobileCycleBarEntry
+        let ratio: CGFloat
+        var id: String { entry.id }
+    }
+
     private func mobileCycleBarEntries(_ cycle: EvolutionCycleHistoryItemV2) -> [MobileCycleBarEntry] {
         let executionEntries = cycle.executions
             .filter { isExecutionCompletedStatus($0.status) }
@@ -2390,29 +2396,7 @@ struct MobileEvolutionView: View {
                                 .foregroundColor(.secondary)
                         }
                         // 紧凑彩色条
-                        HStack(spacing: 2) {
-                            ForEach(entries) { entry in
-                                let durationText = mobileTooltipDuration(entry.durationMs)
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(mobileStageColor(entry.stage))
-                                    .frame(height: 6)
-                                    .overlay {
-                                        Color.clear
-                                            .contentShape(Rectangle())
-                                            .contextMenu {
-                                                Text(stageDisplayName(entry.stage))
-                                                if !entry.agent.isEmpty {
-                                                    Text("evolution.page.pipeline.agentLabel".localized + ": \(entry.agent)")
-                                                }
-                                                if !entry.aiTool.isEmpty {
-                                                    Text("AI: \(entry.aiTool)")
-                                                }
-                                                Text("evolution.page.pipeline.durationLabel".localized + ": \(durationText)")
-                                            }
-                                    }
-                            }
-                        }
-                        .clipShape(Capsule())
+                        mobileProportionalStageBar(entries: entries, height: 6)
 
                         // 终止原因
                         if let reason = trimmedNonEmptyText(cycle.terminalReasonCode) {
@@ -2460,5 +2444,63 @@ struct MobileEvolutionView: View {
             return "evolution.page.pipeline.durationUnknown".localized
         }
         return mobileStageDuration(TimeInterval(durationMs) / 1000.0)
+    }
+
+    private func mobileProportionalStageBar(entries: [MobileCycleBarEntry], height: CGFloat) -> some View {
+        let segments = mobileStageBarSegments(entries)
+        let segmentSpacing: CGFloat = 2
+
+        return GeometryReader { geo in
+            let totalSpacing = segmentSpacing * CGFloat(max(segments.count - 1, 0))
+            let drawableWidth = max(geo.size.width - totalSpacing, 0)
+            HStack(spacing: segmentSpacing) {
+                ForEach(segments) { segment in
+                    let durationText = mobileTooltipDuration(segment.entry.durationMs)
+                    RoundedRectangle(cornerRadius: height / 2)
+                        .fill(mobileStageColor(segment.entry.stage))
+                        .frame(width: max(0, drawableWidth * segment.ratio), height: height)
+                        .overlay {
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .contextMenu {
+                                    Text(stageDisplayName(segment.entry.stage))
+                                    if !segment.entry.agent.isEmpty {
+                                        Text("evolution.page.pipeline.agentLabel".localized + ": \(segment.entry.agent)")
+                                    }
+                                    if !segment.entry.aiTool.isEmpty {
+                                        Text("AI: \(segment.entry.aiTool)")
+                                    }
+                                    Text("evolution.page.pipeline.durationLabel".localized + ": \(durationText)")
+                                }
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: height)
+        .clipShape(Capsule())
+    }
+
+    private func mobileStageBarSegments(_ entries: [MobileCycleBarEntry]) -> [MobileCycleBarSegment] {
+        guard !entries.isEmpty else { return [] }
+
+        let rawDurations = entries.map { TimeInterval($0.durationMs ?? 0) / 1000.0 }
+        let positiveDurations = rawDurations.filter { $0 > 0 }
+        let weights: [TimeInterval]
+
+        if !positiveDurations.isEmpty {
+            let averagePositive = positiveDurations.reduce(0, +) / Double(positiveDurations.count)
+            let fallbackWeight = max(averagePositive * 0.12, 0.3)
+            weights = rawDurations.map { duration in
+                duration > 0 ? duration : fallbackWeight
+            }
+        } else {
+            weights = Array(repeating: 1, count: entries.count)
+        }
+
+        let totalWeight = max(weights.reduce(0, +), 0.0001)
+        return zip(entries, weights).map { entry, weight in
+            MobileCycleBarSegment(entry: entry, ratio: CGFloat(weight / totalWeight))
+        }
     }
 }

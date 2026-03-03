@@ -611,7 +611,7 @@ struct EvolutionPipelineView: View {
             // 本轮循环（有运行数据时才显示）
             if hasCurrentCycleRow {
                 cycleListRow(
-                    icon: "arrow.triangle.2.circlepath",
+                    round: currentCycleRound,
                     color: .green,
                     title: currentCycleDisplayTitle,
                     isSelected: selectedCycle == .currentCycle,
@@ -633,7 +633,7 @@ struct EvolutionPipelineView: View {
             // 历史循环
             ForEach(cycleHistories) { cycle in
                 cycleListRow(
-                    icon: "clock.arrow.circlepath",
+                    round: cycle.round,
                     color: .indigo,
                     title: cycle.displayTitle,
                     isSelected: selectedCycle == .history(id: cycle.id),
@@ -660,6 +660,10 @@ struct EvolutionPipelineView: View {
 
     private var currentCycleDisplayTitle: String {
         cycleDisplayTitle(currentItem?.title)
+    }
+
+    private var currentCycleRound: Int {
+        max(1, currentItem?.globalLoopRound ?? lastRecordedRound)
     }
 
     private var hasRunningAgents: Bool {
@@ -695,7 +699,7 @@ struct EvolutionPipelineView: View {
 
     /// 循环列表行
     private func cycleListRow(
-        icon: String,
+        round: Int,
         color: Color,
         title: String,
         isSelected: Bool,
@@ -709,9 +713,7 @@ struct EvolutionPipelineView: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 10))
-                        .foregroundColor(isSelected ? color : .secondary)
+                    roundBadge(round: round, color: color, isSelected: isSelected)
 
                     Text(title)
                         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
@@ -748,22 +750,7 @@ struct EvolutionPipelineView: View {
 
                 // 分段彩色线条
                 if let entries = stageEntries, !entries.isEmpty {
-                    HStack(spacing: 2) {
-                        ForEach(entries) { entry in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(stageColor(entry.stage))
-                                .frame(height: 4)
-                                .help(stageTooltip(
-                                    stage: entry.stage,
-                                    agent: entry.agent,
-                                    aiTool: entry.aiToolName,
-                                    duration: tooltipDurationText(entry.durationSeconds)
-                                ))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .clipShape(Capsule())
-                    .padding(.leading, 16)
+                    proportionalStageBar(entries: entries, height: 4)
                 }
             }
             .padding(.horizontal, 8)
@@ -778,6 +765,76 @@ struct EvolutionPipelineView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func roundBadge(round: Int, color: Color, isSelected: Bool) -> some View {
+        Text("\(max(1, round))")
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundStyle(isSelected ? color : .secondary)
+            .frame(width: 18, height: 18)
+            .background(
+                Circle()
+                    .fill(isSelected ? color.opacity(0.14) : Color.secondary.opacity(0.12))
+            )
+            .overlay(
+                Circle()
+                    .stroke(isSelected ? color.opacity(0.45) : Color.secondary.opacity(0.25), lineWidth: 1)
+            )
+    }
+
+    private struct StageBarSegment: Identifiable {
+        let entry: PipelineCycleStageEntry
+        let ratio: CGFloat
+        var id: String { entry.id }
+    }
+
+    private func proportionalStageBar(entries: [PipelineCycleStageEntry], height: CGFloat) -> some View {
+        let segments = stageBarSegments(entries)
+        let segmentSpacing: CGFloat = 2
+
+        return GeometryReader { geo in
+            let totalSpacing = segmentSpacing * CGFloat(max(segments.count - 1, 0))
+            let drawableWidth = max(geo.size.width - totalSpacing, 0)
+            HStack(spacing: segmentSpacing) {
+                ForEach(segments) { segment in
+                    RoundedRectangle(cornerRadius: height / 2)
+                        .fill(stageColor(segment.entry.stage))
+                        .frame(width: max(0, drawableWidth * segment.ratio), height: height)
+                        .help(stageTooltip(
+                            stage: segment.entry.stage,
+                            agent: segment.entry.agent,
+                            aiTool: segment.entry.aiToolName,
+                            duration: tooltipDurationText(segment.entry.durationSeconds)
+                        ))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: height)
+        .clipShape(Capsule())
+    }
+
+    private func stageBarSegments(_ entries: [PipelineCycleStageEntry]) -> [StageBarSegment] {
+        guard !entries.isEmpty else { return [] }
+
+        let rawDurations = entries.map { max(0, $0.durationSeconds) }
+        let positiveDurations = rawDurations.filter { $0 > 0 }
+        let weights: [TimeInterval]
+
+        if !positiveDurations.isEmpty {
+            let averagePositive = positiveDurations.reduce(0, +) / Double(positiveDurations.count)
+            let fallbackWeight = max(averagePositive * 0.12, 0.3)
+            weights = rawDurations.map { duration in
+                duration > 0 ? duration : fallbackWeight
+            }
+        } else {
+            weights = Array(repeating: 1, count: entries.count)
+        }
+
+        let totalWeight = max(weights.reduce(0, +), 0.0001)
+        return zip(entries, weights).map { entry, weight in
+            StageBarSegment(entry: entry, ratio: CGFloat(weight / totalWeight))
+        }
     }
 
     // MARK: - 终止/异常原因提示（仅在终止或异常时显示）
