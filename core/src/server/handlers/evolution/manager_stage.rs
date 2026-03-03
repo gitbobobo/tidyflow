@@ -3565,6 +3565,14 @@ impl EvolutionManager {
         }
 
         if let Some((project, workspace, cycle_id, from_stage, to_stage)) = stage_changed {
+            let verify_iteration = {
+                let state = self.state.lock().await;
+                state
+                    .workspaces
+                    .get(key)
+                    .map(|v| v.verify_iteration)
+                    .unwrap_or(0)
+            };
             self.broadcast(
                 ctx,
                 ServerMessage::EvoStageChanged {
@@ -3577,20 +3585,21 @@ impl EvolutionManager {
                     source: "orchestrator".to_string(),
                     from_stage,
                     to_stage,
-                    verify_iteration: self
-                        .state
-                        .lock()
-                        .await
-                        .workspaces
-                        .get(key)
-                        .map(|v| v.verify_iteration)
-                        .unwrap_or(0),
+                    verify_iteration,
                 },
             )
             .await;
         }
 
         if let Some((project, workspace, cycle_id, from_stage, to_stage)) = post_stage_changed {
+            let verify_iteration = {
+                let state = self.state.lock().await;
+                state
+                    .workspaces
+                    .get(key)
+                    .map(|v| v.verify_iteration)
+                    .unwrap_or(0)
+            };
             self.broadcast(
                 ctx,
                 ServerMessage::EvoStageChanged {
@@ -3603,14 +3612,7 @@ impl EvolutionManager {
                     source: "orchestrator".to_string(),
                     from_stage,
                     to_stage,
-                    verify_iteration: self
-                        .state
-                        .lock()
-                        .await
-                        .workspaces
-                        .get(key)
-                        .map(|v| v.verify_iteration)
-                        .unwrap_or(0),
+                    verify_iteration,
                 },
             )
             .await;

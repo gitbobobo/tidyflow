@@ -76,9 +76,6 @@ impl ClaudeToolState {
 /// 从 init 事件中提取的元数据
 struct ClaudeInitData {
     session_id: Option<String>,
-    model: Option<String>,
-    agents: Vec<String>,
-    slash_commands: Vec<String>,
 }
 
 /// 持久 Claude 子进程的运行时句柄
@@ -603,12 +600,7 @@ impl ClaudeCodeAgent {
                                             }
 
                                             *handle_ref.init_data.lock().await =
-                                                Some(ClaudeInitData {
-                                                    session_id,
-                                                    model,
-                                                    agents,
-                                                    slash_commands,
-                                                });
+                                                Some(ClaudeInitData { session_id });
                                             let _ = handle_ref.init_watch.send(true);
                                             debug!(
                                                 "[claude] init metadata received for {}",
