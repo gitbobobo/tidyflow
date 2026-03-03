@@ -16,9 +16,7 @@ pub async fn handle_mutate_message(
         ClientMessage::SaveClientSettings {
             custom_commands,
             workspace_shortcuts,
-            commit_ai_agent,
             merge_ai_agent,
-            selected_ai_agent,
             fixed_port,
             app_language,
             remote_access_enabled,
@@ -29,9 +27,7 @@ pub async fn handle_mutate_message(
                 SaveClientSettingsParams {
                     custom_commands: custom_commands.clone(),
                     workspace_shortcuts: workspace_shortcuts.clone(),
-                    commit_ai_agent: commit_ai_agent.clone(),
                     merge_ai_agent: merge_ai_agent.clone(),
-                    selected_ai_agent: selected_ai_agent.clone(),
                     fixed_port: *fixed_port,
                     app_language: app_language.clone(),
                     remote_access_enabled: *remote_access_enabled,

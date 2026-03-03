@@ -8,9 +8,7 @@ use crate::workspace::state::EvolutionStageProfile;
 pub struct SaveClientSettingsParams {
     pub custom_commands: Vec<CustomCommandInfo>,
     pub workspace_shortcuts: std::collections::HashMap<String, String>,
-    pub commit_ai_agent: Option<String>,
     pub merge_ai_agent: Option<String>,
-    pub selected_ai_agent: Option<String>,
     pub fixed_port: Option<u16>,
     pub app_language: Option<String>,
     pub remote_access_enabled: Option<bool>,
@@ -40,7 +38,6 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
     ServerMessage::ClientSettingsResult {
         custom_commands: commands,
         workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
-        commit_ai_agent: state.client_settings.commit_ai_agent.clone(),
         merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
         fixed_port: state.client_settings.fixed_port,
         app_language: state.client_settings.app_language.clone(),
@@ -63,15 +60,7 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
         })
         .collect();
     state.client_settings.workspace_shortcuts = params.workspace_shortcuts;
-
-    // 优先使用新字段；若新字段为空则回退兼容旧客户端的 selected_ai_agent
-    if params.commit_ai_agent.is_some() || params.merge_ai_agent.is_some() {
-        state.client_settings.commit_ai_agent = params.commit_ai_agent;
-        state.client_settings.merge_ai_agent = params.merge_ai_agent;
-    } else if let Some(old) = params.selected_ai_agent {
-        state.client_settings.commit_ai_agent = Some(old.clone());
-        state.client_settings.merge_ai_agent = Some(old);
-    }
+    state.client_settings.merge_ai_agent = params.merge_ai_agent;
 
     if let Some(port) = params.fixed_port {
         state.client_settings.fixed_port = port;
@@ -113,9 +102,7 @@ mod tests {
         SaveClientSettingsParams {
             custom_commands: Vec::new(),
             workspace_shortcuts: HashMap::new(),
-            commit_ai_agent: None,
             merge_ai_agent: None,
-            selected_ai_agent: None,
             fixed_port: None,
             app_language: None,
             remote_access_enabled: None,
