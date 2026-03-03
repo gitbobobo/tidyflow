@@ -1,7 +1,8 @@
 use crate::ai::shared::request_id::request_id_key as shared_request_id_key;
+use crate::util::shell_launch::{build_login_zsh_exec_args, LOGIN_ZSH_PATH};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -197,9 +198,19 @@ impl CodexAppServerManager {
             return Ok(());
         }
 
-        let mut command = Command::new(&self.command);
+        if !Path::new(LOGIN_ZSH_PATH).exists() {
+            return Err(format!("zsh not found at {}", LOGIN_ZSH_PATH));
+        }
+        let launch_args =
+            build_login_zsh_exec_args(&self.command, &self.command_args).map_err(|e| {
+                format!(
+                    "Failed to build launch args for {}: {}",
+                    self.display_name, e
+                )
+            })?;
+        let mut command = Command::new(LOGIN_ZSH_PATH);
         command
-            .args(&self.command_args)
+            .args(&launch_args)
             .current_dir(&self.working_dir)
             .envs(Self::build_extended_env())
             .stdin(std::process::Stdio::piped())
