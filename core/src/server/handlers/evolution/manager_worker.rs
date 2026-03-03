@@ -1,6 +1,6 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use tokio::time::{sleep, Duration};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use super::EvolutionManager;
 use crate::ai::AiMessage;
@@ -568,6 +568,10 @@ impl EvolutionManager {
             self.broadcast_cycle_update(&key, &ctx, "orchestrator")
                 .await;
 
+            info!(
+                "evolution worker run_stage begin: key={}, project={}, workspace={}, cycle_id={}, stage={}, round={}",
+                key, project, workspace, cycle_id, stage, round
+            );
             let stage_result = self
                 .run_stage(&key, &project, &workspace, &cycle_id, &stage, round, &ctx)
                 .await;
@@ -576,10 +580,49 @@ impl EvolutionManager {
 
             match stage_result {
                 Ok(judge_pass) => {
-                    if self
+                    info!(
+                        "evolution worker run_stage done: key={}, cycle_id={}, stage={}, judge_pass={}",
+                        key, cycle_id, stage, judge_pass
+                    );
+                    info!(
+                        "evolution worker after_stage_success begin: key={}, cycle_id={}, stage={}, judge_pass={}",
+                        key, cycle_id, stage, judge_pass
+                    );
+                    let auto_next_cycle = self
                         .after_stage_success(&key, &stage, judge_pass, &ctx)
-                        .await
+                        .await;
+                    let post_transition_snapshot = {
+                        let state = self.state.lock().await;
+                        state.workspaces.get(&key).map(|entry| {
+                            (
+                                entry.status.clone(),
+                                entry.current_stage.clone(),
+                                entry.cycle_id.clone(),
+                                entry.stop_requested,
+                            )
+                        })
+                    };
+                    if let Some((status, current_stage, next_cycle_id, stop_requested)) =
+                        post_transition_snapshot
                     {
+                        info!(
+                            "evolution worker after_stage_success end: key={}, prev_cycle_id={}, stage={}, auto_next_cycle={}, status={}, current_stage={}, cycle_id={}, stop_requested={}",
+                            key,
+                            cycle_id,
+                            stage,
+                            auto_next_cycle,
+                            status,
+                            current_stage,
+                            next_cycle_id,
+                            stop_requested
+                        );
+                    } else {
+                        warn!(
+                            "evolution worker after_stage_success end: workspace state missing: key={}, prev_cycle_id={}, stage={}, auto_next_cycle={}",
+                            key, cycle_id, stage, auto_next_cycle
+                        );
+                    }
+                    if auto_next_cycle {
                         continue;
                     }
                 }

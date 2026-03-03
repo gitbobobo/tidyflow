@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::ai::{AiAgent, AiModelSelection, AiQuestionRequest};
@@ -2750,6 +2750,17 @@ impl EvolutionManager {
                 profile_for_stage(&entry.stage_profiles, stage),
             )
         };
+        info!(
+            "evolution run_stage enter: key={}, project={}, workspace={}, cycle_id={}, stage={}, round={}, verify_iteration={}, backlog_contract_version={}",
+            key,
+            project,
+            workspace,
+            cycle_id,
+            stage,
+            round,
+            verify_iteration,
+            backlog_contract_version
+        );
 
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
         let implement_lanes = if Self::lane_for_stage(stage).is_some() {
@@ -2998,8 +3009,17 @@ impl EvolutionManager {
         )
         .await
         .ok();
-        self.persist_cycle_file(key).await.ok();
+        if let Err(err) = self.persist_cycle_file(key).await {
+            warn!(
+                "evolution run_stage done persist_cycle_file failed: key={}, cycle_id={}, stage={}, session_id={}, error={}",
+                key, cycle_id, stage, run_ctx.session_id, err
+            );
+        }
         self.broadcast_cycle_update(key, ctx, "agent").await;
+        info!(
+            "evolution run_stage done: key={}, cycle_id={}, stage={}, session_id={}, judge_pass={}, tool_calls={}",
+            key, cycle_id, stage, run_ctx.session_id, judge_pass, tool_call_count
+        );
 
         Ok(judge_pass)
     }
@@ -3110,12 +3130,49 @@ impl EvolutionManager {
         judge_pass: bool,
         ctx: &HandlerContext,
     ) -> bool {
-        let cycle_for_validation = {
+        let (cycle_for_validation, before_snapshot) = {
             let state = self.state.lock().await;
-            state.workspaces.get(key).map(|e| e.cycle_id.clone())
+            if let Some(entry) = state.workspaces.get(key) {
+                (
+                    Some(entry.cycle_id.clone()),
+                    Some((
+                        entry.status.clone(),
+                        entry.current_stage.clone(),
+                        entry.cycle_id.clone(),
+                        entry.verify_iteration,
+                        entry.global_loop_round,
+                    )),
+                )
+            } else {
+                (None, None)
+            }
         };
+        if let Some((status, current_stage, cycle_id, verify_iteration, global_loop_round)) =
+            before_snapshot
+        {
+            info!(
+                "evolution after_stage_success enter: key={}, stage={}, judge_pass={}, status={}, current_stage={}, cycle_id={}, verify_iteration={}, global_loop_round={}",
+                key,
+                stage,
+                judge_pass,
+                status,
+                current_stage,
+                cycle_id,
+                verify_iteration,
+                global_loop_round
+            );
+        } else {
+            warn!(
+                "evolution after_stage_success enter: workspace state missing: key={}, stage={}, judge_pass={}",
+                key, stage, judge_pass
+            );
+        }
         if stage == "plan" {
             let Some(cycle_id) = cycle_for_validation.clone() else {
+                warn!(
+                    "evolution after_stage_success plan validation skipped: missing cycle_id: key={}, stage={}",
+                    key, stage
+                );
                 return false;
             };
             if let Err(err) = self
@@ -3129,6 +3186,10 @@ impl EvolutionManager {
         }
         if stage == "judge" {
             let Some(cycle_id) = cycle_for_validation.clone() else {
+                warn!(
+                    "evolution after_stage_success judge validation skipped: missing cycle_id: key={}, stage={}",
+                    key, stage
+                );
                 return false;
             };
             if let Err(err) = self.ensure_acceptance_consistency(key, &cycle_id).await {
@@ -3383,6 +3444,26 @@ impl EvolutionManager {
                 ));
             }
         }
+        if !matches!(stage, "auto_commit") && stage_changed.is_none() {
+            warn!(
+                "evolution after_stage_success no stage_changed emitted: key={}, stage={}, judge_pass={}",
+                key, stage, judge_pass
+            );
+        }
+        if let Some((project, workspace, cycle_id, from_stage, to_stage)) = stage_changed.as_ref() {
+            info!(
+                "evolution after_stage_success stage_changed: key={}, project={}, workspace={}, cycle_id={}, from_stage={}, to_stage={}",
+                key, project, workspace, cycle_id, from_stage, to_stage
+            );
+        }
+        if let Some((project, workspace, cycle_id, from_stage, to_stage)) =
+            post_stage_changed.as_ref()
+        {
+            info!(
+                "evolution after_stage_success post_stage_changed: key={}, project={}, workspace={}, cycle_id={}, from_stage={}, to_stage={}",
+                key, project, workspace, cycle_id, from_stage, to_stage
+            );
+        }
 
         if let Some((project, workspace, workspace_root, cycle_id)) = auto_loop_gate {
             match self
@@ -3535,9 +3616,47 @@ impl EvolutionManager {
             .await;
         }
 
-        self.persist_cycle_file(key).await.ok();
+        if let Err(err) = self.persist_cycle_file(key).await {
+            warn!(
+                "evolution after_stage_success persist_cycle_file failed: key={}, stage={}, error={}",
+                key, stage, err
+            );
+        }
         self.broadcast_cycle_update(key, ctx, "orchestrator").await;
         self.broadcast_scheduler(ctx).await;
+        let after_snapshot = {
+            let state = self.state.lock().await;
+            state.workspaces.get(key).map(|entry| {
+                (
+                    entry.status.clone(),
+                    entry.current_stage.clone(),
+                    entry.cycle_id.clone(),
+                    entry.verify_iteration,
+                    entry.global_loop_round,
+                )
+            })
+        };
+        if let Some((status, current_stage, cycle_id, verify_iteration, global_loop_round)) =
+            after_snapshot
+        {
+            info!(
+                "evolution after_stage_success exit: key={}, stage={}, judge_pass={}, auto_next_cycle={}, status={}, current_stage={}, cycle_id={}, verify_iteration={}, global_loop_round={}",
+                key,
+                stage,
+                judge_pass,
+                auto_next_cycle,
+                status,
+                current_stage,
+                cycle_id,
+                verify_iteration,
+                global_loop_round
+            );
+        } else {
+            warn!(
+                "evolution after_stage_success exit: workspace state missing: key={}, stage={}, auto_next_cycle={}",
+                key, stage, auto_next_cycle
+            );
+        }
         auto_next_cycle
     }
 
