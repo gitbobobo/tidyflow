@@ -142,7 +142,6 @@ struct MobileSessionListSheet: View {
 
     /// 向服务端请求指定 AI 工具的会话列表
     private func requestSessionList(for tool: AIChatTool) {
-        appState.aiSessionListLoadingTools.insert(tool)
         appState.requestAISessionList(for: tool)
     }
 }

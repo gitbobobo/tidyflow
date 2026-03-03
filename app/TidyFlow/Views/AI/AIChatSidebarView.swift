@@ -119,15 +119,7 @@ struct AIChatSidebarView: View {
 
     /// 向服务端请求指定 AI 工具的会话列表
     private func requestSessionList(for tool: AIChatTool) {
-        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
-              appState.connectionState == .connected else { return }
-        appState.aiSessionListLoadingTools.insert(tool)
-        appState.wsClient.requestAISessionList(
-            projectName: appState.selectedProjectName,
-            workspaceName: ws,
-            aiTool: tool,
-            limit: 50
-        )
+        _ = appState.requestAISessionList(for: tool, limit: 50)
     }
 }
 
