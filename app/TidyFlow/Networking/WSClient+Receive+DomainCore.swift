@@ -150,15 +150,6 @@ extension WSClient {
                 }
             }
             return true
-        case "git_ai_commit_result":
-            if let result = GitAICommitResult.from(json: json) {
-                if let handler = gitMessageHandler {
-                    handler.handleGitAICommitResult(result)
-                } else {
-                    onGitAICommitResult?(result)
-                }
-            }
-            return true
         case "git_ai_merge_result":
             if let result = GitAIMergeResult.from(json: json) {
                 if let handler = gitMessageHandler {

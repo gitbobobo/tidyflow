@@ -72,7 +72,6 @@ class WSClient: NSObject, ObservableObject {
     var onGitOpResult: ((GitOpResult) -> Void)?
     var onGitBranchesResult: ((GitBranchesResult) -> Void)?
     var onGitCommitResult: ((GitCommitResult) -> Void)?
-    var onGitAICommitResult: ((GitAICommitResult) -> Void)?
     var onGitAIMergeResult: ((GitAIMergeResult) -> Void)?
     var onGitRebaseResult: ((GitRebaseResult) -> Void)?
     var onGitOpStatusResult: ((GitOpStatusResult) -> Void)?
@@ -156,6 +155,7 @@ class WSClient: NSObject, ObservableObject {
     var onEvoBlockingRequired: ((EvolutionBlockingRequiredV2) -> Void)?
     var onEvoBlockersUpdated: ((EvolutionBlockersUpdatedV2) -> Void)?
     var onEvoCycleHistory: ((String, String, [EvolutionCycleHistoryItemV2]) -> Void)?
+    var onEvoAutoCommitResult: ((EvoAutoCommitResult) -> Void)?
     var onEvidenceSnapshot: ((EvidenceSnapshotV2) -> Void)?
     var onEvidenceRebuildPrompt: ((EvidenceRebuildPromptV2) -> Void)?
     var onEvidenceItemChunk: ((EvidenceItemChunkV2) -> Void)?

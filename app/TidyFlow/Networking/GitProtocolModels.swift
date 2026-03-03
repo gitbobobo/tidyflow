@@ -1177,15 +1177,15 @@ struct AIGitCommit {
     }
 }
 
-/// AI Git commit 结果
-struct GitAICommitResult {
+/// Evolution AutoCommit 结果
+struct EvoAutoCommitResult {
     let project: String
     let workspace: String
     let success: Bool
     let message: String
     let commits: [AIGitCommit]
 
-    static func from(json: [String: Any]) -> GitAICommitResult? {
+    static func from(json: [String: Any]) -> EvoAutoCommitResult? {
         guard let project = json["project"] as? String,
               let workspace = json["workspace"] as? String,
               let success = json["success"] as? Bool,
@@ -1194,7 +1194,7 @@ struct GitAICommitResult {
             return nil
         }
         let commits = commitsArray.compactMap { AIGitCommit.from(json: $0) }
-        return GitAICommitResult(project: project, workspace: workspace, success: success, message: message, commits: commits)
+        return EvoAutoCommitResult(project: project, workspace: workspace, success: success, message: message, commits: commits)
     }
 }
 

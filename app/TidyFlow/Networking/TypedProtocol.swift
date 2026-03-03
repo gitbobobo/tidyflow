@@ -19,7 +19,6 @@ protocol GitMessageHandler: AnyObject {
     func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult)
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult)
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification)
-    func handleGitAICommitResult(_ result: GitAICommitResult)
     func handleGitAIMergeResult(_ result: GitAIMergeResult)
 }
 
@@ -39,7 +38,6 @@ extension GitMessageHandler {
     func handleGitRebaseOntoDefaultResult(_ result: GitRebaseOntoDefaultResult) {}
     func handleGitResetIntegrationWorktreeResult(_ result: GitResetIntegrationWorktreeResult) {}
     func handleGitStatusChanged(_ notification: GitStatusChangedNotification) {}
-    func handleGitAICommitResult(_ result: GitAICommitResult) {}
     func handleGitAIMergeResult(_ result: GitAIMergeResult) {}
 }
 
@@ -183,6 +181,7 @@ protocol EvolutionMessageHandler: AnyObject {
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2)
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2)
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2])
+    func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult)
     func handleEvolutionError(_ message: String, project: String?, workspace: String?)
 }
 
@@ -194,6 +193,7 @@ extension EvolutionMessageHandler {
     func handleEvolutionBlockingRequired(_ ev: EvolutionBlockingRequiredV2) {}
     func handleEvolutionBlockersUpdated(_ ev: EvolutionBlockersUpdatedV2) {}
     func handleEvolutionCycleHistory(project: String, workspace: String, cycles: [EvolutionCycleHistoryItemV2]) {}
+    func handleEvolutionAutoCommitResult(_ result: EvoAutoCommitResult) {}
     func handleEvolutionError(_ message: String, project: String?, workspace: String?) {}
 }
 

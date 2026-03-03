@@ -8,7 +8,6 @@ private struct SaveClientSettingsRequest: Encodable {
     let type: String = "save_client_settings"
     let customCommands: [CustomCommandPayload]
     let workspaceShortcuts: [String: String]
-    let commitAIAgent: String?
     let mergeAIAgent: String?
     let fixedPort: Int
     let appLanguage: String
@@ -25,7 +24,6 @@ private struct SaveClientSettingsRequest: Encodable {
         case type
         case customCommands = "custom_commands"
         case workspaceShortcuts = "workspace_shortcuts"
-        case commitAIAgent = "commit_ai_agent"
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case appLanguage = "app_language"
@@ -310,17 +308,13 @@ extension WSClient {
         ])
     }
 
-    /// AI 智能提交
-    func requestGitAICommit(project: String, workspace: String, aiAgent: String? = nil) {
-        var dict: [String: Any] = [
-            "type": "git_ai_commit",
+    /// Evolution AutoCommit 独立执行
+    func requestEvoAutoCommit(project: String, workspace: String) {
+        send([
+            "type": "evo_auto_commit",
             "project": project,
             "workspace": workspace
-        ]
-        if let agent = aiAgent {
-            dict["ai_agent"] = agent
-        }
-        send(dict)
+        ])
     }
 
     /// AI 智能合并到默认分支（v1.33）
@@ -614,7 +608,6 @@ extension WSClient {
                 )
             },
             workspaceShortcuts: settings.workspaceShortcuts,
-            commitAIAgent: settings.commitAIAgent,
             mergeAIAgent: settings.mergeAIAgent,
             fixedPort: settings.fixedPort,
             appLanguage: settings.appLanguage,

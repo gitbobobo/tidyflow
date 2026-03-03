@@ -143,7 +143,6 @@ extension WSClient {
                 }
             }
             let workspaceShortcuts = json["workspace_shortcuts"] as? [String: String] ?? [:]
-            let commitAIAgent = json["commit_ai_agent"] as? String
             let mergeAIAgent = json["merge_ai_agent"] as? String
             let fixedPort = json["fixed_port"] as? Int ?? 0
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
@@ -152,7 +151,6 @@ extension WSClient {
             let settings = ClientSettings(
                 customCommands: commands,
                 workspaceShortcuts: workspaceShortcuts,
-                commitAIAgent: commitAIAgent,
                 mergeAIAgent: mergeAIAgent,
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
@@ -251,6 +249,15 @@ extension WSClient {
                     handler.handleEvolutionCycleHistory(project: project, workspace: workspace, cycles: cycles)
                 } else {
                     onEvoCycleHistory?(project, workspace, cycles)
+                }
+            }
+            return true
+        case "evo_auto_commit_result":
+            if let result = EvoAutoCommitResult.from(json: json) {
+                if let handler = evolutionMessageHandler {
+                    handler.handleEvolutionAutoCommitResult(result)
+                } else {
+                    onEvoAutoCommitResult?(result)
                 }
             }
             return true
