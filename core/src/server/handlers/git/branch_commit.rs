@@ -13,6 +13,7 @@ use crate::server::context::{
 use crate::server::git;
 use crate::server::protocol::{AIGitCommit, ClientMessage, GitBranchInfo, ServerMessage};
 use crate::server::ws::send_message;
+use crate::util::shell_launch::{wrap_command_for_login_zsh, LOGIN_ZSH_PATH};
 
 /// AI 代理执行超时（10 分钟）
 const AI_AGENT_TIMEOUT: Duration = Duration::from_secs(600);
@@ -625,21 +626,28 @@ pub fn execute_ai_agent(
     pid_holder: Option<&std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
 ) -> Result<String, String> {
     use std::process::Command;
+    let program = args
+        .first()
+        .ok_or_else(|| "AI agent command is empty".to_string())?;
+    if !Path::new(LOGIN_ZSH_PATH).exists() {
+        return Err(format!("zsh not found at {}", LOGIN_ZSH_PATH));
+    }
+    let launch_args = wrap_command_for_login_zsh(args)
+        .map_err(|e| format!("Failed to build AI agent launch args: {}", e))?;
 
     info!(
         "Executing AI agent: {} (cwd: {})",
-        args[0],
+        program,
         workspace_root.display()
     );
 
-    let child = Command::new("/usr/bin/env")
-        .args(args)
+    let child = Command::new(LOGIN_ZSH_PATH)
+        .args(&launch_args)
         .current_dir(workspace_root)
-        .envs(build_extended_env())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to execute AI agent '{}': {}", args[0], e))?;
+        .map_err(|e| format!("Failed to execute AI agent '{}': {}", program, e))?;
 
     // 捕获 PID 供取消使用
     if let Some(holder) = pid_holder {
@@ -650,55 +658,21 @@ pub fn execute_ai_agent(
 
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("Failed to wait for AI agent '{}': {}", args[0], e))?;
+        .map_err(|e| format!("Failed to wait for AI agent '{}': {}", program, e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("AI agent '{}' exited with error: {}", args[0], stderr);
+        warn!("AI agent '{}' exited with error: {}", program, stderr);
         return Err(format!("AI agent failed: {}", stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     info!(
         "AI agent '{}' completed, output length: {} bytes",
-        args[0],
+        program,
         stdout.len()
     );
     Ok(stdout.to_string())
-}
-
-/// 构建包含常见 CLI 安装路径的环境变量
-/// macOS App 默认 PATH 不含 Homebrew、~/.local/bin 等用户路径，需手动补充
-fn build_extended_env() -> std::collections::HashMap<String, String> {
-    let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/unknown".to_string());
-    let extra_paths = [
-        format!("{}/.local/bin", home),
-        format!("{}/.cargo/bin", home),
-        format!("{}/.opencode/bin", home),
-        format!("{}/.bun/bin", home),
-        "/opt/homebrew/bin".to_string(),
-        "/opt/homebrew/sbin".to_string(),
-        "/usr/local/bin".to_string(),
-        "/usr/local/sbin".to_string(),
-    ];
-    let system_path =
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
-    let mut seen = std::collections::HashSet::new();
-    let mut parts = Vec::new();
-    for p in extra_paths.iter().chain(
-        system_path
-            .split(':')
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-            .iter(),
-    ) {
-        if seen.insert(p.clone()) {
-            parts.push(p.clone());
-        }
-    }
-    env.insert("PATH".to_string(), parts.join(":"));
-    env
 }
 
 /// 解析 AI 输出为提交结果（委托式：AI 已执行提交，直接解析结果 JSON）
@@ -988,7 +962,8 @@ pub async fn handle_cancel_ai_task(
 
 #[cfg(test)]
 mod tests {
-    use super::build_ai_commit_prompt;
+    use super::{build_ai_commit_prompt, execute_ai_agent};
+    use tempfile::tempdir;
 
     #[test]
     fn ai_commit_prompt_should_require_git_add_and_git_commit() {
@@ -1001,5 +976,12 @@ mod tests {
             prompt.contains("git commit"),
             "AI 提交提示词必须包含 git commit 约束"
         );
+    }
+
+    #[test]
+    fn execute_ai_agent_should_reject_empty_args() {
+        let temp = tempdir().expect("temp dir");
+        let err = execute_ai_agent(temp.path(), &[], None).expect_err("empty args should fail");
+        assert!(err.contains("empty"));
     }
 }
