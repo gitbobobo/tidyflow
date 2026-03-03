@@ -807,7 +807,10 @@ pub(crate) fn ai_session_messages_encoded_len(
     workspace_name: &str,
     ai_tool: &str,
     session_id: &str,
+    before_message_id: Option<String>,
     messages: Vec<crate::server::protocol::ai::MessageInfo>,
+    has_more: bool,
+    next_before_message_id: Option<String>,
     selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
     truncated: Option<bool>,
 ) -> Result<usize, String> {
@@ -816,7 +819,10 @@ pub(crate) fn ai_session_messages_encoded_len(
         workspace_name: workspace_name.to_string(),
         ai_tool: ai_tool.to_string(),
         session_id: session_id.to_string(),
+        before_message_id,
         messages,
+        has_more,
+        next_before_message_id,
         selection_hint,
         truncated,
     };

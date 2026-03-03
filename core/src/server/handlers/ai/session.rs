@@ -58,6 +58,98 @@ fn map_session_config_options(
         .collect::<Vec<_>>()
 }
 
+const AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE: usize = 50;
+const AI_SESSION_MESSAGES_MAX_PAGE_SIZE: usize = 200;
+
+#[derive(Debug, Clone)]
+struct AiSessionMessagesPage {
+    requested_before_message_id: Option<String>,
+    applied_before_message_id: Option<String>,
+    window_end: usize,
+    messages: Vec<crate::server::protocol::ai::MessageInfo>,
+    has_more: bool,
+    next_before_message_id: Option<String>,
+}
+
+fn normalize_ai_session_messages_page_size(limit: Option<i64>) -> usize {
+    match limit.unwrap_or(AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE as i64) {
+        raw if raw <= 0 => AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE,
+        raw => (raw as usize).min(AI_SESSION_MESSAGES_MAX_PAGE_SIZE),
+    }
+}
+
+fn paginate_ai_session_messages(
+    all_messages: &[crate::server::protocol::ai::MessageInfo],
+    before_message_id: Option<&str>,
+    page_size: usize,
+) -> AiSessionMessagesPage {
+    let requested_before_message_id = before_message_id
+        .map(str::trim)
+        .filter(|it| !it.is_empty())
+        .map(|it| it.to_string());
+
+    let total = all_messages.len();
+    let (window_end, applied_before_message_id) =
+        if let Some(before_id) = requested_before_message_id.as_deref() {
+            if let Some(cursor_idx) = all_messages.iter().position(|it| it.id == before_id) {
+                (cursor_idx, Some(before_id.to_string()))
+            } else {
+                (total, None)
+            }
+        } else {
+            (total, None)
+        };
+
+    let window_start = window_end.saturating_sub(page_size.max(1));
+    let messages = all_messages[window_start..window_end].to_vec();
+    let has_more = window_start > 0;
+    let next_before_message_id = if has_more {
+        messages.first().map(|it| it.id.clone())
+    } else {
+        None
+    };
+
+    AiSessionMessagesPage {
+        requested_before_message_id,
+        applied_before_message_id,
+        window_end,
+        messages,
+        has_more,
+        next_before_message_id,
+    }
+}
+
+fn recompute_ai_session_page_meta_after_truncate(
+    all_messages: &[crate::server::protocol::ai::MessageInfo],
+    page: &mut AiSessionMessagesPage,
+) {
+    if let Some(first) = page.messages.first() {
+        if let Some(first_idx) = all_messages.iter().position(|it| it.id == first.id) {
+            page.has_more = first_idx > 0;
+            page.next_before_message_id = if page.has_more {
+                Some(first.id.clone())
+            } else {
+                None
+            };
+            return;
+        }
+    }
+
+    if page.window_end > 0 {
+        // 当当前页被裁剪为空时，使用“窗口最后一条”作为翻页锚点，继续向更旧历史翻页。
+        let fallback_idx = page.window_end.saturating_sub(1);
+        page.has_more = fallback_idx > 0;
+        page.next_before_message_id = if page.has_more {
+            all_messages.get(fallback_idx).map(|it| it.id.clone())
+        } else {
+            None
+        };
+    } else {
+        page.has_more = false;
+        page.next_before_message_id = None;
+    }
+}
+
 pub(super) async fn handle_ai_session_list(
     msg: &ClientMessage,
     socket: &mut WebSocket,
@@ -152,6 +244,7 @@ pub(super) async fn handle_ai_session_messages(
         workspace_name,
         ai_tool,
         session_id,
+        before_message_id,
         limit,
     } = msg
     else {
@@ -170,8 +263,8 @@ pub(super) async fn handle_ai_session_messages(
     }
 
     info!(
-        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, limit={:?}, directory={}",
-        project_name, workspace_name, ai_tool, session_id, limit, directory
+        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, directory={}",
+        project_name, workspace_name, ai_tool, session_id, before_message_id, limit, directory
     );
     if ai_tool == "opencode" && !session_id.starts_with("ses") {
         warn!(
@@ -186,17 +279,18 @@ pub(super) async fn handle_ai_session_messages(
     let cached_selection_hint = cached_snapshot
         .as_ref()
         .and_then(|snapshot| snapshot.selection_hint.clone());
-    let mut messages: Vec<crate::server::protocol::ai::MessageInfo> = if let Some(snapshot) =
+    let all_messages: Vec<crate::server::protocol::ai::MessageInfo> = if let Some(snapshot) =
         cached_snapshot
     {
         snapshot.messages
     } else {
-        agent.list_messages(&directory, session_id, *limit)
+        agent
+                .list_messages(&directory, session_id, None)
                 .await
                 .map_err(|e| {
                     warn!(
-                        "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, limit={:?}, error={}",
-                        project_name, workspace_name, ai_tool, session_id, limit, e
+                        "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, error={}",
+                        project_name, workspace_name, ai_tool, session_id, before_message_id, limit, e
                     );
                     e
                 })?
@@ -204,6 +298,21 @@ pub(super) async fn handle_ai_session_messages(
                 .map(map_ai_message_for_wire)
                 .collect()
     };
+    let page_size = normalize_ai_session_messages_page_size(*limit);
+    let mut page =
+        paginate_ai_session_messages(&all_messages, before_message_id.as_deref(), page_size);
+    if page.requested_before_message_id.is_some() && page.applied_before_message_id.is_none() {
+        warn!(
+            "AISessionMessages before_message_id not found, fallback to latest page: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, page_size={}",
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            page.requested_before_message_id.as_deref(),
+            page_size
+        );
+    }
+    let mut messages = page.messages.clone();
 
     let selection_hint = if from_snapshot {
         if cached_selection_hint.is_some() {
@@ -255,7 +364,10 @@ pub(super) async fn handle_ai_session_messages(
         workspace_name,
         &ai_tool,
         session_id,
+        page.applied_before_message_id.clone(),
         messages.clone(),
+        page.has_more,
+        page.next_before_message_id.clone(),
         selection_hint.clone(),
         None,
     )?;
@@ -265,12 +377,17 @@ pub(super) async fn handle_ai_session_messages(
         messages.remove(0);
         dropped_count += 1;
         truncated = true;
+        page.messages = messages.clone();
+        recompute_ai_session_page_meta_after_truncate(&all_messages, &mut page);
         payload_bytes = ai_session_messages_encoded_len(
             project_name,
             workspace_name,
             &ai_tool,
             session_id,
+            page.applied_before_message_id.clone(),
             messages.clone(),
+            page.has_more,
+            page.next_before_message_id.clone(),
             selection_hint.clone(),
             Some(true),
         )?;
@@ -278,46 +395,64 @@ pub(super) async fn handle_ai_session_messages(
     if payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES {
         truncated = true;
         messages.clear();
+        page.messages.clear();
+        recompute_ai_session_page_meta_after_truncate(&all_messages, &mut page);
         payload_bytes = ai_session_messages_encoded_len(
             project_name,
             workspace_name,
             &ai_tool,
             session_id,
+            page.applied_before_message_id.clone(),
             messages.clone(),
+            page.has_more,
+            page.next_before_message_id.clone(),
             selection_hint.clone(),
             Some(true),
         )?;
         warn!(
-            "AISessionMessages payload still exceeds limit after window truncate, fallback to empty messages: project={}, workspace={}, ai_tool={}, session_id={}, payload_bytes={}, limit_bytes={}",
+            "AISessionMessages payload still exceeds limit after page truncate, fallback to empty messages: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, payload_bytes={}, limit_bytes={}",
             project_name,
             workspace_name,
             ai_tool,
             session_id,
+            page.requested_before_message_id.as_deref(),
+            page.applied_before_message_id.as_deref(),
+            page_size,
             payload_bytes,
             MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES
         );
     }
     if dropped_count > 0 {
         warn!(
-            "AISessionMessages payload truncated: project={}, workspace={}, ai_tool={}, session_id={}, dropped_count={}, remaining_count={}, payload_bytes={}, max_payload_bytes={}",
+            "AISessionMessages payload truncated: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, applied_before={:?}, page_size={}, dropped_count={}, remaining_count={}, has_more={}, next_before={:?}, payload_bytes={}, max_payload_bytes={}",
             project_name,
             workspace_name,
             ai_tool,
             session_id,
+            page.requested_before_message_id.as_deref(),
+            page.applied_before_message_id.as_deref(),
+            page_size,
             dropped_count,
             messages.len(),
+            page.has_more,
+            page.next_before_message_id.as_deref(),
             payload_bytes,
             MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES
         );
     }
     let (parts_count, text_bytes) = ai_session_messages_stats(&messages);
     info!(
-        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, source={}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}, has_selection_hint={}, truncated={}",
+        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, source={}, requested_before={:?}, applied_before={:?}, page_size={}, has_more={}, next_before={:?}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}, has_selection_hint={}, truncated={}",
         project_name,
         workspace_name,
         ai_tool,
         session_id,
         if from_snapshot { "snapshot" } else { "agent" },
+        page.requested_before_message_id.as_deref(),
+        page.applied_before_message_id.as_deref(),
+        page_size,
+        page.has_more,
+        page.next_before_message_id.as_deref(),
         messages.len(),
         parts_count,
         text_bytes,
@@ -333,7 +468,10 @@ pub(super) async fn handle_ai_session_messages(
             workspace_name: workspace_name.clone(),
             ai_tool,
             session_id: session_id.clone(),
+            before_message_id: page.applied_before_message_id.clone(),
             messages,
+            has_more: page.has_more,
+            next_before_message_id: page.next_before_message_id.clone(),
             selection_hint,
             truncated: if truncated { Some(true) } else { None },
         },
@@ -814,4 +952,127 @@ pub(super) async fn handle_ai_session_unsubscribe(
     }
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_messages(count: usize) -> Vec<crate::server::protocol::ai::MessageInfo> {
+        (1..=count)
+            .map(|idx| crate::server::protocol::ai::MessageInfo {
+                id: format!("msg_{:03}", idx),
+                role: "assistant".to_string(),
+                created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: vec![],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn normalize_page_size_with_default_and_max_limit() {
+        assert_eq!(
+            normalize_ai_session_messages_page_size(None),
+            AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE
+        );
+        assert_eq!(
+            normalize_ai_session_messages_page_size(Some(0)),
+            AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE
+        );
+        assert_eq!(
+            normalize_ai_session_messages_page_size(Some(-42)),
+            AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE
+        );
+        assert_eq!(normalize_ai_session_messages_page_size(Some(12)), 12);
+        assert_eq!(
+            normalize_ai_session_messages_page_size(Some(999)),
+            AI_SESSION_MESSAGES_MAX_PAGE_SIZE
+        );
+    }
+
+    #[test]
+    fn paginate_without_before_returns_latest_page() {
+        let messages = build_messages(120);
+        let page = paginate_ai_session_messages(&messages, None, 50);
+        assert_eq!(page.messages.len(), 50);
+        assert_eq!(
+            page.messages.first().map(|it| it.id.as_str()),
+            Some("msg_071")
+        );
+        assert_eq!(
+            page.messages.last().map(|it| it.id.as_str()),
+            Some("msg_120")
+        );
+        assert_eq!(page.applied_before_message_id, None);
+        assert!(page.has_more);
+        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_071"));
+    }
+
+    #[test]
+    fn paginate_with_before_returns_older_page_without_anchor() {
+        let messages = build_messages(120);
+        let page = paginate_ai_session_messages(&messages, Some("msg_071"), 20);
+        assert_eq!(page.messages.len(), 20);
+        assert_eq!(
+            page.messages.first().map(|it| it.id.as_str()),
+            Some("msg_051")
+        );
+        assert_eq!(
+            page.messages.last().map(|it| it.id.as_str()),
+            Some("msg_070")
+        );
+        assert_eq!(page.applied_before_message_id.as_deref(), Some("msg_071"));
+        assert!(page.has_more);
+        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_051"));
+    }
+
+    #[test]
+    fn paginate_with_invalid_before_falls_back_to_latest_page() {
+        let messages = build_messages(80);
+        let page = paginate_ai_session_messages(&messages, Some("msg_not_found"), 50);
+        assert_eq!(page.messages.len(), 50);
+        assert_eq!(
+            page.messages.first().map(|it| it.id.as_str()),
+            Some("msg_031")
+        );
+        assert_eq!(
+            page.messages.last().map(|it| it.id.as_str()),
+            Some("msg_080")
+        );
+        assert_eq!(
+            page.requested_before_message_id.as_deref(),
+            Some("msg_not_found")
+        );
+        assert_eq!(page.applied_before_message_id, None);
+        assert!(page.has_more);
+        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_031"));
+    }
+
+    #[test]
+    fn recompute_meta_after_truncate_keeps_pagination_progress() {
+        let messages = build_messages(10);
+        let mut page = paginate_ai_session_messages(&messages, None, 5);
+        assert_eq!(
+            page.messages.first().map(|it| it.id.as_str()),
+            Some("msg_006")
+        );
+        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_006"));
+
+        page.messages.remove(0);
+        recompute_ai_session_page_meta_after_truncate(&messages, &mut page);
+        assert_eq!(
+            page.messages.first().map(|it| it.id.as_str()),
+            Some("msg_007")
+        );
+        assert!(page.has_more);
+        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_007"));
+
+        page.messages.clear();
+        recompute_ai_session_page_meta_after_truncate(&messages, &mut page);
+        assert!(page.has_more);
+        assert_eq!(page.next_before_message_id.as_deref(), Some("msg_010"));
+    }
 }
