@@ -55,6 +55,78 @@
 - Git 能力（状态、diff、stage/unstage、commit、branch、rebase、merge、log、show）
 - 客户端设置同步与文件系统监听
 
+## AI 会话历史分页（`ai_session_messages`）
+
+- 客户端请求 action：`ai_session_messages`
+  - `payload.session_id`：会话 ID（必填）
+  - `payload.limit`：页大小（可选）
+    - 缺省：`50`
+    - `<= 0`：按 `50` 处理
+    - `> 200`：按 `200` 处理
+  - `payload.before_message_id`：向更旧历史翻页游标（可选）
+    - 语义：返回严格早于该消息的历史片段（不含锚点消息本身）
+    - 游标无效时：服务端回退到“最新一页”，不报错
+- 服务端结果 action：`ai_session_messages`
+  - `payload.before_message_id`：本次实际生效的游标（游标无效回退时为 `null`）
+  - `payload.messages`：消息数组（顺序固定为旧 -> 新）
+  - `payload.has_more`：是否还有更旧历史可翻页
+  - `payload.next_before_message_id`：下一页游标（用于继续向前翻页）
+  - `payload.selection_hint`：会话选择提示（可选）
+  - `payload.truncated`：是否因载荷限制发生裁剪（可选）
+
+### 请求示例（首屏）
+
+```json
+{
+  "domain": "ai",
+  "action": "ai_session_messages",
+  "payload": {
+    "project_name": "demo",
+    "workspace_name": "default",
+    "ai_tool": "codex",
+    "session_id": "ses_123",
+    "limit": 50
+  }
+}
+```
+
+### 请求示例（加载更早消息）
+
+```json
+{
+  "domain": "ai",
+  "action": "ai_session_messages",
+  "payload": {
+    "project_name": "demo",
+    "workspace_name": "default",
+    "ai_tool": "codex",
+    "session_id": "ses_123",
+    "before_message_id": "msg_071",
+    "limit": 50
+  }
+}
+```
+
+### 响应示例
+
+```json
+{
+  "action": "ai_session_messages",
+  "kind": "result",
+  "payload": {
+    "project_name": "demo",
+    "workspace_name": "default",
+    "ai_tool": "codex",
+    "session_id": "ses_123",
+    "before_message_id": "msg_071",
+    "messages": [],
+    "has_more": true,
+    "next_before_message_id": "msg_021",
+    "truncated": false
+  }
+}
+```
+
 ## AI 会话配置选项（ACP `session-config-options`）
 
 - 客户端请求 action：

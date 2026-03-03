@@ -51,7 +51,10 @@ struct AISessionMessagesV2 {
     let workspaceName: String
     let aiTool: AIChatTool
     let sessionId: String
+    let beforeMessageId: String?
     let messages: [AIProtocolMessageInfo]
+    let hasMore: Bool
+    let nextBeforeMessageId: String?
     let selectionHint: AISessionSelectionHint?
     let truncated: Bool
 
@@ -60,7 +63,10 @@ struct AISessionMessagesV2 {
               let workspaceName = json["workspace_name"] as? String,
               let aiTool = parseAIChatTool(json["ai_tool"]),
               let sessionId = json["session_id"] as? String else { return nil }
+        let beforeMessageId = parseOptionalString(json["before_message_id"])
         let messages = (json["messages"] as? [[String: Any]] ?? []).compactMap { AIProtocolMessageInfo.from(json: $0) }
+        let hasMore = parseBool(json["has_more"]) ?? false
+        let nextBeforeMessageId = parseOptionalString(json["next_before_message_id"])
         let selectionHint = AISessionSelectionHint.from(json: json["selection_hint"] as? [String: Any])
         let truncated = parseBool(json["truncated"]) ?? false
         return AISessionMessagesV2(
@@ -68,7 +74,10 @@ struct AISessionMessagesV2 {
             workspaceName: workspaceName,
             aiTool: aiTool,
             sessionId: sessionId,
+            beforeMessageId: beforeMessageId,
             messages: messages,
+            hasMore: hasMore,
+            nextBeforeMessageId: nextBeforeMessageId,
             selectionHint: selectionHint,
             truncated: truncated
         )

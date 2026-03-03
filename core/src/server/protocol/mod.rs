@@ -525,7 +525,9 @@ pub enum ClientMessage {
         ai_tool: String,
         session_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        limit: Option<u32>,
+        before_message_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<i64>,
     },
     #[serde(rename = "ai_session_delete")]
     AISessionDelete {
@@ -1269,7 +1271,12 @@ pub enum ServerMessage {
         workspace_name: String,
         ai_tool: String,
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        before_message_id: Option<String>,
         messages: Vec<ai::MessageInfo>,
+        has_more: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        next_before_message_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         selection_hint: Option<ai::SessionSelectionHint>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1982,6 +1989,78 @@ mod tests {
             }
             Ok(other) => panic!("Unexpected message type: {:?}", other),
             Err(e) => panic!("Parse error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_ai_session_messages_with_before_message_id() {
+        let json = r#"{"type":"ai_session_messages","project_name":"demo","workspace_name":"default","ai_tool":"codex","session_id":"ses_1","before_message_id":"msg_42","limit":50}"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        match result {
+            Ok(ClientMessage::AISessionMessages {
+                project_name,
+                workspace_name,
+                ai_tool,
+                session_id,
+                before_message_id,
+                limit,
+            }) => {
+                assert_eq!(project_name, "demo");
+                assert_eq!(workspace_name, "default");
+                assert_eq!(ai_tool, "codex");
+                assert_eq!(session_id, "ses_1");
+                assert_eq!(before_message_id.as_deref(), Some("msg_42"));
+                assert_eq!(limit, Some(50));
+            }
+            Ok(other) => panic!("Unexpected message type: {:?}", other),
+            Err(e) => panic!("Parse error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_ai_session_messages_with_negative_limit() {
+        let json = r#"{"type":"ai_session_messages","project_name":"demo","workspace_name":"default","ai_tool":"codex","session_id":"ses_1","limit":-3}"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        match result {
+            Ok(ClientMessage::AISessionMessages { limit, .. }) => {
+                assert_eq!(limit, Some(-3));
+            }
+            Ok(other) => panic!("Unexpected message type: {:?}", other),
+            Err(e) => panic!("Parse error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_ai_session_messages_result_roundtrip_with_pagination_fields() {
+        let message = ServerMessage::AISessionMessages {
+            project_name: "demo".to_string(),
+            workspace_name: "default".to_string(),
+            ai_tool: "codex".to_string(),
+            session_id: "ses_1".to_string(),
+            before_message_id: Some("msg_42".to_string()),
+            messages: vec![],
+            has_more: true,
+            next_before_message_id: Some("msg_21".to_string()),
+            selection_hint: None,
+            truncated: Some(true),
+        };
+        let encoded = rmp_serde::to_vec_named(&message).expect("encode ai_session_messages");
+        let decoded: ServerMessage =
+            rmp_serde::from_slice(&encoded).expect("decode ai_session_messages");
+        match decoded {
+            ServerMessage::AISessionMessages {
+                before_message_id,
+                has_more,
+                next_before_message_id,
+                truncated,
+                ..
+            } => {
+                assert_eq!(before_message_id.as_deref(), Some("msg_42"));
+                assert!(has_more);
+                assert_eq!(next_before_message_id.as_deref(), Some("msg_21"));
+                assert_eq!(truncated, Some(true));
+            }
+            other => panic!("Unexpected message type: {:?}", other),
         }
     }
 }
