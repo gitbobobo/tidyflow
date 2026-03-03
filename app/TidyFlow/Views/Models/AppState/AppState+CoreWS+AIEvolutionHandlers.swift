@@ -222,6 +222,117 @@ extension AppState {
         }
     }
 
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
+        _ = consumeEvolutionReplayMessagesUpdateIfNeeded(ev)
+        _ = consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
+        guard selectedProjectName == ev.projectName,
+              selectedWorkspaceKey == ev.workspaceName else { return }
+        let store = aiStore(for: ev.aiTool)
+        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
+        if store.isAbortPending(for: ev.sessionId) { return }
+
+        if let messages = ev.messages {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let inferredHint = self?.inferAISessionSelectionHintFromMessages(messages)
+                let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                    sessionId: ev.sessionId,
+                    messages: messages
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    guard store.shouldApplySessionCacheRevision(
+                        ev.cacheRevision,
+                        sessionId: ev.sessionId
+                    ) else {
+                        TFLog.app.debug(
+                            "AI session_messages_update(snapshot) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), revision=\(ev.cacheRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
+                        )
+                        return
+                    }
+                    store.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
+                    store.replaceQuestionRequests(restoredQuestions)
+                    let effectiveHint = self.mergedAISessionSelectionHint(
+                        primary: ev.selectionHint,
+                        fallback: inferredHint
+                    )
+                    self.sendAISelectionPipelineLog(
+                        event: "session_messages_update_snapshot_received",
+                        tool: ev.aiTool,
+                        sessionId: ev.sessionId,
+                        primaryHint: ev.selectionHint,
+                        inferredHint: inferredHint,
+                        effectiveHint: effectiveHint,
+                        messagesCount: messages.count
+                    )
+                    self.applyAISessionSelectionHint(
+                        effectiveHint,
+                        sessionId: ev.sessionId,
+                        for: ev.aiTool,
+                        trigger: "session_messages_update_snapshot"
+                    )
+                    self.setBadgeRunning(ev.isStreaming, for: ev.aiTool)
+                    self.markUnreadBadge(for: ev.aiTool)
+                }
+            }
+            return
+        }
+
+        if let ops = ev.ops {
+            guard store.shouldApplySessionCacheRevision(
+                ev.cacheRevision,
+                sessionId: ev.sessionId
+            ) else {
+                TFLog.app.debug(
+                    "AI session_messages_update(ops) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), revision=\(ev.cacheRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
+                )
+                return
+            }
+            store.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+            if let hint = ev.selectionHint {
+                sendAISelectionPipelineLog(
+                    event: "session_messages_update_ops_received",
+                    tool: ev.aiTool,
+                    sessionId: ev.sessionId,
+                    primaryHint: hint,
+                    inferredHint: nil,
+                    effectiveHint: hint
+                )
+                applyAISessionSelectionHint(
+                    hint,
+                    sessionId: ev.sessionId,
+                    for: ev.aiTool,
+                    trigger: "session_messages_update_ops"
+                )
+            }
+            setBadgeRunning(ev.isStreaming, for: ev.aiTool)
+            markUnreadBadge(for: ev.aiTool)
+            return
+        }
+
+        if !ev.isStreaming {
+            guard store.shouldApplySessionCacheRevision(
+                ev.cacheRevision,
+                sessionId: ev.sessionId
+            ) else {
+                TFLog.app.debug(
+                    "AI session_messages_update(terminal) ignored by stale revision: session_id=\(ev.sessionId, privacy: .public), revision=\(ev.cacheRevision), ai_tool=\(ev.aiTool.rawValue, privacy: .public)"
+                )
+                return
+            }
+            store.applySessionCacheOps([], isStreaming: false)
+        }
+        if let hint = ev.selectionHint {
+            applyAISessionSelectionHint(
+                hint,
+                sessionId: ev.sessionId,
+                for: ev.aiTool,
+                trigger: "session_messages_update_terminal"
+            )
+        }
+        setBadgeRunning(ev.isStreaming, for: ev.aiTool)
+        markUnreadBadge(for: ev.aiTool)
+    }
+
     func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
         scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
         upsertAISessionStatus(
@@ -265,84 +376,21 @@ extension AppState {
     }
 
     func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2) {
-        consumeEvolutionReplayMessageUpdatedIfNeeded(ev)
-        consumeSubAgentViewerMessageUpdatedIfNeeded(ev)
-        guard selectedProjectName == ev.projectName,
-              selectedWorkspaceKey == ev.workspaceName else { return }
-        let store = aiStore(for: ev.aiTool)
-        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
-        if store.isAbortPending(for: ev.sessionId) { return }
-        if isPerfAISelectionDebugLogEnabled {
-            TFLog.app.debug(
-                "AI stream message_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), role=\(ev.role, privacy: .public)"
-            )
-        }
-        store.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
-        sendAISelectionPipelineLog(
-            event: "message_updated_received",
-            tool: ev.aiTool,
-            sessionId: ev.sessionId,
-            messageId: ev.messageId,
-            primaryHint: ev.selectionHint,
-            inferredHint: nil,
-            effectiveHint: ev.selectionHint
+        TFLog.app.debug(
+            "AI legacy event ignored: ai_chat_message_updated, session_id=\(ev.sessionId, privacy: .public)"
         )
-        applyAISessionSelectionHint(
-            ev.selectionHint,
-            sessionId: ev.sessionId,
-            for: ev.aiTool,
-            trigger: "message_updated"
-        )
-        setBadgeRunning(true, for: ev.aiTool)
-        markUnreadBadge(for: ev.aiTool)
     }
 
     func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) {
-        consumeEvolutionReplayPartUpdatedIfNeeded(ev)
-        consumeSubAgentViewerPartUpdatedIfNeeded(ev)
-        guard selectedProjectName == ev.projectName,
-              selectedWorkspaceKey == ev.workspaceName else { return }
-        let store = aiStore(for: ev.aiTool)
-        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
-        if store.isAbortPending(for: ev.sessionId) { return }
-        if isPerfAISelectionDebugLogEnabled {
-            TFLog.app.debug(
-                "AI stream part_updated: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.part.id, privacy: .public), part_type=\(ev.part.partType, privacy: .public)"
-            )
-        }
-        store.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
-        applyAISessionSelectionHintFromPart(
-            ev.part,
-            sessionId: ev.sessionId,
-            for: ev.aiTool,
-            trigger: "part_updated"
+        TFLog.app.debug(
+            "AI legacy event ignored: ai_chat_part_updated, session_id=\(ev.sessionId, privacy: .public)"
         )
-        setBadgeRunning(true, for: ev.aiTool)
-        markUnreadBadge(for: ev.aiTool)
     }
 
     func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) {
-        consumeEvolutionReplayPartDeltaIfNeeded(ev)
-        consumeSubAgentViewerPartDeltaIfNeeded(ev)
-        guard selectedProjectName == ev.projectName,
-              selectedWorkspaceKey == ev.workspaceName else { return }
-        let store = aiStore(for: ev.aiTool)
-        guard store.subscribedSessionIds.contains(ev.sessionId) else { return }
-        if store.isAbortPending(for: ev.sessionId) { return }
-        if isPerfAISelectionDebugLogEnabled {
-            TFLog.app.debug(
-                "AI stream part_delta: session_id=\(ev.sessionId, privacy: .public), message_id=\(ev.messageId, privacy: .public), part_id=\(ev.partId, privacy: .public), part_type=\(ev.partType, privacy: .public), field=\(ev.field, privacy: .public), delta_len=\(ev.delta.count)"
-            )
-        }
-        store.enqueuePartDelta(
-            messageId: ev.messageId,
-            partId: ev.partId,
-            partType: ev.partType,
-            field: ev.field,
-            delta: ev.delta
+        TFLog.app.debug(
+            "AI legacy event ignored: ai_chat_part_delta, session_id=\(ev.sessionId, privacy: .public)"
         )
-        setBadgeRunning(true, for: ev.aiTool)
-        markUnreadBadge(for: ev.aiTool)
     }
 
     func handleAIChatDone(_ ev: AIChatDoneV2) {
@@ -373,15 +421,6 @@ extension AppState {
             trigger: "chat_done"
         )
         store.handleChatDone(sessionId: ev.sessionId)
-        if store.currentSessionId == ev.sessionId {
-            wsClient.requestAISessionMessages(
-                projectName: ev.projectName,
-                workspaceName: ev.workspaceName,
-                aiTool: ev.aiTool,
-                sessionId: ev.sessionId,
-                limit: 200
-            )
-        }
         setBadgeRunning(false, for: ev.aiTool)
         markUnreadBadge(for: ev.aiTool)
     }

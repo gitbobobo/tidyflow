@@ -41,6 +41,15 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_session_messages_update":
+            if let ev = AISessionMessagesUpdateV2.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAISessionMessagesUpdate(ev)
+                } else {
+                    onAISessionMessagesUpdate?(ev)
+                }
+            }
+            return true
         case "ai_session_status_result":
             if let ev = AISessionStatusResultV2.from(json: json) {
                 if let handler = aiMessageHandler {

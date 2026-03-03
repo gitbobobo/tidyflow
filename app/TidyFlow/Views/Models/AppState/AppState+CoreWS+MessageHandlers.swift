@@ -165,6 +165,7 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     func handleAISessionStarted(_ ev: AISessionStartedV2) { appState?.handleAISessionStarted(ev) }
     func handleAISessionList(_ ev: AISessionListV2) { appState?.handleAISessionList(ev) }
     func handleAISessionMessages(_ ev: AISessionMessagesV2) { appState?.handleAISessionMessages(ev) }
+    func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) { appState?.handleAISessionMessagesUpdate(ev) }
     func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) { appState?.handleAISessionStatusResult(ev) }
     func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) { appState?.handleAISessionStatusUpdate(ev) }
     func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2) { appState?.handleAIChatMessageUpdated(ev) }

@@ -645,6 +645,41 @@ extension AppState {
         return true
     }
 
+    func consumeEvolutionReplayMessagesUpdateIfNeeded(_ ev: AISessionMessagesUpdateV2) -> Bool {
+        guard matchesEvolutionReplayContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return false }
+        if evolutionReplayStore.currentSessionId != ev.sessionId {
+            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
+        }
+        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return true }
+        guard evolutionReplayStore.shouldApplySessionCacheRevision(
+            ev.cacheRevision,
+            sessionId: ev.sessionId
+        ) else {
+            return true
+        }
+
+        if let messages = ev.messages {
+            evolutionReplayStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
+            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                sessionId: ev.sessionId,
+                messages: messages
+            )
+            evolutionReplayStore.replaceQuestionRequests(restoredQuestions)
+        } else if let ops = ev.ops {
+            evolutionReplayStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+        } else if !ev.isStreaming {
+            evolutionReplayStore.applySessionCacheOps([], isStreaming: false)
+        }
+        evolutionReplayLoading = false
+        evolutionReplayError = nil
+        return true
+    }
+
     func consumeEvolutionReplayMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
         guard matchesEvolutionReplayContext(
             project: ev.projectName,
@@ -748,6 +783,41 @@ extension AppState {
               request.sessionId == ev.sessionId else { return false }
         subAgentViewerStore.setCurrentSessionId(ev.sessionId)
         subAgentViewerStore.replaceMessages(ev.toChatMessages())
+        subAgentViewerLoading = false
+        subAgentViewerError = nil
+        return true
+    }
+
+    func consumeSubAgentViewerMessagesUpdateIfNeeded(_ ev: AISessionMessagesUpdateV2) -> Bool {
+        guard matchesSubAgentViewerContext(
+            project: ev.projectName,
+            workspace: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId
+        ) else { return false }
+        if subAgentViewerStore.currentSessionId != ev.sessionId {
+            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return true }
+        guard subAgentViewerStore.shouldApplySessionCacheRevision(
+            ev.cacheRevision,
+            sessionId: ev.sessionId
+        ) else {
+            return true
+        }
+
+        if let messages = ev.messages {
+            subAgentViewerStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
+            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                sessionId: ev.sessionId,
+                messages: messages
+            )
+            subAgentViewerStore.replaceQuestionRequests(restoredQuestions)
+        } else if let ops = ev.ops {
+            subAgentViewerStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+        } else if !ev.isStreaming {
+            subAgentViewerStore.applySessionCacheOps([], isStreaming: false)
+        }
         subAgentViewerLoading = false
         subAgentViewerError = nil
         return true

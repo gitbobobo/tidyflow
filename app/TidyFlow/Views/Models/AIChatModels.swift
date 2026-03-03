@@ -699,6 +699,7 @@ final class AIChatStore: ObservableObject {
     private var messageIndexByMessageId: [String: Int] = [:]
     private var messageRoleByMessageId: [String: AIChatRole] = [:]
     private var partIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
+    private var sessionCacheRevisionBySessionId: [String: UInt64] = [:]
     private var questionRequestToCallId: [String: String] = [:]
     private var streamingAssistantIndex: Int?
     /// 用户主动终止后，对应会话的“tool running 推导流式”本地抑制集合。
@@ -779,6 +780,7 @@ final class AIChatStore: ObservableObject {
         messageIndexByMessageId = [:]
         messageRoleByMessageId = [:]
         partIndexByPartId = [:]
+        sessionCacheRevisionBySessionId = [:]
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
@@ -798,6 +800,7 @@ final class AIChatStore: ObservableObject {
         messageIndexByMessageId = [:]
         messageRoleByMessageId = [:]
         partIndexByPartId = [:]
+        sessionCacheRevisionBySessionId = [:]
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
@@ -823,6 +826,60 @@ final class AIChatStore: ObservableObject {
         questionRequestToCallId = [:]
         rebuildIndexes()
         recomputeIsStreaming()
+    }
+
+    func replaceMessagesFromSessionCache(
+        _ protocolMessages: [AIProtocolMessageInfo],
+        isStreaming: Bool
+    ) {
+        let mapped = protocolMessages.map { message in
+            let role: AIChatRole = (message.role == "assistant") ? .assistant : .user
+            let parts = message.parts.map { AIChatPartNormalization.makeChatPart(from: $0) }
+            return AIChatMessage(messageId: message.id, role: role, parts: parts, isStreaming: false)
+        }
+        replaceMessages(mapped)
+        if isStreaming,
+           let assistantIndex = messages.indices.reversed().first(where: { messages[$0].role == .assistant }) {
+            markOnlyStreamingAssistant(at: assistantIndex)
+        }
+        recomputeIsStreaming()
+    }
+
+    func applySessionCacheOps(
+        _ ops: [AIProtocolSessionCacheOp],
+        isStreaming: Bool
+    ) {
+        for op in ops {
+            switch op {
+            case .messageUpdated(let messageId, let role):
+                enqueueMessageUpdated(messageId: messageId, role: role)
+            case .partUpdated(let messageId, let part):
+                enqueuePartUpdated(messageId: messageId, part: part)
+            case .partDelta(let messageId, let partId, let partType, let field, let delta):
+                enqueuePartDelta(
+                    messageId: messageId,
+                    partId: partId,
+                    partType: partType,
+                    field: field,
+                    delta: delta
+                )
+            }
+        }
+        if !isStreaming {
+            flushPendingStreamEvents()
+            clearAssistantStreaming()
+            self.isStreaming = false
+            recomputeIsStreaming()
+        }
+    }
+
+    /// 仅接受单调不回退的 cache_revision，避免异步快照覆盖更晚到达的增量。
+    @discardableResult
+    func shouldApplySessionCacheRevision(_ revision: UInt64, sessionId: String) -> Bool {
+        let current = sessionCacheRevisionBySessionId[sessionId] ?? 0
+        guard revision >= current else { return false }
+        sessionCacheRevisionBySessionId[sessionId] = revision
+        return true
     }
 
     func appendMessage(_ message: AIChatMessage) {
