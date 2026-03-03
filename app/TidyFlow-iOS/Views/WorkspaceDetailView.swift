@@ -1319,6 +1319,14 @@ struct MobileEvolutionView: View {
                                 .lineLimit(2)
                         }
                     }
+                    if let terminalError = trimmedNonEmptyText(item.terminalErrorMessage) {
+                        LabeledContent("evolution.page.pipeline.terminalError".localized) {
+                            Text(terminalError)
+                                .foregroundColor(.red)
+                                .lineLimit(4)
+                                .font(.caption)
+                        }
+                    }
                     // 限流错误信息
                     if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
                         LabeledContent("evolution.page.pipeline.rateLimitError".localized) {
@@ -2360,6 +2368,12 @@ struct MobileEvolutionView: View {
                             Text(mobileLocalizedTerminalReason(reason))
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
+                        }
+                        if let terminalError = trimmedNonEmptyText(cycle.terminalErrorMessage) {
+                            Text(terminalError)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
                         }
                     }
                     .padding(.vertical, 2)

@@ -408,6 +408,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "verify_iteration": 0,
             "verify_iteration_limit": 5,
             "agents": [],
+            "terminal_error_message": "verify.result.json 校验失败: 缺少 summary 字段",
             "executions": [
                 [
                     "stage": "verify",
@@ -430,6 +431,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.executions.first?.sessionID, "sess-1")
         XCTAssertEqual(item?.executions.first?.durationMs, 5000)
         XCTAssertEqual(item?.executions.first?.toolCallCount, 2)
+        XCTAssertEqual(item?.terminalErrorMessage, "verify.result.json 校验失败: 缺少 summary 字段")
     }
 
     func testEvolutionCycleHistoryParsesExecutionsAndFallbackStages() {
@@ -439,6 +441,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "global_loop_round": 1,
             "created_at": "2026-03-01T00:00:00Z",
             "updated_at": "2026-03-01T00:10:00Z",
+            "terminal_error_message": "judge.result.json 缺少 pass 字段",
             "executions": [
                 [
                     "stage": "verify",
@@ -463,6 +466,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
         let parsedWithExecutions = EvolutionCycleHistoryItemV2.from(json: withExecutions)
         XCTAssertEqual(parsedWithExecutions?.executions.count, 1)
         XCTAssertEqual(parsedWithExecutions?.stages.count, 1)
+        XCTAssertEqual(parsedWithExecutions?.terminalErrorMessage, "judge.result.json 缺少 pass 字段")
 
         let fallbackStagesOnly: [String: Any] = [
             "cycle_id": "cycle-2",

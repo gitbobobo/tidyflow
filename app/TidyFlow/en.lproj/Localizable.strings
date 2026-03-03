@@ -432,6 +432,7 @@
 "evolution.status.rateLimited" = "Rate Limited";
 "evolution.page.pipeline.cycleStatus" = "Cycle Status";
 "evolution.page.pipeline.terminalReason" = "Terminal Reason";
+"evolution.page.pipeline.terminalError" = "Error Details";
 "evolution.page.pipeline.rateLimitError" = "Rate Limit Info";
 "evolution.terminalReason.evo_stop_requested" = "Manually stopped";
 "evolution.terminalReason.evo_verify_iteration_exhausted" = "Verify iterations exhausted";

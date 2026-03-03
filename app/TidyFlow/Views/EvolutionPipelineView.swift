@@ -528,6 +528,20 @@ struct EvolutionPipelineView: View {
                             .lineLimit(2)
                     }
                 }
+                if let terminalError = trimmedNonEmptyText(item.terminalErrorMessage) {
+                    HStack(alignment: .top, spacing: 4) {
+                        Image(systemName: "text.bubble.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.red.opacity(0.9))
+                        Text("evolution.page.pipeline.terminalError".localized + ": ")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text(terminalError)
+                            .font(.system(size: 9))
+                            .foregroundColor(.primary)
+                            .lineLimit(4)
+                    }
+                }
 
                 // 限流错误信息
                 if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
@@ -775,6 +789,17 @@ struct EvolutionPipelineView: View {
                                 .lineLimit(2)
                         }
                     }
+                    if let terminalError = trimmedNonEmptyText(item.terminalErrorMessage) {
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "text.bubble.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.red.opacity(0.9))
+                            Text(terminalError)
+                                .font(.system(size: 9))
+                                .foregroundColor(.primary)
+                                .lineLimit(4)
+                        }
+                    }
 
                     // 限流错误信息
                     if let rateLimitMsg = trimmedNonEmptyText(item.rateLimitErrorMessage) {
@@ -880,6 +905,17 @@ struct EvolutionPipelineView: View {
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
+                }
+            }
+            if let terminalError = trimmedNonEmptyText(cycle.terminalErrorMessage) {
+                HStack(spacing: 4) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(terminalError)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
                 }
             }
         }
@@ -1399,7 +1435,8 @@ struct EvolutionPipelineView: View {
                 stages: entries.map(\.stage),
                 startDate: startDate,
                 stageEntries: entries,
-                terminalReasonCode: cycle.terminalReasonCode
+                terminalReasonCode: cycle.terminalReasonCode,
+                terminalErrorMessage: cycle.terminalErrorMessage
             )
         }
         normalizeCycleSelection(preferCurrent: false)
@@ -1886,14 +1923,25 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     let stageEntries: [PipelineCycleStageEntry]
     /// 终止原因码
     let terminalReasonCode: String?
+    /// 终止错误详情
+    let terminalErrorMessage: String?
 
-    init(id: String, round: Int, stages: [String], startDate: Date, stageEntries: [PipelineCycleStageEntry], terminalReasonCode: String? = nil) {
+    init(
+        id: String,
+        round: Int,
+        stages: [String],
+        startDate: Date,
+        stageEntries: [PipelineCycleStageEntry],
+        terminalReasonCode: String? = nil,
+        terminalErrorMessage: String? = nil
+    ) {
         self.id = id
         self.round = round
         self.stages = stages
         self.startDate = startDate
         self.stageEntries = stageEntries
         self.terminalReasonCode = terminalReasonCode
+        self.terminalErrorMessage = terminalErrorMessage
     }
 }
 

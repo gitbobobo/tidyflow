@@ -1344,6 +1344,7 @@ struct EvolutionWorkspaceItemV2 {
     let executions: [EvolutionSessionExecutionEntryV2]
     let activeAgents: [String]
     let terminalReasonCode: String?
+    let terminalErrorMessage: String?
     let rateLimitErrorMessage: String?
 
     var workspaceKey: String {
@@ -1375,6 +1376,7 @@ struct EvolutionWorkspaceItemV2 {
             executions: executions,
             activeAgents: activeAgents,
             terminalReasonCode: json["terminal_reason_code"] as? String,
+            terminalErrorMessage: json["terminal_error_message"] as? String,
             rateLimitErrorMessage: json["rate_limit_error_message"] as? String
         )
     }
@@ -1487,6 +1489,7 @@ struct EvolutionCycleHistoryItemV2 {
     let createdAt: String
     let updatedAt: String
     let terminalReasonCode: String?
+    let terminalErrorMessage: String?
     let executions: [EvolutionSessionExecutionEntryV2]
     let stages: [EvolutionCycleStageHistoryEntryV2]
 
@@ -1497,6 +1500,7 @@ struct EvolutionCycleHistoryItemV2 {
         let createdAt = parseOptionalString(json["created_at"]) ?? ""
         let updatedAt = parseOptionalString(json["updated_at"]) ?? ""
         let terminalReasonCode = parseOptionalString(json["terminal_reason_code"])
+        let terminalErrorMessage = parseOptionalString(json["terminal_error_message"])
         let executions = (json["executions"] as? [[String: Any]] ?? [])
             .compactMap { EvolutionSessionExecutionEntryV2.from(json: $0) }
         let stages = (json["stages"] as? [[String: Any]] ?? [])
@@ -1508,6 +1512,7 @@ struct EvolutionCycleHistoryItemV2 {
             createdAt: createdAt,
             updatedAt: updatedAt,
             terminalReasonCode: terminalReasonCode,
+            terminalErrorMessage: terminalErrorMessage,
             executions: executions,
             stages: stages
         )
