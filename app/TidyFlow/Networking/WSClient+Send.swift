@@ -1006,7 +1006,8 @@ extension WSClient {
         workspaceName: String,
         aiTool: AIChatTool,
         sessionId: String,
-        limit: Int? = nil
+        limit: Int? = nil,
+        beforeMessageId: String? = nil
     ) {
         var msg: [String: Any] = [
             "type": "ai_session_messages",
@@ -1016,6 +1017,10 @@ extension WSClient {
             "session_id": sessionId
         ]
         if let limit { msg["limit"] = limit }
+        if let beforeMessageId,
+           !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            msg["before_message_id"] = beforeMessageId
+        }
         send(msg)
     }
 
