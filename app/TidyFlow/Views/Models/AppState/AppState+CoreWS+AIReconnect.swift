@@ -179,7 +179,7 @@ extension AppState {
                 workspaceName: workspace,
                 aiTool: tool,
                 sessionId: sessionId,
-                limit: 200
+                limit: 50
             )
         }
     }

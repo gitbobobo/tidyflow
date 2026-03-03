@@ -666,6 +666,8 @@ struct AIChatSnapshot {
     var currentSessionId: String?
     var subscribedSessionIds: Set<String>
     var messages: [AIChatMessage]
+    var historyHasMore: Bool = false
+    var historyNextBeforeMessageId: String? = nil
     var isStreaming: Bool
     var sessions: [AISessionInfo]
     var messageIndexByMessageId: [String: Int]
@@ -685,6 +687,9 @@ final class AIChatStore: ObservableObject {
     @Published var currentSessionId: String?
     @Published var subscribedSessionIds: Set<String> = []
     @Published var messages: [AIChatMessage] = []
+    @Published var historyHasMore: Bool = false
+    @Published var historyNextBeforeMessageId: String?
+    @Published var historyIsLoading: Bool = false
     @Published var isStreaming: Bool = false
     @Published var abortPendingSessionId: String?
     @Published var awaitingUserEcho: Bool = false
@@ -735,6 +740,9 @@ final class AIChatStore: ObservableObject {
             subscribedSessionIds.insert(currentSessionId)
         }
         messages = snapshot.messages
+        historyHasMore = snapshot.historyHasMore
+        historyNextBeforeMessageId = snapshot.historyNextBeforeMessageId
+        historyIsLoading = false
         // 切换工作空间后不恢复流式态，后续由服务端事件重新驱动。
         abortPendingSessionId = nil
         awaitingUserEcho = false
@@ -754,6 +762,8 @@ final class AIChatStore: ObservableObject {
             currentSessionId: currentSessionId,
             subscribedSessionIds: subscribedSessionIds,
             messages: messages,
+            historyHasMore: historyHasMore,
+            historyNextBeforeMessageId: historyNextBeforeMessageId,
             isStreaming: isStreaming,
             sessions: sessions,
             messageIndexByMessageId: messageIndexByMessageId,
@@ -772,6 +782,9 @@ final class AIChatStore: ObservableObject {
         flushPendingStreamEvents()
         currentSessionId = nil
         messages = []
+        historyHasMore = false
+        historyNextBeforeMessageId = nil
+        historyIsLoading = false
         abortPendingSessionId = nil
         awaitingUserEcho = false
         hasPendingFirstContent = false
@@ -793,6 +806,9 @@ final class AIChatStore: ObservableObject {
     func clearMessages() {
         flushPendingStreamEvents()
         messages = []
+        historyHasMore = false
+        historyNextBeforeMessageId = nil
+        historyIsLoading = false
         awaitingUserEcho = false
         hasPendingFirstContent = false
         lastUserEchoMessageId = nil
@@ -814,6 +830,7 @@ final class AIChatStore: ObservableObject {
         flushPendingStreamEvents()
         messages = newMessages
         abortPendingSessionId = nil
+        historyIsLoading = false
         awaitingUserEcho = false
         hasPendingFirstContent = false
         lastUserEchoMessageId = nil
@@ -843,6 +860,35 @@ final class AIChatStore: ObservableObject {
             markOnlyStreamingAssistant(at: assistantIndex)
         }
         recomputeIsStreaming()
+    }
+
+    func prependMessages(_ olderMessages: [AIChatMessage]) {
+        guard !olderMessages.isEmpty else { return }
+        flushPendingStreamEvents()
+
+        let existingMessageIDs = Set(messages.compactMap(\.messageId))
+        let existingLocalIDs = Set(messages.map(\.id))
+        let filtered = olderMessages.filter { message in
+            if let messageId = message.messageId {
+                return !existingMessageIDs.contains(messageId)
+            }
+            return !existingLocalIDs.contains(message.id)
+        }
+        guard !filtered.isEmpty else { return }
+
+        messages.insert(contentsOf: filtered, at: 0)
+        rebuildIndexes()
+        recomputeIsStreaming()
+    }
+
+    func setHistoryLoading(_ isLoading: Bool) {
+        historyIsLoading = isLoading
+    }
+
+    func updateHistoryPagination(hasMore: Bool, nextBeforeMessageId: String?) {
+        historyHasMore = hasMore
+        historyNextBeforeMessageId = nextBeforeMessageId
+        historyIsLoading = false
     }
 
     func applySessionCacheOps(
@@ -956,6 +1002,9 @@ final class AIChatStore: ObservableObject {
                 awaitingUserEchoBaselineIndex = nil
                 userPlaceholderMessageIdsPendingServerPart = []
             }
+            historyHasMore = false
+            historyNextBeforeMessageId = nil
+            historyIsLoading = false
         }
         if let old = currentSessionId, old != sessionId {
             subscribedSessionIds.remove(old)

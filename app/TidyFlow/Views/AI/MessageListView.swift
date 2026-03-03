@@ -29,6 +29,9 @@ struct MessageListView: View {
     @EnvironmentObject var aiChatStore: AIChatStore
     let messages: [AIChatMessage]
     let sessionToken: String?
+    let canLoadOlderMessages: Bool
+    let isLoadingOlderMessages: Bool
+    let onLoadOlderMessages: (() -> Void)?
     let onQuestionReply: (AIQuestionRequestInfo, [[String]]) -> Void
     let onQuestionReject: (AIQuestionRequestInfo) -> Void
     let onQuestionReplyAsMessage: (String) -> Void
@@ -45,6 +48,28 @@ struct MessageListView: View {
     private let scrollSpaceName = "ai_message_scroll_space"
     private let bottomAnchorId = "ai_message_bottom_anchor"
     private let renderBufferCount: Int = 12
+
+    init(
+        messages: [AIChatMessage],
+        sessionToken: String?,
+        canLoadOlderMessages: Bool = false,
+        isLoadingOlderMessages: Bool = false,
+        onLoadOlderMessages: (() -> Void)? = nil,
+        onQuestionReply: @escaping (AIQuestionRequestInfo, [[String]]) -> Void,
+        onQuestionReject: @escaping (AIQuestionRequestInfo) -> Void,
+        onQuestionReplyAsMessage: @escaping (String) -> Void,
+        onOpenLinkedSession: ((String) -> Void)?
+    ) {
+        self.messages = messages
+        self.sessionToken = sessionToken
+        self.canLoadOlderMessages = canLoadOlderMessages
+        self.isLoadingOlderMessages = isLoadingOlderMessages
+        self.onLoadOlderMessages = onLoadOlderMessages
+        self.onQuestionReply = onQuestionReply
+        self.onQuestionReject = onQuestionReject
+        self.onQuestionReplyAsMessage = onQuestionReplyAsMessage
+        self.onOpenLinkedSession = onOpenLinkedSession
+    }
 
     /// 仅关注消息尾部变化：新消息、流式增量、尾部 part 增长等。
     private var tailChangeToken: String {
@@ -206,6 +231,23 @@ struct MessageListView: View {
     @ViewBuilder
     private func messageStack() -> some View {
         LazyVStack(spacing: 16) {
+            if canLoadOlderMessages || isLoadingOlderMessages {
+                HStack {
+                    Spacer(minLength: 0)
+                    if isLoadingOlderMessages {
+                        ProgressView("加载中…")
+                            .controlSize(.small)
+                            .font(.caption)
+                    } else if canLoadOlderMessages, let onLoadOlderMessages {
+                        Button("加载更早消息", action: onLoadOlderMessages)
+                            .font(.caption)
+                            .buttonStyle(.bordered)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 4)
+            }
+
             ForEach(Array(displayMessages.enumerated()), id: \.element.id) { index, message in
                 MessageBubble(
                     message: message,

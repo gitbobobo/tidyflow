@@ -184,6 +184,19 @@ extension AppState {
         // 将重型数据转换移至后台线程，避免阻塞主线程造成卡顿
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let mapped = ev.toChatMessages()
+            if ev.beforeMessageId != nil {
+                DispatchQueue.main.async {
+                    store.prependMessages(mapped)
+                    store.updateHistoryPagination(
+                        hasMore: ev.hasMore,
+                        nextBeforeMessageId: ev.nextBeforeMessageId
+                    )
+                    TFLog.app.info(
+                        "AI session_messages prepended: ai_tool=\(ev.aiTool.rawValue, privacy: .public), session_id=\(ev.sessionId, privacy: .public), before_message_id=\((ev.beforeMessageId ?? ""), privacy: .public), prepended_count=\(mapped.count), has_more=\(ev.hasMore), next_before=\((ev.nextBeforeMessageId ?? ""), privacy: .public)"
+                    )
+                }
+                return
+            }
             let restoredQuestions = Self.rebuildPendingQuestionRequests(
                 sessionId: ev.sessionId,
                 messages: ev.messages
@@ -193,6 +206,10 @@ extension AppState {
                 guard let self else { return }
                 store.replaceMessages(mapped)
                 store.replaceQuestionRequests(restoredQuestions)
+                store.updateHistoryPagination(
+                    hasMore: ev.hasMore,
+                    nextBeforeMessageId: ev.nextBeforeMessageId
+                )
                 let effectiveHint = self.mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
                 self.sendAISelectionPipelineLog(
                     event: "session_messages_received",
@@ -769,7 +786,7 @@ extension AppState {
             workspaceName: normalizedWorkspace,
             aiTool: aiTool,
             sessionId: ev.sessionID,
-            limit: 400
+            limit: 50
         )
     }
 
@@ -911,7 +928,7 @@ extension AppState {
                 workspaceName: session.workspaceName,
                 aiTool: tool,
                 sessionId: session.id,
-                limit: 200
+                limit: 50
             )
 
             // 取消订阅旧会话
@@ -950,6 +967,11 @@ extension AppState {
             pendingHandoffReadPath = nil
             evolutionHandoffLoading = false
             evolutionHandoffError = errorMsg
+        }
+
+        // 历史分页请求失败时，避免“加载更早消息”按钮长期停留在 loading。
+        for tool in AIChatTool.allCases {
+            aiStore(for: tool).setHistoryLoading(false)
         }
     }
 }

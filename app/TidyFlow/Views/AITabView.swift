@@ -222,6 +222,7 @@ struct AITabView: View {
     /// 延迟拉取非当前工具会话列表的任务（削峰）
     @State private var deferredSessionListLoadWorkItem: DispatchWorkItem? = nil
     private let aiSessionListLimit = 50
+    private let aiSessionMessagesPageSize = 50
     private let deferredSessionListDelay: TimeInterval = 0.35
 
     private var canSwitchAITool: Bool {
@@ -354,6 +355,9 @@ struct AITabView: View {
                 MessageListView(
                     messages: aiChatStore.messages,
                     sessionToken: aiChatStore.currentSessionId,
+                    canLoadOlderMessages: aiChatStore.currentSessionId != nil && aiChatStore.historyHasMore,
+                    isLoadingOlderMessages: aiChatStore.historyIsLoading,
+                    onLoadOlderMessages: loadOlderMessages,
                     onQuestionReply: handleQuestionReply,
                     onQuestionReject: handleQuestionReject,
                     onQuestionReplyAsMessage: handleQuestionReplyAsMessage,
@@ -845,7 +849,7 @@ struct AITabView: View {
             workspaceName: ws,
             aiTool: targetTool,
             sessionId: sessionId,
-            limit: 200
+            limit: aiSessionMessagesPageSize
         )
         appState.wsClient.requestAISessionConfigOptions(
             projectName: appState.selectedProjectName,
@@ -1408,7 +1412,7 @@ struct AITabView: View {
         )
     }
 
-    private func requestCurrentSessionMessages(limit: Int = 200) {
+    private func requestCurrentSessionMessages(limit: Int = 50) {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
               let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return }
         appState.wsClient.requestAISessionMessages(
@@ -1417,6 +1421,26 @@ struct AITabView: View {
             aiTool: appState.aiChatTool,
             sessionId: sessionId,
             limit: limit
+        )
+    }
+
+    private func loadOlderMessages() {
+        guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
+              let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty,
+              aiChatStore.historyHasMore else { return }
+        guard let beforeMessageId = aiChatStore.historyNextBeforeMessageId,
+              !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            aiChatStore.updateHistoryPagination(hasMore: false, nextBeforeMessageId: nil)
+            return
+        }
+        aiChatStore.setHistoryLoading(true)
+        appState.wsClient.requestAISessionMessages(
+            projectName: appState.selectedProjectName,
+            workspaceName: ws,
+            aiTool: appState.aiChatTool,
+            sessionId: sessionId,
+            limit: aiSessionMessagesPageSize,
+            beforeMessageId: beforeMessageId
         )
     }
 }

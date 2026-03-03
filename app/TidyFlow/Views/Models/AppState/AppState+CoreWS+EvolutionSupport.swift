@@ -302,7 +302,7 @@ extension AppState {
             workspaceName: normalizedWorkspace,
             aiTool: aiTool,
             sessionId: trimmedSessionId,
-            limit: 400
+            limit: 50
         )
     }
 
