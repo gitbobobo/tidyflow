@@ -2,7 +2,7 @@ use axum::extract::ws::WebSocket;
 use chrono::Utc;
 use tracing::info;
 
-use crate::server::context::HandlerContext;
+use crate::server::context::{resolve_workspace, HandlerContext};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -173,6 +173,39 @@ pub(super) async fn handle_message(
                     project: project.clone(),
                     workspace: workspace.clone(),
                     cycles,
+                },
+            )
+            .await?;
+            Ok(true)
+        }
+        ClientMessage::EvoAutoCommit { project, workspace } => {
+            let result = match resolve_workspace(&ctx.app_state, project, workspace).await {
+                Ok(workspace_ctx) => {
+                    manager
+                        .run_auto_commit_independent(
+                            project,
+                            workspace,
+                            &workspace_ctx.root_path,
+                            ctx,
+                        )
+                        .await
+                }
+                Err(err) => Err(err.to_string()),
+            };
+
+            let (success, message, commits) = match result {
+                Ok((message, commits)) => (true, message, commits),
+                Err(err) => (false, err, Vec::new()),
+            };
+
+            send_message(
+                socket,
+                &ServerMessage::EvoAutoCommitResult {
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    success,
+                    message,
+                    commits,
                 },
             )
             .await?;

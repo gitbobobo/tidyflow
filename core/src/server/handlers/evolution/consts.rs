@@ -1,4 +1,4 @@
-pub(super) const STAGES: [&str; 8] = [
+pub(super) const STAGES: [&str; 9] = [
     "direction",
     "plan",
     "implement_general",
@@ -7,6 +7,7 @@ pub(super) const STAGES: [&str; 8] = [
     "verify",
     "judge",
     "report",
+    "auto_commit",
 ];
 
 pub(super) const MAX_STAGE_RUNTIME_SECS: u64 = 3600;

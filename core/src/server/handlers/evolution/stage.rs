@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::server::handlers::evolution_prompts::{
-    STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT, STAGE_JUDGE_PROMPT, STAGE_PLAN_PROMPT,
-    STAGE_REPORT_PROMPT, STAGE_VERIFY_PROMPT,
+    STAGE_AUTO_COMMIT_PROMPT, STAGE_DIRECTION_PROMPT, STAGE_IMPLEMENT_PROMPT,
+    STAGE_JUDGE_PROMPT, STAGE_PLAN_PROMPT, STAGE_REPORT_PROMPT, STAGE_VERIFY_PROMPT,
 };
 use crate::server::protocol::EvolutionAgentInfo;
 
@@ -108,7 +108,8 @@ pub(super) fn next_stage(stage: &str) -> Option<&'static str> {
         "implement_advanced" => Some("verify"),
         "verify" => Some("judge"),
         "judge" => Some("report"),
-        "report" => Some("direction"),
+        "report" => Some("auto_commit"),
+        "auto_commit" => Some("direction"),
         _ => None,
     }
 }
@@ -123,6 +124,7 @@ pub(super) fn prompt_template_for_stage(stage: &str) -> Option<&'static str> {
         "verify" => Some(STAGE_VERIFY_PROMPT),
         "judge" => Some(STAGE_JUDGE_PROMPT),
         "report" => Some(STAGE_REPORT_PROMPT),
+        "auto_commit" => Some(STAGE_AUTO_COMMIT_PROMPT),
         _ => None,
     }
 }
@@ -137,6 +139,7 @@ pub(super) fn prompt_id_for_stage(stage: &str) -> Option<&'static str> {
         "verify" => Some("builtin://evolution/stage.verify.prompt"),
         "judge" => Some("builtin://evolution/stage.judge.prompt"),
         "report" => Some("builtin://evolution/stage.report.prompt"),
+        "auto_commit" => Some("builtin://evolution/stage.auto_commit.prompt"),
         _ => None,
     }
 }

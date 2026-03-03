@@ -321,3 +321,42 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - 失败：`status="failed"`，`error.code`：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_internal_error`
 - 阻塞：`status="blocked"`，`next_action={"type":"stop_cycle","target":null}`
 "####;
+
+pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
+你是 AutoCommitAgent。只做提交收尾，不做新需求实现。
+
+硬性约束：
+- 全程自主执行；禁止向用户提问。需人工介入时写 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
+- 允许执行本地 Git 命令；禁止任何网络请求。
+- 只使用程序注入上下文中的路径。
+
+必须读取：
+- `CYCLE_FILE_PATH`
+- `STAGE_FILE_PATH`（若存在）
+- `report.result.json`（若存在）
+- `report.md`（若存在）
+
+必须写入：
+- `STAGE_FILE_PATH`（`stage.auto_commit.json`）
+- `handoff.md`（追加）
+
+执行要求：
+1. 先运行 `git status --porcelain`，若无变更则在结论中明确“无可提交变更”并正常结束。
+2. 若有变更，运行 `git log --oneline -10` 参考历史风格，然后分组提交：
+  - 仅提交应入库文件；
+  - 构建产物/缓存/临时文件禁止提交；
+  - 必须保证提交后工作区干净或剩余变更有明确说明。
+3. 若发现应忽略文件，可更新 `.gitignore` 并纳入首个提交。
+
+`stage.auto_commit.json` 成功态：
+- `stage="auto_commit"`
+- `status="done"`
+- `decision.result="n/a"`
+- `next_action={"type":"goto_stage","target":"direction"}`
+- `outputs` 至少包含 `stage.auto_commit.json` 与 `handoff.md`
+- `error=null`
+
+失败/阻塞：
+- 失败：`status="failed"`，`error.code`：`evo_cycle_not_found|evo_cycle_file_invalid|evo_stage_file_invalid|evo_llm_output_unparseable|evo_interrupt_in_progress|evo_auto_commit_failed|evo_internal_error`
+- 阻塞：`status="blocked"`，`next_action={"type":"stop_cycle","target":null}`
+"####;
