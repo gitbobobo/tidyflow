@@ -1,6 +1,6 @@
 use axum::extract::ws::WebSocket;
 use chrono::Utc;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::server::context::{resolve_workspace, HandlerContext};
 use crate::server::protocol::{ClientMessage, ServerMessage};
@@ -179,36 +179,55 @@ pub(super) async fn handle_message(
             Ok(true)
         }
         ClientMessage::EvoAutoCommit { project, workspace } => {
-            let result = match resolve_workspace(&ctx.app_state, project, workspace).await {
-                Ok(workspace_ctx) => {
-                    manager
-                        .run_auto_commit_independent(
-                            project,
-                            workspace,
-                            &workspace_ctx.root_path,
-                            ctx,
-                        )
-                        .await
-                }
-                Err(err) => Err(err.to_string()),
-            };
+            // 后台执行，避免长耗时提交阻塞同连接上的后续查询请求。
+            let project = project.clone();
+            let workspace = workspace.clone();
+            let manager = manager.clone();
+            let ctx = ctx.clone();
+            let origin_conn_id = ctx.conn_meta.conn_id.clone();
 
-            let (success, message, commits) = match result {
-                Ok((message, commits)) => (true, message, commits),
-                Err(err) => (false, err, Vec::new()),
-            };
+            tokio::spawn(async move {
+                let result = match resolve_workspace(&ctx.app_state, &project, &workspace).await {
+                    Ok(workspace_ctx) => {
+                        manager
+                            .run_auto_commit_independent(
+                                &project,
+                                &workspace,
+                                &workspace_ctx.root_path,
+                                &ctx,
+                            )
+                            .await
+                    }
+                    Err(err) => Err(err.to_string()),
+                };
 
-            send_message(
-                socket,
-                &ServerMessage::EvoAutoCommitResult {
+                let (success, message, commits) = match result {
+                    Ok((message, commits)) => (true, message, commits),
+                    Err(err) => (false, err, Vec::new()),
+                };
+
+                let msg = ServerMessage::EvoAutoCommitResult {
                     project: project.clone(),
                     workspace: workspace.clone(),
                     success,
                     message,
                     commits,
-                },
-            )
-            .await?;
+                };
+
+                if let Err(err) = ctx.cmd_output_tx.send(msg.clone()).await {
+                    warn!(
+                        "Failed to send EvoAutoCommitResult to initiator: conn_id={}, project={}, workspace={}, error={}",
+                        origin_conn_id, project, workspace, err
+                    );
+                    return;
+                }
+
+                let _ = crate::server::context::send_task_broadcast_message(
+                    &ctx.task_broadcast_tx,
+                    origin_conn_id,
+                    msg,
+                );
+            });
             Ok(true)
         }
         _ => Ok(false),
