@@ -73,15 +73,9 @@ pub struct ClientSettings {
     /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
     #[serde(default)]
     pub workspace_shortcuts: HashMap<String, String>,
-    /// 用于提交操作的 AI Agent
-    #[serde(default)]
-    pub commit_ai_agent: Option<String>,
     /// 用于合并操作的 AI Agent
     #[serde(default)]
     pub merge_ai_agent: Option<String>,
-    /// 旧字段，仅用于反序列化迁移
-    #[serde(default, skip_serializing)]
-    pub selected_ai_agent: Option<String>,
     /// 固定端口，0 表示动态分配
     #[serde(default)]
     pub fixed_port: u16,
@@ -105,17 +99,8 @@ fn default_evolution_ai_tool() -> String {
 }
 
 impl ClientSettings {
-    /// 迁移旧字段：若 selected_ai_agent 有值且新字段为空，则复制到两个新字段
+    /// 预留迁移入口（当前无需迁移逻辑）
     pub fn migrate(&mut self) {
-        if let Some(ref old) = self.selected_ai_agent {
-            if self.commit_ai_agent.is_none() {
-                self.commit_ai_agent = Some(old.clone());
-            }
-            if self.merge_ai_agent.is_none() {
-                self.merge_ai_agent = Some(old.clone());
-            }
-        }
-        self.selected_ai_agent = None;
     }
 }
 
