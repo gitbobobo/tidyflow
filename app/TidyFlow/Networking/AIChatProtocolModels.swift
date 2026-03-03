@@ -1452,6 +1452,7 @@ struct EvolutionWorkspaceItemV2 {
     let project: String
     let workspace: String
     let cycleID: String
+    let title: String?
     let status: String
     let currentStage: String
     let globalLoopRound: Int
@@ -1484,6 +1485,7 @@ struct EvolutionWorkspaceItemV2 {
             project: project,
             workspace: workspace,
             cycleID: cycleID,
+            title: parseOptionalString(json["title"]) ?? parseOptionalString(json["cycle_title"]),
             status: status,
             currentStage: currentStage,
             globalLoopRound: Int(parseInt64(json["global_loop_round"])),
@@ -1602,6 +1604,7 @@ struct EvolutionCycleStageHistoryEntryV2 {
 
 struct EvolutionCycleHistoryItemV2 {
     let cycleID: String
+    let title: String?
     let status: String
     let globalLoopRound: Int
     let createdAt: String
@@ -1613,6 +1616,7 @@ struct EvolutionCycleHistoryItemV2 {
 
     static func from(json: [String: Any]) -> EvolutionCycleHistoryItemV2? {
         guard let cycleID = parseOptionalString(json["cycle_id"]) else { return nil }
+        let title = parseOptionalString(json["title"]) ?? parseOptionalString(json["cycle_title"])
         let status = parseOptionalString(json["status"]) ?? "unknown"
         let globalLoopRound = Int(parseInt64(json["global_loop_round"]))
         let createdAt = parseOptionalString(json["created_at"]) ?? ""
@@ -1625,6 +1629,7 @@ struct EvolutionCycleHistoryItemV2 {
             .compactMap { EvolutionCycleStageHistoryEntryV2.from(json: $0) }
         return EvolutionCycleHistoryItemV2(
             cycleID: cycleID,
+            title: title,
             status: status,
             globalLoopRound: globalLoopRound,
             createdAt: createdAt,

@@ -401,6 +401,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
             "project": "tidyflow",
             "workspace": "default",
             "cycle_id": "cycle-1",
+            "title": "当前循环标题",
             "status": "running",
             "current_stage": "verify",
             "global_loop_round": 1,
@@ -431,12 +432,14 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.executions.first?.sessionID, "sess-1")
         XCTAssertEqual(item?.executions.first?.durationMs, 5000)
         XCTAssertEqual(item?.executions.first?.toolCallCount, 2)
+        XCTAssertEqual(item?.title, "当前循环标题")
         XCTAssertEqual(item?.terminalErrorMessage, "verify.result.json 校验失败: 缺少 summary 字段")
     }
 
     func testEvolutionCycleHistoryParsesExecutionsAndFallbackStages() {
         let withExecutions: [String: Any] = [
             "cycle_id": "cycle-1",
+            "title": "历史循环标题",
             "status": "completed",
             "global_loop_round": 1,
             "created_at": "2026-03-01T00:00:00Z",
@@ -466,10 +469,12 @@ final class AIChatProtocolModelsTests: XCTestCase {
         let parsedWithExecutions = EvolutionCycleHistoryItemV2.from(json: withExecutions)
         XCTAssertEqual(parsedWithExecutions?.executions.count, 1)
         XCTAssertEqual(parsedWithExecutions?.stages.count, 1)
+        XCTAssertEqual(parsedWithExecutions?.title, "历史循环标题")
         XCTAssertEqual(parsedWithExecutions?.terminalErrorMessage, "judge.result.json 缺少 pass 字段")
 
         let fallbackStagesOnly: [String: Any] = [
             "cycle_id": "cycle-2",
+            "cycle_title": "兼容字段标题",
             "status": "completed",
             "global_loop_round": 1,
             "created_at": "2026-03-01T00:00:00Z",
@@ -487,6 +492,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
         let parsedFallback = EvolutionCycleHistoryItemV2.from(json: fallbackStagesOnly)
         XCTAssertEqual(parsedFallback?.executions.count, 0)
         XCTAssertEqual(parsedFallback?.stages.count, 1)
+        XCTAssertEqual(parsedFallback?.title, "兼容字段标题")
         XCTAssertEqual(parsedFallback?.stages.first?.stage, "plan")
     }
 
@@ -696,6 +702,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
             workspaceName: "default",
             aiTool: .codex,
             sessionId: "s-tool",
+            beforeMessageId: nil,
             messages: [
                 AIProtocolMessageInfo(
                     id: "m-tool",
@@ -738,6 +745,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
                     ]
                 )
             ],
+            hasMore: false,
+            nextBeforeMessageId: nil,
             selectionHint: nil,
             truncated: false
         )

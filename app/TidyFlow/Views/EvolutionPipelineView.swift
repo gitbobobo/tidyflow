@@ -29,6 +29,8 @@ struct EvolutionPipelineView: View {
     /// 当前选中的循环
     @State private var selectedCycle: CycleSelection = .currentCycle
 
+    private let untitledCycleTitle = "Untitled"
+
     /// 循环选择类型
     enum CycleSelection: Equatable {
         case currentCycle
@@ -611,7 +613,7 @@ struct EvolutionPipelineView: View {
                 cycleListRow(
                     icon: "arrow.triangle.2.circlepath",
                     color: .green,
-                    title: "evolution.page.pipeline.currentCycle".localized,
+                    title: currentCycleDisplayTitle,
                     isSelected: selectedCycle == .currentCycle,
                     badge: currentCycleBadge,
                     stageEntries: completedTimeline.map { entry in
@@ -633,7 +635,7 @@ struct EvolutionPipelineView: View {
                 cycleListRow(
                     icon: "clock.arrow.circlepath",
                     color: .indigo,
-                    title: relativeTimeString(from: cycle.startDate),
+                    title: cycle.displayTitle,
                     isSelected: selectedCycle == .history(id: cycle.id),
                     stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
                         PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
@@ -654,6 +656,10 @@ struct EvolutionPipelineView: View {
 
     private var hasCurrentCycleRow: Bool {
         !completedTimeline.isEmpty || hasRunningAgents
+    }
+
+    private var currentCycleDisplayTitle: String {
+        cycleDisplayTitle(currentItem?.title)
     }
 
     private var hasRunningAgents: Bool {
@@ -678,6 +684,13 @@ struct EvolutionPipelineView: View {
             }
         }
         return nil
+    }
+
+    private func cycleDisplayTitle(_ value: String?) -> String {
+        guard let trimmed = trimmedNonEmptyText(value) else {
+            return untitledCycleTitle
+        }
+        return trimmed
     }
 
     /// 循环列表行
@@ -864,7 +877,7 @@ struct EvolutionPipelineView: View {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 12))
                     .foregroundColor(.indigo)
-                Text(relativeTimeString(from: cycle.startDate))
+                Text(cycle.displayTitle)
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.round))
@@ -1027,7 +1040,7 @@ struct EvolutionPipelineView: View {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 12))
                     .foregroundColor(.indigo)
-                Text(relativeTimeString(from: cycle.startDate))
+                Text(cycle.displayTitle)
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.round))
@@ -1431,6 +1444,7 @@ struct EvolutionPipelineView: View {
             }()
             return PipelineCycleHistory(
                 id: cycle.cycleID,
+                title: cycle.title,
                 round: cycle.globalLoopRound,
                 stages: entries.map(\.stage),
                 startDate: startDate,
@@ -1915,6 +1929,7 @@ struct PipelineCycleStageEntry: Identifiable, Equatable {
 
 struct PipelineCycleHistory: Identifiable, Equatable {
     let id: String
+    let title: String?
     let round: Int
     let stages: [String]
     /// 循环开始时间
@@ -1926,8 +1941,14 @@ struct PipelineCycleHistory: Identifiable, Equatable {
     /// 终止错误详情
     let terminalErrorMessage: String?
 
+    var displayTitle: String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Untitled" : trimmed
+    }
+
     init(
         id: String,
+        title: String? = nil,
         round: Int,
         stages: [String],
         startDate: Date,
@@ -1936,6 +1957,7 @@ struct PipelineCycleHistory: Identifiable, Equatable {
         terminalErrorMessage: String? = nil
     ) {
         self.id = id
+        self.title = title
         self.round = round
         self.stages = stages
         self.startDate = startDate

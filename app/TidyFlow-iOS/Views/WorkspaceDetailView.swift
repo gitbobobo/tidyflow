@@ -1330,6 +1330,9 @@ struct MobileEvolutionView: View {
                     LabeledContent("evolution.page.workspace.loopRound".localized) {
                         Text("\(item.globalLoopRound)/\(max(1, item.loopRoundLimit))")
                     }
+                    LabeledContent("循环标题") {
+                        Text(mobileCycleDisplayTitle(item.title))
+                    }
                     LabeledContent("evolution.page.workspace.verifyRound".localized) {
                         Text("\(item.verifyIteration)/\(item.verifyIterationLimit)")
                     }
@@ -2118,6 +2121,10 @@ struct MobileEvolutionView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private func mobileCycleDisplayTitle(_ value: String?) -> String {
+        trimmedNonEmptyText(value) ?? "Untitled"
+    }
+
     private var activeBlockingRequest: EvolutionBlockingRequiredV2? {
         guard let blocking = appState.evolutionBlockingRequired else { return nil }
         guard blocking.project == project else { return nil }
@@ -2370,6 +2377,9 @@ struct MobileEvolutionView: View {
                 ForEach(cycles, id: \.cycleID) { cycle in
                     let entries = mobileCycleBarEntries(cycle)
                     VStack(alignment: .leading, spacing: 6) {
+                        Text(mobileCycleDisplayTitle(cycle.title))
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
                         HStack {
                             Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
                                 .font(.caption)
