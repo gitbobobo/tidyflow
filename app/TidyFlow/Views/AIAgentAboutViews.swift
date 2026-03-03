@@ -42,7 +42,6 @@ struct AIAgentSection: View {
 
     private var aiAgentBaseSection: some View {
         Section {
-            agentPickerRow(title: "settings.aiAgent.commitAgent".localized, selection: commitBinding)
             agentPickerRow(title: "settings.aiAgent.mergeAgent".localized, selection: mergeBinding)
         } header: {
             Text("settings.aiAgent.title".localized)
@@ -240,6 +239,7 @@ struct AIAgentSection: View {
         case "verify":    return "Verify"
         case "judge":     return "Judge"
         case "report":    return "Report"
+        case "auto_commit": return "Auto Commit"
         default:          return stage
         }
     }
@@ -300,16 +300,6 @@ struct AIAgentSection: View {
 
     private func persistEvolutionProfiles() {
         appState.saveEvolutionDefaultProfiles(editableProfiles)
-    }
-
-    private var commitBinding: Binding<String?> {
-        Binding(
-            get: { appState.clientSettings.commitAIAgent },
-            set: { newValue in
-                appState.clientSettings.commitAIAgent = newValue
-                appState.saveClientSettings()
-            }
-        )
     }
 
     private var mergeBinding: Binding<String?> {

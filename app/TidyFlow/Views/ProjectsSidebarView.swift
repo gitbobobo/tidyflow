@@ -494,7 +494,6 @@ struct WorkspaceRowView: View {
                 } label: {
                     Label("git.aiCommit".localized, systemImage: "sparkles")
                 }
-                .disabled(appState.clientSettings.commitAIAgent == nil)
 
                 if !workspace.isDefault {
                     Button {
@@ -567,10 +566,6 @@ struct WorkspaceRowView: View {
 
     /// 触发 AI 智能提交（后台任务）
     private func triggerAICommit() {
-        guard appState.clientSettings.commitAIAgent != nil else {
-            showNoAgentAlert = true
-            return
-        }
         guard let path = workspacePath else { return }
         let projPath = appState.projects.first(where: { $0.name == projectName })?.path
         appState.submitBackgroundTask(

@@ -413,6 +413,7 @@ extension AppState {
             "verify",
             "judge",
             "report",
+            "auto_commit",
         ].map {
             EvolutionStageProfileInfoV2(stage: $0, aiTool: .codex, mode: nil, model: nil, configOptions: [:])
         }

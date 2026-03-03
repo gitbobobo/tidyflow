@@ -31,8 +31,8 @@ extension AppState {
         scheduleWorkspaceSidebarStatusRefresh(projectName: result.project)
     }
 
-    /// 处理 AI 提交结果（来自 WebSocket）
-    func handleGitAICommitResult(_ result: GitAICommitResult) {
+    /// 处理 Evolution AutoCommit 结果（来自 WebSocket）
+    func handleEvoAutoCommitResult(_ result: EvoAutoCommitResult) {
         scheduleWorkspaceSidebarStatusRefresh(projectName: result.project)
         let key = "\(result.project):\(result.workspace)"
         if let continuation = aiCommitContinuations.removeValue(forKey: key) {
@@ -117,9 +117,6 @@ extension AppState {
 
     /// 执行 AI 智能提交（通过 WebSocket 委托 Rust Core）
     func executeAICommit(projectName: String, workspaceKey: String, task: BackgroundTask? = nil) async -> AICommitResult {
-        // 获取 AI Agent 名称
-        let agentName = clientSettings.commitAIAgent
-
         return await withCheckedContinuation { continuation in
             let _ = registerAICommitContinuation(
                 project: projectName,
@@ -130,10 +127,9 @@ extension AppState {
 
             // 触发侧边栏状态刷新，获取 Rust 端最新任务运行态
             scheduleWorkspaceSidebarStatusRefresh(projectName: projectName, debounce: 0.08)
-            wsClient.requestGitAICommit(
+            wsClient.requestEvoAutoCommit(
                 project: projectName,
-                workspace: workspaceKey,
-                aiAgent: agentName
+                workspace: workspaceKey
             )
         }
     }
