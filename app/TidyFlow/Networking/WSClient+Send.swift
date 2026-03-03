@@ -1,5 +1,95 @@
 import Foundation
 
+private enum CoreHTTPClientError: LocalizedError {
+    case invalidBaseURL
+    case invalidRequestURL
+    case invalidResponse
+    case invalidPayload
+    case httpStatus(code: Int, message: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBaseURL:
+            return "HTTP base URL 不可用"
+        case .invalidRequestURL:
+            return "HTTP 请求 URL 非法"
+        case .invalidResponse:
+            return "HTTP 响应无效"
+        case .invalidPayload:
+            return "HTTP 响应格式非法"
+        case let .httpStatus(code, message):
+            return "HTTP \(code): \(message)"
+        }
+    }
+}
+
+private struct CoreHTTPClient {
+    static func baseURL(from wsURL: URL?) -> URL? {
+        guard let wsURL,
+              var components = URLComponents(url: wsURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        if components.scheme == "wss" {
+            components.scheme = "https"
+        } else {
+            components.scheme = "http"
+        }
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
+
+    static func fetchJSON(
+        baseURL: URL,
+        path: String,
+        queryItems: [URLQueryItem],
+        token: String?
+    ) async throws -> [String: Any] {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw CoreHTTPClientError.invalidRequestURL
+        }
+        components.path = path
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components.url else {
+            throw CoreHTTPClientError.invalidRequestURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CoreHTTPClientError.invalidResponse
+        }
+
+        if !(200..<300).contains(httpResponse.statusCode) {
+            let message: String = {
+                guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return "请求失败"
+                }
+                let code = (object["code"] as? String) ?? "error"
+                let detail = (object["message"] as? String) ?? "请求失败"
+                return "\(code): \(detail)"
+            }()
+            throw CoreHTTPClientError.httpStatus(code: httpResponse.statusCode, message: message)
+        }
+
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CoreHTTPClientError.invalidPayload
+        }
+        return object
+    }
+}
+
+private func encodePathComponent(_ raw: String) -> String {
+    let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    return raw.addingPercentEncoding(withAllowedCharacters: allowed) ?? raw
+}
+
 private struct GetClientSettingsRequest: Encodable {
     let type: String = "get_client_settings"
 }
@@ -149,6 +239,65 @@ extension WSClient {
         } catch {
             TFLog.ws.error("MessagePack typed encode failed: \(error.localizedDescription, privacy: .public)")
             emitClientError("Failed to encode typed message: \(error.localizedDescription)")
+        }
+    }
+
+    @MainActor
+    private func handleHTTPReadResult(
+        domain: String,
+        fallbackAction: String,
+        json: [String: Any]
+    ) {
+        let action = (json["type"] as? String) ?? fallbackAction
+        let handled: Bool
+        switch domain {
+        case "ai":
+            handled = handleAiDomain(action, json: json)
+        case "evolution":
+            handled = handleEvolutionDomain(action, json: json)
+        case "evidence":
+            handled = handleEvidenceDomain(action, json: json)
+        default:
+            handled = false
+        }
+        if !handled {
+            emitClientError("Unexpected HTTP response action: \(action)")
+        }
+    }
+
+    @MainActor
+    private func handleHTTPReadError(_ error: Error) {
+        emitClientError(error.localizedDescription)
+    }
+
+    private func requestReadViaHTTP(
+        domain: String,
+        path: String,
+        queryItems: [URLQueryItem] = [],
+        fallbackAction: String
+    ) {
+        guard let baseURL = CoreHTTPClient.baseURL(from: currentURL) else {
+            emitClientError(CoreHTTPClientError.invalidBaseURL.localizedDescription)
+            return
+        }
+        let token = wsAuthToken
+
+        Task { [weak self] in
+            do {
+                let json = try await CoreHTTPClient.fetchJSON(
+                    baseURL: baseURL,
+                    path: path,
+                    queryItems: queryItems,
+                    token: token
+                )
+                await self?.handleHTTPReadResult(
+                    domain: domain,
+                    fallbackAction: fallbackAction,
+                    json: json
+                )
+            } catch {
+                await self?.handleHTTPReadError(error)
+            }
         }
     }
 
@@ -988,16 +1137,17 @@ extension WSClient {
         aiTool: AIChatTool,
         limit: Int? = 50
     ) {
-        var msg: [String: Any] = [
-            "type": "ai_session_list",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue
-        ]
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions"
+        var queryItems: [URLQueryItem] = []
         if let limit, limit > 0 {
-            msg["limit"] = limit
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
         }
-        send(msg)
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "ai_session_list"
+        )
     }
 
     /// 获取 AI 会话历史消息
@@ -1009,19 +1159,21 @@ extension WSClient {
         limit: Int? = nil,
         beforeMessageId: String? = nil
     ) {
-        var msg: [String: Any] = [
-            "type": "ai_session_messages",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue,
-            "session_id": sessionId
-        ]
-        if let limit { msg["limit"] = limit }
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions/\(encodePathComponent(sessionId))/messages"
+        var queryItems: [URLQueryItem] = []
+        if let limit {
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+        }
         if let beforeMessageId,
            !beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            msg["before_message_id"] = beforeMessageId
+            queryItems.append(URLQueryItem(name: "before_message_id", value: beforeMessageId))
         }
-        send(msg)
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "ai_session_messages"
+        )
     }
 
     /// 查询 AI 会话状态（idle/busy/error）
@@ -1031,13 +1183,12 @@ extension WSClient {
         aiTool: AIChatTool,
         sessionId: String
     ) {
-        send([
-            "type": "ai_session_status",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue,
-            "session_id": sessionId
-        ])
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/sessions/\(encodePathComponent(sessionId))/status"
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            fallbackAction: "ai_session_status_result"
+        )
     }
 
     /// 删除 AI 会话
@@ -1058,22 +1209,22 @@ extension WSClient {
 
     /// 获取 AI Provider/模型列表
     func requestAIProviderList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
-        send([
-            "type": "ai_provider_list",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue
-        ])
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/providers"
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            fallbackAction: "ai_provider_list"
+        )
     }
 
     /// 获取 AI Agent 列表
     func requestAIAgentList(projectName: String, workspaceName: String, aiTool: AIChatTool) {
-        send([
-            "type": "ai_agent_list",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue
-        ])
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/agents"
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            fallbackAction: "ai_agent_list"
+        )
     }
 
     /// 获取 AI 斜杠命令列表
@@ -1083,16 +1234,17 @@ extension WSClient {
         aiTool: AIChatTool,
         sessionId: String? = nil
     ) {
-        var msg: [String: Any] = [
-            "type": "ai_slash_commands",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue
-        ]
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/slash-commands"
+        var queryItems: [URLQueryItem] = []
         if let sessionId, !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            msg["session_id"] = sessionId
+            queryItems.append(URLQueryItem(name: "session_id", value: sessionId))
         }
-        send(msg)
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "ai_slash_commands"
+        )
     }
 
     /// 获取会话配置选项（ACP session-config-options）
@@ -1102,16 +1254,17 @@ extension WSClient {
         aiTool: AIChatTool,
         sessionId: String? = nil
     ) {
-        var msg: [String: Any] = [
-            "type": "ai_session_config_options",
-            "project_name": projectName,
-            "workspace_name": workspaceName,
-            "ai_tool": aiTool.rawValue
-        ]
+        let path = "/api/v1/projects/\(encodePathComponent(projectName))/workspaces/\(encodePathComponent(workspaceName))/ai/\(encodePathComponent(aiTool.rawValue))/session-config-options"
+        var queryItems: [URLQueryItem] = []
         if let sessionId, !sessionId.isEmpty {
-            msg["session_id"] = sessionId
+            queryItems.append(URLQueryItem(name: "session_id", value: sessionId))
         }
-        send(msg)
+        requestReadViaHTTP(
+            domain: "ai",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "ai_session_config_options"
+        )
     }
 
     /// 设置会话配置选项（ACP session/set_config_option）
@@ -1201,20 +1354,32 @@ extension WSClient {
     }
 
     func requestEvoSnapshot(project: String? = nil, workspace: String? = nil) {
-        var msg: [String: Any] = ["type": "evo_get_snapshot"]
-        if let project, !project.isEmpty { msg["project"] = project }
-        if let workspace, !workspace.isEmpty { msg["workspace"] = workspace }
-        send(msg)
+        var queryItems: [URLQueryItem] = []
+        if let project, !project.isEmpty {
+            queryItems.append(URLQueryItem(name: "project", value: project))
+        }
+        if let workspace, !workspace.isEmpty {
+            queryItems.append(URLQueryItem(name: "workspace", value: workspace))
+        }
+        requestReadViaHTTP(
+            domain: "evolution",
+            path: "/api/v1/evolution/snapshot",
+            queryItems: queryItems,
+            fallbackAction: "evo_snapshot"
+        )
     }
 
     func requestEvoOpenStageChat(project: String, workspace: String, cycleID: String, stage: String) {
-        send([
-            "type": "evo_open_stage_chat",
-            "project": project,
-            "workspace": workspace,
-            "cycle_id": cycleID,
-            "stage": stage
-        ])
+        let path = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/stage-chat"
+        requestReadViaHTTP(
+            domain: "evolution",
+            path: path,
+            queryItems: [
+                URLQueryItem(name: "cycle_id", value: cycleID),
+                URLQueryItem(name: "stage", value: stage)
+            ],
+            fallbackAction: "evo_stage_chat_opened"
+        )
     }
 
     func requestEvoUpdateAgentProfile(project: String, workspace: String, stageProfiles: [EvolutionStageProfileInfoV2]) {
@@ -1227,35 +1392,39 @@ extension WSClient {
     }
 
     func requestEvoGetAgentProfile(project: String, workspace: String) {
-        send([
-            "type": "evo_get_agent_profile",
-            "project": project,
-            "workspace": workspace
-        ])
+        let path = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/agent-profile"
+        requestReadViaHTTP(
+            domain: "evolution",
+            path: path,
+            fallbackAction: "evo_agent_profile"
+        )
     }
 
     func requestEvoListCycleHistory(project: String, workspace: String) {
-        send([
-            "type": "evo_list_cycle_history",
-            "project": project,
-            "workspace": workspace
-        ])
+        let path = "/api/v1/evolution/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/cycle-history"
+        requestReadViaHTTP(
+            domain: "evolution",
+            path: path,
+            fallbackAction: "evo_cycle_history"
+        )
     }
 
     func requestEvidenceSnapshot(project: String, workspace: String) {
-        send([
-            "type": "evidence_get_snapshot",
-            "project": project,
-            "workspace": workspace
-        ])
+        let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/snapshot"
+        requestReadViaHTTP(
+            domain: "evidence",
+            path: path,
+            fallbackAction: "evidence_snapshot"
+        )
     }
 
     func requestEvidenceRebuildPrompt(project: String, workspace: String) {
-        send([
-            "type": "evidence_get_rebuild_prompt",
-            "project": project,
-            "workspace": workspace
-        ])
+        let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/rebuild-prompt"
+        requestReadViaHTTP(
+            domain: "evidence",
+            path: path,
+            fallbackAction: "evidence_rebuild_prompt"
+        )
     }
 
     func requestEvidenceReadItem(
@@ -1265,16 +1434,18 @@ extension WSClient {
         offset: UInt64 = 0,
         limit: UInt32? = 262_144
     ) {
-        var msg: [String: Any] = [
-            "type": "evidence_read_item",
-            "project": project,
-            "workspace": workspace,
-            "item_id": itemID,
-            "offset": offset
+        let path = "/api/v1/evidence/projects/\(encodePathComponent(project))/workspaces/\(encodePathComponent(workspace))/items/\(encodePathComponent(itemID))/chunk"
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "offset", value: "\(offset)")
         ]
         if let limit {
-            msg["limit"] = limit
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
         }
-        send(msg)
+        requestReadViaHTTP(
+            domain: "evidence",
+            path: path,
+            queryItems: queryItems,
+            fallbackAction: "evidence_item_chunk"
+        )
     }
 }
