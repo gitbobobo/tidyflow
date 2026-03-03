@@ -16,6 +16,10 @@ fn is_terminal_status(status: &str) -> bool {
     matches!(status, "completed" | "failed_exhausted" | "failed_system")
 }
 
+fn should_stop_worker_after_stage(terminal_reached: bool, stage_changed: bool) -> bool {
+    terminal_reached && !stage_changed
+}
+
 fn is_round_limit_exceeded(global_loop_round: u32, loop_round_limit: u32) -> bool {
     let normalized_limit = loop_round_limit.max(1);
     global_loop_round > normalized_limit
@@ -674,7 +678,7 @@ impl EvolutionManager {
                 }
             }
 
-            let (stop_now, terminal_reached) = {
+            let (stop_now, terminal_reached, stage_changed) = {
                 let state = self.state.lock().await;
                 let stop_now = state
                     .workspaces
@@ -686,9 +690,14 @@ impl EvolutionManager {
                     .get(&key)
                     .map(|w| is_terminal_status(&w.status))
                     .unwrap_or(true);
-                (stop_now, terminal_reached)
+                let stage_changed = state
+                    .workspaces
+                    .get(&key)
+                    .map(|w| w.current_stage != stage)
+                    .unwrap_or(false);
+                (stop_now, terminal_reached, stage_changed)
             };
-            if terminal_reached {
+            if should_stop_worker_after_stage(terminal_reached, stage_changed) {
                 return;
             }
             if stop_now {
@@ -708,7 +717,7 @@ mod tests {
     use super::{
         extract_rate_limit_resume_at_from_messages, extract_rate_limit_resume_at_from_text,
         is_rate_limit_error_text, is_retryable_session_error_text, is_round_limit_exceeded,
-        is_terminal_status,
+        is_terminal_status, should_stop_worker_after_stage,
     };
 
     #[test]
@@ -725,6 +734,13 @@ mod tests {
         assert!(!is_round_limit_exceeded(1, 1));
         assert!(!is_round_limit_exceeded(1, 3));
         assert!(is_round_limit_exceeded(2, 1));
+    }
+
+    #[test]
+    fn should_stop_worker_after_stage_should_require_terminal_without_stage_change() {
+        assert!(should_stop_worker_after_stage(true, false));
+        assert!(!should_stop_worker_after_stage(true, true));
+        assert!(!should_stop_worker_after_stage(false, false));
     }
 
     #[test]
