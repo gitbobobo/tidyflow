@@ -62,6 +62,33 @@ struct EvolutionPipelineView: View {
         appState.evolutionControlCapability(project: project, workspace: workspace)
     }
 
+    /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
+    private var primaryControlShowsStop: Bool {
+        controlCapability.canStop || controlCapability.isStopPending
+    }
+
+    private var canTriggerPrimaryControlAction: Bool {
+        controlCapability.canStart || controlCapability.canStop
+    }
+
+    private var primaryControlButtonSymbol: String {
+        if primaryControlShowsStop {
+            return controlCapability.isStopPending ? "clock" : "stop.fill"
+        }
+        return controlCapability.isStartPending ? "clock" : "play.fill"
+    }
+
+    private var primaryControlButtonTint: Color {
+        primaryControlShowsStop ? .red : .green
+    }
+
+    private var primaryControlHelpText: String {
+        if primaryControlShowsStop {
+            return actionHelpText("evolution.page.action.stop".localized, reason: controlCapability.stopReason)
+        }
+        return actionHelpText("evolution.page.action.startManual".localized, reason: controlCapability.startReason)
+    }
+
     private let evolutionStageOrder: [String] = [
         "direction", "plan",
         "implement_general", "implement_visual", "implement_advanced",
@@ -234,34 +261,15 @@ struct EvolutionPipelineView: View {
                 // 操作按钮
                 HStack(spacing: 4) {
                     Button {
-                        startCurrentWorkspace()
+                        triggerPrimaryControlAction()
                     } label: {
-                        if controlCapability.isStartPending {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "play.fill")
-                        }
+                        Image(systemName: primaryControlButtonSymbol)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .help(actionHelpText("evolution.page.action.startManual".localized, reason: controlCapability.startReason))
-                    .disabled(!controlCapability.canStart)
-
-                    Button {
-                        guard let workspace else { return }
-                        guard controlCapability.canStop else { return }
-                        appState.stopEvolution(project: project, workspace: workspace)
-                    } label: {
-                        if controlCapability.isStopPending {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "stop.fill")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help(actionHelpText("evolution.page.action.stop".localized, reason: controlCapability.stopReason))
-                    .disabled(!controlCapability.canStop)
+                    .tint(primaryControlButtonTint)
+                    .help(primaryControlHelpText)
+                    .disabled(!canTriggerPrimaryControlAction)
 
                     Button {
                         guard let workspace else { return }
@@ -1747,6 +1755,20 @@ struct EvolutionPipelineView: View {
     }
 
     // MARK: - 启动逻辑
+
+    private func triggerPrimaryControlAction() {
+        if primaryControlShowsStop {
+            stopCurrentWorkspace()
+        } else {
+            startCurrentWorkspace()
+        }
+    }
+
+    private func stopCurrentWorkspace() {
+        guard let workspace else { return }
+        guard controlCapability.canStop else { return }
+        appState.stopEvolution(project: project, workspace: workspace)
+    }
 
     private func startCurrentWorkspace() {
         guard let workspace else { return }
