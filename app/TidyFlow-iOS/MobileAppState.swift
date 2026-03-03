@@ -170,7 +170,6 @@ final class MobileAppState: ObservableObject {
     @Published var explorerPreviewPath: String?
     @Published var explorerPreviewContent: String = ""
     @Published var explorerPreviewError: String?
-    @Published var commitAIAgent: String?
     @Published var mergeAIAgent: String?
     @Published var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = []
     private var clientFixedPort: Int = 0
@@ -648,7 +647,6 @@ final class MobileAppState: ObservableObject {
         let payload = ClientSettings(
             customCommands: customCommands,
             workspaceShortcuts: workspaceShortcuts,
-            commitAIAgent: commitAIAgent,
             mergeAIAgent: mergeAIAgent,
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
@@ -966,7 +964,7 @@ final class MobileAppState: ObservableObject {
             message: "执行中..."
         )
         aiCommitPendingTaskIds.append(task.id)
-        wsClient.requestGitAICommit(project: project, workspace: workspace, aiAgent: commitAIAgent)
+        wsClient.requestEvoAutoCommit(project: project, workspace: workspace)
     }
 
     func runAIMerge(project: String, workspace: String) {
@@ -1381,6 +1379,7 @@ final class MobileAppState: ObservableObject {
             "verify",
             "judge",
             "report",
+            "auto_commit",
         ]
     }
 
@@ -3640,7 +3639,7 @@ final class MobileAppState: ObservableObject {
             self.wsClient.requestTermList()
         }
 
-        wsClient.onGitAICommitResult = { [weak self] result in
+        wsClient.onEvoAutoCommitResult = { [weak self] result in
             guard let self else { return }
             // 按 project:workspace 匹配本地任务
             let key = self.globalWorkspaceKey(project: result.project, workspace: result.workspace)
@@ -3840,7 +3839,6 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             self.customCommands = settings.customCommands
             self.workspaceShortcuts = settings.workspaceShortcuts
-            self.commitAIAgent = settings.commitAIAgent
             self.mergeAIAgent = settings.mergeAIAgent
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
