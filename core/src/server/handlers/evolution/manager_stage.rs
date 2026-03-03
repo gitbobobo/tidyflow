@@ -12,8 +12,10 @@ use uuid::Uuid;
 use crate::ai::{AiAgent, AiModelSelection, AiQuestionRequest};
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::{
-    ensure_agent, infer_selection_hint_from_messages, merge_session_selection_hint,
-    normalize_part_for_wire, resolve_directory,
+    apply_stream_snapshot_cache_op, build_ai_session_messages_update, ensure_agent,
+    infer_selection_hint_from_messages, map_ai_messages_for_wire, map_ai_selection_hint_to_wire,
+    mark_stream_snapshot_terminal, merge_session_selection_hint, normalize_part_for_wire,
+    resolve_directory, seed_stream_snapshot, split_utf8_text_by_max_bytes, stream_key,
 };
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
@@ -29,6 +31,70 @@ const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.json";
 const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.json";
+const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
+
+fn build_stage_part_updated_ops(
+    message_id: String,
+    part: crate::server::protocol::ai::PartInfo,
+) -> Vec<crate::server::protocol::ai::AiSessionCacheOpInfo> {
+    if let Some(text) = part.text.clone() {
+        if text.len() > MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES {
+            let mut base_part = part.clone();
+            base_part.text = None;
+            let mut ops = vec![
+                crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated {
+                    message_id: message_id.clone(),
+                    part: base_part,
+                },
+            ];
+            for chunk in split_utf8_text_by_max_bytes(&text, MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES) {
+                ops.push(
+                    crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                        message_id: message_id.clone(),
+                        part_id: part.id.clone(),
+                        part_type: part.part_type.clone(),
+                        field: "text".to_string(),
+                        delta: chunk,
+                    },
+                );
+            }
+            return ops;
+        }
+    }
+    vec![crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated { message_id, part }]
+}
+
+fn build_stage_part_delta_ops(
+    message_id: String,
+    part_id: String,
+    part_type: String,
+    field: String,
+    delta: String,
+) -> Vec<crate::server::protocol::ai::AiSessionCacheOpInfo> {
+    if delta.len() <= MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES {
+        return vec![
+            crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id,
+                part_id,
+                part_type,
+                field,
+                delta,
+            },
+        ];
+    }
+    split_utf8_text_by_max_bytes(&delta, MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES)
+        .into_iter()
+        .map(
+            |chunk| crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id: message_id.clone(),
+                part_id: part_id.clone(),
+                part_type: part_type.clone(),
+                field: field.clone(),
+                delta: chunk,
+            },
+        )
+        .collect::<Vec<_>>()
+}
 
 fn should_attempt_idle_recovery(stall_recovery_attempts: u32) -> bool {
     // 对所有 AI 工具统一启用 idle 超时恢复，避免不同工具行为不一致。
@@ -463,7 +529,11 @@ fn collect_commits_between(
 
     let rev_list_output = if let Some(before_sha) = before {
         Command::new("git")
-            .args(["rev-list", "--reverse", &format!("{}..{}", before_sha, after_sha)])
+            .args([
+                "rev-list",
+                "--reverse",
+                &format!("{}..{}", before_sha, after_sha),
+            ])
             .current_dir(workspace_root)
             .output()
             .map_err(|e| format!("执行 git rev-list 失败: {}", e))?
@@ -475,7 +545,9 @@ fn collect_commits_between(
             .map_err(|e| format!("执行 git rev-list 失败: {}", e))?
     };
     if !rev_list_output.status.success() {
-        let stderr = String::from_utf8_lossy(&rev_list_output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&rev_list_output.stderr)
+            .trim()
+            .to_string();
         return Err(format!("git rev-list 执行失败: {}", stderr));
     }
 
@@ -491,7 +563,14 @@ fn collect_commits_between(
     let mut commits: Vec<AIGitCommit> = Vec::with_capacity(shas.len());
     for sha in shas {
         let output = Command::new("git")
-            .args(["show", "--name-only", "--pretty=format:%h%x1f%s", "-n", "1", &sha])
+            .args([
+                "show",
+                "--name-only",
+                "--pretty=format:%h%x1f%s",
+                "-n",
+                "1",
+                &sha,
+            ])
             .current_dir(workspace_root)
             .output()
             .map_err(|e| format!("执行 git show 失败: {}", e))?;
@@ -2154,6 +2233,24 @@ impl EvolutionManager {
     ) -> Result<(), String> {
         let idle_timeout_secs = STAGE_STREAM_IDLE_TIMEOUT_SECS.min(MAX_STAGE_RUNTIME_SECS);
         let mut stall_recovery_attempts: u32 = 0;
+        let session_key = stream_key(ai_tool, directory, session_id);
+
+        let seed_messages = match agent.list_messages(directory, session_id, None).await {
+            Ok(messages) => map_ai_messages_for_wire(messages),
+            Err(_) => Vec::new(),
+        };
+        let seed_selection_hint = match agent.session_selection_hint(directory, session_id).await {
+            Ok(Some(hint)) => Some(map_ai_selection_hint_to_wire(hint)),
+            _ => None,
+        };
+        seed_stream_snapshot(
+            &ctx.ai_state,
+            &session_key,
+            seed_messages,
+            seed_selection_hint,
+            true,
+        )
+        .await;
 
         loop {
             let next = timeout(Duration::from_secs(idle_timeout_secs), stream.next()).await;
@@ -2169,32 +2266,30 @@ impl EvolutionManager {
                                     Err(_) => crate::ai::AiSessionSelectionHint::default(),
                                 };
                             let inferred_hint =
-                                match agent.list_messages(directory, session_id, Some(200)).await {
-                                    Ok(messages) => {
-                                        let wire_messages: Vec<
-                                            crate::server::protocol::ai::MessageInfo,
-                                        > = messages
-                                            .into_iter()
-                                            .map(|m| crate::server::protocol::ai::MessageInfo {
-                                                id: m.id,
-                                                role: m.role,
-                                                created_at: m.created_at,
-                                                agent: m.agent,
-                                                model_provider_id: m.model_provider_id,
-                                                model_id: m.model_id,
-                                                parts: m
-                                                    .parts
-                                                    .into_iter()
-                                                    .map(normalize_part_for_wire)
-                                                    .collect(),
-                                            })
-                                            .collect();
-                                        infer_selection_hint_from_messages(&wire_messages)
-                                    }
+                                match agent.list_messages(directory, session_id, None).await {
+                                    Ok(messages) => infer_selection_hint_from_messages(
+                                        &map_ai_messages_for_wire(messages),
+                                    ),
                                     Err(_) => crate::ai::AiSessionSelectionHint::default(),
                                 };
                             let selection_hint =
                                 merge_session_selection_hint(adapter_hint, inferred_hint);
+                            if let Some(snapshot) = mark_stream_snapshot_terminal(
+                                &ctx.ai_state,
+                                &session_key,
+                                selection_hint.clone(),
+                            )
+                            .await
+                            {
+                                self.broadcast(
+                                    ctx,
+                                    build_ai_session_messages_update(
+                                        project, workspace, ai_tool, session_id, &snapshot, None,
+                                        true,
+                                    ),
+                                )
+                                .await;
+                            }
                             self.broadcast(
                                 ctx,
                                 ServerMessage::AIChatDone {
@@ -2210,6 +2305,19 @@ impl EvolutionManager {
                             break;
                         }
                         crate::ai::AiEvent::Error { message } => {
+                            if let Some(snapshot) =
+                                mark_stream_snapshot_terminal(&ctx.ai_state, &session_key, None)
+                                    .await
+                            {
+                                self.broadcast(
+                                    ctx,
+                                    build_ai_session_messages_update(
+                                        project, workspace, ai_tool, session_id, &snapshot, None,
+                                        true,
+                                    ),
+                                )
+                                .await;
+                            }
                             self.broadcast(
                                 ctx,
                                 ServerMessage::AIChatErrorV2 {
@@ -2228,24 +2336,30 @@ impl EvolutionManager {
                             role,
                             selection_hint,
                         } => {
-                            self.broadcast(
-                                ctx,
-                                ServerMessage::AIChatMessageUpdated {
-                                    project_name: project.to_string(),
-                                    workspace_name: workspace.to_string(),
-                                    ai_tool: ai_tool.to_string(),
-                                    session_id: session_id.to_string(),
+                            let wire_hint = selection_hint.map(map_ai_selection_hint_to_wire);
+                            let op =
+                                crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
                                     message_id,
                                     role,
-                                    selection_hint: selection_hint.map(|hint| {
-                                        crate::server::protocol::ai::SessionSelectionHint {
-                                            agent: hint.agent,
-                                            model_provider_id: hint.model_provider_id,
-                                            model_id: hint.model_id,
-                                            config_options: hint.config_options,
-                                        }
-                                    }),
-                                },
+                                };
+                            let snapshot = apply_stream_snapshot_cache_op(
+                                &ctx.ai_state,
+                                &session_key,
+                                &op,
+                                wire_hint,
+                            )
+                            .await;
+                            self.broadcast(
+                                ctx,
+                                build_ai_session_messages_update(
+                                    project,
+                                    workspace,
+                                    ai_tool,
+                                    session_id,
+                                    &snapshot,
+                                    Some(vec![op]),
+                                    false,
+                                ),
                             )
                             .await;
                         }
@@ -2260,18 +2374,32 @@ impl EvolutionManager {
                                 tool_call_count_changed =
                                     self.record_stage_tool_call(key, stage, call_key).await;
                             }
-                            self.broadcast(
-                                ctx,
-                                ServerMessage::AIChatPartUpdated {
-                                    project_name: project.to_string(),
-                                    workspace_name: workspace.to_string(),
-                                    ai_tool: ai_tool.to_string(),
-                                    session_id: session_id.to_string(),
-                                    message_id,
-                                    part: normalize_part_for_wire(part),
-                                },
-                            )
-                            .await;
+                            let ops = build_stage_part_updated_ops(
+                                message_id,
+                                normalize_part_for_wire(part),
+                            );
+                            for op in ops {
+                                let snapshot = apply_stream_snapshot_cache_op(
+                                    &ctx.ai_state,
+                                    &session_key,
+                                    &op,
+                                    None,
+                                )
+                                .await;
+                                self.broadcast(
+                                    ctx,
+                                    build_ai_session_messages_update(
+                                        project,
+                                        workspace,
+                                        ai_tool,
+                                        session_id,
+                                        &snapshot,
+                                        Some(vec![op]),
+                                        false,
+                                    ),
+                                )
+                                .await;
+                            }
                             if tool_call_count_changed {
                                 self.broadcast_cycle_update(key, ctx, "agent").await;
                             }
@@ -2288,21 +2416,31 @@ impl EvolutionManager {
                             } else {
                                 false
                             };
-                            self.broadcast(
-                                ctx,
-                                ServerMessage::AIChatPartDelta {
-                                    project_name: project.to_string(),
-                                    workspace_name: workspace.to_string(),
-                                    ai_tool: ai_tool.to_string(),
-                                    session_id: session_id.to_string(),
-                                    message_id,
-                                    part_id,
-                                    part_type,
-                                    field,
-                                    delta,
-                                },
-                            )
-                            .await;
+                            let ops = build_stage_part_delta_ops(
+                                message_id, part_id, part_type, field, delta,
+                            );
+                            for op in ops {
+                                let snapshot = apply_stream_snapshot_cache_op(
+                                    &ctx.ai_state,
+                                    &session_key,
+                                    &op,
+                                    None,
+                                )
+                                .await;
+                                self.broadcast(
+                                    ctx,
+                                    build_ai_session_messages_update(
+                                        project,
+                                        workspace,
+                                        ai_tool,
+                                        session_id,
+                                        &snapshot,
+                                        Some(vec![op]),
+                                        false,
+                                    ),
+                                )
+                                .await;
+                            }
                             if tool_call_count_changed {
                                 self.broadcast_cycle_update(key, ctx, "agent").await;
                             }
@@ -2328,8 +2466,34 @@ impl EvolutionManager {
                         crate::ai::AiEvent::SlashCommandsUpdated { .. } => {}
                     }
                 }
-                Ok(Some(Err(err))) => return Err(err),
-                Ok(None) => break,
+                Ok(Some(Err(err))) => {
+                    if let Some(snapshot) =
+                        mark_stream_snapshot_terminal(&ctx.ai_state, &session_key, None).await
+                    {
+                        self.broadcast(
+                            ctx,
+                            build_ai_session_messages_update(
+                                project, workspace, ai_tool, session_id, &snapshot, None, true,
+                            ),
+                        )
+                        .await;
+                    }
+                    return Err(err);
+                }
+                Ok(None) => {
+                    if let Some(snapshot) =
+                        mark_stream_snapshot_terminal(&ctx.ai_state, &session_key, None).await
+                    {
+                        self.broadcast(
+                            ctx,
+                            build_ai_session_messages_update(
+                                project, workspace, ai_tool, session_id, &snapshot, None, true,
+                            ),
+                        )
+                        .await;
+                    }
+                    break;
+                }
                 Err(_) => {
                     let stage_tool_call_count = {
                         let state = self.state.lock().await;
@@ -2894,8 +3058,11 @@ impl EvolutionManager {
             .await?;
 
         loop {
-            let next =
-                timeout(Duration::from_secs(STAGE_STREAM_IDLE_TIMEOUT_SECS), stream.next()).await;
+            let next = timeout(
+                Duration::from_secs(STAGE_STREAM_IDLE_TIMEOUT_SECS),
+                stream.next(),
+            )
+            .await;
             match next {
                 Ok(Some(Ok(crate::ai::AiEvent::Done { .. }))) => break,
                 Ok(Some(Ok(crate::ai::AiEvent::Error { message }))) => {
@@ -2912,17 +3079,26 @@ impl EvolutionManager {
         }
 
         let after_head = git_head_sha(workspace_root)?;
-        let commits =
-            collect_commits_between(workspace_root, before_head.as_deref(), after_head.as_deref())?;
+        let commits = collect_commits_between(
+            workspace_root,
+            before_head.as_deref(),
+            after_head.as_deref(),
+        )?;
         if commits.is_empty() {
             let after_has_changes = git_repo_has_changes(workspace_root)?;
             if after_has_changes {
                 return Err("auto_commit 未生成提交，且工作区仍有未提交变更".to_string());
             }
-            return Ok(("Auto commit completed with no new commits".to_string(), commits));
+            return Ok((
+                "Auto commit completed with no new commits".to_string(),
+                commits,
+            ));
         }
         Ok((
-            format!("Auto commit completed. Created {} commit(s).", commits.len()),
+            format!(
+                "Auto commit completed. Created {} commit(s).",
+                commits.len()
+            ),
             commits,
         ))
     }

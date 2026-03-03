@@ -100,6 +100,27 @@ pub(crate) async fn handle_ai_chat_abort(
         }
     });
 
+    if let Some(snapshot) = mark_stream_snapshot_terminal(ai_state, &key, None).await {
+        let target_conn_ids = ai_session_subscriber_conn_ids(ai_state, &key, origin_conn_id).await;
+        let update = build_ai_session_messages_update(
+            &project_name,
+            &workspace_name,
+            &ai_tool,
+            &session_id,
+            &snapshot,
+            None,
+            true,
+        );
+        let _ = emit_server_message_with_targets(
+            output_tx,
+            task_broadcast_tx,
+            origin_conn_id,
+            target_conn_ids,
+            update,
+        )
+        .await;
+    }
+
     // 若没有可用流任务接收 abort 信号，主动下发 done 收敛前端状态。
     if should_emit_done_now {
         let target_conn_ids = ai_session_subscriber_conn_ids(ai_state, &key, origin_conn_id).await;

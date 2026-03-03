@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::Sender;
 
+use super::utils::AiStreamSnapshot;
 use crate::ai::session_status::AiSessionStateStore;
 use crate::ai::AiAgent;
 
@@ -11,6 +12,8 @@ pub struct AIState {
     pub agents: HashMap<String, Arc<dyn AiAgent>>,
     /// 活跃流的中止通道：key = "{tool}::{directory}::{session_id}"
     pub active_streams: HashMap<String, Sender<()>>,
+    /// 会话流式快照：key = "{tool}::{directory}::{session_id}"
+    pub(crate) stream_snapshots: HashMap<String, AiStreamSnapshot>,
     /// AI 会话状态存储（跨工具统一）
     pub session_statuses: Arc<AiSessionStateStore>,
     /// tool+directory 使用情况：用于 idle dispose
@@ -28,6 +31,7 @@ impl AIState {
     pub fn new() -> Self {
         Self {
             active_streams: HashMap::new(),
+            stream_snapshots: HashMap::new(),
             agents: HashMap::new(),
             session_statuses: AiSessionStateStore::new_shared(),
             directory_last_used_ms: HashMap::new(),

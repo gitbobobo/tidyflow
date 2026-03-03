@@ -35,22 +35,8 @@ async fn resolve_selection_hint_for_done(
         }
     };
 
-    let inferred_hint = match agent.list_messages(directory, session_id, Some(200)).await {
-        Ok(messages) => {
-            let wire_messages: Vec<crate::server::protocol::ai::MessageInfo> = messages
-                .into_iter()
-                .map(|m| crate::server::protocol::ai::MessageInfo {
-                    id: m.id,
-                    role: m.role,
-                    created_at: m.created_at,
-                    agent: m.agent,
-                    model_provider_id: m.model_provider_id,
-                    model_id: m.model_id,
-                    parts: m.parts.into_iter().map(normalize_part_for_wire).collect(),
-                })
-                .collect();
-            infer_selection_hint_from_messages(&wire_messages)
-        }
+    let inferred_hint = match agent.list_messages(directory, session_id, None).await {
+        Ok(messages) => infer_selection_hint_from_messages(&map_ai_messages_for_wire(messages)),
         Err(e) => {
             warn!(
                 "AIChatDone selection hint infer failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
@@ -130,6 +116,104 @@ fn build_slash_commands_update_message(
         session_id,
         commands: map_slash_commands_for_wire(commands),
     }
+}
+
+const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
+
+fn build_part_updated_cache_ops(
+    message_id: String,
+    part: crate::server::protocol::ai::PartInfo,
+) -> Vec<crate::server::protocol::ai::AiSessionCacheOpInfo> {
+    if let Some(text) = part.text.clone() {
+        if text.len() > MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES {
+            let mut base_part = part.clone();
+            base_part.text = None;
+            let mut ops = vec![
+                crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated {
+                    message_id: message_id.clone(),
+                    part: base_part,
+                },
+            ];
+            for chunk in split_utf8_text_by_max_bytes(&text, MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES) {
+                ops.push(
+                    crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                        message_id: message_id.clone(),
+                        part_id: part.id.clone(),
+                        part_type: part.part_type.clone(),
+                        field: "text".to_string(),
+                        delta: chunk,
+                    },
+                );
+            }
+            return ops;
+        }
+    }
+    vec![crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated { message_id, part }]
+}
+
+fn build_part_delta_cache_ops(
+    message_id: String,
+    part_id: String,
+    part_type: String,
+    field: String,
+    delta: String,
+) -> Vec<crate::server::protocol::ai::AiSessionCacheOpInfo> {
+    if delta.len() <= MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES {
+        return vec![
+            crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id,
+                part_id,
+                part_type,
+                field,
+                delta,
+            },
+        ];
+    }
+
+    split_utf8_text_by_max_bytes(&delta, MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES)
+        .into_iter()
+        .map(
+            |chunk| crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id: message_id.clone(),
+                part_id: part_id.clone(),
+                part_type: part_type.clone(),
+                field: field.clone(),
+                delta: chunk,
+            },
+        )
+        .collect::<Vec<_>>()
+}
+
+async fn emit_ai_session_messages_update_with_ops(
+    output_tx: &mpsc::Sender<ServerMessage>,
+    task_broadcast_tx: &TaskBroadcastTx,
+    origin_conn_id: &str,
+    emit_state: &mut StreamEmitState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+    snapshot: &AiStreamSnapshot,
+    ops: Option<Vec<crate::server::protocol::ai::AiSessionCacheOpInfo>>,
+    allow_snapshot_messages_fallback: bool,
+) {
+    let update = build_ai_session_messages_update(
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        snapshot,
+        ops,
+        allow_snapshot_messages_fallback,
+    );
+    let _ = emit_server_message_with_state(
+        output_tx,
+        task_broadcast_tx,
+        origin_conn_id,
+        update,
+        emit_state,
+    )
+    .await;
 }
 
 pub(crate) async fn handle_ai_chat_start(
@@ -390,6 +474,37 @@ pub(crate) async fn handle_ai_chat_send(
             &mut emit_state,
         )
         .await;
+        let seed_messages = match agent.list_messages(&directory, &session_id, None).await {
+            Ok(messages) => map_ai_messages_for_wire(messages),
+            Err(e) => {
+                warn!(
+                    "AIChatSend: seed snapshot list_messages failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                    project_name, workspace_name, ai_tool, session_id, e
+                );
+                Vec::new()
+            }
+        };
+        let seed_selection_hint = match agent.session_selection_hint(&directory, &session_id).await
+        {
+            Ok(Some(hint)) => Some(map_ai_selection_hint_to_wire(hint)),
+            Ok(None) => None,
+            Err(e) => {
+                warn!(
+                    "AIChatSend: seed snapshot selection_hint failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                    project_name, workspace_name, ai_tool, session_id, e
+                );
+                None
+            }
+        };
+        seed_stream_snapshot(
+            &ai_state_cloned,
+            &abort_key,
+            seed_messages,
+            seed_selection_hint,
+            true,
+        )
+        .await;
+
         let mut stream = match agent
             .send_message_with_config(
                 &directory,
@@ -414,6 +529,24 @@ pub(crate) async fn handle_ai_chat_send(
                     status_meta_cloned.clone(),
                     AiSessionStatus::Error { message: e.clone() },
                 );
+                if let Some(snapshot) =
+                    mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
+                {
+                    emit_ai_session_messages_update_with_ops(
+                        &output_tx,
+                        task_broadcast_tx,
+                        origin_conn_id,
+                        &mut emit_state,
+                        &project_name,
+                        &workspace_name,
+                        &ai_tool,
+                        &session_id,
+                        &snapshot,
+                        None,
+                        true,
+                    )
+                    .await;
+                }
                 let _ = emit_server_message_with_state(
                     &output_tx,
                     task_broadcast_tx,
@@ -456,68 +589,86 @@ pub(crate) async fn handle_ai_chat_send(
                                     role,
                                     selection_hint,
                                 } => {
-                                    let _ = emit_server_message_with_state(
+                                    let wire_hint = selection_hint.map(map_ai_selection_hint_to_wire);
+                                    let op = crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                                        message_id,
+                                        role,
+                                    };
+                                    let snapshot = apply_stream_snapshot_cache_op(
+                                        &ai_state_cloned,
+                                        &abort_key,
+                                        &op,
+                                        wire_hint,
+                                    )
+                                    .await;
+                                    emit_ai_session_messages_update_with_ops(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
-                                        ServerMessage::AIChatMessageUpdated {
-                                            project_name: project_name.clone(),
-                                            workspace_name: workspace_name.clone(),
-                                            ai_tool: ai_tool.clone(),
-                                            session_id: session_id.clone(),
-                                            message_id,
-                                            role,
-                                            selection_hint: selection_hint.map(|hint| {
-                                                crate::server::protocol::ai::SessionSelectionHint {
-                                                    agent: hint.agent,
-                                                    model_provider_id: hint.model_provider_id,
-                                                    model_id: hint.model_id,
-                                                    config_options: hint.config_options,
-                                                }
-                                            }),
-                                        },
                                         &mut emit_state,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                        &session_id,
+                                        &snapshot,
+                                        Some(vec![op]),
+                                        false,
                                     )
                                     .await;
                                     true
                                 }
                                 AiEvent::PartUpdated { message_id, part } => {
-                                    let _ = emit_server_message_with_state(
-                                        &output_tx,
-                                        task_broadcast_tx,
-                                        origin_conn_id,
-                                        ServerMessage::AIChatPartUpdated {
-                                            project_name: project_name.clone(),
-                                            workspace_name: workspace_name.clone(),
-                                            ai_tool: ai_tool.clone(),
-                                            session_id: session_id.clone(),
-                                            message_id,
-                                            part: normalize_part_for_wire(part),
-                                        },
-                                        &mut emit_state,
-                                    )
-                                    .await;
+                                    let ops = build_part_updated_cache_ops(message_id, normalize_part_for_wire(part));
+                                    for op in ops {
+                                        let snapshot = apply_stream_snapshot_cache_op(
+                                            &ai_state_cloned,
+                                            &abort_key,
+                                            &op,
+                                            None,
+                                        )
+                                        .await;
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            Some(vec![op]),
+                                            false,
+                                        )
+                                        .await;
+                                    }
                                     true
                                 }
                                 AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
-                                    let _ = emit_server_message_with_state(
-                                        &output_tx,
-                                        task_broadcast_tx,
-                                        origin_conn_id,
-                                        ServerMessage::AIChatPartDelta {
-                                            project_name: project_name.clone(),
-                                            workspace_name: workspace_name.clone(),
-                                            ai_tool: ai_tool.clone(),
-                                            session_id: session_id.clone(),
-                                            message_id,
-                                            part_id,
-                                            part_type,
-                                            field,
-                                            delta,
-                                        },
-                                        &mut emit_state,
-                                    )
-                                    .await;
+                                    let ops = build_part_delta_cache_ops(message_id, part_id, part_type, field, delta);
+                                    for op in ops {
+                                        let snapshot = apply_stream_snapshot_cache_op(
+                                            &ai_state_cloned,
+                                            &abort_key,
+                                            &op,
+                                            None,
+                                        )
+                                        .await;
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            Some(vec![op]),
+                                            false,
+                                        )
+                                        .await;
+                                    }
                                     true
                                 }
                                 AiEvent::QuestionAsked { request } => {
@@ -662,6 +813,24 @@ pub(crate) async fn handle_ai_chat_send(
                                         status_meta_cloned.clone(),
                                         AiSessionStatus::Error { message: message.clone() },
                                     );
+                                    if let Some(snapshot) =
+                                        mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
+                                    {
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            None,
+                                            true,
+                                        )
+                                        .await;
+                                    }
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -689,6 +858,27 @@ pub(crate) async fn handle_ai_chat_send(
                                         &ai_tool,
                                     )
                                     .await;
+                                    if let Some(snapshot) = mark_stream_snapshot_terminal(
+                                        &ai_state_cloned,
+                                        &abort_key,
+                                        selection_hint.clone(),
+                                    )
+                                    .await {
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            None,
+                                            true,
+                                        )
+                                        .await;
+                                    }
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -720,6 +910,22 @@ pub(crate) async fn handle_ai_chat_send(
                                 status_meta_cloned.clone(),
                                 AiSessionStatus::Error { message: e.clone() },
                             );
+                            if let Some(snapshot) = mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await {
+                                emit_ai_session_messages_update_with_ops(
+                                    &output_tx,
+                                    task_broadcast_tx,
+                                    origin_conn_id,
+                                    &mut emit_state,
+                                    &project_name,
+                                    &workspace_name,
+                                    &ai_tool,
+                                    &session_id,
+                                    &snapshot,
+                                    None,
+                                    true,
+                                )
+                                .await;
+                            }
                             let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
@@ -748,6 +954,27 @@ pub(crate) async fn handle_ai_chat_send(
                                 &ai_tool,
                             )
                             .await;
+                            if let Some(snapshot) = mark_stream_snapshot_terminal(
+                                &ai_state_cloned,
+                                &abort_key,
+                                selection_hint.clone(),
+                            )
+                            .await {
+                                emit_ai_session_messages_update_with_ops(
+                                    &output_tx,
+                                    task_broadcast_tx,
+                                    origin_conn_id,
+                                    &mut emit_state,
+                                    &project_name,
+                                    &workspace_name,
+                                    &ai_tool,
+                                    &session_id,
+                                    &snapshot,
+                                    None,
+                                    true,
+                                )
+                                .await;
+                            }
                             let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
@@ -959,6 +1186,37 @@ pub(crate) async fn handle_ai_chat_command(
         } else {
             format!("/{} {}", command.trim(), arguments.trim())
         };
+        let seed_messages = match agent.list_messages(&directory, &session_id, None).await {
+            Ok(messages) => map_ai_messages_for_wire(messages),
+            Err(e) => {
+                warn!(
+                    "AIChatCommand: seed snapshot list_messages failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                    project_name, workspace_name, ai_tool, session_id, e
+                );
+                Vec::new()
+            }
+        };
+        let seed_selection_hint = match agent.session_selection_hint(&directory, &session_id).await
+        {
+            Ok(Some(hint)) => Some(map_ai_selection_hint_to_wire(hint)),
+            Ok(None) => None,
+            Err(e) => {
+                warn!(
+                    "AIChatCommand: seed snapshot selection_hint failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                    project_name, workspace_name, ai_tool, session_id, e
+                );
+                None
+            }
+        };
+        seed_stream_snapshot(
+            &ai_state_cloned,
+            &abort_key,
+            seed_messages,
+            seed_selection_hint,
+            true,
+        )
+        .await;
+
         let mut stream = match agent
             .send_message_with_config(
                 &directory,
@@ -983,6 +1241,24 @@ pub(crate) async fn handle_ai_chat_command(
                     status_meta_cloned.clone(),
                     AiSessionStatus::Error { message: e.clone() },
                 );
+                if let Some(snapshot) =
+                    mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
+                {
+                    emit_ai_session_messages_update_with_ops(
+                        &output_tx,
+                        task_broadcast_tx,
+                        origin_conn_id,
+                        &mut emit_state,
+                        &project_name,
+                        &workspace_name,
+                        &ai_tool,
+                        &session_id,
+                        &snapshot,
+                        None,
+                        true,
+                    )
+                    .await;
+                }
                 let _ = emit_server_message_with_state(
                     &output_tx,
                     task_broadcast_tx,
@@ -1025,68 +1301,86 @@ pub(crate) async fn handle_ai_chat_command(
                                     role,
                                     selection_hint,
                                 } => {
-                                    let _ = emit_server_message_with_state(
+                                    let wire_hint = selection_hint.map(map_ai_selection_hint_to_wire);
+                                    let op = crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                                        message_id,
+                                        role,
+                                    };
+                                    let snapshot = apply_stream_snapshot_cache_op(
+                                        &ai_state_cloned,
+                                        &abort_key,
+                                        &op,
+                                        wire_hint,
+                                    )
+                                    .await;
+                                    emit_ai_session_messages_update_with_ops(
                                         &output_tx,
                                         task_broadcast_tx,
                                         origin_conn_id,
-                                        ServerMessage::AIChatMessageUpdated {
-                                            project_name: project_name.clone(),
-                                            workspace_name: workspace_name.clone(),
-                                            ai_tool: ai_tool.clone(),
-                                            session_id: session_id.clone(),
-                                            message_id,
-                                            role,
-                                            selection_hint: selection_hint.map(|hint| {
-                                                crate::server::protocol::ai::SessionSelectionHint {
-                                                    agent: hint.agent,
-                                                    model_provider_id: hint.model_provider_id,
-                                                    model_id: hint.model_id,
-                                                    config_options: hint.config_options,
-                                                }
-                                            }),
-                                        },
                                         &mut emit_state,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                        &session_id,
+                                        &snapshot,
+                                        Some(vec![op]),
+                                        false,
                                     )
                                     .await;
                                     true
                                 }
                                 AiEvent::PartUpdated { message_id, part } => {
-                                    let _ = emit_server_message_with_state(
-                                        &output_tx,
-                                        task_broadcast_tx,
-                                        origin_conn_id,
-                                        ServerMessage::AIChatPartUpdated {
-                                            project_name: project_name.clone(),
-                                            workspace_name: workspace_name.clone(),
-                                            ai_tool: ai_tool.clone(),
-                                            session_id: session_id.clone(),
-                                            message_id,
-                                            part: normalize_part_for_wire(part),
-                                        },
-                                        &mut emit_state,
-                                    )
-                                    .await;
+                                    let ops = build_part_updated_cache_ops(message_id, normalize_part_for_wire(part));
+                                    for op in ops {
+                                        let snapshot = apply_stream_snapshot_cache_op(
+                                            &ai_state_cloned,
+                                            &abort_key,
+                                            &op,
+                                            None,
+                                        )
+                                        .await;
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            Some(vec![op]),
+                                            false,
+                                        )
+                                        .await;
+                                    }
                                     true
                                 }
                                 AiEvent::PartDelta { message_id, part_id, part_type, field, delta } => {
-                                    let _ = emit_server_message_with_state(
-                                        &output_tx,
-                                        task_broadcast_tx,
-                                        origin_conn_id,
-                                        ServerMessage::AIChatPartDelta {
-                                            project_name: project_name.clone(),
-                                            workspace_name: workspace_name.clone(),
-                                            ai_tool: ai_tool.clone(),
-                                            session_id: session_id.clone(),
-                                            message_id,
-                                            part_id,
-                                            part_type,
-                                            field,
-                                            delta,
-                                        },
-                                        &mut emit_state,
-                                    )
-                                    .await;
+                                    let ops = build_part_delta_cache_ops(message_id, part_id, part_type, field, delta);
+                                    for op in ops {
+                                        let snapshot = apply_stream_snapshot_cache_op(
+                                            &ai_state_cloned,
+                                            &abort_key,
+                                            &op,
+                                            None,
+                                        )
+                                        .await;
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            Some(vec![op]),
+                                            false,
+                                        )
+                                        .await;
+                                    }
                                     true
                                 }
                                 AiEvent::QuestionAsked { .. } | AiEvent::QuestionCleared { .. } => true,
@@ -1167,6 +1461,24 @@ pub(crate) async fn handle_ai_chat_command(
                                         status_meta_cloned.clone(),
                                         AiSessionStatus::Error { message: message.clone() },
                                     );
+                                    if let Some(snapshot) =
+                                        mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
+                                    {
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            None,
+                                            true,
+                                        )
+                                        .await;
+                                    }
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -1194,6 +1506,27 @@ pub(crate) async fn handle_ai_chat_command(
                                         &ai_tool,
                                     )
                                     .await;
+                                    if let Some(snapshot) = mark_stream_snapshot_terminal(
+                                        &ai_state_cloned,
+                                        &abort_key,
+                                        selection_hint.clone(),
+                                    )
+                                    .await {
+                                        emit_ai_session_messages_update_with_ops(
+                                            &output_tx,
+                                            task_broadcast_tx,
+                                            origin_conn_id,
+                                            &mut emit_state,
+                                            &project_name,
+                                            &workspace_name,
+                                            &ai_tool,
+                                            &session_id,
+                                            &snapshot,
+                                            None,
+                                            true,
+                                        )
+                                        .await;
+                                    }
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -1221,6 +1554,22 @@ pub(crate) async fn handle_ai_chat_command(
                                 status_meta_cloned.clone(),
                                 AiSessionStatus::Error { message: e.clone() },
                             );
+                            if let Some(snapshot) = mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await {
+                                emit_ai_session_messages_update_with_ops(
+                                    &output_tx,
+                                    task_broadcast_tx,
+                                    origin_conn_id,
+                                    &mut emit_state,
+                                    &project_name,
+                                    &workspace_name,
+                                    &ai_tool,
+                                    &session_id,
+                                    &snapshot,
+                                    None,
+                                    true,
+                                )
+                                .await;
+                            }
                             let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,
@@ -1248,6 +1597,27 @@ pub(crate) async fn handle_ai_chat_command(
                                 &ai_tool,
                             )
                             .await;
+                            if let Some(snapshot) = mark_stream_snapshot_terminal(
+                                &ai_state_cloned,
+                                &abort_key,
+                                selection_hint.clone(),
+                            )
+                            .await {
+                                emit_ai_session_messages_update_with_ops(
+                                    &output_tx,
+                                    task_broadcast_tx,
+                                    origin_conn_id,
+                                    &mut emit_state,
+                                    &project_name,
+                                    &workspace_name,
+                                    &ai_tool,
+                                    &session_id,
+                                    &snapshot,
+                                    None,
+                                    true,
+                                )
+                                .await;
+                            }
                             let _ = emit_server_message_with_state(
                                 &output_tx,
                                 task_broadcast_tx,

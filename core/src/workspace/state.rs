@@ -100,8 +100,7 @@ fn default_evolution_ai_tool() -> String {
 
 impl ClientSettings {
     /// 预留迁移入口（当前无需迁移逻辑）
-    pub fn migrate(&mut self) {
-    }
+    pub fn migrate(&mut self) {}
 }
 
 /// 移动端配对 token 持久化条目

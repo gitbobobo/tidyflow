@@ -21,6 +21,9 @@ pub(crate) const PRELOAD_AI_TOOLS: [&str; 5] =
 // 经验值：macOS URLSession WebSocket 在超大单帧下更容易被客户端主动 reset。
 // 这里对 ai_session_messages 做保守上限，优先保证“详情可打开”。
 pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
+pub(crate) const MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES: usize = 850_000;
+pub(crate) const AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS: i64 = 2 * 60 * 1000;
+pub(crate) const AI_STREAM_SNAPSHOT_STALE_TTL_MS: i64 = 30 * 60 * 1000;
 const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_LOW: Duration = Duration::from_millis(250);
 const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_MEDIUM: Duration = Duration::from_millis(500);
 const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGH: Duration = Duration::from_millis(1000);
@@ -95,6 +98,16 @@ fn should_broadcast_stream_message(msg: &ServerMessage, broadcast_depth: usize) 
     }
 }
 
+fn should_cleanup_stream_snapshot(snapshot: &AiStreamSnapshot, now: i64) -> bool {
+    let terminal_expired = snapshot
+        .terminal_at_ms
+        .map(|terminal_at| now.saturating_sub(terminal_at) > AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS)
+        .unwrap_or(false);
+    let stale_expired =
+        now.saturating_sub(snapshot.last_updated_ms) > AI_STREAM_SNAPSHOT_STALE_TTL_MS;
+    terminal_expired || stale_expired
+}
+
 #[derive(Default)]
 pub(crate) struct StreamEmitState {
     pub(crate) direct_channel_closed: bool,
@@ -114,6 +127,239 @@ pub(crate) fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[derive(Clone)]
+pub(crate) struct AiStreamSnapshot {
+    pub(crate) messages: Vec<crate::server::protocol::ai::MessageInfo>,
+    pub(crate) selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+    pub(crate) is_streaming: bool,
+    pub(crate) cache_revision: u64,
+    pub(crate) last_updated_ms: i64,
+    pub(crate) terminal_at_ms: Option<i64>,
+    message_index_by_id: HashMap<String, usize>,
+    part_index_by_id: HashMap<String, (usize, usize)>,
+}
+
+impl AiStreamSnapshot {
+    pub(crate) fn seeded(
+        messages: Vec<crate::server::protocol::ai::MessageInfo>,
+        selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+        is_streaming: bool,
+    ) -> Self {
+        let mut snapshot = Self {
+            messages,
+            selection_hint,
+            is_streaming,
+            cache_revision: 0,
+            last_updated_ms: now_ms(),
+            terminal_at_ms: if is_streaming { None } else { Some(now_ms()) },
+            message_index_by_id: HashMap::new(),
+            part_index_by_id: HashMap::new(),
+        };
+        snapshot.rebuild_indexes();
+        snapshot
+    }
+
+    pub(crate) fn cache_revision(&self) -> u64 {
+        self.cache_revision
+    }
+
+    pub(crate) fn touch_activity(&mut self, is_streaming: bool) -> u64 {
+        let now = now_ms();
+        self.cache_revision = self.cache_revision.saturating_add(1);
+        self.last_updated_ms = now;
+        self.is_streaming = is_streaming;
+        self.terminal_at_ms = if is_streaming { None } else { Some(now) };
+        self.cache_revision
+    }
+
+    pub(crate) fn apply_cache_op(
+        &mut self,
+        op: &crate::server::protocol::ai::AiSessionCacheOpInfo,
+        selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+    ) -> u64 {
+        match op {
+            crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                message_id,
+                role,
+            } => {
+                self.ensure_message(message_id, role);
+            }
+            crate::server::protocol::ai::AiSessionCacheOpInfo::PartUpdated { message_id, part } => {
+                let msg_idx = self.ensure_message(message_id, "assistant");
+                if let Some((part_msg_idx, part_idx)) = self.part_index_by_id.get(&part.id).copied()
+                {
+                    if part_msg_idx == msg_idx && part_idx < self.messages[msg_idx].parts.len() {
+                        self.messages[msg_idx].parts[part_idx] = part.clone();
+                    } else {
+                        self.part_index_by_id.remove(&part.id);
+                        self.messages[msg_idx].parts.push(part.clone());
+                        let new_part_idx = self.messages[msg_idx].parts.len().saturating_sub(1);
+                        self.part_index_by_id
+                            .insert(part.id.clone(), (msg_idx, new_part_idx));
+                    }
+                } else {
+                    self.messages[msg_idx].parts.push(part.clone());
+                    let new_part_idx = self.messages[msg_idx].parts.len().saturating_sub(1);
+                    self.part_index_by_id
+                        .insert(part.id.clone(), (msg_idx, new_part_idx));
+                }
+            }
+            crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id,
+                part_id,
+                part_type,
+                field,
+                delta,
+            } => {
+                let msg_idx = self.ensure_message(message_id, "assistant");
+                let (part_msg_idx, part_idx) = self.ensure_part(msg_idx, part_id, part_type);
+                if part_msg_idx < self.messages.len()
+                    && part_idx < self.messages[part_msg_idx].parts.len()
+                {
+                    let part = &mut self.messages[part_msg_idx].parts[part_idx];
+                    if field == "text" {
+                        let text = part.text.get_or_insert_with(String::new);
+                        text.push_str(delta);
+                    } else if part.part_type == "tool" {
+                        Self::append_tool_delta(part, field, delta);
+                    } else {
+                        let text = part.text.get_or_insert_with(String::new);
+                        text.push_str(delta);
+                    }
+                }
+            }
+        }
+
+        if selection_hint.is_some() {
+            self.selection_hint = selection_hint;
+        }
+        self.touch_activity(true)
+    }
+
+    fn rebuild_indexes(&mut self) {
+        self.message_index_by_id.clear();
+        self.part_index_by_id.clear();
+        for (msg_idx, message) in self.messages.iter().enumerate() {
+            self.message_index_by_id.insert(message.id.clone(), msg_idx);
+            for (part_idx, part) in message.parts.iter().enumerate() {
+                self.part_index_by_id
+                    .insert(part.id.clone(), (msg_idx, part_idx));
+            }
+        }
+    }
+
+    fn ensure_message(&mut self, message_id: &str, role: &str) -> usize {
+        if let Some(idx) = self.message_index_by_id.get(message_id).copied() {
+            if idx < self.messages.len() {
+                self.messages[idx].role = role.to_string();
+                return idx;
+            }
+            self.message_index_by_id.remove(message_id);
+        }
+        self.messages
+            .push(crate::server::protocol::ai::MessageInfo {
+                id: message_id.to_string(),
+                role: role.to_string(),
+                created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: Vec::new(),
+            });
+        let idx = self.messages.len().saturating_sub(1);
+        self.message_index_by_id.insert(message_id.to_string(), idx);
+        idx
+    }
+
+    fn ensure_part(&mut self, msg_idx: usize, part_id: &str, part_type: &str) -> (usize, usize) {
+        if let Some((part_msg_idx, part_idx)) = self.part_index_by_id.get(part_id).copied() {
+            if part_msg_idx < self.messages.len()
+                && part_idx < self.messages[part_msg_idx].parts.len()
+            {
+                return (part_msg_idx, part_idx);
+            }
+            self.part_index_by_id.remove(part_id);
+        }
+
+        if msg_idx >= self.messages.len() {
+            return (msg_idx, 0);
+        }
+
+        self.messages[msg_idx]
+            .parts
+            .push(crate::server::protocol::ai::PartInfo {
+                id: part_id.to_string(),
+                part_type: part_type.to_string(),
+                text: None,
+                mime: None,
+                filename: None,
+                url: None,
+                synthetic: None,
+                ignored: None,
+                source: None,
+                tool_name: None,
+                tool_call_id: None,
+                tool_kind: None,
+                tool_title: None,
+                tool_raw_input: None,
+                tool_raw_output: None,
+                tool_locations: None,
+                tool_state: None,
+                tool_part_metadata: None,
+            });
+        let part_idx = self.messages[msg_idx].parts.len().saturating_sub(1);
+        self.part_index_by_id
+            .insert(part_id.to_string(), (msg_idx, part_idx));
+        (msg_idx, part_idx)
+    }
+
+    fn append_tool_delta(
+        part: &mut crate::server::protocol::ai::PartInfo,
+        field: &str,
+        delta: &str,
+    ) {
+        if !matches!(part.tool_state, Some(serde_json::Value::Object(_))) {
+            part.tool_state = Some(serde_json::json!({}));
+        }
+        let Some(state) = part.tool_state.as_mut() else {
+            return;
+        };
+        let Some(state_obj) = state.as_object_mut() else {
+            return;
+        };
+
+        if field == "progress" {
+            let metadata = state_obj
+                .entry("metadata".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if !metadata.is_object() {
+                *metadata = serde_json::json!({});
+            }
+            if let Some(meta_obj) = metadata.as_object_mut() {
+                let progress_lines = meta_obj
+                    .entry("progress_lines".to_string())
+                    .or_insert_with(|| serde_json::json!([]));
+                if !progress_lines.is_array() {
+                    *progress_lines = serde_json::json!([]);
+                }
+                if let Some(lines) = progress_lines.as_array_mut() {
+                    lines.push(serde_json::Value::String(delta.to_string()));
+                }
+            }
+            return;
+        }
+
+        let entry = state_obj
+            .entry(field.to_string())
+            .or_insert_with(|| serde_json::Value::String(String::new()));
+        if let Some(existing) = entry.as_str() {
+            *entry = serde_json::Value::String(format!("{}{}", existing, delta));
+        } else {
+            *entry = serde_json::Value::String(delta.to_string());
+        }
+    }
 }
 
 /// 创建 AI 代理实例（单 opencode serve child + x-opencode-directory 路由）
@@ -182,6 +428,248 @@ pub(crate) fn tool_directory_key(tool: &str, directory: &str) -> String {
 
 pub(crate) fn stream_key(tool: &str, directory: &str, session_id: &str) -> String {
     format!("{}::{}::{}", tool, directory, session_id)
+}
+
+pub(crate) fn map_ai_selection_hint_to_wire(
+    hint: crate::ai::AiSessionSelectionHint,
+) -> crate::server::protocol::ai::SessionSelectionHint {
+    crate::server::protocol::ai::SessionSelectionHint {
+        agent: hint.agent,
+        model_provider_id: hint.model_provider_id,
+        model_id: hint.model_id,
+        config_options: hint.config_options,
+    }
+}
+
+pub(crate) fn map_ai_message_for_wire(
+    message: crate::ai::AiMessage,
+) -> crate::server::protocol::ai::MessageInfo {
+    crate::server::protocol::ai::MessageInfo {
+        id: message.id,
+        role: message.role,
+        created_at: message.created_at,
+        agent: message.agent,
+        model_provider_id: message.model_provider_id,
+        model_id: message.model_id,
+        parts: message
+            .parts
+            .into_iter()
+            .map(normalize_part_for_wire)
+            .collect::<Vec<_>>(),
+    }
+}
+
+pub(crate) fn map_ai_messages_for_wire(
+    messages: Vec<crate::ai::AiMessage>,
+) -> Vec<crate::server::protocol::ai::MessageInfo> {
+    messages
+        .into_iter()
+        .map(map_ai_message_for_wire)
+        .collect::<Vec<_>>()
+}
+
+pub(crate) fn split_utf8_text_by_max_bytes(input: &str, max_bytes: usize) -> Vec<String> {
+    if input.is_empty() || max_bytes == 0 {
+        return vec![input.to_string()];
+    }
+    if input.len() <= max_bytes {
+        return vec![input.to_string()];
+    }
+
+    let mut chunks: Vec<String> = Vec::new();
+    let mut start = 0usize;
+    while start < input.len() {
+        let mut end = (start + max_bytes).min(input.len());
+        while end > start && !input.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        if end == start {
+            end = input.len();
+        }
+        chunks.push(input[start..end].to_string());
+        start = end;
+    }
+    if chunks.is_empty() {
+        chunks.push(input.to_string());
+    }
+    chunks
+}
+
+pub(crate) async fn seed_stream_snapshot(
+    ai_state: &SharedAIState,
+    stream_key: &str,
+    messages: Vec<crate::server::protocol::ai::MessageInfo>,
+    selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+    is_streaming: bool,
+) {
+    let mut ai = ai_state.lock().await;
+    ai.stream_snapshots.insert(
+        stream_key.to_string(),
+        AiStreamSnapshot::seeded(messages, selection_hint, is_streaming),
+    );
+}
+
+pub(crate) async fn get_stream_snapshot(
+    ai_state: &SharedAIState,
+    stream_key: &str,
+) -> Option<AiStreamSnapshot> {
+    let ai = ai_state.lock().await;
+    ai.stream_snapshots.get(stream_key).cloned()
+}
+
+pub(crate) async fn remove_stream_snapshot(ai_state: &SharedAIState, stream_key: &str) -> bool {
+    let mut ai = ai_state.lock().await;
+    ai.stream_snapshots.remove(stream_key).is_some()
+}
+
+pub(crate) async fn apply_stream_snapshot_cache_op(
+    ai_state: &SharedAIState,
+    stream_key: &str,
+    op: &crate::server::protocol::ai::AiSessionCacheOpInfo,
+    selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+) -> AiStreamSnapshot {
+    let mut ai = ai_state.lock().await;
+    let snapshot = ai
+        .stream_snapshots
+        .entry(stream_key.to_string())
+        .or_insert_with(|| AiStreamSnapshot::seeded(Vec::new(), None, true));
+    snapshot.apply_cache_op(op, selection_hint);
+    snapshot.clone()
+}
+
+pub(crate) async fn mark_stream_snapshot_terminal(
+    ai_state: &SharedAIState,
+    stream_key: &str,
+    selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+) -> Option<AiStreamSnapshot> {
+    let mut ai = ai_state.lock().await;
+    let snapshot = ai.stream_snapshots.get_mut(stream_key)?;
+    if selection_hint.is_some() {
+        snapshot.selection_hint = selection_hint;
+    }
+    snapshot.touch_activity(false);
+    Some(snapshot.clone())
+}
+
+pub(crate) fn ai_session_messages_update_encoded_len(
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+    cache_revision: u64,
+    is_streaming: bool,
+    selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+    messages: Option<Vec<crate::server::protocol::ai::MessageInfo>>,
+    ops: Option<Vec<crate::server::protocol::ai::AiSessionCacheOpInfo>>,
+) -> Result<usize, String> {
+    let payload = crate::server::protocol::ServerMessage::AISessionMessagesUpdate {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool: ai_tool.to_string(),
+        session_id: session_id.to_string(),
+        cache_revision,
+        is_streaming,
+        selection_hint,
+        messages,
+        ops,
+    };
+    rmp_serde::to_vec_named(&payload)
+        .map(|buf| buf.len())
+        .map_err(|e| format!("encode ai_session_messages_update failed: {}", e))
+}
+
+pub(crate) fn build_ai_session_messages_update(
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+    snapshot: &AiStreamSnapshot,
+    ops: Option<Vec<crate::server::protocol::ai::AiSessionCacheOpInfo>>,
+    allow_snapshot_messages_fallback: bool,
+) -> crate::server::protocol::ServerMessage {
+    if let Some(ref ops_payload) = ops {
+        let ops_size = ai_session_messages_update_encoded_len(
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            snapshot.cache_revision(),
+            snapshot.is_streaming,
+            snapshot.selection_hint.clone(),
+            None,
+            Some(ops_payload.clone()),
+        );
+        if let Ok(size) = ops_size {
+            if size <= MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES {
+                return crate::server::protocol::ServerMessage::AISessionMessagesUpdate {
+                    project_name: project_name.to_string(),
+                    workspace_name: workspace_name.to_string(),
+                    ai_tool: ai_tool.to_string(),
+                    session_id: session_id.to_string(),
+                    cache_revision: snapshot.cache_revision(),
+                    is_streaming: snapshot.is_streaming,
+                    selection_hint: snapshot.selection_hint.clone(),
+                    messages: None,
+                    ops: Some(ops_payload.clone()),
+                };
+            }
+            warn!(
+                "ai_session_messages_update ops payload too large, fallback without ops: session_id={}, cache_revision={}, payload_bytes={}, limit_bytes={}",
+                session_id,
+                snapshot.cache_revision(),
+                size,
+                MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES
+            );
+        } else if let Err(err) = ops_size {
+            warn!(
+                "ai_session_messages_update ops payload encode failed, fallback without ops: session_id={}, cache_revision={}, error={}",
+                session_id,
+                snapshot.cache_revision(),
+                err
+            );
+        }
+    }
+
+    if allow_snapshot_messages_fallback {
+        let full_messages = Some(snapshot.messages.clone());
+        if let Ok(size) = ai_session_messages_update_encoded_len(
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            snapshot.cache_revision(),
+            snapshot.is_streaming,
+            snapshot.selection_hint.clone(),
+            full_messages.clone(),
+            None,
+        ) {
+            if size <= MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES {
+                return crate::server::protocol::ServerMessage::AISessionMessagesUpdate {
+                    project_name: project_name.to_string(),
+                    workspace_name: workspace_name.to_string(),
+                    ai_tool: ai_tool.to_string(),
+                    session_id: session_id.to_string(),
+                    cache_revision: snapshot.cache_revision(),
+                    is_streaming: snapshot.is_streaming,
+                    selection_hint: snapshot.selection_hint.clone(),
+                    messages: full_messages,
+                    ops: None,
+                };
+            }
+        }
+    }
+
+    crate::server::protocol::ServerMessage::AISessionMessagesUpdate {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool: ai_tool.to_string(),
+        session_id: session_id.to_string(),
+        cache_revision: snapshot.cache_revision(),
+        is_streaming: snapshot.is_streaming,
+        selection_hint: snapshot.selection_hint.clone(),
+        messages: None,
+        ops: None,
+    }
 }
 
 pub(crate) async fn ai_session_subscriber_conn_ids(
@@ -321,6 +809,7 @@ pub(crate) fn ai_session_messages_encoded_len(
     session_id: &str,
     messages: Vec<crate::server::protocol::ai::MessageInfo>,
     selection_hint: Option<crate::server::protocol::ai::SessionSelectionHint>,
+    truncated: Option<bool>,
 ) -> Result<usize, String> {
     let payload = crate::server::protocol::ServerMessage::AISessionMessages {
         project_name: project_name.to_string(),
@@ -329,6 +818,7 @@ pub(crate) fn ai_session_messages_encoded_len(
         session_id: session_id.to_string(),
         messages,
         selection_hint,
+        truncated,
     };
     rmp_serde::to_vec_named(&payload)
         .map(|buf| buf.len())
@@ -720,6 +1210,7 @@ pub(crate) async fn shutdown_agents(ai_state: &SharedAIState) {
         let mut ai = ai_state.lock().await;
         let drained = ai.agents.drain().collect::<Vec<_>>();
         ai.active_streams.clear();
+        ai.stream_snapshots.clear();
         ai.directory_active_streams.clear();
         ai.directory_last_used_ms.clear();
         drained
@@ -776,6 +1267,19 @@ pub(crate) async fn ensure_maintenance(ai_state: &SharedAIState) {
                     })
                     .collect()
             };
+            let stale_snapshot_keys: Vec<String> = {
+                let ai = ai_state.lock().await;
+                ai.stream_snapshots
+                    .iter()
+                    .filter_map(|(key, snapshot)| {
+                        if should_cleanup_stream_snapshot(snapshot, now) {
+                            Some(key.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
 
             for key in idle_keys {
                 let mut parts = key.splitn(2, "::");
@@ -795,6 +1299,13 @@ pub(crate) async fn ensure_maintenance(ai_state: &SharedAIState) {
                         }
                         Err(e) => warn!("AI maintenance: dispose_instance failed: {}", e),
                     }
+                }
+            }
+
+            if !stale_snapshot_keys.is_empty() {
+                let mut ai = ai_state.lock().await;
+                for key in stale_snapshot_keys {
+                    ai.stream_snapshots.remove(&key);
                 }
             }
         }
@@ -1007,7 +1518,10 @@ pub(crate) fn normalize_ai_audio_parts(
 #[cfg(test)]
 mod tests {
     use super::{
-        infer_selection_hint_from_messages, normalize_ai_tool, should_broadcast_stream_message,
+        build_ai_session_messages_update, infer_selection_hint_from_messages, normalize_ai_tool,
+        should_broadcast_stream_message, should_cleanup_stream_snapshot, AiStreamSnapshot,
+        AI_STREAM_SNAPSHOT_STALE_TTL_MS, AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS,
+        MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES,
     };
     use crate::server::protocol::ServerMessage;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1180,6 +1694,107 @@ mod tests {
         assert_eq!(normalize_ai_tool("kimi").as_deref(), Ok("kimi"));
         assert_eq!(normalize_ai_tool("KIMI-CODE").as_deref(), Ok("kimi"));
         assert!(normalize_ai_tool("kimi-agent").is_err());
+    }
+
+    #[test]
+    fn stream_snapshot_supports_unbounded_message_growth() {
+        let mut snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
+        for idx in 0..320usize {
+            let op = crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                message_id: format!("m-{}", idx),
+                role: "assistant".to_string(),
+            };
+            snapshot.apply_cache_op(&op, None);
+        }
+        assert_eq!(snapshot.messages.len(), 320);
+    }
+
+    #[test]
+    fn stream_snapshot_cache_revision_is_monotonic() {
+        let mut snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
+        let first = snapshot.apply_cache_op(
+            &crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                message_id: "m1".to_string(),
+                role: "assistant".to_string(),
+            },
+            None,
+        );
+        let second = snapshot.apply_cache_op(
+            &crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+                message_id: "m1".to_string(),
+                part_id: "p1".to_string(),
+                part_type: "text".to_string(),
+                field: "text".to_string(),
+                delta: "hello".to_string(),
+            },
+            None,
+        );
+        let third = snapshot.touch_activity(false);
+        assert!(second > first);
+        assert!(third > second);
+    }
+
+    #[test]
+    fn stream_snapshot_cleanup_policy_matches_ttl() {
+        let now = super::now_ms();
+        let mut terminal_snapshot = AiStreamSnapshot::seeded(Vec::new(), None, false);
+        terminal_snapshot.terminal_at_ms = Some(now - AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS - 1);
+        terminal_snapshot.last_updated_ms = now;
+        assert!(should_cleanup_stream_snapshot(&terminal_snapshot, now));
+
+        let mut stale_snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
+        stale_snapshot.terminal_at_ms = None;
+        stale_snapshot.last_updated_ms = now - AI_STREAM_SNAPSHOT_STALE_TTL_MS - 1;
+        assert!(should_cleanup_stream_snapshot(&stale_snapshot, now));
+
+        let fresh_snapshot = AiStreamSnapshot::seeded(Vec::new(), None, true);
+        assert!(!should_cleanup_stream_snapshot(&fresh_snapshot, now));
+    }
+
+    #[test]
+    fn build_session_update_drops_oversized_ops_payload() {
+        let snapshot = AiStreamSnapshot::seeded(
+            vec![crate::server::protocol::ai::MessageInfo {
+                id: "m1".to_string(),
+                role: "assistant".to_string(),
+                created_at: None,
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: vec![],
+            }],
+            None,
+            true,
+        );
+        let oversized_op = crate::server::protocol::ai::AiSessionCacheOpInfo::PartDelta {
+            message_id: "m1".to_string(),
+            part_id: "p1".to_string(),
+            part_type: "text".to_string(),
+            field: "text".to_string(),
+            delta: "x".repeat(MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES),
+        };
+
+        let update = build_ai_session_messages_update(
+            "p",
+            "w",
+            "codex",
+            "s1",
+            &snapshot,
+            Some(vec![oversized_op]),
+            false,
+        );
+
+        match update {
+            crate::server::protocol::ServerMessage::AISessionMessagesUpdate {
+                ops,
+                messages,
+                ..
+            } => {
+                assert!(ops.is_none());
+                assert!(messages.is_none());
+            }
+            other => panic!("unexpected message variant: {:?}", other),
+        }
     }
 }
 

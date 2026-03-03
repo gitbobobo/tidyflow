@@ -180,47 +180,59 @@ pub(super) async fn handle_ai_session_messages(
         );
     }
 
-    let mut messages: Vec<crate::server::protocol::ai::MessageInfo> = agent
-        .list_messages(&directory, session_id, *limit)
-        .await
-        .map_err(|e| {
-            warn!(
-                "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, limit={:?}, error={}",
-                project_name, workspace_name, ai_tool, session_id, limit, e
-            );
-            e
-        })?
-        .into_iter()
-        .map(|m| crate::server::protocol::ai::MessageInfo {
-            id: m.id,
-            role: m.role,
-            created_at: m.created_at,
-            agent: m.agent,
-            model_provider_id: m.model_provider_id,
-            model_id: m.model_id,
-            parts: m
-                .parts
+    let session_key = stream_key(&ai_tool, &directory, session_id);
+    let cached_snapshot = get_stream_snapshot(ai_state, &session_key).await;
+    let from_snapshot = cached_snapshot.is_some();
+    let cached_selection_hint = cached_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.selection_hint.clone());
+    let mut messages: Vec<crate::server::protocol::ai::MessageInfo> = if let Some(snapshot) =
+        cached_snapshot
+    {
+        snapshot.messages
+    } else {
+        agent.list_messages(&directory, session_id, *limit)
+                .await
+                .map_err(|e| {
+                    warn!(
+                        "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, limit={:?}, error={}",
+                        project_name, workspace_name, ai_tool, session_id, limit, e
+                    );
+                    e
+                })?
                 .into_iter()
-                .map(normalize_part_for_wire)
-                .collect(),
-        })
-        .collect();
-    let adapter_hint = agent
-        .session_selection_hint(&directory, session_id)
-        .await
-        .map_err(|e| {
-            warn!(
-                "AISessionMessages hint failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
-                project_name, workspace_name, ai_tool, session_id, e
-            );
-            e
-        })
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let inferred_hint = infer_selection_hint_from_messages(&messages);
-    // 真实接口数据优先，消息元数据推断仅作兜底。
-    let selection_hint = merge_session_selection_hint(adapter_hint, inferred_hint);
+                .map(map_ai_message_for_wire)
+                .collect()
+    };
+
+    let selection_hint = if from_snapshot {
+        if cached_selection_hint.is_some() {
+            cached_selection_hint
+        } else {
+            let inferred_hint = infer_selection_hint_from_messages(&messages);
+            merge_session_selection_hint(
+                inferred_hint,
+                crate::ai::AiSessionSelectionHint::default(),
+            )
+        }
+    } else {
+        let adapter_hint = agent
+            .session_selection_hint(&directory, session_id)
+            .await
+            .map_err(|e| {
+                warn!(
+                    "AISessionMessages hint failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                    project_name, workspace_name, ai_tool, session_id, e
+                );
+                e
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let inferred_hint = infer_selection_hint_from_messages(&messages);
+        // 真实接口数据优先，消息元数据推断仅作兜底。
+        merge_session_selection_hint(adapter_hint, inferred_hint)
+    };
     if let Some(hint) = selection_hint.as_ref() {
         info!(
             "AISessionMessages selection_hint: project={}, workspace={}, ai_tool={}, session_id={}, agent={:?}, model_provider_id={:?}, model_id={:?}",
@@ -245,11 +257,14 @@ pub(super) async fn handle_ai_session_messages(
         session_id,
         messages.clone(),
         selection_hint.clone(),
+        None,
     )?;
     let mut dropped_count = 0usize;
+    let mut truncated = false;
     while payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES && messages.len() > 1 {
         messages.remove(0);
         dropped_count += 1;
+        truncated = true;
         payload_bytes = ai_session_messages_encoded_len(
             project_name,
             workspace_name,
@@ -257,7 +272,30 @@ pub(super) async fn handle_ai_session_messages(
             session_id,
             messages.clone(),
             selection_hint.clone(),
+            Some(true),
         )?;
+    }
+    if payload_bytes > MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES {
+        truncated = true;
+        messages.clear();
+        payload_bytes = ai_session_messages_encoded_len(
+            project_name,
+            workspace_name,
+            &ai_tool,
+            session_id,
+            messages.clone(),
+            selection_hint.clone(),
+            Some(true),
+        )?;
+        warn!(
+            "AISessionMessages payload still exceeds limit after window truncate, fallback to empty messages: project={}, workspace={}, ai_tool={}, session_id={}, payload_bytes={}, limit_bytes={}",
+            project_name,
+            workspace_name,
+            ai_tool,
+            session_id,
+            payload_bytes,
+            MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES
+        );
     }
     if dropped_count > 0 {
         warn!(
@@ -274,16 +312,18 @@ pub(super) async fn handle_ai_session_messages(
     }
     let (parts_count, text_bytes) = ai_session_messages_stats(&messages);
     info!(
-        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}, has_selection_hint={}",
+        "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, source={}, messages_count={}, parts_count={}, text_bytes={}, payload_bytes={}, has_selection_hint={}, truncated={}",
         project_name,
         workspace_name,
         ai_tool,
         session_id,
+        if from_snapshot { "snapshot" } else { "agent" },
         messages.len(),
         parts_count,
         text_bytes,
         payload_bytes,
-        selection_hint.is_some()
+        selection_hint.is_some(),
+        truncated
     );
 
     send_message(
@@ -295,6 +335,7 @@ pub(super) async fn handle_ai_session_messages(
             session_id: session_id.clone(),
             messages,
             selection_hint,
+            truncated: if truncated { Some(true) } else { None },
         },
     )
     .await?;
@@ -334,6 +375,7 @@ pub(super) async fn handle_ai_session_delete(
         let mut ai = ai_state.lock().await;
         ai.active_streams.remove(&key);
     }
+    let _ = remove_stream_snapshot(ai_state, &key).await;
     {
         let store = {
             let guard = ai_state.lock().await;

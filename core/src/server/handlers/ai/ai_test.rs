@@ -7,6 +7,7 @@ mod tests {
     fn test_ai_state_new() {
         let state = AIState::new();
         assert!(state.active_streams.is_empty());
+        assert!(state.stream_snapshots.is_empty());
         assert!(state.directory_last_used_ms.is_empty());
         assert!(state.directory_active_streams.is_empty());
         assert!(state.agents.is_empty());
