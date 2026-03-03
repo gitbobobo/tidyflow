@@ -897,13 +897,36 @@ impl CodexAppServerManager {
         shared_request_id_key(id)
     }
 
+    /// 从登录 shell 获取用户的完整 PATH（包含 .zshrc/.bashrc 中配置的路径）
+    fn get_shell_path() -> Option<String> {
+        use std::process::Command;
+        
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let output = Command::new(&shell)
+            .args(["-l", "-c", "echo $PATH"])
+            .output()
+            .ok()?;
+        
+        if output.status.success() {
+            String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+        } else {
+            None
+        }
+    }
+
     fn build_extended_env() -> HashMap<String, String> {
         let mut env: HashMap<String, String> = std::env::vars().collect();
         let home = dirs::home_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
+        
+        // 优先使用从登录 shell 获取的完整 PATH
+        let shell_path = Self::get_shell_path();
+        let base_path = shell_path.as_deref().or_else(|| env.get("PATH").map(|s| s.as_str()));
+        
         let mut extra = vec![
             "/opt/homebrew/bin".to_string(),
+            "/opt/homebrew/sbin".to_string(),
             "/usr/local/bin".to_string(),
             "/usr/bin".to_string(),
             "/bin".to_string(),
@@ -914,10 +937,11 @@ impl CodexAppServerManager {
             extra.push(format!("{}/.opencode/bin", home));
             extra.push(format!("{}/.bun/bin", home));
         }
-        let existing = env.get("PATH").cloned().unwrap_or_default();
-        for p in existing.split(':') {
-            if !p.is_empty() {
-                extra.push(p.to_string());
+        if let Some(path) = base_path {
+            for p in path.split(':') {
+                if !p.is_empty() {
+                    extra.push(p.to_string());
+                }
             }
         }
         extra.dedup();
