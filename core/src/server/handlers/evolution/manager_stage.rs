@@ -719,6 +719,11 @@ fn is_valid_implementation_agent(agent: &str) -> bool {
     )
 }
 
+fn is_unknown_selector_value(value: &str) -> bool {
+    let normalized = value.trim();
+    normalized.is_empty() || normalized.eq_ignore_ascii_case("unknown")
+}
+
 fn backlog_contract_version_from_cycle(cycle_dir: &Path) -> Result<u32, String> {
     let cycle = read_json_file(cycle_dir, "cycle.json")?;
     let version = cycle
@@ -762,6 +767,72 @@ fn coverage_summary(items: &[ManagedBacklogCoverageItem]) -> ManagedBacklogCover
         blocked,
         not_done,
     }
+}
+
+fn validate_requirement_selector_against_plan(
+    selector_label: &str,
+    source_criteria_id: &str,
+    source_check_id: &str,
+    work_item_id: &str,
+    implementation_agent: PlanImplementationAgent,
+    tables: &PlanRoutingTables,
+    check_to_work_items: &HashMap<String, Vec<(String, PlanImplementationAgent)>>,
+) -> Result<(), String> {
+    let mapped_checks = tables
+        .criteria_to_checks
+        .get(source_criteria_id)
+        .ok_or_else(|| {
+            format!(
+                "{}.source_criteria_id 未在 plan.acceptance_mapping 中定义: {}",
+                selector_label, source_criteria_id
+            )
+        })?;
+    if !mapped_checks
+        .iter()
+        .any(|check_id| check_id == source_check_id)
+    {
+        return Err(format!(
+            "{}.source_check_id 与 source_criteria_id 不匹配: {} -> {}",
+            selector_label, source_criteria_id, source_check_id
+        ));
+    }
+    let mapped_agents = tables.check_to_agents.get(source_check_id).ok_or_else(|| {
+        format!(
+            "{}.source_check_id 未关联任何 implementation_agent: {}",
+            selector_label, source_check_id
+        )
+    })?;
+    if !mapped_agents.contains(&implementation_agent) {
+        return Err(format!(
+            "{}.implementation_agent 与 source_check_id 不匹配: {} -> {}",
+            selector_label,
+            source_check_id,
+            implementation_agent.as_str()
+        ));
+    }
+    let mapped_work_items = check_to_work_items.get(source_check_id).ok_or_else(|| {
+        format!(
+            "{}.source_check_id 未关联任何 work_item: {}",
+            selector_label, source_check_id
+        )
+    })?;
+    if !mapped_work_items
+        .iter()
+        .any(|(id, agent)| id == work_item_id && *agent == implementation_agent)
+    {
+        return Err(format!(
+            "{}.work_item_id 与 source_check_id/implementation_agent 不匹配: ({}, {}, {})",
+            selector_label,
+            source_check_id,
+            work_item_id,
+            implementation_agent.as_str()
+        ));
+    }
+    Ok(())
+}
+
+fn should_force_advanced_reimplementation(verify_iteration: u32) -> bool {
+    verify_iteration >= 2
 }
 
 impl EvolutionManager {
@@ -906,6 +977,23 @@ impl EvolutionManager {
             .unwrap_or_default()
             .to_string();
 
+        let previous_backlog_items = Self::read_managed_failure_backlog(cycle_dir)
+            .map(|file| file.items)
+            .unwrap_or_default();
+        let mut previous_by_id: HashMap<String, usize> = HashMap::new();
+        let mut previous_by_requirement_ref: HashMap<String, usize> = HashMap::new();
+        for (idx, item) in previous_backlog_items.iter().enumerate() {
+            if !item.id.trim().is_empty() {
+                previous_by_id.entry(item.id.clone()).or_insert(idx);
+            }
+            let requirement_ref = item.requirement_ref.trim();
+            if !requirement_ref.is_empty() {
+                previous_by_requirement_ref
+                    .entry(requirement_ref.to_string())
+                    .or_insert(idx);
+            }
+        }
+
         let mut seen_selectors: HashSet<(String, String, String, String)> = HashSet::new();
         let mut backlog_items: Vec<ManagedFailureBacklogItem> = Vec::new();
 
@@ -913,6 +1001,9 @@ impl EvolutionManager {
             let requirement_ref = id_from_value(
                 requirement,
                 &[
+                    "requirement_id",
+                    "failure_backlog_id",
+                    "backlog_id",
                     "id",
                     "item_id",
                     "criteria_id",
@@ -922,32 +1013,90 @@ impl EvolutionManager {
                 ],
             )
             .unwrap_or_else(|| format!("requirement-{}", idx + 1));
-            let source_criteria_id = id_from_value(
+            let previous_selector_ref = id_from_value(
+                requirement,
+                &[
+                    "requirement_id",
+                    "failure_backlog_id",
+                    "backlog_id",
+                    "id",
+                    "item_id",
+                ],
+            );
+            let previous_item = previous_selector_ref
+                .as_ref()
+                .and_then(|key| {
+                    previous_by_id
+                        .get(key)
+                        .or_else(|| previous_by_requirement_ref.get(key))
+                })
+                .and_then(|index| previous_backlog_items.get(*index));
+
+            let mut source_criteria_id = id_from_value(
                 requirement,
                 &["source_criteria_id", "criteria_id", "criterion_id"],
-            )
-            .unwrap_or_else(|| "unknown".to_string());
+            );
+            if source_criteria_id.is_none() {
+                source_criteria_id = previous_item.map(|item| item.source_criteria_id.clone());
+            }
+            let source_criteria_id = source_criteria_id.ok_or_else(|| {
+                format!(
+                    "full_next_iteration_requirements[{}] 缺少 source_criteria_id（无法映射 selector）",
+                    idx
+                )
+            })?;
+            if is_unknown_selector_value(&source_criteria_id) {
+                return Err(format!(
+                    "full_next_iteration_requirements[{}].source_criteria_id 不能为空且不能为 unknown",
+                    idx
+                ));
+            }
 
             let mut source_check_id = id_from_value(
                 requirement,
                 &["source_check_id", "check_id", "linked_check_id"],
             );
             if source_check_id.is_none() {
+                source_check_id = previous_item.map(|item| item.source_check_id.clone());
+            }
+            if source_check_id.is_none() {
                 source_check_id = tables
                     .criteria_to_checks
                     .get(&source_criteria_id)
                     .and_then(|checks| checks.first().cloned());
             }
-            let source_check_id = source_check_id.unwrap_or_else(|| "unknown".to_string());
+            let source_check_id = source_check_id.ok_or_else(|| {
+                format!(
+                    "full_next_iteration_requirements[{}] 缺少 source_check_id（无法映射 selector）",
+                    idx
+                )
+            })?;
+            if is_unknown_selector_value(&source_check_id) {
+                return Err(format!(
+                    "full_next_iteration_requirements[{}].source_check_id 不能为空且不能为 unknown",
+                    idx
+                ));
+            }
 
-            let mut agent_set: HashSet<PlanImplementationAgent> = HashSet::new();
-            if let Some(agent) = requirement
+            let mut implementation_agent = None;
+            if let Some(raw_agent) = requirement
                 .get("implementation_agent")
                 .and_then(|v| v.as_str())
-                .and_then(PlanImplementationAgent::parse)
             {
-                agent_set.insert(agent);
-            } else {
+                let parsed = PlanImplementationAgent::parse(raw_agent).ok_or_else(|| {
+                    format!(
+                        "full_next_iteration_requirements[{}].implementation_agent 非法: {}",
+                        idx, raw_agent
+                    )
+                })?;
+                implementation_agent = Some(parsed);
+            }
+            if implementation_agent.is_none() {
+                implementation_agent = previous_item
+                    .and_then(|item| PlanImplementationAgent::parse(&item.implementation_agent));
+            }
+            if implementation_agent.is_none() {
+                let mut agent_set: HashSet<PlanImplementationAgent> = HashSet::new();
                 if let Some(mapped) = tables.check_to_agents.get(&source_check_id) {
                     agent_set.extend(mapped.iter().copied());
                 }
@@ -958,29 +1107,57 @@ impl EvolutionManager {
                         }
                     }
                 }
+                implementation_agent = Self::preferred_agent_from_set(&agent_set);
             }
-            let implementation_agent = Self::preferred_agent_from_set(&agent_set)
-                .map(|agent| agent.as_str().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            let implementation_agent = implementation_agent.ok_or_else(|| {
+                format!(
+                    "full_next_iteration_requirements[{}] 缺少 implementation_agent（无法映射 selector）",
+                    idx
+                )
+            })?;
+            let implementation_agent_text = implementation_agent.as_str().to_string();
 
             let mut work_item_id = id_from_value(requirement, &["work_item_id"]);
+            if work_item_id.is_none() {
+                work_item_id = previous_item.map(|item| item.work_item_id.clone());
+            }
             if work_item_id.is_none() {
                 if let Some(mapped_items) = check_to_work_items.get(&source_check_id) {
                     let preferred = mapped_items
                         .iter()
-                        .find(|(_, agent)| agent.as_str() == implementation_agent)
+                        .find(|(_, agent)| *agent == implementation_agent)
                         .or_else(|| mapped_items.first());
                     work_item_id = preferred.map(|(id, _)| id.clone());
                 }
             }
-            let work_item_id =
-                work_item_id.unwrap_or_else(|| format!("{}-wi", requirement_ref.clone()));
+            let work_item_id = work_item_id.ok_or_else(|| {
+                format!(
+                    "full_next_iteration_requirements[{}] 缺少 work_item_id（无法映射 selector）",
+                    idx
+                )
+            })?;
+            if is_unknown_selector_value(&work_item_id) {
+                return Err(format!(
+                    "full_next_iteration_requirements[{}].work_item_id 不能为空且不能为 unknown",
+                    idx
+                ));
+            }
+
+            validate_requirement_selector_against_plan(
+                &format!("full_next_iteration_requirements[{}]", idx),
+                &source_criteria_id,
+                &source_check_id,
+                &work_item_id,
+                implementation_agent,
+                &tables,
+                &check_to_work_items,
+            )?;
 
             let selector = (
                 source_criteria_id.clone(),
                 source_check_id.clone(),
                 work_item_id.clone(),
-                implementation_agent.clone(),
+                implementation_agent_text.clone(),
             );
             if !seen_selectors.insert(selector) {
                 continue;
@@ -992,7 +1169,7 @@ impl EvolutionManager {
                 source_criteria_id,
                 source_check_id,
                 work_item_id,
-                implementation_agent,
+                implementation_agent: implementation_agent_text,
                 requirement_ref,
                 description: requirement
                     .get("description")
@@ -1485,7 +1662,7 @@ impl EvolutionManager {
     fn validate_judge_artifact(
         cycle_dir: &Path,
         verify_iteration: u32,
-        _backlog_contract_version: u32,
+        backlog_contract_version: u32,
     ) -> Result<(), String> {
         if verify_iteration == 0 {
             return Ok(());
@@ -1547,6 +1724,71 @@ impl EvolutionManager {
                 "full_next_iteration_requirements 未覆盖 verify 未通过项: {:?}",
                 missing_expected
             ));
+        }
+
+        if backlog_contract_version >= 2 {
+            let plan_value = read_json_file(cycle_dir, "plan.execution.json")?;
+            let tables = parse_plan_routing_tables(&plan_value)?;
+            let check_to_work_items = Self::parse_check_to_work_items(&plan_value)?;
+            for (idx, requirement) in requirements.iter().enumerate() {
+                let selector_label = format!("full_next_iteration_requirements[{}]", idx);
+                let source_criteria_id = id_from_value(
+                    requirement,
+                    &["source_criteria_id", "criteria_id", "criterion_id"],
+                )
+                .ok_or_else(|| format!("{}.source_criteria_id 缺失", selector_label))?;
+                if is_unknown_selector_value(&source_criteria_id) {
+                    return Err(format!(
+                        "{}.source_criteria_id 不能为空且不能为 unknown",
+                        selector_label
+                    ));
+                }
+                let source_check_id = id_from_value(
+                    requirement,
+                    &["source_check_id", "check_id", "linked_check_id"],
+                )
+                .ok_or_else(|| format!("{}.source_check_id 缺失", selector_label))?;
+                if is_unknown_selector_value(&source_check_id) {
+                    return Err(format!(
+                        "{}.source_check_id 不能为空且不能为 unknown",
+                        selector_label
+                    ));
+                }
+                let work_item_id = id_from_value(requirement, &["work_item_id"])
+                    .ok_or_else(|| format!("{}.work_item_id 缺失", selector_label))?;
+                if is_unknown_selector_value(&work_item_id) {
+                    return Err(format!(
+                        "{}.work_item_id 不能为空且不能为 unknown",
+                        selector_label
+                    ));
+                }
+                let raw_agent = requirement
+                    .get("implementation_agent")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("{}.implementation_agent 缺失", selector_label))?;
+                if is_unknown_selector_value(raw_agent) {
+                    return Err(format!(
+                        "{}.implementation_agent 不能为空且不能为 unknown",
+                        selector_label
+                    ));
+                }
+                let implementation_agent =
+                    PlanImplementationAgent::parse(raw_agent).ok_or_else(|| {
+                        format!(
+                            "{}.implementation_agent 非法: {}",
+                            selector_label, raw_agent
+                        )
+                    })?;
+                validate_requirement_selector_against_plan(
+                    &selector_label,
+                    &source_criteria_id,
+                    &source_check_id,
+                    &work_item_id,
+                    implementation_agent,
+                    &tables,
+                    &check_to_work_items,
+                )?;
+            }
         }
         Ok(())
     }
@@ -2687,7 +2929,8 @@ impl EvolutionManager {
                 && contract_version >= 2
                 && Self::lane_for_stage(stage).is_some()
             {
-                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage)?;
+                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage)
+                    .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
             }
             Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration, contract_version)
                 .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
@@ -3249,7 +3492,7 @@ impl EvolutionManager {
                 return false;
             }
         }
-        let mut emit_judge: Option<(String, String, String, String)> = None;
+        let mut emit_judge: Option<(String, String, String, String, String)> = None;
         let mut stage_changed: Option<(String, String, String, String, String)> = None;
         let mut post_stage_changed: Option<(String, String, String, String, String)> = None;
         let mut auto_next_cycle = false;
@@ -3270,17 +3513,7 @@ impl EvolutionManager {
                 "direction" => next_stage = "plan".to_string(),
                 "plan" => next_stage = "implement_general".to_string(),
                 "implement_general" => {
-                    let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
-                        .ok()
-                        .and_then(|dir| {
-                            Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
-                        })
-                        .unwrap_or_else(|| vec![ImplementLane::General, ImplementLane::Visual]);
-                    let has_visual = lanes.iter().any(|lane| *lane == ImplementLane::Visual);
-                    let has_advanced = lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                    if has_visual {
-                        next_stage = "implement_visual".to_string();
-                    } else if has_advanced {
+                    if should_force_advanced_reimplementation(entry.verify_iteration) {
                         entry
                             .stage_statuses
                             .insert("implement_visual".to_string(), "skipped".to_string());
@@ -3289,39 +3522,65 @@ impl EvolutionManager {
                             .insert("implement_visual".to_string(), 0);
                         next_stage = "implement_advanced".to_string();
                     } else {
-                        entry
-                            .stage_statuses
-                            .insert("implement_visual".to_string(), "skipped".to_string());
-                        entry
-                            .stage_tool_call_counts
-                            .insert("implement_visual".to_string(), 0);
-                        entry
-                            .stage_statuses
-                            .insert("implement_advanced".to_string(), "skipped".to_string());
-                        entry
-                            .stage_tool_call_counts
-                            .insert("implement_advanced".to_string(), 0);
-                        next_stage = "verify".to_string();
+                        let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
+                            .ok()
+                            .and_then(|dir| {
+                                Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
+                            })
+                            .unwrap_or_else(|| vec![ImplementLane::General, ImplementLane::Visual]);
+                        let has_visual = lanes.iter().any(|lane| *lane == ImplementLane::Visual);
+                        let has_advanced =
+                            lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
+                        if has_visual {
+                            next_stage = "implement_visual".to_string();
+                        } else if has_advanced {
+                            entry
+                                .stage_statuses
+                                .insert("implement_visual".to_string(), "skipped".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert("implement_visual".to_string(), 0);
+                            next_stage = "implement_advanced".to_string();
+                        } else {
+                            entry
+                                .stage_statuses
+                                .insert("implement_visual".to_string(), "skipped".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert("implement_visual".to_string(), 0);
+                            entry
+                                .stage_statuses
+                                .insert("implement_advanced".to_string(), "skipped".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert("implement_advanced".to_string(), 0);
+                            next_stage = "verify".to_string();
+                        }
                     }
                 }
                 "implement_visual" => {
-                    let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
-                        .ok()
-                        .and_then(|dir| {
-                            Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
-                        })
-                        .unwrap_or_else(|| vec![ImplementLane::Visual]);
-                    let has_advanced = lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                    if has_advanced {
+                    if should_force_advanced_reimplementation(entry.verify_iteration) {
                         next_stage = "implement_advanced".to_string();
                     } else {
-                        entry
-                            .stage_statuses
-                            .insert("implement_advanced".to_string(), "skipped".to_string());
-                        entry
-                            .stage_tool_call_counts
-                            .insert("implement_advanced".to_string(), 0);
-                        next_stage = "verify".to_string();
+                        let lanes = cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
+                            .ok()
+                            .and_then(|dir| {
+                                Self::resolve_implement_lanes(&dir, entry.verify_iteration).ok()
+                            })
+                            .unwrap_or_else(|| vec![ImplementLane::Visual]);
+                        let has_advanced =
+                            lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
+                        if has_advanced {
+                            next_stage = "implement_advanced".to_string();
+                        } else {
+                            entry
+                                .stage_statuses
+                                .insert("implement_advanced".to_string(), "skipped".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert("implement_advanced".to_string(), 0);
+                            next_stage = "verify".to_string();
+                        }
                     }
                 }
                 "implement_advanced" => next_stage = "verify".to_string(),
@@ -3336,6 +3595,7 @@ impl EvolutionManager {
                             entry.workspace.clone(),
                             entry.cycle_id.clone(),
                             "pass".to_string(),
+                            "goto_stage:report".to_string(),
                         ));
                         next_stage = "report".to_string();
                     } else if entry.verify_iteration + 1 < entry.verify_iteration_limit {
@@ -3381,49 +3641,67 @@ impl EvolutionManager {
                                 }
                             }
                         }
-                        let lanes = match cycle_dir_path(&entry.workspace_root, &entry.cycle_id) {
-                            Ok(cycle_dir) => match Self::resolve_implement_lanes(
-                                &cycle_dir,
-                                entry.verify_iteration,
-                            ) {
-                                Ok(value) => value,
+                        if should_force_advanced_reimplementation(entry.verify_iteration) {
+                            entry
+                                .stage_statuses
+                                .insert("implement_general".to_string(), "skipped".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert("implement_general".to_string(), 0);
+                            entry
+                                .stage_statuses
+                                .insert("implement_visual".to_string(), "skipped".to_string());
+                            entry
+                                .stage_tool_call_counts
+                                .insert("implement_visual".to_string(), 0);
+                            next_stage = "implement_advanced".to_string();
+                        } else {
+                            let lanes = match cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
+                            {
+                                Ok(cycle_dir) => match Self::resolve_implement_lanes(
+                                    &cycle_dir,
+                                    entry.verify_iteration,
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        warn!(
+                                            "resolve implement lanes failed (project={}, workspace={}, verify_iteration={}): {}",
+                                            entry.project,
+                                            entry.workspace,
+                                            entry.verify_iteration,
+                                            err
+                                        );
+                                        vec![ImplementLane::General]
+                                    }
+                                },
                                 Err(err) => {
                                     warn!(
-                                        "resolve implement lanes failed (project={}, workspace={}, verify_iteration={}): {}",
-                                        entry.project,
-                                        entry.workspace,
-                                        entry.verify_iteration,
-                                        err
+                                        "resolve cycle dir failed (project={}, workspace={}): {}",
+                                        entry.project, entry.workspace, err
                                     );
                                     vec![ImplementLane::General]
                                 }
-                            },
-                            Err(err) => {
-                                warn!(
-                                    "resolve cycle dir failed (project={}, workspace={}): {}",
-                                    entry.project, entry.workspace, err
-                                );
-                                vec![ImplementLane::General]
+                            };
+                            let has_general_or_visual = lanes.iter().any(|lane| {
+                                matches!(lane, ImplementLane::General | ImplementLane::Visual)
+                            });
+                            let has_advanced =
+                                lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
+                            if has_general_or_visual {
+                                next_stage = "implement_general".to_string();
+                            } else if has_advanced {
+                                next_stage = "implement_advanced".to_string();
+                            } else {
+                                next_stage = "implement_general".to_string();
                             }
-                        };
+                        }
                         emit_judge = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
                             entry.cycle_id.clone(),
                             "fail".to_string(),
+                            format!("goto_stage:{}", next_stage),
                         ));
-                        let has_general_or_visual = lanes.iter().any(|lane| {
-                            matches!(lane, ImplementLane::General | ImplementLane::Visual)
-                        });
-                        let has_advanced =
-                            lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                        if has_general_or_visual {
-                            next_stage = "implement_general".to_string();
-                        } else if has_advanced {
-                            next_stage = "implement_advanced".to_string();
-                        } else {
-                            next_stage = "implement_general".to_string();
-                        }
                     } else {
                         entry.status = "failed_exhausted".to_string();
                         entry.terminal_reason_code =
@@ -3434,6 +3712,7 @@ impl EvolutionManager {
                             entry.workspace.clone(),
                             entry.cycle_id.clone(),
                             "fail".to_string(),
+                            "goto_stage:report".to_string(),
                         ));
                         next_stage = "report".to_string();
                     }
@@ -3589,7 +3868,7 @@ impl EvolutionManager {
             ));
         }
 
-        if let Some((project, workspace, cycle_id, result)) = emit_judge {
+        if let Some((project, workspace, cycle_id, result, next_action)) = emit_judge {
             self.broadcast(
                 ctx,
                 ServerMessage::EvoJudgeResult {
@@ -3606,11 +3885,7 @@ impl EvolutionManager {
                     } else {
                         "judge fail".to_string()
                     },
-                    next_action: if result == "pass" {
-                        "goto_stage:report".to_string()
-                    } else {
-                        "goto_stage:implement_general".to_string()
-                    },
+                    next_action,
                 },
             )
             .await;
@@ -3829,7 +4104,8 @@ impl EvolutionManager {
 mod tests {
     use super::super::{stage::next_stage, STAGES};
     use super::{
-        parse_judge_result_from_json, should_start_next_round, EvolutionManager, ImplementLane,
+        parse_judge_result_from_json, should_force_advanced_reimplementation,
+        should_start_next_round, EvolutionManager, ImplementLane,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -4280,6 +4556,130 @@ mod tests {
         let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 1)
             .expect_err("judge requirements missing should fail");
         assert!(err.contains("未覆盖 verify 未通过项"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_judge_v2_missing_selector_fields() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1", "status": "fail"}
+                ],
+                "carryover_verification": {
+                    "items": [],
+                    "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}
+                }
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [
+                    {"criteria_id": "ac-1"}
+                ]
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 2)
+            .expect_err("v2 judge 缺少 selector 字段应失败");
+        assert!(err.contains("source_check_id"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_accept_judge_v2_complete_selector_fields() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1", "status": "fail"}
+                ],
+                "carryover_verification": {
+                    "items": [],
+                    "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}
+                }
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [
+                    {
+                        "id": "ac-1",
+                        "criteria_id": "ac-1",
+                        "source_criteria_id": "ac-1",
+                        "source_check_id": "v-1",
+                        "work_item_id": "w-1",
+                        "implementation_agent": "implement_general"
+                    }
+                ]
+            }),
+        );
+        EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 2)
+            .expect("v2 judge 完整 selector 应通过");
     }
 
     #[test]
@@ -4801,6 +5201,12 @@ mod tests {
     }
 
     #[test]
+    fn deterministic_policy_should_force_advanced_after_second_reimplementation() {
+        assert!(!should_force_advanced_reimplementation(1));
+        assert!(should_force_advanced_reimplementation(2));
+    }
+
+    #[test]
     fn validate_implement_artifact_should_reject_invalid_failure_backlog_agent() {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
@@ -5225,8 +5631,14 @@ mod tests {
                         {
                             "type": "criteria_gap",
                             "criteria_id": "ac-1",
-                            "check_ids": ["v-1", "v-2"],
-                            "required_items": ["fix compilation errors"]
+                            "check_ids": ["v-1"],
+                            "required_items": ["fix core compilation errors"]
+                        },
+                        {
+                            "type": "criteria_gap",
+                            "criteria_id": "ac-2",
+                            "check_ids": ["v-2"],
+                            "required_items": ["fix extra compilation errors"]
                         }
                     ],
                     "notes": "fix all errors"
@@ -5254,5 +5666,145 @@ mod tests {
                 .unwrap_or(0),
             2
         );
+    }
+
+    #[test]
+    fn generate_managed_backlog_from_judge_should_backfill_selector_from_previous_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        write_json(
+            &dir.path().join("cycle.json"),
+            serde_json::json!({ "cycle_id": "c-4" }),
+        );
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        write_managed_backlog_files(
+            dir.path(),
+            "c-4",
+            1,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "legacy-ref",
+                "description": "old",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "status": "not_done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [{
+                    "requirement_id": "fb-1",
+                    "id": "fb-1",
+                    "description": "use previous selector"
+                }]
+            }),
+        );
+        EvolutionManager::generate_managed_backlog_from_judge(dir.path(), 2)
+            .expect("应可从上一轮 backlog 回填 selector");
+        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.json")
+            .expect("managed backlog should exist");
+        let item = &backlog["items"][0];
+        assert_eq!(item["source_criteria_id"], serde_json::json!("ac-1"));
+        assert_eq!(item["source_check_id"], serde_json::json!("v-1"));
+        assert_eq!(item["work_item_id"], serde_json::json!("w-1"));
+        assert_eq!(
+            item["implementation_agent"],
+            serde_json::json!("implement_general")
+        );
+    }
+
+    #[test]
+    fn generate_managed_backlog_from_judge_should_reject_unresolved_selector() {
+        let dir = tempfile::tempdir().unwrap();
+        write_json(
+            &dir.path().join("cycle.json"),
+            serde_json::json!({ "cycle_id": "c-5" }),
+        );
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![
+                serde_json::json!({
+                    "id": "w-1",
+                    "title": "x",
+                    "type": "code",
+                    "priority": "p0",
+                    "depends_on": [],
+                    "targets": ["core/src/lib.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-1"]
+                }),
+                serde_json::json!({
+                    "id": "w-2",
+                    "title": "y",
+                    "type": "code",
+                    "priority": "p1",
+                    "depends_on": [],
+                    "targets": ["core/src/extra.rs"],
+                    "definition_of_done": ["done"],
+                    "risk": "low",
+                    "rollback": "git restore",
+                    "implementation_agent": "implement_general",
+                    "linked_check_ids": ["v-2"]
+                }),
+            ]),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [{
+                    "id": "opaque-only"
+                }]
+            }),
+        );
+        let err = EvolutionManager::generate_managed_backlog_from_judge(dir.path(), 1)
+            .expect_err("无法映射 selector 时应失败");
+        assert!(err.contains("source_criteria_id"));
     }
 }

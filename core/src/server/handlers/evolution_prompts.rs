@@ -262,6 +262,12 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - 当 `VERIFY_ITERATION > 0`：
   - 若 `verify.result.json.carryover_verification.summary.missing > 0`，不得判 `pass`
   - `full_next_iteration_requirements` 必须覆盖全部未通过项（验收失败 + carryover 失败）
+  - 当 `BACKLOG_CONTRACT_VERSION >= 2` 时，`full_next_iteration_requirements[*]` 每项必须包含并填写：
+    - `source_criteria_id`
+    - `source_check_id`
+    - `work_item_id`
+    - `implementation_agent`（只能是 `implement_general|implement_visual|implement_advanced`）
+    - 上述字段值不得为空，且不得为 `unknown`
 
 `stage.judge.json` 成功态：
 - `stage="judge"`
