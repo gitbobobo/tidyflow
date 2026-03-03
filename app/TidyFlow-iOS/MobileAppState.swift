@@ -1754,6 +1754,7 @@ final class MobileAppState: ObservableObject {
             saveCurrentAISnapshotIfNeeded()
             aiPendingSendRequest = nil
             aiAbortPendingSessionId = nil
+            aiSessionListLoadingTools.removeAll()
         }
 
         aiActiveProject = trimmedProject
@@ -1833,7 +1834,7 @@ final class MobileAppState: ObservableObject {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
         // 会话列表按工具分别拉取，再在客户端做跨工具融合排序
         for tool in AIChatTool.allCases {
-            wsClient.requestAISessionList(projectName: aiActiveProject, workspaceName: aiActiveWorkspace, aiTool: tool)
+            requestAISessionList(for: tool)
         }
         isAILoadingModels = true
         isAILoadingAgents = true
@@ -1855,7 +1856,11 @@ final class MobileAppState: ObservableObject {
 
     /// 拉取指定 AI 工具的会话列表
     func requestAISessionList(for tool: AIChatTool) {
-        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
+        guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else {
+            aiSessionListLoadingTools.remove(tool)
+            return
+        }
+        aiSessionListLoadingTools.insert(tool)
         wsClient.requestAISessionList(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
@@ -3789,6 +3794,7 @@ final class MobileAppState: ObservableObject {
         wsClient.onError = { [weak self] message in
             guard let self else { return }
             self.errorMessage = message
+            self.aiSessionListLoadingTools.removeAll()
             if self.pendingExplorerPreviewRequest != nil {
                 self.pendingExplorerPreviewRequest = nil
                 self.explorerPreviewLoading = false

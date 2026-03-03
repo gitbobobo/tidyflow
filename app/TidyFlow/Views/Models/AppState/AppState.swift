@@ -373,6 +373,25 @@ class AppState: ObservableObject {
         aiSessionsByTool[tool] ?? []
     }
 
+    /// 请求指定 AI 工具的会话列表，并统一维护 loading 状态。
+    @discardableResult
+    func requestAISessionList(for tool: AIChatTool, limit: Int = 50) -> Bool {
+        guard let workspace = selectedWorkspaceKey,
+              !workspace.isEmpty,
+              connectionState == .connected else {
+            aiSessionListLoadingTools.remove(tool)
+            return false
+        }
+        aiSessionListLoadingTools.insert(tool)
+        wsClient.requestAISessionList(
+            projectName: selectedProjectName,
+            workspaceName: workspace,
+            aiTool: tool,
+            limit: limit
+        )
+        return true
+    }
+
     // AI Provider / Model / Agent 状态（当前工具上下文）
     @Published var aiProviders: [AIProviderInfo] = [] {
         didSet { aiProvidersByTool[aiChatTool] = aiProviders }
