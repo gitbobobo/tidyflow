@@ -2,6 +2,19 @@ import Foundation
 
 // MARK: - UX-1: Project/Workspace Models
 
+/// 工作空间在侧边栏中的活动状态快照（由 Rust Core 计算）
+struct WorkspaceSidebarStatusModel: Equatable {
+    var taskIconName: String?
+    var hasStreamingChat: Bool
+    var hasActiveEvolutionLoop: Bool
+
+    static let empty = WorkspaceSidebarStatusModel(
+        taskIconName: nil,
+        hasStreamingChat: false,
+        hasActiveEvolutionLoop: false
+    )
+}
+
 /// Represents a workspace within a project
 struct WorkspaceModel: Identifiable, Equatable {
     var id: String { name }
@@ -9,6 +22,7 @@ struct WorkspaceModel: Identifiable, Equatable {
     var root: String?  // 工作空间路径
     var status: String?
     var isDefault: Bool = false  // 是否为默认工作空间（虚拟，指向项目根目录）
+    var sidebarStatus: WorkspaceSidebarStatusModel = .empty
 }
 
 /// Represents a project containing multiple workspaces

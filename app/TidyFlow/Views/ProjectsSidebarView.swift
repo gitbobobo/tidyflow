@@ -397,13 +397,13 @@ struct WorkspaceRowView: View {
     /// 右侧活动图标：聊天流式 / 自主进化 / 后台任务（可并存）
     private var workspaceActivityIndicators: [TreeRowActivityIndicator] {
         var items: [TreeRowActivityIndicator] = []
-        if appState.hasWorkspaceStreamingChat(projectName: projectName, workspaceName: workspace.name) {
+        if workspace.sidebarStatus.hasStreamingChat {
             items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
         }
-        if appState.hasWorkspaceActiveEvolutionLoop(projectName: projectName, workspaceName: workspace.name) {
+        if workspace.sidebarStatus.hasActiveEvolutionLoop {
             items.append(TreeRowActivityIndicator(id: "evolution", iconName: "person.crop.circle.badge.brain", color: .purple))
         }
-        if let taskIcon = appState.workspaceActiveTaskIconName(projectName: projectName, workspaceName: workspace.name) {
+        if let taskIcon = workspace.sidebarStatus.taskIconName {
             items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))
         }
         return items

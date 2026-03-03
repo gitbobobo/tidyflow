@@ -27,8 +27,13 @@ extension AppState {
 
     // MARK: - AI 结果回调处理
 
+    func handleAITaskCancelled(_ result: AITaskCancelled) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: result.project)
+    }
+
     /// 处理 AI 提交结果（来自 WebSocket）
     func handleGitAICommitResult(_ result: GitAICommitResult) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: result.project)
         let key = "\(result.project):\(result.workspace)"
         if let continuation = aiCommitContinuations.removeValue(forKey: key) {
             // 本地发起的任务：转换为 AICommitResult 并恢复 continuation
@@ -73,6 +78,7 @@ extension AppState {
 
     /// 处理 AI 合并结果（来自 WebSocket）
     func handleGitAIMergeResult(_ result: GitAIMergeResult) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: result.project)
         let key = "\(result.project):\(result.workspace)"
         if let continuation = aiMergeContinuations.removeValue(forKey: key) {
             // 本地发起的任务：转换为 AIMergeResult 并恢复 continuation
@@ -122,6 +128,8 @@ extension AppState {
                 continuation.resume(returning: result)
             }
 
+            // 触发侧边栏状态刷新，获取 Rust 端最新任务运行态
+            scheduleWorkspaceSidebarStatusRefresh(projectName: projectName, debounce: 0.08)
             wsClient.requestGitAICommit(
                 project: projectName,
                 workspace: workspaceKey,
@@ -152,6 +160,8 @@ extension AppState {
                 continuation.resume(returning: result)
             }
 
+            // 触发侧边栏状态刷新，获取 Rust 端最新任务运行态
+            scheduleWorkspaceSidebarStatusRefresh(projectName: projectName, debounce: 0.08)
             wsClient.requestGitAIMerge(
                 project: projectName,
                 workspace: workspaceName,

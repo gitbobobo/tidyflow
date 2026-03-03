@@ -4,5 +4,6 @@ pub mod project_admin;
 pub mod project_command;
 pub mod project_workspace;
 pub mod settings;
+pub mod sidebar_status;
 pub mod task;
 pub mod terminal;

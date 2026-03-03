@@ -1573,12 +1573,24 @@ pub struct ProjectInfo {
     pub commands: Vec<ProjectCommandInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceSidebarStatusInfo {
+    #[serde(default)]
+    pub task_icon: Option<String>,
+    #[serde(default)]
+    pub chat_active: bool,
+    #[serde(default)]
+    pub evolution_active: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceInfo {
     pub name: String,
     pub root: String,
     pub branch: String,
     pub status: String,
+    #[serde(default)]
+    pub sidebar_status: WorkspaceSidebarStatusInfo,
 }
 
 /// AI Git commit information

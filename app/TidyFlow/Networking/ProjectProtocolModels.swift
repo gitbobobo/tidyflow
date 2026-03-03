@@ -3,11 +3,34 @@ import Foundation
 // MARK: - UX-2: Project Import Protocol Models
 
 /// Workspace info returned from import/create operations
+struct WorkspaceSidebarStatusInfo {
+    let taskIcon: String?
+    let chatActive: Bool
+    let evolutionActive: Bool
+
+    static let empty = WorkspaceSidebarStatusInfo(
+        taskIcon: nil,
+        chatActive: false,
+        evolutionActive: false
+    )
+
+    static func from(json: [String: Any]?) -> WorkspaceSidebarStatusInfo {
+        guard let json else { return .empty }
+        return WorkspaceSidebarStatusInfo(
+            taskIcon: json["task_icon"] as? String,
+            chatActive: json["chat_active"] as? Bool ?? false,
+            evolutionActive: json["evolution_active"] as? Bool ?? false
+        )
+    }
+}
+
+/// Workspace info returned from import/create operations
 struct WorkspaceImportInfo {
     let name: String
     let root: String
     let branch: String
     let status: String
+    let sidebarStatus: WorkspaceSidebarStatusInfo
 
     static func from(json: [String: Any]) -> WorkspaceImportInfo? {
         guard let name = json["name"] as? String,
@@ -16,7 +39,13 @@ struct WorkspaceImportInfo {
               let status = json["status"] as? String else {
             return nil
         }
-        return WorkspaceImportInfo(name: name, root: root, branch: branch, status: status)
+        return WorkspaceImportInfo(
+            name: name,
+            root: root,
+            branch: branch,
+            status: status,
+            sidebarStatus: WorkspaceSidebarStatusInfo.from(json: json["sidebar_status"] as? [String: Any])
+        )
     }
 }
 
@@ -118,6 +147,7 @@ struct WorkspaceInfo {
     let root: String
     let branch: String
     let status: String
+    let sidebarStatus: WorkspaceSidebarStatusInfo
 
     static func from(json: [String: Any]) -> WorkspaceInfo? {
         guard let name = json["name"] as? String,
@@ -126,7 +156,13 @@ struct WorkspaceInfo {
               let status = json["status"] as? String else {
             return nil
         }
-        return WorkspaceInfo(name: name, root: root, branch: branch, status: status)
+        return WorkspaceInfo(
+            name: name,
+            root: root,
+            branch: branch,
+            status: status,
+            sidebarStatus: WorkspaceSidebarStatusInfo.from(json: json["sidebar_status"] as? [String: Any])
+        )
     }
 }
 
@@ -221,4 +257,3 @@ struct FileIndexCache {
         Date().timeIntervalSince(updatedAt) > 600
     }
 }
-

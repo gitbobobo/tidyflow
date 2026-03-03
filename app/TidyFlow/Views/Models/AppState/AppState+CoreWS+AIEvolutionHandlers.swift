@@ -223,6 +223,7 @@ extension AppState {
     }
 
     func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
         upsertAISessionStatus(
             projectName: ev.projectName,
             workspaceName: ev.workspaceName,
@@ -243,6 +244,7 @@ extension AppState {
     }
 
     func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
         upsertAISessionStatus(
             projectName: ev.projectName,
             workspaceName: ev.workspaceName,
@@ -575,6 +577,10 @@ extension AppState {
                 guard let self else { return }
                 self.evolutionScheduler = snapshot.scheduler
                 self.evolutionWorkspaceItems = items
+                self.scheduleWorkspaceSidebarStatusRefresh(
+                    projectNames: items.map(\.project),
+                    debounce: 0.2
+                )
                 for (key, pendingAction) in self.evolutionPendingActionByWorkspace {
                     if EvolutionControlCapability.shouldClearPendingAction(
                         pendingAction,

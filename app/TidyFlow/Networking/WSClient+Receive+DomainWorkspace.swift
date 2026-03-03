@@ -106,9 +106,15 @@ extension WSClient {
             }
             return true
         case "project_command_cancelled":
-            // 服务端确认取消，客户端已在 stopRunningTask 中提前处理，此处仅日志
+            let project = json["project"] as? String ?? ""
+            let workspace = json["workspace"] as? String ?? ""
+            let commandId = json["command_id"] as? String ?? ""
             let taskId = json["task_id"] as? String ?? ""
-            NSLog("[WSClient] ProjectCommand cancelled: task_id=%@", taskId)
+            if let handler = projectMessageHandler {
+                handler.handleProjectCommandCancelled(project, workspace, commandId, taskId)
+            } else {
+                onProjectCommandCancelled?(project, workspace, commandId, taskId)
+            }
             return true
         case "tasks_snapshot":
             if let items = json["tasks"] as? [[String: Any]] {

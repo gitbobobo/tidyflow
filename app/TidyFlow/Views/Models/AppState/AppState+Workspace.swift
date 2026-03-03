@@ -76,44 +76,30 @@ extension AppState {
         return workspace.root
     }
 
-    /// 指定工作空间是否存在流式聊天活动（会话 busy 或当前本地流式态）。
-    func hasWorkspaceStreamingChat(projectName: String, workspaceName: String) -> Bool {
-        let project = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let workspace = workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !project.isEmpty, !workspace.isEmpty else { return false }
+    /// 防抖刷新指定项目的工作空间列表（由 Rust Core 统一计算侧边栏状态）。
+    func scheduleWorkspaceSidebarStatusRefresh(projectName: String, debounce: TimeInterval = 0.15) {
+        let normalizedProject = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedProject.isEmpty, connectionState == .connected else { return }
 
-        let prefix = "\(project)::\(workspace)::"
-        for tool in AIChatTool.allCases {
-            if let statuses = aiSessionStatusesByTool[tool],
-               statuses.contains(where: { $0.key.hasPrefix(prefix) && $0.value.isBusy }) {
-                return true
-            }
+        workspaceSidebarStatusRefreshWorkItemByProject[normalizedProject]?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard self.connectionState == .connected else { return }
+            self.wsClient.requestListWorkspaces(project: normalizedProject)
+            self.workspaceSidebarStatusRefreshWorkItemByProject.removeValue(forKey: normalizedProject)
         }
-
-        if selectedProjectName == project, selectedWorkspaceKey == workspace {
-            for tool in AIChatTool.allCases {
-                let store = aiStore(for: tool)
-                if store.isStreaming || store.awaitingUserEcho {
-                    return true
-                }
-            }
-        }
-        return false
+        workspaceSidebarStatusRefreshWorkItemByProject[normalizedProject] = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: workItem)
     }
 
-    /// 指定工作空间是否处于自主进化循环活跃状态。
-    func hasWorkspaceActiveEvolutionLoop(projectName: String, workspaceName: String) -> Bool {
-        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspaceName)
-        guard let item = evolutionItem(project: projectName, workspace: normalizedWorkspace) else {
-            return false
+    /// 批量防抖刷新多个项目的工作空间侧边栏状态。
+    func scheduleWorkspaceSidebarStatusRefresh<S: Sequence>(projectNames: S, debounce: TimeInterval = 0.15)
+    where S.Element == String {
+        let uniqueProjects = Set(projectNames.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+        for project in uniqueProjects {
+            scheduleWorkspaceSidebarStatusRefresh(projectName: project, debounce: debounce)
         }
-        let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return ["queued", "running", "pending", "in_progress", "processing"].contains(status)
-    }
-
-    /// 指定工作空间当前用于侧边栏展示的后台任务图标。
-    func workspaceActiveTaskIconName(projectName: String, workspaceName: String) -> String? {
-        let key = globalWorkspaceKey(projectName: projectName, workspaceName: workspaceName)
-        return taskManager.sidebarActiveTaskIconName(for: key)
     }
 }

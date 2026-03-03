@@ -126,6 +126,7 @@ extension AppState {
 
     /// 处理命令 started 事件：绑定远端 task_id
     func handleProjectCommandStarted(project: String, workspace: String, commandId: String, taskId: String) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: project)
         guard let executionId = resolveExecutionId(
             project: project,
             workspace: workspace,
@@ -184,6 +185,7 @@ extension AppState {
         ok: Bool,
         message: String?
     ) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: project)
         // 本地任务
         if let executionId = resolveExecutionId(
             project: project,
@@ -202,6 +204,11 @@ extension AppState {
             taskManager.completeRemoteTask(task, result: result, appState: self)
             TFLog.app.info("远程项目命令 completed: \(project, privacy: .public)/\(workspace, privacy: .public)/\(commandId, privacy: .public)")
         }
+    }
+
+    /// 处理命令取消事件：用于刷新侧边栏状态。
+    func handleProjectCommandCancelled(project: String, workspace _: String, commandId _: String, taskId _: String) {
+        scheduleWorkspaceSidebarStatusRefresh(projectName: project)
     }
 
     private func registerProjectCommandExecution(

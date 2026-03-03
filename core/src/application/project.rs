@@ -1,4 +1,4 @@
-use crate::server::context::SharedAppState;
+use crate::server::context::{HandlerContext, SharedAppState};
 use crate::server::protocol::{ProjectCommandInfo, ProjectInfo, ServerMessage, WorkspaceInfo};
 use crate::workspace::state::WorkspaceStatus;
 
@@ -40,41 +40,68 @@ pub async fn list_projects_message(app_state: &SharedAppState) -> ServerMessage 
 }
 
 pub async fn list_workspaces_message(
-    app_state: &SharedAppState,
+    ctx: &HandlerContext,
     project: &str,
 ) -> Result<ServerMessage, ServerMessage> {
-    let state = app_state.read().await;
-    match state.get_project(project) {
-        Some(p) => {
-            let mut items: Vec<WorkspaceInfo> = p
-                .workspaces
-                .values()
-                .map(|w| WorkspaceInfo {
-                    name: w.name.clone(),
-                    root: w.worktree_path.to_string_lossy().to_string(),
-                    branch: w.branch.clone(),
-                    status: workspace_status_str(&w.status),
-                })
-                .collect();
+    let (default_root, default_branch, mut workspace_rows) = {
+        let state = ctx.app_state.read().await;
+        let Some(p) = state.get_project(project) else {
+            return Err(ServerMessage::Error {
+                code: "project_not_found".to_string(),
+                message: format!("Project '{}' not found", project),
+            });
+        };
 
-            let default_ws = WorkspaceInfo {
-                name: "default".to_string(),
-                root: p.root_path.to_string_lossy().to_string(),
-                branch: p.default_branch.clone(),
-                status: "ready".to_string(),
-            };
-            items.insert(0, default_ws);
-
-            Ok(ServerMessage::Workspaces {
-                project: project.to_string(),
-                items,
+        let rows = p
+            .workspaces
+            .values()
+            .map(|w| {
+                (
+                    w.name.clone(),
+                    w.worktree_path.to_string_lossy().to_string(),
+                    w.branch.clone(),
+                    workspace_status_str(&w.status),
+                )
             })
-        }
-        None => Err(ServerMessage::Error {
-            code: "project_not_found".to_string(),
-            message: format!("Project '{}' not found", project),
-        }),
+            .collect::<Vec<_>>();
+
+        (
+            p.root_path.to_string_lossy().to_string(),
+            p.default_branch.clone(),
+            rows,
+        )
+    };
+
+    workspace_rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut items: Vec<WorkspaceInfo> = Vec::with_capacity(workspace_rows.len() + 1);
+    items.push(WorkspaceInfo {
+        name: "default".to_string(),
+        root: default_root,
+        branch: default_branch,
+        status: "ready".to_string(),
+        sidebar_status: crate::application::sidebar_status::workspace_sidebar_status(
+            ctx, project, "default",
+        )
+        .await,
+    });
+
+    for (name, root, branch, status) in workspace_rows {
+        let sidebar_status =
+            crate::application::sidebar_status::workspace_sidebar_status(ctx, project, &name).await;
+        items.push(WorkspaceInfo {
+            name,
+            root,
+            branch,
+            status,
+            sidebar_status,
+        });
     }
+
+    Ok(ServerMessage::Workspaces {
+        project: project.to_string(),
+        items,
+    })
 }
 
 #[cfg(test)]

@@ -116,6 +116,28 @@ impl AiSessionStateStore {
             .collect()
     }
 
+    /// 判断指定项目/工作空间是否存在任一 busy 会话。
+    pub fn has_busy_for_workspace(&self, project_name: &str, workspace_name: &str) -> bool {
+        let Ok(statuses) = self.statuses.read() else {
+            return false;
+        };
+        let Ok(metas) = self.metas.read() else {
+            return false;
+        };
+
+        statuses.iter().any(|(key, status)| {
+            if status != &AiSessionStatus::Busy {
+                return false;
+            }
+            metas
+                .get(key)
+                .map(|meta| {
+                    meta.project_name == project_name && meta.workspace_name == workspace_name
+                })
+                .unwrap_or(false)
+        })
+    }
+
     pub fn set_status(
         &self,
         ai_tool: &str,
@@ -212,5 +234,34 @@ mod tests {
     fn test_key_format() {
         let key = AiSessionStateStore::make_key("codex", "/a/b", "ses_1");
         assert_eq!(key, "codex:/a/b:ses_1");
+    }
+
+    #[test]
+    fn test_has_busy_for_workspace() {
+        let store = AiSessionStateStore::new();
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "p1".to_string(),
+                workspace_name: "w1".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/a".to_string(),
+                session_id: "s1".to_string(),
+            },
+            AiSessionStatus::Busy,
+        );
+        store.set_status_with_meta(
+            AiSessionStatusMeta {
+                project_name: "p1".to_string(),
+                workspace_name: "w2".to_string(),
+                ai_tool: "codex".to_string(),
+                directory: "/tmp/b".to_string(),
+                session_id: "s2".to_string(),
+            },
+            AiSessionStatus::Idle,
+        );
+
+        assert!(store.has_busy_for_workspace("p1", "w1"));
+        assert!(!store.has_busy_for_workspace("p1", "w2"));
+        assert!(!store.has_busy_for_workspace("p2", "w1"));
     }
 }

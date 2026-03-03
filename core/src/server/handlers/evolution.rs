@@ -65,3 +65,23 @@ impl EvolutionManager {
         }
     }
 }
+
+fn is_active_workspace_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "queued" | "running" | "pending" | "in_progress" | "processing"
+    )
+}
+
+pub async fn has_active_workspace(project: &str, workspace: &str) -> bool {
+    let Some(manager) = maybe_manager() else {
+        return false;
+    };
+    let key = format!("{}:{}", project, workspace);
+    let state = manager.state.lock().await;
+    state
+        .workspaces
+        .get(&key)
+        .map(|entry| is_active_workspace_status(&entry.status))
+        .unwrap_or(false)
+}

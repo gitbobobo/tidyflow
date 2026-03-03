@@ -63,6 +63,14 @@ final class AppStateProjectMessageHandlerAdapter: ProjectMessageHandler {
             message: message
         )
     }
+    func handleProjectCommandCancelled(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {
+        appState?.handleProjectCommandCancelled(
+            project: project,
+            workspace: workspace,
+            commandId: commandId,
+            taskId: taskId
+        )
+    }
     func handleProjectCommandOutput(_ taskId: String, _ line: String) {
         appState?.handleProjectCommandOutput(taskId: taskId, line: line)
     }
@@ -154,6 +162,7 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
         self.appState = appState
     }
 
+    func handleAITaskCancelled(_ result: AITaskCancelled) { appState?.handleAITaskCancelled(result) }
     func handleAISessionStarted(_ ev: AISessionStartedV2) { appState?.handleAISessionStarted(ev) }
     func handleAISessionList(_ ev: AISessionListV2) { appState?.handleAISessionList(ev) }
     func handleAISessionMessages(_ ev: AISessionMessagesV2) { appState?.handleAISessionMessages(ev) }

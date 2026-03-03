@@ -54,6 +54,7 @@ pub async fn create_workspace_message(
                 root: ws.worktree_path.to_string_lossy().to_string(),
                 branch: ws.branch,
                 status: workspace_status_str(&ws.status),
+                sidebar_status: Default::default(),
             },
         },
         Err(e) => {

@@ -18,7 +18,7 @@ pub async fn handle_query_message(
             Ok(true)
         }
         ClientMessage::ListWorkspaces { project } => {
-            match list_workspaces_message(&ctx.app_state, project).await {
+            match list_workspaces_message(ctx, project).await {
                 Ok(msg) => send_message(socket, &msg).await?,
                 Err(err_msg) => send_message(socket, &err_msg).await?,
             }

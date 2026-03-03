@@ -53,6 +53,7 @@ protocol ProjectMessageHandler: AnyObject {
     func handleProjectCommandsSaved(_ project: String, _ ok: Bool, _ message: String?)
     func handleProjectCommandStarted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String)
     func handleProjectCommandCompleted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String, _ ok: Bool, _ message: String?)
+    func handleProjectCommandCancelled(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String)
     func handleProjectCommandOutput(_ taskId: String, _ line: String)
 }
 
@@ -66,6 +67,7 @@ extension ProjectMessageHandler {
     func handleProjectCommandsSaved(_ project: String, _ ok: Bool, _ message: String?) {}
     func handleProjectCommandStarted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {}
     func handleProjectCommandCompleted(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String, _ ok: Bool, _ message: String?) {}
+    func handleProjectCommandCancelled(_ project: String, _ workspace: String, _ commandId: String, _ taskId: String) {}
     func handleProjectCommandOutput(_ taskId: String, _ line: String) {}
 }
 

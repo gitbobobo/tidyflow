@@ -1,6 +1,14 @@
 import Foundation
 
 extension AppState {
+    private func workspaceSidebarStatusModel(from info: WorkspaceSidebarStatusInfo) -> WorkspaceSidebarStatusModel {
+        WorkspaceSidebarStatusModel(
+            taskIconName: info.taskIcon,
+            hasStreamingChat: info.chatActive,
+            hasActiveEvolutionLoop: info.evolutionActive
+        )
+    }
+
     // MARK: - UX-2: Project Import API
 
     /// Handle projects list result from WebSocket
@@ -35,7 +43,8 @@ extension AppState {
                     name: item.name,
                     root: item.root,
                     status: item.status,
-                    isDefault: item.name == "default"
+                    isDefault: item.name == "default",
+                    sidebarStatus: workspaceSidebarStatusModel(from: item.sidebarStatus)
                 )
             }
             
@@ -53,7 +62,8 @@ extension AppState {
             name: "default",
             root: result.root,
             status: "ready",
-            isDefault: true
+            isDefault: true,
+            sidebarStatus: .empty
         )
 
         let newProject = ProjectModel(
@@ -79,7 +89,8 @@ extension AppState {
                 name: result.workspace.name,
                 root: result.workspace.root,
                 status: result.workspace.status,
-                isDefault: false
+                isDefault: false,
+                sidebarStatus: workspaceSidebarStatusModel(from: result.workspace.sidebarStatus)
             )
             projects[index].workspaces.append(newWorkspace)
 

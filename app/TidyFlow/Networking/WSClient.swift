@@ -119,6 +119,7 @@ class WSClient: NSObject, ObservableObject {
     var onProjectCommandsSaved: ((String, Bool, String?) -> Void)?
     var onProjectCommandStarted: ((String, String, String, String) -> Void)?
     var onProjectCommandCompleted: ((String, String, String, String, Bool, String?) -> Void)?
+    var onProjectCommandCancelled: ((String, String, String, String) -> Void)?
     // v1.30: 项目命令实时输出回调 (taskId, line)
     var onProjectCommandOutput: ((String, String) -> Void)?
     var onRemoteTermChanged: (() -> Void)?

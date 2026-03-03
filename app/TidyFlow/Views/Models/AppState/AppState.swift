@@ -505,6 +505,8 @@ class AppState: ObservableObject {
 
     /// 正在删除中的工作空间（globalWorkspaceKey 集合），用于阻塞 UI 交互
     @Published var deletingWorkspaces: Set<String> = []
+    /// 侧边栏状态刷新防抖（按项目维度）
+    var workspaceSidebarStatusRefreshWorkItemByProject: [String: DispatchWorkItem] = [:]
 
     // 客户端设置（自定义命令等）
     @Published var clientSettings: ClientSettings = ClientSettings()
