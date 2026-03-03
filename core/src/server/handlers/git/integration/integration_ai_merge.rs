@@ -57,6 +57,8 @@ pub async fn handle_git_ai_merge(
     let root = proj_ctx.root_path;
     let project_name = proj_ctx.project_name;
     let ai_agent_type = ai_agent.unwrap_or_else(|| "cursor".to_string());
+    let project_for_task = project.clone();
+    let workspace_for_task = workspace.clone();
 
     // 通过 cmd_output_tx 异步回传结果，不阻塞 WS 主循环
     let cmd_output_tx = ctx.cmd_output_tx.clone();
@@ -74,6 +76,7 @@ pub async fn handle_git_ai_merge(
     let child_pid_clone = child_pid.clone();
     let task_id_clone = task_id.clone();
     let running_ai_tasks_cleanup = running_ai_tasks.clone();
+    let ctx_for_sidebar = ctx.clone();
     let project_for_registry = project.clone();
     let workspace_for_registry = workspace.clone();
     let task_history = ctx.task_history.clone();
@@ -100,11 +103,11 @@ pub async fn handle_git_ai_merge(
             Ok(Ok(Ok(merge_result))) => {
                 info!(
                     "AI merge succeeded: project={}, workspace={}",
-                    project, workspace
+                    project_for_task, workspace_for_task
                 );
                 ServerMessage::GitAIMergeResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
+                    project: project_for_task.clone(),
+                    workspace: workspace_for_task.clone(),
                     success: merge_result.success,
                     message: merge_result.message,
                     conflicts: merge_result.conflicts,
@@ -113,11 +116,11 @@ pub async fn handle_git_ai_merge(
             Ok(Ok(Err(e))) => {
                 warn!(
                     "AI merge failed: project={}, workspace={}, error={}",
-                    project, workspace, e
+                    project_for_task, workspace_for_task, e
                 );
                 ServerMessage::GitAIMergeResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
+                    project: project_for_task.clone(),
+                    workspace: workspace_for_task.clone(),
                     success: false,
                     message: e,
                     conflicts: vec![],
@@ -126,8 +129,8 @@ pub async fn handle_git_ai_merge(
             Ok(Err(e)) => {
                 error!("AI merge task panicked: {}", e);
                 ServerMessage::GitAIMergeResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
+                    project: project_for_task.clone(),
+                    workspace: workspace_for_task.clone(),
                     success: false,
                     message: format!("AI merge task failed: {}", e),
                     conflicts: vec![],
@@ -137,12 +140,12 @@ pub async fn handle_git_ai_merge(
                 error!(
                     "AI merge timed out after {}s: project={}, workspace={}",
                     AI_AGENT_TIMEOUT.as_secs(),
-                    project,
-                    workspace
+                    project_for_task,
+                    workspace_for_task
                 );
                 ServerMessage::GitAIMergeResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
+                    project: project_for_task.clone(),
+                    workspace: workspace_for_task.clone(),
                     success: false,
                     message: format!(
                         "AI agent timed out after {} seconds",
@@ -175,6 +178,12 @@ pub async fn handle_git_ai_merge(
         }
         // 从注册表移除
         running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
+        crate::application::sidebar_status::notify_workspace_sidebar_changed(
+            &ctx_for_sidebar,
+            &project_for_task,
+            &workspace_for_task,
+        )
+        .await;
     });
 
     // 注册到 AI 任务注册表
@@ -189,6 +198,8 @@ pub async fn handle_git_ai_merge(
             join_handle,
         },
     );
+    crate::application::sidebar_status::notify_workspace_sidebar_changed(ctx, &project, &workspace)
+        .await;
 
     // 写入任务历史
     push_task_history(

@@ -126,12 +126,30 @@ pub async fn notify_workspace_sidebar_if_evolution_changed(
         return;
     }
 
+    broadcast_workspace_sidebar_status(ctx, project, workspace, "evolution").await;
+}
+
+/// 主动广播指定项目的 workspaces 列表，驱动前端侧边栏状态即时刷新。
+pub async fn notify_workspace_sidebar_changed(
+    ctx: &HandlerContext,
+    project: &str,
+    workspace: &str,
+) {
+    broadcast_workspace_sidebar_status(ctx, project, workspace, "task").await;
+}
+
+async fn broadcast_workspace_sidebar_status(
+    ctx: &HandlerContext,
+    project: &str,
+    workspace: &str,
+    source: &str,
+) {
     let message = match crate::application::project::list_workspaces_message(ctx, project).await {
         Ok(message) => message,
         Err(error_message) => {
             warn!(
-                "broadcast workspaces for sidebar failed: project={}, workspace={}, error={:?}",
-                project, workspace, error_message
+                "broadcast workspaces for sidebar failed: project={}, workspace={}, source={}, error={:?}",
+                project, workspace, source, error_message
             );
             return;
         }
@@ -140,7 +158,7 @@ pub async fn notify_workspace_sidebar_if_evolution_changed(
     let _ = crate::server::context::send_task_broadcast_event(
         &ctx.task_broadcast_tx,
         crate::server::context::TaskBroadcastEvent {
-            origin_conn_id: "sidebar_status_evolution".to_string(),
+            origin_conn_id: format!("sidebar_status_{}", source),
             message,
             target_conn_ids: None,
             skip_when_single_receiver: false,

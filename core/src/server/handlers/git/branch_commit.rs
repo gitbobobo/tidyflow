@@ -593,6 +593,10 @@ pub async fn handle_cancel_ai_task(
             Some("已取消".to_string()),
         )
         .await;
+        crate::application::sidebar_status::notify_workspace_sidebar_changed(
+            ctx, project, workspace,
+        )
+        .await;
     }
 
     Ok(true)

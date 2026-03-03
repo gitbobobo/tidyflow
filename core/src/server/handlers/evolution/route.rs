@@ -1,7 +1,9 @@
 use axum::extract::ws::WebSocket;
+use std::sync::{Arc, Mutex as StdMutex};
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use crate::server::context::{resolve_workspace, HandlerContext};
+use crate::server::context::{resolve_workspace, HandlerContext, RunningAITaskEntry};
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
@@ -136,19 +138,33 @@ pub(super) async fn handle_message(
             // 后台执行，避免长耗时提交阻塞同连接上的后续查询请求。
             let project = project.clone();
             let workspace = workspace.clone();
+            let project_for_task = project.clone();
+            let workspace_for_task = workspace.clone();
             let manager = manager.clone();
             let ctx = ctx.clone();
+            let ctx_for_task = ctx.clone();
             let origin_conn_id = ctx.conn_meta.conn_id.clone();
+            let running_ai_tasks = ctx.running_ai_tasks.clone();
+            let running_ai_tasks_cleanup = running_ai_tasks.clone();
+            let task_id = Uuid::new_v4().to_string();
+            let task_id_clone = task_id.clone();
+            let child_pid: Arc<StdMutex<Option<u32>>> = Arc::new(StdMutex::new(None));
 
-            tokio::spawn(async move {
-                let result = match resolve_workspace(&ctx.app_state, &project, &workspace).await {
+            let join_handle = tokio::spawn(async move {
+                let result = match resolve_workspace(
+                    &ctx_for_task.app_state,
+                    &project_for_task,
+                    &workspace_for_task,
+                )
+                .await
+                {
                     Ok(workspace_ctx) => {
                         manager
                             .run_auto_commit_independent(
-                                &project,
-                                &workspace,
+                                &project_for_task,
+                                &workspace_for_task,
                                 &workspace_ctx.root_path,
-                                &ctx,
+                                &ctx_for_task,
                             )
                             .await
                     }
@@ -161,27 +177,50 @@ pub(super) async fn handle_message(
                 };
 
                 let msg = ServerMessage::EvoAutoCommitResult {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
+                    project: project_for_task.clone(),
+                    workspace: workspace_for_task.clone(),
                     success,
                     message,
                     commits,
                 };
 
-                if let Err(err) = ctx.cmd_output_tx.send(msg.clone()).await {
+                if let Err(err) = ctx_for_task.cmd_output_tx.send(msg.clone()).await {
                     warn!(
                         "Failed to send EvoAutoCommitResult to initiator: conn_id={}, project={}, workspace={}, error={}",
-                        origin_conn_id, project, workspace, err
+                        origin_conn_id, project_for_task, workspace_for_task, err
                     );
-                    return;
                 }
 
                 let _ = crate::server::context::send_task_broadcast_message(
-                    &ctx.task_broadcast_tx,
+                    &ctx_for_task.task_broadcast_tx,
                     origin_conn_id,
                     msg,
                 );
+
+                running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
+                crate::application::sidebar_status::notify_workspace_sidebar_changed(
+                    &ctx_for_task,
+                    &project_for_task,
+                    &workspace_for_task,
+                )
+                .await;
             });
+
+            running_ai_tasks.lock().await.insert(
+                task_id.clone(),
+                RunningAITaskEntry {
+                    task_id,
+                    project: project.clone(),
+                    workspace: workspace.clone(),
+                    operation_type: "ai_commit".to_string(),
+                    child_pid,
+                    join_handle,
+                },
+            );
+            crate::application::sidebar_status::notify_workspace_sidebar_changed(
+                &ctx, &project, &workspace,
+            )
+            .await;
             Ok(true)
         }
         _ => Ok(false),
