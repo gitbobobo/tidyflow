@@ -8,7 +8,6 @@ struct ToastOverlayView: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            Spacer()
             ForEach(toastManager.toasts) { toast in
                 ToastItemView(toast: toast) {
                     toastManager.dismiss(toast.id)
@@ -19,10 +18,6 @@ struct ToastOverlayView: View {
                 ))
             }
         }
-        .padding(.bottom, 12)
-        .padding(.trailing, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .allowsHitTesting(true) // Toast 本身可交互
     }
 }
 

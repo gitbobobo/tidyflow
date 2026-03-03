@@ -93,11 +93,13 @@ struct ContentView: View {
                     .accessibilityIdentifier("tf.mac.toolbar.inspectorToggle")
                 }
             }
-
-            // Toast 通知覆盖层（右上角，不拦截下层交互）
-            ToastOverlayView(toastManager: appState.toastManager)
-                .allowsHitTesting(!appState.toastManager.toasts.isEmpty)
-                .zIndex(98)
+            .overlay(alignment: .bottomTrailing) {
+                // Toast 仅占据卡片自身区域，避免出现全屏透明层吞点击
+                ToastOverlayView(toastManager: appState.toastManager)
+                    .padding(.bottom, 12)
+                    .padding(.trailing, 12)
+                    .zIndex(98)
+            }
 
             // Command Palette Overlay
             if paletteState.isPresented {
