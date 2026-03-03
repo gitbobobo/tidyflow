@@ -760,7 +760,7 @@ mod tests {
             "stage stream error: Unknown error"
         ));
         assert!(is_retryable_session_error_text(
-            "Kimi ACP server stdout closed"
+            "Kimi Wire server stdout closed"
         ));
         assert!(is_retryable_session_error_text(
             "stage stream timeout (idle 180s, tool_call_count=60)"

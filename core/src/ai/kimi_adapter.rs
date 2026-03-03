@@ -1,1 +1,1 @@
-pub use super::acp_adapter::AcpAgent as KimiAcpAgent;
+pub use super::kimi_wire::agent::KimiWireAgent;

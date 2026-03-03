@@ -17,6 +17,7 @@ pub mod copilot_adapter;
 pub mod copilot_client;
 pub mod event_hub;
 pub mod kimi_adapter;
+pub mod kimi_wire;
 pub mod manager;
 pub mod opencode;
 pub mod session_status;
@@ -28,7 +29,7 @@ pub use client::OpenCodeClient;
 pub use codex_adapter::CodexAppServerAgent;
 pub use codex_manager::CodexAppServerManager;
 pub use copilot_adapter::CopilotAcpAgent;
-pub use kimi_adapter::KimiAcpAgent;
+pub use kimi_adapter::KimiWireAgent;
 pub use manager::OpenCodeManager;
 
 use async_trait::async_trait;
