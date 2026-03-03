@@ -147,6 +147,25 @@ enum AIAgent: String, CaseIterable, Identifiable {
 
 /// 构建包含常见 CLI 安装路径的 PATH 环境变量
 /// macOS App 默认 PATH 不含 Homebrew、~/.local/bin 等用户路径，需手动补充
+private func discoverHomebrewNodeBinPaths() -> [String] {
+    let fm = FileManager.default
+    let cellarRoots = ["/opt/homebrew/Cellar/node", "/usr/local/Cellar/node"]
+    var paths: [String] = []
+
+    for root in cellarRoots {
+        guard let versions = try? fm.contentsOfDirectory(atPath: root) else { continue }
+        for version in versions.sorted() {
+            let binPath = "\(root)/\(version)/bin"
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: binPath, isDirectory: &isDirectory), isDirectory.boolValue {
+                paths.append(binPath)
+            }
+        }
+    }
+
+    return paths
+}
+
 private func buildExtendedPATH() -> [String: String] {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let extraPaths = [
@@ -158,7 +177,7 @@ private func buildExtendedPATH() -> [String: String] {
         "/opt/homebrew/sbin",
         "/usr/local/bin",
         "/usr/local/sbin",
-    ]
+    ] + discoverHomebrewNodeBinPaths()
     let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
     let fullPath = (extraPaths + systemPath.split(separator: ":").map(String.init))
         .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
