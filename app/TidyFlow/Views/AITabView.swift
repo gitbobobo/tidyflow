@@ -470,7 +470,11 @@ struct AITabView: View {
             // 首次触发 @ 时，若文件索引缓存为空则拉取
             if newText.contains("@") || newText.contains("＠") {
                 if let ws = appState.selectedWorkspaceKey {
-                    let cache = fileCache.fileIndexCache[ws]
+                    let globalKey = appState.globalWorkspaceKey(
+                        projectName: appState.selectedProjectName,
+                        workspaceName: ws
+                    )
+                    let cache = fileCache.fileIndexCache[globalKey]
                     if cache == nil || cache!.items.isEmpty {
                         appState.fetchFileIndex(workspaceKey: ws)
                     }
@@ -488,7 +492,7 @@ struct AITabView: View {
                 refreshAutocomplete(text: inputText)
             }
         }
-        .onChange(of: fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items.count) { _, _ in
+        .onChange(of: fileCache.fileIndexCache[appState.currentGlobalWorkspaceKey ?? ""]?.items.count) { _, _ in
             // 文件索引加载完成后，重新触发自动补全（解决首次 @ 时索引为空的问题）
             if !inputIsComposing {
                 refreshAutocomplete(text: inputText)
@@ -777,7 +781,7 @@ struct AITabView: View {
                 inputHint: cmd.inputHint
             )
         }
-        let fileItems = fileCache.fileIndexCache[appState.selectedWorkspaceKey ?? ""]?.items ?? []
+        let fileItems = fileCache.fileIndexCache[appState.currentGlobalWorkspaceKey ?? ""]?.items ?? []
         updateAutocomplete(
             text: text,
             cursorLocation: inputCursorLocation,

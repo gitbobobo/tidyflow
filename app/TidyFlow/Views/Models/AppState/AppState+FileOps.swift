@@ -7,6 +7,10 @@ extension AppState {
     // MARK: - File Index API
 
     func handleFileIndexResult(_ result: FileIndexResult) {
+        let globalKey = globalWorkspaceKey(
+            projectName: result.project,
+            workspaceName: result.workspace
+        )
         let cache = FileIndexCache(
             items: result.items,
             truncated: result.truncated,
@@ -14,23 +18,27 @@ extension AppState {
             isLoading: false,
             error: nil
         )
-        fileIndexCache[result.workspace] = cache
+        fileIndexCache[globalKey] = cache
     }
 
     func fetchFileIndex(workspaceKey: String) {
+        let globalKey = globalWorkspaceKey(
+            projectName: selectedProjectName,
+            workspaceName: workspaceKey
+        )
         guard connectionState == .connected else {
-            var cache = fileIndexCache[workspaceKey] ?? FileIndexCache.empty()
+            var cache = fileIndexCache[globalKey] ?? FileIndexCache.empty()
             cache.error = "Disconnected"
             cache.isLoading = false
-            fileIndexCache[workspaceKey] = cache
+            fileIndexCache[globalKey] = cache
             return
         }
 
         // Set loading state
-        var cache = fileIndexCache[workspaceKey] ?? FileIndexCache.empty()
+        var cache = fileIndexCache[globalKey] ?? FileIndexCache.empty()
         cache.isLoading = true
         cache.error = nil
-        fileIndexCache[workspaceKey] = cache
+        fileIndexCache[globalKey] = cache
 
         // Send request
         wsClient.requestFileIndex(project: selectedProjectName, workspace: workspaceKey)
@@ -62,6 +70,7 @@ extension AppState {
     /// 采用增量更新策略：不清除缓存，直接获取新数据覆盖旧数据，避免界面闪烁
     func invalidateFileCache(project: String, workspace: String) {
         let prefix = "\(project):\(workspace):"
+        let globalKey = globalWorkspaceKey(projectName: project, workspaceName: workspace)
 
         // 收集所有展开的目录路径
         let expandedPaths = directoryExpandState
@@ -69,7 +78,7 @@ extension AppState {
             .map { String($0.key.dropFirst(prefix.count)) }
 
         // 清除文件索引缓存（搜索用）
-        fileIndexCache.removeValue(forKey: workspace)
+        fileIndexCache.removeValue(forKey: globalKey)
 
         // 如果是当前选中的工作空间，刷新根目录和所有展开的目录
         // 注意：不清除文件列表缓存，新数据会直接覆盖旧数据

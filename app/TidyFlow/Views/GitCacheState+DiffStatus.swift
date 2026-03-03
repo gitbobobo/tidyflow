@@ -7,7 +7,12 @@ extension GitCacheState {
     // MARK: - Phase C2-2a: Git Diff API
 
     func handleGitDiffResult(_ result: GitDiffResult) {
-        let key = diffCacheKey(workspace: result.workspace, path: result.path, mode: result.mode)
+        let key = diffCacheKey(
+            project: result.project,
+            workspace: result.workspace,
+            path: result.path,
+            mode: result.mode
+        )
         // Diff 文本解析移至后台线程，避免大文件阻塞 UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let parsedLines = DiffParser.parse(result.text)
@@ -191,7 +196,11 @@ extension GitCacheState {
     // MARK: - Git Show (单个 commit 详情) API
 
     func handleGitShowResult(_ result: GitShowResult) {
-        let cacheKey = "\(result.workspace):\(result.sha)"
+        let cacheKey = gitShowCacheKey(
+            project: result.project,
+            workspace: result.workspace,
+            sha: result.sha
+        )
         let cache = GitShowCache(
             result: result,
             isLoading: false,
@@ -201,7 +210,11 @@ extension GitCacheState {
     }
 
     func fetchGitShow(workspaceKey: String, sha: String) {
-        let cacheKey = "\(workspaceKey):\(sha)"
+        let cacheKey = gitShowCacheKey(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            sha: sha
+        )
         guard connectionState == .connected else {
             gitShowCache[cacheKey] = GitShowCache(
                 result: nil,
@@ -222,7 +235,11 @@ extension GitCacheState {
     }
 
     func getGitShowCache(workspaceKey: String, sha: String) -> GitShowCache? {
-        let cacheKey = "\(workspaceKey):\(sha)"
+        let cacheKey = gitShowCacheKey(
+            project: selectedProjectName,
+            workspace: workspaceKey,
+            sha: sha
+        )
         return gitShowCache[cacheKey]
     }
 }

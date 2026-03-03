@@ -955,12 +955,12 @@ extension AppState {
             projectImportError = errorMsg
         }
 
-        if let ws = selectedWorkspaceKey {
-            var cache = fileIndexCache[ws] ?? FileIndexCache.empty()
+        if let globalKey = currentGlobalWorkspaceKey {
+            var cache = fileIndexCache[globalKey] ?? FileIndexCache.empty()
             if cache.isLoading {
                 cache.isLoading = false
                 cache.error = errorMsg
-                fileIndexCache[ws] = cache
+                fileIndexCache[globalKey] = cache
             }
         }
 

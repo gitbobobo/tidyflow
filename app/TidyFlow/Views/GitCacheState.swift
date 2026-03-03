@@ -84,15 +84,29 @@ class GitCacheState: ObservableObject {
 
     // MARK: - Cache Key 辅助方法（跨 extension 文件访问）
 
+    func workspaceCacheKey(workspace: String, project: String? = nil) -> String {
+        let projectName = (project ?? selectedProjectName).trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaceName = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(projectName):\(workspaceName)"
+    }
+
+    func diffCacheKey(project: String, workspace: String, path: String, mode: String) -> String {
+        return "\(workspaceCacheKey(workspace: workspace, project: project)):\(path):\(mode)"
+    }
+
     func diffCacheKey(workspace: String, path: String, mode: String) -> String {
-        return "\(workspace):\(path):\(mode)"
+        return diffCacheKey(project: selectedProjectName, workspace: workspace, path: path, mode: mode)
     }
 
     func gitStatusCacheKey(project: String, workspace: String) -> String {
-        return "\(project):\(workspace)"
+        return workspaceCacheKey(workspace: workspace, project: project)
     }
 
     func gitLogCacheKey(project: String, workspace: String) -> String {
-        return "\(project):\(workspace)"
+        return workspaceCacheKey(workspace: workspace, project: project)
+    }
+
+    func gitShowCacheKey(project: String, workspace: String, sha: String) -> String {
+        return "\(workspaceCacheKey(workspace: workspace, project: project)):\(sha)"
     }
 }

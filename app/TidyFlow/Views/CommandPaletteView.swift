@@ -25,16 +25,16 @@ struct CommandPaletteView: View {
     }
 
     var currentFileCache: FileIndexCache? {
-        guard let ws = appState.selectedWorkspaceKey else { return nil }
-        return fileCache.fileIndexCache[ws]
+        guard let globalKey = appState.currentGlobalWorkspaceKey else { return nil }
+        return fileCache.fileIndexCache[globalKey]
     }
 
     var filteredFiles: [String] {
         guard paletteState.mode == .file else { return [] }
-        guard let ws = appState.selectedWorkspaceKey else { return [] }
+        guard let globalKey = appState.currentGlobalWorkspaceKey else { return [] }
 
         // 直接从 fileCache 读取，确保文件索引变化时触发重绘
-        let cache = fileCache.fileIndexCache[ws]
+        let cache = fileCache.fileIndexCache[globalKey]
         let files: [String]
         if let cache = cache, !cache.items.isEmpty {
             files = cache.items
@@ -138,7 +138,11 @@ struct CommandPaletteView: View {
             // Auto-fetch file index when opening Quick Open
             if paletteState.mode == .file,
                let ws = appState.selectedWorkspaceKey {
-                let cache = fileCache.fileIndexCache[ws]
+                let globalKey = appState.globalWorkspaceKey(
+                    projectName: appState.selectedProjectName,
+                    workspaceName: ws
+                )
+                let cache = fileCache.fileIndexCache[globalKey]
                 if cache == nil || cache!.isExpired {
                     appState.fetchFileIndex(workspaceKey: ws)
                 }

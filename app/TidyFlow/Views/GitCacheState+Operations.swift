@@ -8,24 +8,25 @@ extension GitCacheState {
 
     func handleGitOpResult(_ result: GitOpResult) {
         let opKey = GitOpInFlight(op: result.op, path: result.path, scope: result.scope)
-        gitOpsInFlight[result.workspace]?.remove(opKey)
+        let wsCacheKey = workspaceCacheKey(workspace: result.workspace, project: result.project)
+        gitOpsInFlight[wsCacheKey]?.remove(opKey)
 
         if result.op == "switch_branch" {
-            branchSwitchInFlight.removeValue(forKey: result.workspace)
+            branchSwitchInFlight.removeValue(forKey: wsCacheKey)
             if result.ok {
                 fetchGitBranches(workspaceKey: result.workspace)
                 fetchGitStatus(workspaceKey: result.workspace)
-                onCloseAllDiffTabs?(result.workspace)
+                onCloseAllDiffTabs?(wsCacheKey)
             }
             return
         }
 
         if result.op == "create_branch" {
-            branchCreateInFlight.removeValue(forKey: result.workspace)
+            branchCreateInFlight.removeValue(forKey: wsCacheKey)
             if result.ok {
                 fetchGitBranches(workspaceKey: result.workspace)
                 fetchGitStatus(workspaceKey: result.workspace)
-                onCloseAllDiffTabs?(result.workspace)
+                onCloseAllDiffTabs?(wsCacheKey)
             }
             return
         }
@@ -34,10 +35,11 @@ extension GitCacheState {
             fetchGitStatus(workspaceKey: result.workspace)
 
             if let path = result.path,
+               selectedProjectName == result.project,
                selectedWorkspaceKey == result.workspace,
                getActiveDiffPath?() == path {
                 if result.op == "discard" {
-                    onCloseDiffTab?(result.workspace, path)
+                    onCloseDiffTab?(wsCacheKey, path)
                 } else {
                     onRefreshActiveDiff?()
                 }
@@ -47,11 +49,12 @@ extension GitCacheState {
 
     func gitStage(workspaceKey: String, path: String?, scope: String) {
         guard connectionState == .connected else { return }
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
         let opKey = GitOpInFlight(op: "stage", path: path, scope: scope)
-        if gitOpsInFlight[workspaceKey] == nil {
-            gitOpsInFlight[workspaceKey] = []
+        if gitOpsInFlight[wsCacheKey] == nil {
+            gitOpsInFlight[wsCacheKey] = []
         }
-        gitOpsInFlight[workspaceKey]?.insert(opKey)
+        gitOpsInFlight[wsCacheKey]?.insert(opKey)
         wsClient?.requestGitStage(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -62,11 +65,12 @@ extension GitCacheState {
 
     func gitUnstage(workspaceKey: String, path: String?, scope: String) {
         guard connectionState == .connected else { return }
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
         let opKey = GitOpInFlight(op: "unstage", path: path, scope: scope)
-        if gitOpsInFlight[workspaceKey] == nil {
-            gitOpsInFlight[workspaceKey] = []
+        if gitOpsInFlight[wsCacheKey] == nil {
+            gitOpsInFlight[wsCacheKey] = []
         }
-        gitOpsInFlight[workspaceKey]?.insert(opKey)
+        gitOpsInFlight[wsCacheKey]?.insert(opKey)
         wsClient?.requestGitUnstage(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -77,11 +81,12 @@ extension GitCacheState {
 
     func gitDiscard(workspaceKey: String, path: String?, scope: String, includeUntracked: Bool = false) {
         guard connectionState == .connected else { return }
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
         let opKey = GitOpInFlight(op: "discard", path: path, scope: scope)
-        if gitOpsInFlight[workspaceKey] == nil {
-            gitOpsInFlight[workspaceKey] = []
+        if gitOpsInFlight[wsCacheKey] == nil {
+            gitOpsInFlight[wsCacheKey] = []
         }
-        gitOpsInFlight[workspaceKey]?.insert(opKey)
+        gitOpsInFlight[wsCacheKey]?.insert(opKey)
         wsClient?.requestGitDiscard(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -92,18 +97,21 @@ extension GitCacheState {
     }
 
     func isGitOpInFlight(workspaceKey: String, path: String?, op: String) -> Bool {
-        guard let ops = gitOpsInFlight[workspaceKey] else { return false }
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        guard let ops = gitOpsInFlight[wsCacheKey] else { return false }
         return ops.contains { $0.op == op && $0.path == path }
     }
 
     func hasAnyGitOpInFlight(workspaceKey: String) -> Bool {
-        guard let ops = gitOpsInFlight[workspaceKey] else { return false }
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        guard let ops = gitOpsInFlight[wsCacheKey] else { return false }
         return !ops.isEmpty
     }
 
     // MARK: - Phase C3-3a: Git Branch API
 
     func handleGitBranchesResult(_ result: GitBranchesResult) {
+        let wsCacheKey = workspaceCacheKey(workspace: result.workspace, project: result.project)
         let cache = GitBranchCache(
             current: result.current,
             branches: result.branches,
@@ -111,19 +119,20 @@ extension GitCacheState {
             error: nil,
             updatedAt: Date()
         )
-        gitBranchCache[result.workspace] = cache
+        gitBranchCache[wsCacheKey] = cache
     }
 
     func fetchGitBranches(workspaceKey: String) {
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
         guard connectionState == .connected else {
-            var cache = gitBranchCache[workspaceKey] ?? GitBranchCache.empty()
+            var cache = gitBranchCache[wsCacheKey] ?? GitBranchCache.empty()
             cache.error = "Disconnected"
             cache.isLoading = false
-            gitBranchCache[workspaceKey] = cache
+            gitBranchCache[wsCacheKey] = cache
             return
         }
         // 已经在加载中时跳过冗余的 @Published 写入
-        let existing = gitBranchCache[workspaceKey]
+        let existing = gitBranchCache[wsCacheKey]
         if existing?.isLoading == true {
             wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey)
             return
@@ -131,7 +140,7 @@ extension GitCacheState {
         var cache = existing ?? GitBranchCache.empty()
         cache.isLoading = true
         cache.error = nil
-        gitBranchCache[workspaceKey] = cache
+        gitBranchCache[wsCacheKey] = cache
         wsClient?.requestGitBranches(project: selectedProjectName, workspace: workspaceKey)
     }
 
@@ -141,12 +150,14 @@ extension GitCacheState {
     }
 
     func getGitBranchCache(workspaceKey: String) -> GitBranchCache? {
-        return gitBranchCache[workspaceKey]
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        return gitBranchCache[wsCacheKey]
     }
 
     func gitSwitchBranch(workspaceKey: String, branch: String) {
         guard connectionState == .connected else { return }
-        branchSwitchInFlight[workspaceKey] = branch
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        branchSwitchInFlight[wsCacheKey] = branch
         wsClient?.requestGitSwitchBranch(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -156,7 +167,8 @@ extension GitCacheState {
 
     func gitCreateBranch(workspaceKey: String, branch: String) {
         guard connectionState == .connected else { return }
-        branchCreateInFlight[workspaceKey] = branch
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        branchCreateInFlight[wsCacheKey] = branch
         wsClient?.requestGitCreateBranch(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -165,19 +177,22 @@ extension GitCacheState {
     }
 
     func isBranchCreateInFlight(workspaceKey: String) -> Bool {
-        return branchCreateInFlight[workspaceKey] != nil
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        return branchCreateInFlight[wsCacheKey] != nil
     }
 
     func isBranchSwitchInFlight(workspaceKey: String) -> Bool {
-        return branchSwitchInFlight[workspaceKey] != nil
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        return branchSwitchInFlight[wsCacheKey] != nil
     }
 
     // MARK: - Phase C3-4a: Git Commit API
 
     func handleGitCommitResult(_ result: GitCommitResult) {
-        commitInFlight.removeValue(forKey: result.workspace)
+        let wsCacheKey = workspaceCacheKey(workspace: result.workspace, project: result.project)
+        commitInFlight.removeValue(forKey: wsCacheKey)
         if result.ok {
-            commitMessage.removeValue(forKey: result.workspace)
+            commitMessage.removeValue(forKey: wsCacheKey)
             fetchGitStatus(workspaceKey: result.workspace)
         }
     }
@@ -186,7 +201,8 @@ extension GitCacheState {
         guard connectionState == .connected else { return }
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else { return }
-        commitInFlight[workspaceKey] = true
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        commitInFlight[wsCacheKey] = true
         wsClient?.requestGitCommit(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -195,22 +211,26 @@ extension GitCacheState {
     }
 
     func isCommitInFlight(workspaceKey: String) -> Bool {
-        return commitInFlight[workspaceKey] == true
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        return commitInFlight[wsCacheKey] == true
     }
 
     func hasStagedChanges(workspaceKey: String) -> Bool {
-        return gitStatusCache[workspaceKey]?.hasStagedChanges ?? false
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        return gitStatusCache[key]?.hasStagedChanges ?? false
     }
 
     func stagedCount(workspaceKey: String) -> Int {
-        return gitStatusCache[workspaceKey]?.stagedCount ?? 0
+        let key = gitStatusCacheKey(project: selectedProjectName, workspace: workspaceKey)
+        return gitStatusCache[key]?.stagedCount ?? 0
     }
 
     // MARK: - Phase UX-3a: Git Rebase API
 
     func handleGitRebaseResult(_ result: GitRebaseResult) {
-        rebaseInFlight.removeValue(forKey: result.workspace)
-        var cache = gitOpStatusCache[result.workspace] ?? GitOpStatusCache.empty()
+        let wsCacheKey = workspaceCacheKey(workspace: result.workspace, project: result.project)
+        rebaseInFlight.removeValue(forKey: wsCacheKey)
+        var cache = gitOpStatusCache[wsCacheKey] ?? GitOpStatusCache.empty()
         cache.isLoading = false
         cache.updatedAt = Date()
         if result.state == "conflict" {
@@ -220,17 +240,18 @@ extension GitCacheState {
             cache.state = .normal
             cache.conflicts = []
         }
-        gitOpStatusCache[result.workspace] = cache
+        gitOpStatusCache[wsCacheKey] = cache
         fetchGitStatus(workspaceKey: result.workspace)
     }
 
     func handleGitOpStatusResult(_ result: GitOpStatusResult) {
-        var cache = gitOpStatusCache[result.workspace] ?? GitOpStatusCache.empty()
+        let wsCacheKey = workspaceCacheKey(workspace: result.workspace, project: result.project)
+        var cache = gitOpStatusCache[wsCacheKey] ?? GitOpStatusCache.empty()
         cache.state = result.state
         cache.conflicts = result.conflicts
         cache.isLoading = false
         cache.updatedAt = Date()
-        gitOpStatusCache[result.workspace] = cache
+        gitOpStatusCache[wsCacheKey] = cache
     }
 
     func gitFetch(workspaceKey: String) {
@@ -243,10 +264,11 @@ extension GitCacheState {
 
     func gitRebase(workspaceKey: String, ontoBranch: String) {
         guard connectionState == .connected else { return }
-        rebaseInFlight[workspaceKey] = true
-        var cache = gitOpStatusCache[workspaceKey] ?? GitOpStatusCache.empty()
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        rebaseInFlight[wsCacheKey] = true
+        var cache = gitOpStatusCache[wsCacheKey] ?? GitOpStatusCache.empty()
         cache.isLoading = true
-        gitOpStatusCache[workspaceKey] = cache
+        gitOpStatusCache[wsCacheKey] = cache
         wsClient?.requestGitRebase(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -256,7 +278,8 @@ extension GitCacheState {
 
     func gitRebaseContinue(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        rebaseInFlight[workspaceKey] = true
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        rebaseInFlight[wsCacheKey] = true
         wsClient?.requestGitRebaseContinue(
             project: selectedProjectName,
             workspace: workspaceKey
@@ -265,7 +288,8 @@ extension GitCacheState {
 
     func gitRebaseAbort(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        rebaseInFlight[workspaceKey] = true
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        rebaseInFlight[wsCacheKey] = true
         wsClient?.requestGitRebaseAbort(
             project: selectedProjectName,
             workspace: workspaceKey
@@ -274,9 +298,10 @@ extension GitCacheState {
 
     func fetchGitOpStatus(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        var cache = gitOpStatusCache[workspaceKey] ?? GitOpStatusCache.empty()
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        var cache = gitOpStatusCache[wsCacheKey] ?? GitOpStatusCache.empty()
         cache.isLoading = true
-        gitOpStatusCache[workspaceKey] = cache
+        gitOpStatusCache[wsCacheKey] = cache
         wsClient?.requestGitOpStatus(
             project: selectedProjectName,
             workspace: workspaceKey
@@ -284,11 +309,13 @@ extension GitCacheState {
     }
 
     func getGitOpStatusCache(workspaceKey: String) -> GitOpStatusCache? {
-        return gitOpStatusCache[workspaceKey]
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        return gitOpStatusCache[wsCacheKey]
     }
 
     func isRebaseInFlight(workspaceKey: String) -> Bool {
-        return rebaseInFlight[workspaceKey] == true
+        let wsCacheKey = workspaceCacheKey(workspace: workspaceKey)
+        return rebaseInFlight[wsCacheKey] == true
     }
 
     // MARK: - Phase UX-3b: Git Integration Merge API
@@ -306,7 +333,10 @@ extension GitCacheState {
             cache.conflicts = []
         }
         gitIntegrationStatusCache[result.project] = cache
-        fetchGitStatus(workspaceKey: result.project)
+        if selectedProjectName == result.project,
+           let workspace = selectedWorkspaceKey {
+            fetchGitStatus(workspaceKey: workspace)
+        }
     }
 
     func handleGitIntegrationStatusResult(_ result: GitIntegrationStatusResult) {
@@ -323,10 +353,11 @@ extension GitCacheState {
 
     func gitMergeToDefault(workspaceKey: String, defaultBranch: String = "main") {
         guard connectionState == .connected else { return }
-        mergeInFlight[workspaceKey] = true
-        var cache = gitIntegrationStatusCache[workspaceKey] ?? GitIntegrationStatusCache.empty()
+        let projectKey = selectedProjectName
+        mergeInFlight[projectKey] = true
+        var cache = gitIntegrationStatusCache[projectKey] ?? GitIntegrationStatusCache.empty()
         cache.isLoading = true
-        gitIntegrationStatusCache[workspaceKey] = cache
+        gitIntegrationStatusCache[projectKey] = cache
         wsClient?.requestGitMergeToDefault(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -336,7 +367,8 @@ extension GitCacheState {
 
     func gitMergeContinue(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        mergeInFlight[workspaceKey] = true
+        let projectKey = selectedProjectName
+        mergeInFlight[projectKey] = true
         wsClient?.requestGitMergeContinue(
             project: selectedProjectName
         )
@@ -344,7 +376,8 @@ extension GitCacheState {
 
     func gitMergeAbort(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        mergeInFlight[workspaceKey] = true
+        let projectKey = selectedProjectName
+        mergeInFlight[projectKey] = true
         wsClient?.requestGitMergeAbort(
             project: selectedProjectName
         )
@@ -352,20 +385,23 @@ extension GitCacheState {
 
     func fetchGitIntegrationStatus(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        var cache = gitIntegrationStatusCache[workspaceKey] ?? GitIntegrationStatusCache.empty()
+        let projectKey = selectedProjectName
+        var cache = gitIntegrationStatusCache[projectKey] ?? GitIntegrationStatusCache.empty()
         cache.isLoading = true
-        gitIntegrationStatusCache[workspaceKey] = cache
+        gitIntegrationStatusCache[projectKey] = cache
         wsClient?.requestGitIntegrationStatus(
             project: selectedProjectName
         )
     }
 
     func getGitIntegrationStatusCache(workspaceKey: String) -> GitIntegrationStatusCache? {
-        return gitIntegrationStatusCache[workspaceKey]
+        let projectKey = selectedProjectName
+        return gitIntegrationStatusCache[projectKey]
     }
 
     func isMergeInFlight(workspaceKey: String) -> Bool {
-        return mergeInFlight[workspaceKey] == true
+        let projectKey = selectedProjectName
+        return mergeInFlight[projectKey] == true
     }
 
     // MARK: - Phase UX-4: Git Rebase onto Default API
@@ -386,15 +422,19 @@ extension GitCacheState {
             cache.conflicts = []
         }
         gitIntegrationStatusCache[result.project] = cache
-        fetchGitStatus(workspaceKey: result.project)
+        if selectedProjectName == result.project,
+           let workspace = selectedWorkspaceKey {
+            fetchGitStatus(workspaceKey: workspace)
+        }
     }
 
     func gitRebaseOntoDefault(workspaceKey: String, defaultBranch: String = "main") {
         guard connectionState == .connected else { return }
-        rebaseOntoDefaultInFlight[workspaceKey] = true
-        var cache = gitIntegrationStatusCache[workspaceKey] ?? GitIntegrationStatusCache.empty()
+        let projectKey = selectedProjectName
+        rebaseOntoDefaultInFlight[projectKey] = true
+        var cache = gitIntegrationStatusCache[projectKey] ?? GitIntegrationStatusCache.empty()
         cache.isLoading = true
-        gitIntegrationStatusCache[workspaceKey] = cache
+        gitIntegrationStatusCache[projectKey] = cache
         wsClient?.requestGitRebaseOntoDefault(
             project: selectedProjectName,
             workspace: workspaceKey,
@@ -404,7 +444,8 @@ extension GitCacheState {
 
     func gitRebaseOntoDefaultContinue(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        rebaseOntoDefaultInFlight[workspaceKey] = true
+        let projectKey = selectedProjectName
+        rebaseOntoDefaultInFlight[projectKey] = true
         wsClient?.requestGitRebaseOntoDefaultContinue(
             project: selectedProjectName
         )
@@ -412,14 +453,16 @@ extension GitCacheState {
 
     func gitRebaseOntoDefaultAbort(workspaceKey: String) {
         guard connectionState == .connected else { return }
-        rebaseOntoDefaultInFlight[workspaceKey] = true
+        let projectKey = selectedProjectName
+        rebaseOntoDefaultInFlight[projectKey] = true
         wsClient?.requestGitRebaseOntoDefaultAbort(
             project: selectedProjectName
         )
     }
 
     func isRebaseOntoDefaultInFlight(workspaceKey: String) -> Bool {
-        return rebaseOntoDefaultInFlight[workspaceKey] == true
+        let projectKey = selectedProjectName
+        return rebaseOntoDefaultInFlight[projectKey] == true
     }
 
     // MARK: - Phase UX-5: Git Reset Integration Worktree API

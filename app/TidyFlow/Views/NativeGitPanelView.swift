@@ -296,18 +296,21 @@ struct GitCommitInputSection: View {
         Binding(
             get: {
                 guard let ws = appState.selectedWorkspaceKey else { return "" }
-                return gitCache.commitMessage[ws] ?? ""
+                let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
+                return gitCache.commitMessage[key] ?? ""
             },
             set: { newValue in
                 guard let ws = appState.selectedWorkspaceKey else { return }
-                gitCache.commitMessage[ws] = newValue
+                let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
+                gitCache.commitMessage[key] = newValue
             }
         )
     }
 
     private var currentMessage: String {
         guard let ws = appState.selectedWorkspaceKey else { return "" }
-        return gitCache.commitMessage[ws] ?? ""
+        let key = appState.globalWorkspaceKey(projectName: appState.selectedProjectName, workspaceName: ws)
+        return gitCache.commitMessage[key] ?? ""
     }
 
     private var hasStagedChanges: Bool {
