@@ -1,14 +1,13 @@
 use axum::extract::ws::WebSocket;
 use serde_json::Value;
 use std::path::Path;
-use std::process::Command;
 use tracing::{info, warn};
 
 use crate::server::context::{
     resolve_workspace, update_task_history, HandlerContext, SharedAppState,
 };
 use crate::server::git;
-use crate::server::protocol::{AIGitCommit, ClientMessage, GitBranchInfo, ServerMessage};
+use crate::server::protocol::{ClientMessage, GitBranchInfo, ServerMessage};
 use crate::server::ws::send_message;
 use crate::util::shell_launch::{wrap_command_for_login_zsh, LOGIN_ZSH_PATH};
 
@@ -269,74 +268,6 @@ pub async fn handle_message(
     }
 }
 
-/// 内部函数：执行 AI 智能提交逻辑（委托式：AI 代理执行 git 操作，我们解析结果）
-pub(crate) fn run_ai_commit_internal(
-    workspace_root: &Path,
-    ai_agent: &str,
-    pid_holder: Option<&std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
-) -> Result<AIGitCommitOutput, String> {
-    // 检查是否为 git 仓库
-    if git::utils::get_git_repo_root(workspace_root).is_none() {
-        return Err("Not a git repository".to_string());
-    }
-
-    // 快速检查：是否有变更
-    if !has_changes(workspace_root)? {
-        return Ok(AIGitCommitOutput {
-            message: "No changes to commit".to_string(),
-            commits: vec![],
-        });
-    }
-
-    // 构建提示词 → 交给 AI 执行 → 解析结果
-    let prompt = build_ai_commit_prompt();
-    let agent_args = build_ai_agent_command(ai_agent, &prompt)?;
-    let ai_output = execute_ai_agent(workspace_root, &agent_args, pid_holder)?;
-    let ai_result = parse_ai_commit_result(&ai_output)?;
-
-    Ok(AIGitCommitOutput {
-        message: format!(
-            "AI commit completed. Created {} commit(s).",
-            ai_result.len()
-        ),
-        commits: ai_result,
-    })
-}
-
-/// 快速检查是否有变更（暂存或未暂存）
-fn has_changes(workspace_root: &Path) -> Result<bool, String> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| format!("Failed to check git status: {}", e))?;
-
-    Ok(output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty())
-}
-
-/// 构建 AI 提交提示词（所有分析交给 AI 自行完成）
-fn build_ai_commit_prompt() -> String {
-    r#"你是一个 Git 提交助手。请在当前目录分析变更并执行智能提交。这是纯本地操作，禁止任何网络请求。
-
-请按以下步骤执行：
-1. 运行 `git log --oneline -10` 了解现有提交风格（Conventional Commits 与否、中英文），并沿用
-2. 运行 `git status` 和 `git diff` 理解所有变更（含未追踪文件）
-3. 对未追踪文件进行判断：构建产物、缓存、IDE 配置、依赖目录、敏感文件等不应入库的文件，追加到 `.gitignore`（如已存在则跳过）
-4. 将应提交的变更按逻辑分组为原子提交（按模块/关注点）
-5. 对每组执行 `git add <files>` 然后 `git commit -m "<message>"`（若修改了 `.gitignore`，将其纳入第一个提交）
-6. 以严格 JSON 格式输出结果（只输出 JSON，不要输出其他内容）：
-```json
-{
-  "success": true,
-  "message": "操作结果描述",
-  "commits": [
-    { "sha": "短SHA", "message": "提交消息", "files": ["文件路径"] }
-  ]
-}
-```"#
-    .to_string()
-}
-
 /// 构建 AI 代理命令
 pub fn build_ai_agent_command(agent: &str, prompt: &str) -> Result<Vec<String>, String> {
     match agent {
@@ -445,65 +376,6 @@ pub fn execute_ai_agent(
         stdout.len()
     );
     Ok(stdout.to_string())
-}
-
-/// 解析 AI 输出为提交结果（委托式：AI 已执行提交，直接解析结果 JSON）
-fn parse_ai_commit_result(output: &str) -> Result<Vec<AIGitCommit>, String> {
-    let json_str = extract_json_from_output(output)?;
-    let value: Value = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Failed to parse AI output as JSON: {}", e))?;
-
-    // 兼容 envelope 格式：某些 agent 输出 { "response": "..." } 或 { "result": "..." }
-    let inner = extract_inner_json(&value);
-
-    let success = inner
-        .get("success")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    if !success {
-        let message = inner
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown error");
-        return Err(format!("AI commit failed: {}", message));
-    }
-
-    let commits = inner
-        .get("commits")
-        .and_then(|v| v.as_array())
-        .ok_or("Missing 'commits' field in AI output")?;
-
-    let mut result = Vec::new();
-    for commit in commits {
-        let sha = commit
-            .get("sha")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let message = commit
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let files = commit
-            .get("files")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        result.push(AIGitCommit {
-            sha,
-            message,
-            files,
-        });
-    }
-
-    Ok(result)
 }
 
 /// 从 envelope 格式中提取内层 JSON（兼容 { "response": "..." } 等包装）
@@ -651,12 +523,6 @@ fn extract_balanced_json(text: &str) -> Option<String> {
     None
 }
 
-/// AI 提交输出
-pub(crate) struct AIGitCommitOutput {
-    pub(crate) message: String,
-    pub(crate) commits: Vec<AIGitCommit>,
-}
-
 /// 取消 AI 任务（按 project + workspace + operation_type 查找）
 pub async fn handle_cancel_ai_task(
     project: &str,
@@ -734,21 +600,8 @@ pub async fn handle_cancel_ai_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_ai_commit_prompt, execute_ai_agent};
+    use super::execute_ai_agent;
     use tempfile::tempdir;
-
-    #[test]
-    fn ai_commit_prompt_should_require_git_add_and_git_commit() {
-        let prompt = build_ai_commit_prompt();
-        assert!(
-            prompt.contains("git add"),
-            "AI 提交提示词必须包含 git add 约束"
-        );
-        assert!(
-            prompt.contains("git commit"),
-            "AI 提交提示词必须包含 git commit 约束"
-        );
-    }
 
     #[test]
     fn execute_ai_agent_should_reject_empty_args() {
