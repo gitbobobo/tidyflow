@@ -1154,6 +1154,79 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    func evolutionControlState(project: String, workspace: String) -> (
+        canStart: Bool,
+        canStop: Bool,
+        canResume: Bool,
+        isStartPending: Bool,
+        isStopPending: Bool,
+        isResumePending: Bool
+    ) {
+        let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
+        let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
+        if let pendingAction = evolutionPendingActionByWorkspace[key] {
+            return (
+                canStart: false,
+                canStop: false,
+                canResume: false,
+                isStartPending: pendingAction == "start",
+                isStopPending: pendingAction == "stop",
+                isResumePending: pendingAction == "resume"
+            )
+        }
+
+        let status = Self.normalizedEvolutionControlStatus(
+            evolutionItem(project: project, workspace: normalizedWorkspace)?.status
+        )
+        switch status {
+        case nil:
+            return (
+                canStart: true,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false
+            )
+        case "queued", "running":
+            return (
+                canStart: false,
+                canStop: true,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false
+            )
+        case "interrupted", "stopped":
+            return (
+                canStart: false,
+                canStop: false,
+                canResume: true,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false
+            )
+        case "completed", "failed_exhausted", "failed_system":
+            return (
+                canStart: true,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false
+            )
+        default:
+            return (
+                canStart: false,
+                canStop: false,
+                canResume: false,
+                isStartPending: false,
+                isStopPending: false,
+                isResumePending: false
+            )
+        }
+    }
+
     func requestEvidenceSnapshot(project: String, workspace: String) {
         let normalizedWorkspace = normalizeEvolutionWorkspaceName(workspace)
         let key = globalWorkspaceKey(project: project, workspace: normalizedWorkspace)
@@ -1389,6 +1462,12 @@ final class MobileAppState: ObservableObject {
             return ["implement_general", "implement_visual"]
         }
         return [normalized]
+    }
+
+    private static func normalizedEvolutionControlStatus(_ status: String?) -> String? {
+        guard let status else { return nil }
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
     }
 
     private static func defaultEvolutionProfiles() -> [EvolutionStageProfileInfoV2] {

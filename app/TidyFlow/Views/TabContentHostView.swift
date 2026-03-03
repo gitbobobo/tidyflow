@@ -1556,6 +1556,32 @@ struct EvolutionTabView: View {
         appState.evolutionControlCapability(project: project, workspace: workspace)
     }
 
+    /// 主控制按钮：运行中显示“停止”，其他状态显示“开始”。
+    private var primaryControlShowsStop: Bool {
+        controlCapability.canStop || controlCapability.isStopPending
+    }
+
+    private var canTriggerPrimaryControlAction: Bool {
+        controlCapability.canStart || controlCapability.canStop
+    }
+
+    private var primaryControlButtonTitle: String {
+        primaryControlShowsStop
+            ? "evolution.page.action.stop".localized
+            : "evolution.page.action.startManual".localized
+    }
+
+    private var primaryControlButtonSymbol: String {
+        if primaryControlShowsStop {
+            return controlCapability.isStopPending ? "clock" : "stop.fill"
+        }
+        return controlCapability.isStartPending ? "clock" : "play.fill"
+    }
+
+    private var primaryControlButtonTint: Color {
+        primaryControlShowsStop ? .red : .green
+    }
+
     private let evolutionStageOrder: [String] = [
         "direction",
         "plan",
@@ -1925,30 +1951,14 @@ struct EvolutionTabView: View {
                         Spacer(minLength: 12)
                         HStack(spacing: 6) {
                             Button {
-                                startCurrentWorkspace()
+                                triggerPrimaryControlAction()
                             } label: {
-                                if controlCapability.isStartPending {
-                                    Label("evolution.page.action.startManual".localized, systemImage: "clock")
-                                } else {
-                                    Label("evolution.page.action.startManual".localized, systemImage: "play.fill")
-                                }
+                                Label(primaryControlButtonTitle, systemImage: primaryControlButtonSymbol)
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
-                            .disabled(!controlCapability.canStart)
-                            Button {
-                                guard controlCapability.canStop else { return }
-                                appState.stopEvolution(project: project, workspace: workspace)
-                            } label: {
-                                if controlCapability.isStopPending {
-                                    Label("evolution.page.action.stop".localized, systemImage: "clock")
-                                } else {
-                                    Label("evolution.page.action.stop".localized, systemImage: "stop.fill")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(!controlCapability.canStop)
+                            .tint(primaryControlButtonTint)
+                            .disabled(!canTriggerPrimaryControlAction)
                             Button {
                                 guard controlCapability.canResume else { return }
                                 appState.resumeEvolution(project: project, workspace: workspace)
@@ -2550,6 +2560,17 @@ struct EvolutionTabView: View {
             loopRoundLimit: loopRoundLimit,
             profiles: profiles
         )
+    }
+
+    private func triggerPrimaryControlAction() {
+        guard let workspace else { return }
+        if controlCapability.canStop {
+            appState.stopEvolution(project: project, workspace: workspace)
+            return
+        }
+        if controlCapability.canStart {
+            startCurrentWorkspace()
+        }
     }
 
     private func syncStartOptionsFromCurrentItem() {

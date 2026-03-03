@@ -1250,6 +1250,36 @@ struct MobileEvolutionView: View {
     private var item: EvolutionWorkspaceItemV2? {
         appState.evolutionItem(project: project, workspace: workspace)
     }
+    private var controlState: (
+        canStart: Bool,
+        canStop: Bool,
+        canResume: Bool,
+        isStartPending: Bool,
+        isStopPending: Bool,
+        isResumePending: Bool
+    ) {
+        appState.evolutionControlState(project: project, workspace: workspace)
+    }
+    private var primaryControlShowsStop: Bool {
+        controlState.canStop || controlState.isStopPending
+    }
+    private var canTriggerPrimaryControlAction: Bool {
+        controlState.canStart || controlState.canStop
+    }
+    private var primaryControlButtonTitle: String {
+        primaryControlShowsStop
+            ? "evolution.page.action.stop".localized
+            : "evolution.page.action.startManual".localized
+    }
+    private var primaryControlButtonSymbol: String {
+        if primaryControlShowsStop {
+            return controlState.isStopPending ? "clock" : "stop.fill"
+        }
+        return controlState.isStartPending ? "clock" : "play.fill"
+    }
+    private var primaryControlButtonTint: Color {
+        primaryControlShowsStop ? .red : .green
+    }
     private let evolutionStageOrder: [String] = [
         "direction",
         "plan",
@@ -1346,6 +1376,7 @@ struct MobileEvolutionView: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 80)
+                        .disabled(!controlState.canStart)
                 }
 
                 Text("evolution.page.workspace.verifyLoopFixed".localized)
@@ -1354,26 +1385,26 @@ struct MobileEvolutionView: View {
 
                 HStack(spacing: 8) {
                     Button {
-                        startEvolution()
+                        triggerPrimaryControlAction()
                     } label: {
-                        Label("evolution.page.action.startManual".localized, systemImage: "play.fill")
+                        Label(primaryControlButtonTitle, systemImage: primaryControlButtonSymbol)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    Button {
-                        appState.stopEvolution(project: project, workspace: workspace)
-                    } label: {
-                        Label("evolution.page.action.stop".localized, systemImage: "stop.fill")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .tint(primaryControlButtonTint)
+                    .disabled(!canTriggerPrimaryControlAction)
                     Button {
                         appState.resumeEvolution(project: project, workspace: workspace)
                     } label: {
-                        Label("evolution.page.action.resume".localized, systemImage: "arrow.clockwise")
+                        if controlState.isResumePending {
+                            Label("evolution.page.action.resume".localized, systemImage: "clock")
+                        } else {
+                            Label("evolution.page.action.resume".localized, systemImage: "arrow.clockwise")
+                        }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(!controlState.canResume)
                 }
 
                 Button {
@@ -2064,6 +2095,16 @@ struct MobileEvolutionView: View {
             loopRoundLimit: loopRoundLimit,
             profiles: values
         )
+    }
+
+    private func triggerPrimaryControlAction() {
+        if controlState.canStop {
+            appState.stopEvolution(project: project, workspace: workspace)
+            return
+        }
+        if controlState.canStart {
+            startEvolution()
+        }
     }
 
     private func syncStartOptionsFromItem() {
