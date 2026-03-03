@@ -23,8 +23,6 @@ struct ClientSettings: Codable {
     var customCommands: [CustomCommand]
     /// 工作空间快捷键映射：key 为 "0"-"9"，value 为 "projectName/workspaceName"
     var workspaceShortcuts: [String: String]
-    /// 用于提交操作的 AI Agent
-    var commitAIAgent: String?
     /// 用于合并操作的 AI Agent
     var mergeAIAgent: String?
     /// 固定端口，0 表示动态分配
@@ -39,20 +37,16 @@ struct ClientSettings: Codable {
     enum CodingKeys: String, CodingKey {
         case customCommands
         case workspaceShortcuts
-        case commitAIAgent = "commit_ai_agent"
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
         case appLanguage = "app_language"
         case evolutionAgentProfiles = "evolution_agent_profiles"
-        // 旧字段，仅用于解码迁移
-        case selectedAIAgent = "selected_ai_agent"
     }
 
     init(
         customCommands: [CustomCommand] = [],
         workspaceShortcuts: [String: String] = [:],
-        commitAIAgent: String? = nil,
         mergeAIAgent: String? = nil,
         fixedPort: Int = 0,
         remoteAccessEnabled: Bool = false,
@@ -61,7 +55,6 @@ struct ClientSettings: Codable {
     ) {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
-        self.commitAIAgent = commitAIAgent
         self.mergeAIAgent = mergeAIAgent
         self.fixedPort = fixedPort
         self.remoteAccessEnabled = remoteAccessEnabled
@@ -73,30 +66,21 @@ struct ClientSettings: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         customCommands = try container.decodeIfPresent([CustomCommand].self, forKey: .customCommands) ?? []
         workspaceShortcuts = try container.decodeIfPresent([String: String].self, forKey: .workspaceShortcuts) ?? [:]
-        commitAIAgent = try container.decodeIfPresent(String.self, forKey: .commitAIAgent)
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
         fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
         remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
         appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? "system"
         evolutionAgentProfiles = [:]
-        // 兼容旧字段迁移
-        let oldAgent = try container.decodeIfPresent(String.self, forKey: .selectedAIAgent)
-        if let old = oldAgent {
-            if commitAIAgent == nil { commitAIAgent = old }
-            if mergeAIAgent == nil { mergeAIAgent = old }
-        }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(customCommands, forKey: .customCommands)
         try container.encode(workspaceShortcuts, forKey: .workspaceShortcuts)
-        try container.encodeIfPresent(commitAIAgent, forKey: .commitAIAgent)
         try container.encodeIfPresent(mergeAIAgent, forKey: .mergeAIAgent)
         try container.encode(fixedPort, forKey: .fixedPort)
         try container.encode(remoteAccessEnabled, forKey: .remoteAccessEnabled)
         try container.encode(appLanguage, forKey: .appLanguage)
-        // 不编码旧字段 selectedAIAgent
     }
 }
 

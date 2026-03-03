@@ -381,6 +381,7 @@ extension AppState {
             "verify",
             "judge",
             "report",
+            "auto_commit",
         ]
     }
 
