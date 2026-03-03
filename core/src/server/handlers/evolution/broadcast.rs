@@ -30,6 +30,7 @@ impl EvolutionManager {
             stage_started_ats,
             stage_duration_ms,
             terminal_reason_code,
+            terminal_error_message,
             rate_limit_error_message,
         ) = {
             let state = self.state.lock().await;
@@ -52,6 +53,7 @@ impl EvolutionManager {
                 entry.stage_started_ats.clone(),
                 entry.stage_duration_ms.clone(),
                 entry.terminal_reason_code.clone(),
+                entry.terminal_error_message.clone(),
                 entry.rate_limit_error_message.clone(),
             )
         };
@@ -83,6 +85,7 @@ impl EvolutionManager {
                 executions: session_executions,
                 active_agents: active_agents(&stage_statuses),
                 terminal_reason_code,
+                terminal_error_message,
                 rate_limit_error_message,
             },
         )

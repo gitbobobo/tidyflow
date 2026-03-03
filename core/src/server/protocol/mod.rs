@@ -1440,6 +1440,8 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         terminal_reason_code: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        terminal_error_message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         rate_limit_error_message: Option<String>,
     },
     #[serde(rename = "evo_judge_result")]
@@ -1792,6 +1794,8 @@ pub struct EvolutionWorkspaceItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_reason_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_error_message: Option<String>,
 }
 
@@ -1837,6 +1841,8 @@ pub struct EvolutionCycleHistoryItem {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_error_message: Option<String>,
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
     pub stages: Vec<EvolutionCycleStageHistoryEntry>,

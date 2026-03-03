@@ -311,6 +311,7 @@ impl EvolutionManager {
             "chat_map_file": "chat.map.json",
             "handoff_file": "handoff.md",
             "terminal_reason_code": entry.terminal_reason_code.clone(),
+            "terminal_error_message": entry.terminal_error_message.clone(),
             "rate_limit_recovery": {
                 "resume_at": entry.rate_limit_resume_at.clone(),
                 "last_error": entry.rate_limit_error_message.clone(),

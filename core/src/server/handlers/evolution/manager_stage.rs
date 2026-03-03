@@ -2920,6 +2920,7 @@ impl EvolutionManager {
                     entry.last_judge_result = Some(judge_pass);
                     if judge_pass {
                         entry.terminal_reason_code = None;
+                        entry.terminal_error_message = None;
                         emit_judge = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
@@ -2929,6 +2930,7 @@ impl EvolutionManager {
                         next_stage = "report".to_string();
                     } else if entry.verify_iteration + 1 < entry.verify_iteration_limit {
                         entry.terminal_reason_code = None;
+                        entry.terminal_error_message = None;
                         entry.verify_iteration += 1;
                         for stage_name in [
                             "implement_general",
@@ -3016,6 +3018,7 @@ impl EvolutionManager {
                         entry.status = "failed_exhausted".to_string();
                         entry.terminal_reason_code =
                             Some("evo_verify_iteration_exhausted".to_string());
+                        entry.terminal_error_message = None;
                         emit_judge = Some((
                             entry.project.clone(),
                             entry.workspace.clone(),
@@ -3029,11 +3032,13 @@ impl EvolutionManager {
                     if entry.status != "failed_system" {
                         entry.status = if entry.last_judge_result.unwrap_or(false) {
                             entry.terminal_reason_code = None;
+                            entry.terminal_error_message = None;
                             "completed".to_string()
                         } else {
                             if entry.terminal_reason_code.is_none() {
                                 entry.terminal_reason_code = Some("evo_judge_failed".to_string());
                             }
+                            entry.terminal_error_message = None;
                             "failed_exhausted".to_string()
                         };
                     }
@@ -3185,6 +3190,7 @@ impl EvolutionManager {
                     entry.status = "queued".to_string();
                     entry.last_judge_result = None;
                     entry.terminal_reason_code = None;
+                    entry.terminal_error_message = None;
                     entry.rate_limit_resume_at = None;
                     entry.rate_limit_error_message = None;
                     entry.llm_defined_acceptance_criteria.clear();
@@ -3318,6 +3324,7 @@ impl EvolutionManager {
             entry.status = "interrupted".to_string();
             entry.stop_requested = true;
             entry.terminal_reason_code = Some("evo_stop_requested".to_string());
+            entry.terminal_error_message = None;
             Some((
                 entry.project.clone(),
                 entry.workspace.clone(),
@@ -3359,6 +3366,25 @@ impl EvolutionManager {
         err: &str,
         ctx: &HandlerContext,
     ) {
+        let normalized_err = {
+            let trimmed = err.trim();
+            let base = if trimmed.is_empty() {
+                format!("{}: missing error details", code)
+            } else {
+                trimmed.to_string()
+            };
+            if base.chars().count() > 1200 {
+                let mut shortened = String::with_capacity(1203);
+                for ch in base.chars().take(1200) {
+                    shortened.push(ch);
+                }
+                shortened.push_str("...");
+                shortened
+            } else {
+                base
+            }
+        };
+
         let maybe = {
             let mut state = self.state.lock().await;
             let Some(entry) = state.workspaces.get_mut(key) else {
@@ -3366,6 +3392,9 @@ impl EvolutionManager {
             };
             entry.status = "failed_system".to_string();
             entry.terminal_reason_code = Some(code.to_string());
+            entry.terminal_error_message = Some(normalized_err.clone());
+            entry.rate_limit_resume_at = None;
+            entry.rate_limit_error_message = None;
             Some((
                 entry.project.clone(),
                 entry.workspace.clone(),
@@ -3386,7 +3415,7 @@ impl EvolutionManager {
                     ts: Utc::now().to_rfc3339(),
                     source: "system".to_string(),
                     code: code.to_string(),
-                    message: err.to_string(),
+                    message: normalized_err,
                     context: None,
                 },
             )

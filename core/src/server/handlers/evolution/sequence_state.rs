@@ -242,6 +242,7 @@ mod tests {
                     llm_defined_acceptance_criteria: Vec::new(),
                     last_judge_result: None,
                     terminal_reason_code: None,
+                    terminal_error_message: None,
                     rate_limit_resume_at: None,
                     rate_limit_error_message: None,
                     stage_profiles: Vec::new(),

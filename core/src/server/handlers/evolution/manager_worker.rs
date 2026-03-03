@@ -372,6 +372,7 @@ impl EvolutionManager {
             entry
                 .stage_statuses
                 .insert(stage.to_string(), "pending".to_string());
+            entry.terminal_error_message = None;
             entry.rate_limit_resume_at = Some(resume_at_rfc3339.clone());
             entry.rate_limit_error_message = Some(truncate_error_message(err, 800));
         }
@@ -413,6 +414,7 @@ impl EvolutionManager {
             entry
                 .stage_statuses
                 .insert(stage.to_string(), "pending".to_string());
+            entry.terminal_error_message = None;
             entry.rate_limit_resume_at = Some(resume_at_rfc3339.clone());
             entry.rate_limit_error_message = Some(truncate_error_message(err, 800));
         }
@@ -462,6 +464,7 @@ impl EvolutionManager {
                             } else {
                                 entry.rate_limit_resume_at = None;
                                 entry.rate_limit_error_message = None;
+                                entry.terminal_error_message = None;
                                 entry.status = "queued".to_string();
                                 should_emit_recovered = true;
                             }
@@ -473,6 +476,7 @@ impl EvolutionManager {
                             );
                             entry.rate_limit_resume_at = None;
                             entry.rate_limit_error_message = None;
+                            entry.terminal_error_message = None;
                             should_emit_recovered = true;
                         }
                     }

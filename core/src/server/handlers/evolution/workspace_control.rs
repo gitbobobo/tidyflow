@@ -233,6 +233,7 @@ impl EvolutionManager {
                     llm_defined_acceptance_criteria: Vec::new(),
                     last_judge_result: None,
                     terminal_reason_code: None,
+                    terminal_error_message: None,
                     rate_limit_resume_at: None,
                     rate_limit_error_message: None,
                     stage_profiles,
@@ -398,6 +399,8 @@ impl EvolutionManager {
             };
             entry.stop_requested = false;
             entry.status = "queued".to_string();
+            entry.terminal_reason_code = None;
+            entry.terminal_error_message = None;
             entry.rate_limit_resume_at = None;
             entry.rate_limit_error_message = None;
         }
@@ -476,6 +479,7 @@ impl EvolutionManager {
                 executions: w.session_executions.clone(),
                 active_agents: active_agents(&w.stage_statuses),
                 terminal_reason_code: w.terminal_reason_code.clone(),
+                terminal_error_message: w.terminal_error_message.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
             });
         }
@@ -560,6 +564,11 @@ impl EvolutionManager {
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
+            let mut fallback_terminal_error_message: Option<String> = None;
+            let terminal_error_message = json["terminal_error_message"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
 
             // 读取各阶段文件
             let mut stages: Vec<EvolutionCycleStageHistoryEntry> = Vec::new();
@@ -584,6 +593,14 @@ impl EvolutionManager {
                     .as_str()
                     .unwrap_or("unknown")
                     .to_string();
+                if fallback_terminal_error_message.is_none() {
+                    fallback_terminal_error_message = stage_json
+                        .get("error")
+                        .and_then(|v| v.get("message"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+                }
                 // 只包含已完成的阶段
                 if stage_status != "done" {
                     continue;
@@ -632,6 +649,7 @@ impl EvolutionManager {
                 created_at,
                 updated_at,
                 terminal_reason_code,
+                terminal_error_message: terminal_error_message.or(fallback_terminal_error_message),
                 executions,
                 stages,
             });
