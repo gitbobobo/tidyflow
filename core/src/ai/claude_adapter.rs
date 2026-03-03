@@ -36,6 +36,7 @@ struct ClaudeToolState {
     tool_name: String,
     status: String,
     input: Value,
+    title: Option<String>,
     output: Option<String>,
     error: Option<String>,
 }
@@ -49,8 +50,14 @@ impl ClaudeToolState {
                 "source": "claude_code"
             }
         });
-        if let Some(output) = self.output.as_ref() {
-            tool_state["output"] = Value::String(output.clone());
+        if let Some(title) = self.title.as_ref() {
+            tool_state["title"] = Value::String(title.clone());
+        }
+        // read 卡片默认不展示正文，避免历史回放中出现超大输出。
+        if self.tool_name != "read" {
+            if let Some(output) = self.output.as_ref() {
+                tool_state["output"] = Value::String(output.clone());
+            }
         }
         if let Some(error) = self.error.as_ref() {
             tool_state["error"] = Value::String(error.clone());
@@ -263,6 +270,61 @@ impl ClaudeCodeAgent {
         }
     }
 
+    fn tool_path_from_input(input: &Value) -> Option<String> {
+        input
+            .get("filePath")
+            .and_then(|v| v.as_str())
+            .or_else(|| input.get("path").and_then(|v| v.as_str()))
+            .or_else(|| input.get("file_path").and_then(|v| v.as_str()))
+            .or_else(|| input.get("file").and_then(|v| v.as_str()))
+            .or_else(|| input.get("uri").and_then(|v| v.as_str()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    fn put_path_aliases(input: &mut Value, path: &str) {
+        let Some(obj) = input.as_object_mut() else {
+            return;
+        };
+        if !obj.contains_key("path") {
+            obj.insert("path".to_string(), Value::String(path.to_string()));
+        }
+        if !obj.contains_key("filePath") {
+            obj.insert("filePath".to_string(), Value::String(path.to_string()));
+        }
+    }
+
+    fn normalize_tool_input(input: Value) -> Value {
+        let mut normalized = input;
+        if let Some(path) = Self::tool_path_from_input(&normalized) {
+            Self::put_path_aliases(&mut normalized, &path);
+        }
+        normalized
+    }
+
+    fn tool_title(tool_name: &str, input: &Value) -> Option<String> {
+        let path = Self::tool_path_from_input(input);
+        match tool_name {
+            "read" => path.map(|p| format!("read({})", p)),
+            "write" => path.map(|p| format!("write({})", p)),
+            "list" => path.map(|p| format!("list({})", p)),
+            _ => None,
+        }
+    }
+
+    fn tool_result_file_path(value: &Value) -> Option<String> {
+        value
+            .pointer("/tool_use_result/file/filePath")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                value
+                    .pointer("/tool_use_result/file/path")
+                    .and_then(|v| v.as_str())
+            })
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     fn emit_snapshot_delta(buffer: &mut String, snapshot: &str) -> Option<String> {
         if snapshot.is_empty() {
             return None;
@@ -388,7 +450,10 @@ impl ClaudeCodeAgent {
             .spawn()
             .map_err(|e| format!("Failed to spawn `claude {}`: {}", args.join(" "), e))?;
 
-        info!("[claude] process spawned successfully, pid={:?}", child.id());
+        info!(
+            "[claude] process spawned successfully, pid={:?}",
+            child.id()
+        );
 
         let stdin = child
             .stdin
@@ -421,7 +486,10 @@ impl ClaudeCodeAgent {
         let handle_ref = Arc::clone(&handle);
         let dir_for_cache = Self::normalize_directory(directory);
         tokio::spawn(async move {
-            info!("[claude reader] background reader started for {}", dir_for_cache);
+            info!(
+                "[claude reader] background reader started for {}",
+                dir_for_cache
+            );
             let mut stdout_lines = BufReader::new(stdout).lines();
             let mut stderr_lines = BufReader::new(stderr).lines();
             let mut stdout_closed = false;
@@ -636,10 +704,7 @@ impl ClaudeCodeAgent {
         )
         .await?;
 
-        self.processes
-            .lock()
-            .await
-            .insert(key, Arc::clone(&handle));
+        self.processes.lock().await.insert(key, Arc::clone(&handle));
         Ok(handle)
     }
 
@@ -647,11 +712,8 @@ impl ClaudeCodeAgent {
     async fn wait_for_init(handle: &ClaudeProcessHandle) -> Result<(), String> {
         let mut init_rx = handle.init_watch.subscribe();
         if !*init_rx.borrow() {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                init_rx.wait_for(|v| *v),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_secs(30), init_rx.wait_for(|v| *v))
+                .await
             {
                 Ok(Ok(_)) => {}
                 Ok(Err(_)) => {
@@ -721,7 +783,10 @@ impl ClaudeCodeAgent {
                             })
                             .collect();
                         if !agents.is_empty() {
-                            agents_cache.lock().await.insert(dir_key_owned.clone(), agents);
+                            agents_cache
+                                .lock()
+                                .await
+                                .insert(dir_key_owned.clone(), agents);
                         }
                     }
                     // 提取 model
@@ -977,8 +1042,7 @@ impl AiAgent for ClaudeCodeAgent {
 
         // 构造用户消息并写入 stdin（必须在等 init 前发送，因为 claude 需要 stdin 输入才输出 init）
         let prompt = Self::compose_message(message, file_refs, image_parts, audio_parts);
-        let msg_json =
-            Self::build_user_message_json(&prompt, claude_session_id_before.as_deref());
+        let msg_json = Self::build_user_message_json(&prompt, claude_session_id_before.as_deref());
         {
             let mut stdin = handle.stdin.lock().await;
             let write_result = async {
@@ -986,10 +1050,7 @@ impl AiAgent for ClaudeCodeAgent {
                     .write_all(msg_json.as_bytes())
                     .await
                     .map_err(|e| e.to_string())?;
-                stdin
-                    .write_all(b"\n")
-                    .await
-                    .map_err(|e| e.to_string())?;
+                stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
                 stdin.flush().await.map_err(|e| e.to_string())
             }
             .await;
@@ -1043,13 +1104,16 @@ impl AiAgent for ClaudeCodeAgent {
 
         tokio::spawn(async move {
             let assistant_message_id = format!("claude-assistant-{}", Uuid::new_v4());
-            let text_part_id = format!("{}-text", assistant_message_id);
             let reasoning_part_id = format!("{}-reasoning", assistant_message_id);
             let mut assistant_opened = false;
-            let mut assistant_text = String::new();
+            let mut text_part_seq: u32 = 0;
+            let mut active_text_part_id: Option<String> = None;
+            let mut text_part_buffers: HashMap<String, String> = HashMap::new();
             let mut assistant_reasoning = String::new();
             let mut parsed_claude_session_id = claude_session_id;
             let mut tool_states: HashMap<String, ClaudeToolState> = HashMap::new();
+            let mut seen_part_ids: HashSet<String> = HashSet::new();
+            let mut ordered_part_ids: Vec<String> = Vec::new();
             let mut last_usage_json: Option<Value> = None;
 
             loop {
@@ -1064,15 +1128,12 @@ impl AiAgent for ClaudeCodeAgent {
                             Ok(value) => {
                                 // 处理系统事件
                                 if value.get("type").and_then(|v| v.as_str()) == Some("system") {
-                                    let subtype = value
-                                        .get("subtype")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
+                                    let subtype =
+                                        value.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
                                     if subtype == "init" {
                                         // 从 init 事件提取斜杠命令并推送到客户端
-                                        if let Some(cmds) = value
-                                            .get("slash_commands")
-                                            .and_then(|v| v.as_array())
+                                        if let Some(cmds) =
+                                            value.get("slash_commands").and_then(|v| v.as_array())
                                         {
                                             let commands: Vec<AiSlashCommand> = cmds
                                                 .iter()
@@ -1139,13 +1200,12 @@ impl AiAgent for ClaudeCodeAgent {
                                             .unwrap_or_else(|| {
                                                 Value::Object(serde_json::Map::new())
                                             });
-                                        let raw_name = ClaudeCodeAgent::first_string(
-                                            block,
-                                            &["name", "tool"],
-                                        )
-                                        .unwrap_or_else(|| "tool".to_string());
+                                        let raw_name =
+                                            ClaudeCodeAgent::first_string(block, &["name", "tool"])
+                                                .unwrap_or_else(|| "tool".to_string());
                                         let tool_name =
                                             ClaudeCodeAgent::normalize_tool_name(&raw_name);
+                                        let input = ClaudeCodeAgent::normalize_tool_input(input);
                                         let part_id = format!(
                                             "claude-tool-{}-{}",
                                             assistant_message_id, tool_call_id
@@ -1153,22 +1213,26 @@ impl AiAgent for ClaudeCodeAgent {
                                         let state = ClaudeToolState {
                                             part_id,
                                             tool_call_id: tool_call_id.clone(),
-                                            tool_name,
+                                            tool_name: tool_name.clone(),
                                             status: "running".to_string(),
+                                            title: ClaudeCodeAgent::tool_title(&tool_name, &input),
                                             input,
                                             output: None,
                                             error: None,
                                         };
-                                        tool_states
-                                            .insert(tool_call_id.clone(), state.clone());
+                                        tool_states.insert(tool_call_id.clone(), state.clone());
+                                        if seen_part_ids.insert(state.part_id.clone()) {
+                                            ordered_part_ids.push(state.part_id.clone());
+                                        }
+                                        // tool 卡片与文本片段按时间轴交错，工具开始后切分下一段文本。
+                                        active_text_part_id = None;
                                         if !assistant_opened {
                                             assistant_opened = true;
-                                            let _ =
-                                                tx.send(Ok(AiEvent::MessageUpdated {
-                                                    message_id: assistant_message_id.clone(),
-                                                    role: "assistant".to_string(),
-                                                    selection_hint: None,
-                                                }));
+                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                message_id: assistant_message_id.clone(),
+                                                role: "assistant".to_string(),
+                                                selection_hint: None,
+                                            }));
                                         }
                                         let _ = tx.send(Ok(AiEvent::PartUpdated {
                                             message_id: assistant_message_id.clone(),
@@ -1220,9 +1284,21 @@ impl AiAgent for ClaudeCodeAgent {
                                                 tool_name: "tool".to_string(),
                                                 status: "running".to_string(),
                                                 input: Value::Object(serde_json::Map::new()),
+                                                title: None,
                                                 output: None,
                                                 error: None,
                                             });
+                                        if seen_part_ids.insert(entry.part_id.clone()) {
+                                            ordered_part_ids.push(entry.part_id.clone());
+                                        }
+                                        if let Some(path) =
+                                            ClaudeCodeAgent::tool_result_file_path(&value)
+                                        {
+                                            ClaudeCodeAgent::put_path_aliases(
+                                                &mut entry.input,
+                                                &path,
+                                            );
+                                        }
                                         if let Some(output) = output {
                                             entry.output = Some(output);
                                         }
@@ -1232,14 +1308,18 @@ impl AiAgent for ClaudeCodeAgent {
                                         } else {
                                             entry.status = "completed".to_string();
                                         }
+                                        entry.title = ClaudeCodeAgent::tool_title(
+                                            &entry.tool_name,
+                                            &entry.input,
+                                        );
+                                        active_text_part_id = None;
                                         if !assistant_opened {
                                             assistant_opened = true;
-                                            let _ =
-                                                tx.send(Ok(AiEvent::MessageUpdated {
-                                                    message_id: assistant_message_id.clone(),
-                                                    role: "assistant".to_string(),
-                                                    selection_hint: None,
-                                                }));
+                                            let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                message_id: assistant_message_id.clone(),
+                                                role: "assistant".to_string(),
+                                                selection_hint: None,
+                                            }));
                                         }
                                         let _ = tx.send(Ok(AiEvent::PartUpdated {
                                             message_id: assistant_message_id.clone(),
@@ -1252,18 +1332,20 @@ impl AiAgent for ClaudeCodeAgent {
                                         || block_type.contains("reasoning")
                                     {
                                         if let Some(text) =
-                                            block.get("text").and_then(|v| v.as_str())
+                                            block.get("text").and_then(|v| v.as_str()).or_else(
+                                                || block.get("thinking").and_then(|v| v.as_str()),
+                                            )
                                         {
                                             if !assistant_opened {
                                                 assistant_opened = true;
-                                                let _ = tx.send(Ok(
-                                                    AiEvent::MessageUpdated {
-                                                        message_id: assistant_message_id
-                                                            .clone(),
-                                                        role: "assistant".to_string(),
-                                                        selection_hint: None,
-                                                    },
-                                                ));
+                                                let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                    message_id: assistant_message_id.clone(),
+                                                    role: "assistant".to_string(),
+                                                    selection_hint: None,
+                                                }));
+                                            }
+                                            if seen_part_ids.insert(reasoning_part_id.clone()) {
+                                                ordered_part_ids.push(reasoning_part_id.clone());
                                             }
                                             assistant_reasoning.push_str(text);
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
@@ -1281,25 +1363,43 @@ impl AiAgent for ClaudeCodeAgent {
                                         if let Some(text) = block
                                             .get("text")
                                             .and_then(|v| v.as_str())
-                                            .or_else(|| {
-                                                block.get("delta").and_then(|v| v.as_str())
-                                            })
+                                            .or_else(|| block.get("delta").and_then(|v| v.as_str()))
                                         {
                                             if !assistant_opened {
                                                 assistant_opened = true;
-                                                let _ = tx.send(Ok(
-                                                    AiEvent::MessageUpdated {
-                                                        message_id: assistant_message_id
-                                                            .clone(),
-                                                        role: "assistant".to_string(),
-                                                        selection_hint: None,
-                                                    },
-                                                ));
+                                                let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                    message_id: assistant_message_id.clone(),
+                                                    role: "assistant".to_string(),
+                                                    selection_hint: None,
+                                                }));
                                             }
-                                            assistant_text.push_str(text);
+                                            let part_id = if let Some(existing) =
+                                                active_text_part_id.as_ref()
+                                            {
+                                                existing.clone()
+                                            } else {
+                                                text_part_seq += 1;
+                                                let new_id = format!(
+                                                    "{}-text-{}",
+                                                    assistant_message_id, text_part_seq
+                                                );
+                                                active_text_part_id = Some(new_id.clone());
+                                                text_part_buffers
+                                                    .entry(new_id.clone())
+                                                    .or_default();
+                                                if seen_part_ids.insert(new_id.clone()) {
+                                                    ordered_part_ids.push(new_id.clone());
+                                                }
+                                                new_id
+                                            };
+                                            if let Some(buffer) =
+                                                text_part_buffers.get_mut(&part_id)
+                                            {
+                                                buffer.push_str(text);
+                                            }
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
                                                 message_id: assistant_message_id.clone(),
-                                                part_id: text_part_id.clone(),
+                                                part_id,
                                                 part_type: "text".to_string(),
                                                 field: "text".to_string(),
                                                 delta: text.to_string(),
@@ -1312,26 +1412,44 @@ impl AiAgent for ClaudeCodeAgent {
                                         if let Some(snapshot) =
                                             block.get("text").and_then(|v| v.as_str())
                                         {
+                                            let part_id = if let Some(existing) =
+                                                active_text_part_id.as_ref()
+                                            {
+                                                existing.clone()
+                                            } else {
+                                                text_part_seq += 1;
+                                                let new_id = format!(
+                                                    "{}-text-{}",
+                                                    assistant_message_id, text_part_seq
+                                                );
+                                                active_text_part_id = Some(new_id.clone());
+                                                text_part_buffers
+                                                    .entry(new_id.clone())
+                                                    .or_default();
+                                                if seen_part_ids.insert(new_id.clone()) {
+                                                    ordered_part_ids.push(new_id.clone());
+                                                }
+                                                new_id
+                                            };
                                             if let Some(delta) =
                                                 ClaudeCodeAgent::emit_snapshot_delta(
-                                                    &mut assistant_text,
+                                                    text_part_buffers
+                                                        .entry(part_id.clone())
+                                                        .or_default(),
                                                     snapshot,
                                                 )
                                             {
                                                 if !assistant_opened {
                                                     assistant_opened = true;
-                                                    let _ = tx.send(Ok(
-                                                        AiEvent::MessageUpdated {
-                                                            message_id: assistant_message_id
-                                                                .clone(),
-                                                            role: "assistant".to_string(),
-                                                            selection_hint: None,
-                                                        },
-                                                    ));
+                                                    let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                        message_id: assistant_message_id.clone(),
+                                                        role: "assistant".to_string(),
+                                                        selection_hint: None,
+                                                    }));
                                                 }
                                                 let _ = tx.send(Ok(AiEvent::PartDelta {
                                                     message_id: assistant_message_id.clone(),
-                                                    part_id: text_part_id.clone(),
+                                                    part_id,
                                                     part_type: "text".to_string(),
                                                     field: "text".to_string(),
                                                     delta,
@@ -1354,26 +1472,37 @@ impl AiAgent for ClaudeCodeAgent {
                                     if let Some(snapshot) =
                                         value.get("result").and_then(|v| v.as_str())
                                     {
-                                        if let Some(delta) =
-                                            ClaudeCodeAgent::emit_snapshot_delta(
-                                                &mut assistant_text,
-                                                snapshot,
-                                            )
+                                        let part_id = if let Some(existing) =
+                                            active_text_part_id.as_ref()
                                         {
+                                            existing.clone()
+                                        } else {
+                                            text_part_seq += 1;
+                                            let new_id = format!(
+                                                "{}-text-{}",
+                                                assistant_message_id, text_part_seq
+                                            );
+                                            text_part_buffers.entry(new_id.clone()).or_default();
+                                            if seen_part_ids.insert(new_id.clone()) {
+                                                ordered_part_ids.push(new_id.clone());
+                                            }
+                                            new_id
+                                        };
+                                        if let Some(delta) = ClaudeCodeAgent::emit_snapshot_delta(
+                                            text_part_buffers.entry(part_id.clone()).or_default(),
+                                            snapshot,
+                                        ) {
                                             if !assistant_opened {
                                                 assistant_opened = true;
-                                                let _ = tx.send(Ok(
-                                                    AiEvent::MessageUpdated {
-                                                        message_id: assistant_message_id
-                                                            .clone(),
-                                                        role: "assistant".to_string(),
-                                                        selection_hint: None,
-                                                    },
-                                                ));
+                                                let _ = tx.send(Ok(AiEvent::MessageUpdated {
+                                                    message_id: assistant_message_id.clone(),
+                                                    role: "assistant".to_string(),
+                                                    selection_hint: None,
+                                                }));
                                             }
                                             let _ = tx.send(Ok(AiEvent::PartDelta {
                                                 message_id: assistant_message_id.clone(),
-                                                part_id: text_part_id.clone(),
+                                                part_id,
                                                 part_type: "text".to_string(),
                                                 field: "text".to_string(),
                                                 delta,
@@ -1392,14 +1521,29 @@ impl AiAgent for ClaudeCodeAgent {
                                         selection_hint: None,
                                     }));
                                 }
-                                assistant_text.push_str(trimmed);
-                                assistant_text.push('\n');
+                                let part_id = if let Some(existing) = active_text_part_id.as_ref() {
+                                    existing.clone()
+                                } else {
+                                    text_part_seq += 1;
+                                    let new_id =
+                                        format!("{}-text-{}", assistant_message_id, text_part_seq);
+                                    active_text_part_id = Some(new_id.clone());
+                                    text_part_buffers.entry(new_id.clone()).or_default();
+                                    if seen_part_ids.insert(new_id.clone()) {
+                                        ordered_part_ids.push(new_id.clone());
+                                    }
+                                    new_id
+                                };
+                                let delta = format!("{}\n", trimmed);
+                                if let Some(buffer) = text_part_buffers.get_mut(&part_id) {
+                                    buffer.push_str(&delta);
+                                }
                                 let _ = tx.send(Ok(AiEvent::PartDelta {
                                     message_id: assistant_message_id.clone(),
-                                    part_id: text_part_id.clone(),
+                                    part_id,
                                     part_type: "text".to_string(),
                                     field: "text".to_string(),
-                                    delta: format!("{}\n", trimmed),
+                                    delta,
                                 }));
                             }
                         }
@@ -1407,9 +1551,7 @@ impl AiAgent for ClaudeCodeAgent {
                     Err(broadcast::error::RecvError::Closed) => {
                         // 进程退出
                         if !assistant_opened {
-                            let _ = tx.send(Err(
-                                "Claude process exited unexpectedly".to_string()
-                            ));
+                            let _ = tx.send(Err("Claude process exited unexpectedly".to_string()));
                         }
                         break;
                     }
@@ -1422,21 +1564,33 @@ impl AiAgent for ClaudeCodeAgent {
 
             // 构建助手消息并存入内存
             let mut assistant_parts = Vec::<AiPart>::new();
-            if !assistant_reasoning.is_empty() {
-                assistant_parts.push(AiPart {
-                    id: reasoning_part_id,
-                    part_type: "reasoning".to_string(),
-                    text: Some(assistant_reasoning),
-                    ..Default::default()
-                });
-            }
-            if !assistant_text.trim().is_empty() {
-                assistant_parts.push(AiPart::new_text(text_part_id, assistant_text));
-            }
-            let mut tool_parts = tool_states.values().cloned().collect::<Vec<_>>();
-            tool_parts.sort_by(|a, b| a.part_id.cmp(&b.part_id));
-            for state in tool_parts {
-                assistant_parts.push(state.to_part());
+            let tool_parts_by_id: HashMap<String, ClaudeToolState> = tool_states
+                .values()
+                .cloned()
+                .map(|state| (state.part_id.clone(), state))
+                .collect();
+
+            for part_id in &ordered_part_ids {
+                if part_id == &reasoning_part_id {
+                    if !assistant_reasoning.is_empty() {
+                        assistant_parts.push(AiPart {
+                            id: reasoning_part_id.clone(),
+                            part_type: "reasoning".to_string(),
+                            text: Some(assistant_reasoning.clone()),
+                            ..Default::default()
+                        });
+                    }
+                    continue;
+                }
+                if let Some(text) = text_part_buffers.get(part_id) {
+                    if !text.trim().is_empty() {
+                        assistant_parts.push(AiPart::new_text(part_id.clone(), text.clone()));
+                    }
+                    continue;
+                }
+                if let Some(state) = tool_parts_by_id.get(part_id) {
+                    assistant_parts.push(state.to_part());
+                }
             }
 
             {
@@ -1638,11 +1792,7 @@ impl AiAgent for ClaudeCodeAgent {
             }
         }
         // Claude CLI 支持通过别名切换模型
-        for (id, name) in [
-            ("sonnet", "Sonnet"),
-            ("opus", "Opus"),
-            ("haiku", "Haiku"),
-        ] {
+        for (id, name) in [("sonnet", "Sonnet"), ("opus", "Opus"), ("haiku", "Haiku")] {
             if !models.iter().any(|m| m.id == id) {
                 models.push(AiModelInfo {
                     id: id.to_string(),
@@ -1707,5 +1857,72 @@ impl AiAgent for ClaudeCodeAgent {
             commands.extend(cached.iter().cloned());
         }
         Ok(commands)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_tool_input_adds_path_aliases() {
+        let input = serde_json::json!({
+            "file_path": "/tmp/demo.txt",
+            "limit": 10
+        });
+        let normalized = ClaudeCodeAgent::normalize_tool_input(input);
+        assert_eq!(
+            normalized.get("path").and_then(|v| v.as_str()),
+            Some("/tmp/demo.txt")
+        );
+        assert_eq!(
+            normalized.get("filePath").and_then(|v| v.as_str()),
+            Some("/tmp/demo.txt")
+        );
+    }
+
+    #[test]
+    fn tool_title_for_read_uses_normalized_path() {
+        let input = serde_json::json!({
+            "file_path": "README.md"
+        });
+        let normalized = ClaudeCodeAgent::normalize_tool_input(input);
+        let title = ClaudeCodeAgent::tool_title("read", &normalized);
+        assert_eq!(title.as_deref(), Some("read(README.md)"));
+    }
+
+    #[test]
+    fn tool_result_file_path_extracts_from_payload() {
+        let payload = serde_json::json!({
+            "tool_use_result": {
+                "file": {
+                    "filePath": "/Users/demo/project/src/main.rs"
+                }
+            }
+        });
+        let path = ClaudeCodeAgent::tool_result_file_path(&payload);
+        assert_eq!(path.as_deref(), Some("/Users/demo/project/src/main.rs"));
+    }
+
+    #[test]
+    fn read_tool_part_omits_large_output_and_keeps_title() {
+        let part = ClaudeToolState {
+            part_id: "p-1".to_string(),
+            tool_call_id: "c-1".to_string(),
+            tool_name: "read".to_string(),
+            status: "completed".to_string(),
+            input: serde_json::json!({ "path": "README.md" }),
+            title: Some("read(README.md)".to_string()),
+            output: Some("huge-content".to_string()),
+            error: None,
+        }
+        .to_part();
+
+        let state = part.tool_state.expect("tool_state should exist");
+        assert_eq!(
+            state.get("title").and_then(|v| v.as_str()),
+            Some("read(README.md)")
+        );
+        assert!(state.get("output").is_none());
     }
 }

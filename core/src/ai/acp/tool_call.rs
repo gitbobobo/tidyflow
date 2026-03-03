@@ -311,14 +311,9 @@ pub(crate) fn parse_tool_call_update_content(
         .and_then(normalize_non_empty_token)
         .or_else(|| tool_kind.clone())
         .or_else(|| {
-            tool_title.as_ref().map(|title| {
-                title
-                    .split(':')
-                    .next()
-                    .unwrap_or(title)
-                    .trim()
-                    .to_string()
-            })
+            tool_title
+                .as_ref()
+                .map(|title| title.split(':').next().unwrap_or(title).trim().to_string())
         })
         .unwrap_or_else(|| "unknown".to_string());
     let status = Some(normalize_tool_status(
@@ -364,7 +359,11 @@ pub(crate) fn parse_tool_call_update_content(
         .cloned()
         .filter(|v| !v.is_null());
     let raw_output = explicit_output.or_else(|| {
-        if nested_content.as_ref().map(|v| v.is_array()).unwrap_or(false) {
+        if nested_content
+            .as_ref()
+            .map(|v| v.is_array())
+            .unwrap_or(false)
+        {
             // 数组格式：仅在终态时作为 raw_output
             if is_terminal_status {
                 nested_content.clone()
@@ -833,7 +832,10 @@ mod tests {
         });
         let p3 = parse_tool_call_update_event(&update_done, "tool_call_update").unwrap();
         let state = merge_tool_state(Some(&state), &p3);
-        assert_eq!(state.get("status").and_then(|v| v.as_str()), Some("completed"));
+        assert_eq!(
+            state.get("status").and_then(|v| v.as_str()),
+            Some("completed")
+        );
         assert_eq!(
             state.get("output").and_then(|v| v.as_str()),
             Some("file content here")
@@ -848,10 +850,7 @@ mod tests {
     #[test]
     fn test_extract_tool_output_text_array() {
         let val = json!([{"content": {"text": "output text", "type": "text"}, "type": "content"}]);
-        assert_eq!(
-            extract_tool_output_text(&val),
-            Some("output text".into())
-        );
+        assert_eq!(extract_tool_output_text(&val), Some("output text".into()));
     }
 
     #[test]
