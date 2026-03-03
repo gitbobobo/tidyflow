@@ -10,7 +10,7 @@ use crate::server::handlers::ai::{ensure_agent, resolve_directory};
 const RATE_LIMIT_WAIT_SLICE_MS: i64 = 3_000;
 const RATE_LIMIT_WAIT_MIN_MS: i64 = 200;
 const RATE_LIMIT_FALLBACK_WAIT_SECS: i64 = 60;
-const SESSION_RECOVERY_FALLBACK_WAIT_SECS: i64 = 15;
+const SESSION_RECOVERY_FALLBACK_WAIT_SECS: i64 = 600;
 
 fn is_terminal_status(status: &str) -> bool {
     matches!(status, "completed" | "failed_exhausted" | "failed_system")
