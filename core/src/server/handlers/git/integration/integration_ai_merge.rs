@@ -5,6 +5,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::application::task::list_tasks_snapshot_message;
 use crate::server::context::{
     push_task_history, resolve_workspace_branch, update_task_history, HandlerContext,
     RunningAITaskEntry, SharedAppState, TaskHistoryEntry,
@@ -175,6 +176,12 @@ pub async fn handle_git_ai_merge(
         {
             let status = if success { "completed" } else { "failed" };
             update_task_history(&task_history, &task_id_clone, status, Some(message.clone())).await;
+            let snapshot = list_tasks_snapshot_message(&task_history).await;
+            let _ = crate::server::context::send_task_broadcast_message(
+                &task_broadcast_tx,
+                &origin_conn_id,
+                snapshot,
+            );
         }
         // 从注册表移除
         running_ai_tasks_cleanup.lock().await.remove(&task_id_clone);
@@ -218,6 +225,12 @@ pub async fn handle_git_ai_merge(
         },
     )
     .await;
+    let snapshot = list_tasks_snapshot_message(&ctx.task_history).await;
+    let _ = crate::server::context::send_task_broadcast_message(
+        &ctx.task_broadcast_tx,
+        &ctx.conn_meta.conn_id,
+        snapshot,
+    );
 
     Ok(true)
 }

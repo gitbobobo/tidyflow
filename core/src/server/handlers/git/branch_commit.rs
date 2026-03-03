@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::path::Path;
 use tracing::{info, warn};
 
+use crate::application::task::list_tasks_snapshot_message;
 use crate::server::context::{
     resolve_workspace, update_task_history, HandlerContext, SharedAppState,
 };
@@ -593,6 +594,12 @@ pub async fn handle_cancel_ai_task(
             Some("已取消".to_string()),
         )
         .await;
+        let snapshot = list_tasks_snapshot_message(&ctx.task_history).await;
+        let _ = crate::server::context::send_task_broadcast_message(
+            &ctx.task_broadcast_tx,
+            &ctx.conn_meta.conn_id,
+            snapshot,
+        );
         crate::application::sidebar_status::notify_workspace_sidebar_changed(
             ctx, project, workspace,
         )

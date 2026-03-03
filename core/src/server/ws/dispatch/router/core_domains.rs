@@ -46,13 +46,7 @@ pub(super) async fn handle_settings_domain(
     socket: &mut WebSocket,
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
-    crate::server::handlers::settings::handle_settings_message(
-        client_msg,
-        socket,
-        &ctx.app_state,
-        &ctx.save_tx,
-    )
-    .await
+    crate::server::handlers::settings::handle_settings_message(client_msg, socket, ctx).await
 }
 
 pub(super) fn handle_log_domain(client_msg: &ClientMessage) -> Result<bool, String> {

@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::application::task::list_tasks_snapshot_message;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
@@ -203,6 +204,12 @@ pub async fn run_project_command(
         },
     )
     .await;
+    broadcast_tasks_snapshot_with(
+        &ctx.task_history,
+        &ctx.task_broadcast_tx,
+        &ctx.conn_meta.conn_id,
+    )
+    .await;
 
     let tx = ctx.cmd_output_tx.clone();
     let rc = ctx.running_commands.clone();
@@ -332,6 +339,7 @@ pub async fn run_project_command(
                     Some(format!("执行失败: {}", e)),
                 )
                 .await;
+                broadcast_tasks_snapshot_with(&task_history, &broadcast_tx, &origin_conn_id).await;
                 let msg = ServerMessage::ProjectCommandCompleted {
                     project: p,
                     workspace: w,
@@ -384,6 +392,7 @@ pub async fn run_project_command(
         );
         let status = if ok { "completed" } else { "failed" };
         update_task_history(&task_history, &tid, status, Some(message)).await;
+        broadcast_tasks_snapshot_with(&task_history, &broadcast_tx, &origin_conn_id).await;
     });
 
     HandlerReply {
@@ -474,6 +483,12 @@ pub async fn cancel_project_command(
         Some("已取消".to_string()),
     )
     .await;
+    broadcast_tasks_snapshot_with(
+        &ctx.task_history,
+        &ctx.task_broadcast_tx,
+        &ctx.conn_meta.conn_id,
+    )
+    .await;
 
     HandlerReply {
         response: cancelled_msg.clone(),
@@ -506,6 +521,16 @@ async fn emit_project_command_output_line(
     let _ = tx.send(msg.clone()).await;
     let _ = crate::server::context::send_task_broadcast_message(broadcast_tx, origin_conn_id, msg);
     crate::server::perf::record_project_command_output_emitted();
+}
+
+async fn broadcast_tasks_snapshot_with(
+    task_history: &crate::server::context::SharedTaskHistory,
+    broadcast_tx: &crate::server::context::TaskBroadcastTx,
+    origin_conn_id: &str,
+) {
+    let snapshot = list_tasks_snapshot_message(task_history).await;
+    let _ =
+        crate::server::context::send_task_broadcast_message(broadcast_tx, origin_conn_id, snapshot);
 }
 
 fn preferred_login_shell() -> &'static str {

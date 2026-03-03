@@ -1,6 +1,6 @@
 use axum::extract::ws::WebSocket;
 
-use crate::server::context::SharedAppState;
+use crate::server::context::HandlerContext;
 use crate::server::handlers::dispatch_handlers;
 use crate::server::protocol::ClientMessage;
 
@@ -11,12 +11,11 @@ mod query;
 pub async fn handle_settings_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    save_tx: &tokio::sync::mpsc::Sender<()>,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     dispatch_handlers!(
-        query::handle_query_message(client_msg, socket, app_state),
-        mutate::handle_mutate_message(client_msg, socket, app_state, save_tx),
+        query::handle_query_message(client_msg, socket, ctx),
+        mutate::handle_mutate_message(client_msg, socket, ctx),
     );
 
     Ok(false)

@@ -1,16 +1,17 @@
 use axum::extract::ws::WebSocket;
 use tracing::info;
 
-use crate::application::settings::{save_client_settings, SaveClientSettingsParams};
-use crate::server::context::SharedAppState;
+use crate::application::settings::{
+    get_client_settings_message, save_client_settings, SaveClientSettingsParams,
+};
+use crate::server::context::HandlerContext;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
 
 pub async fn handle_mutate_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    save_tx: &tokio::sync::mpsc::Sender<()>,
+    ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
         ClientMessage::SaveClientSettings {
@@ -23,7 +24,7 @@ pub async fn handle_mutate_message(
         } => {
             info!("SaveClientSettings request");
             save_client_settings(
-                app_state,
+                &ctx.app_state,
                 SaveClientSettingsParams {
                     custom_commands: custom_commands.clone(),
                     workspace_shortcuts: workspace_shortcuts.clone(),
@@ -35,7 +36,7 @@ pub async fn handle_mutate_message(
             )
             .await;
 
-            let _ = save_tx.send(()).await;
+            let _ = ctx.save_tx.send(()).await;
 
             send_message(
                 socket,
@@ -45,6 +46,13 @@ pub async fn handle_mutate_message(
                 },
             )
             .await?;
+
+            let snapshot = get_client_settings_message(&ctx.app_state).await;
+            let _ = crate::server::context::send_task_broadcast_message(
+                &ctx.task_broadcast_tx,
+                &ctx.conn_meta.conn_id,
+                snapshot,
+            );
             Ok(true)
         }
         _ => Ok(false),
