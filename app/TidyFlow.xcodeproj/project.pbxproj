@@ -165,6 +165,7 @@
 			TST10001 /* ChatScrollPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10011 /* ChatScrollPolicyTests.swift */; };
 			TST10002 /* AIChatProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10012 /* AIChatProtocolModelsTests.swift */; };
 			TST10003 /* AIPlanCardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10013 /* AIPlanCardViewModelTests.swift */; };
+			TST10004 /* AIChatStoreSessionCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10014 /* AIChatStoreSessionCacheTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -207,6 +208,7 @@
 			TST10011 /* ChatScrollPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollPolicyTests.swift; sourceTree = "<group>"; };
 			TST10012 /* AIChatProtocolModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatProtocolModelsTests.swift; sourceTree = "<group>"; };
 			TST10013 /* AIPlanCardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPlanCardViewModelTests.swift; sourceTree = "<group>"; };
+			TST10014 /* AIChatStoreSessionCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStoreSessionCacheTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -494,6 +496,7 @@
 			TST10030 /* TidyFlowTests */ = {
 				isa = PBXGroup;
 				children = (
+					TST10014 /* AIChatStoreSessionCacheTests.swift */,
 					TST10013 /* AIPlanCardViewModelTests.swift */,
 					TST10012 /* AIChatProtocolModelsTests.swift */,
 					TST10011 /* ChatScrollPolicyTests.swift */,
@@ -904,6 +907,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				TST10004 /* AIChatStoreSessionCacheTests.swift in Sources */,
 				TST10003 /* AIPlanCardViewModelTests.swift in Sources */,
 				TST10002 /* AIChatProtocolModelsTests.swift in Sources */,
 				TST10001 /* ChatScrollPolicyTests.swift in Sources */,

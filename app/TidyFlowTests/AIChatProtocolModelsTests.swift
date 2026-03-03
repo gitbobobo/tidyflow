@@ -738,7 +738,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
                     ]
                 )
             ],
-            selectionHint: nil
+            selectionHint: nil,
+            truncated: false
         )
 
         let mapped = payload.toChatMessages()
@@ -750,5 +751,93 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual((part?.toolRawInput as? [String: Any])?["command"] as? String, "ls")
         XCTAssertEqual(part?.toolLocations?.first?.uri, "file:///tmp/a")
         XCTAssertEqual(part?.toolLocations?.first?.line, 9)
+    }
+
+    func testAISessionMessagesParsesTruncatedFlag() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "s1",
+            "messages": [],
+            "truncated": true,
+        ]
+
+        let result = AISessionMessagesV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.truncated, true)
+    }
+
+    func testAISessionMessagesUpdateParsesOpsMode() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "s1",
+            "cache_revision": 8,
+            "is_streaming": true,
+            "ops": [
+                [
+                    "part_delta": [
+                        "message_id": "m1",
+                        "part_id": "p1",
+                        "part_type": "text",
+                        "field": "text",
+                        "delta": "hello",
+                    ]
+                ]
+            ],
+        ]
+
+        let result = AISessionMessagesUpdateV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.cacheRevision, 8)
+        XCTAssertEqual(result?.isStreaming, true)
+        guard let op = result?.ops?.first else {
+            XCTFail("缺少 ops")
+            return
+        }
+        switch op {
+        case let .partDelta(messageId, partId, partType, field, delta):
+            XCTAssertEqual(messageId, "m1")
+            XCTAssertEqual(partId, "p1")
+            XCTAssertEqual(partType, "text")
+            XCTAssertEqual(field, "text")
+            XCTAssertEqual(delta, "hello")
+        default:
+            XCTFail("ops 解析类型错误")
+        }
+    }
+
+    func testAISessionMessagesUpdateParsesMessagesMode() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "codex",
+            "session_id": "s2",
+            "cache_revision": 11,
+            "is_streaming": false,
+            "messages": [
+                [
+                    "id": "m1",
+                    "role": "assistant",
+                    "parts": [
+                        [
+                            "id": "p1",
+                            "part_type": "text",
+                            "text": "snapshot",
+                        ]
+                    ]
+                ]
+            ],
+        ]
+
+        let result = AISessionMessagesUpdateV2.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.cacheRevision, 11)
+        XCTAssertEqual(result?.isStreaming, false)
+        XCTAssertEqual(result?.messages?.count, 1)
+        XCTAssertEqual(result?.messages?.first?.parts.first?.text, "snapshot")
+        XCTAssertNil(result?.ops)
     }
 }
