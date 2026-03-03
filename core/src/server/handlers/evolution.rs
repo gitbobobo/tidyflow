@@ -6,7 +6,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::server::context::HandlerContext;
-use crate::server::protocol::ClientMessage;
+use crate::server::protocol::{ClientMessage, ServerMessage};
 
 static EVOLUTION_MANAGER: OnceLock<Arc<EvolutionManager>> = OnceLock::new();
 
@@ -37,6 +37,81 @@ pub async fn handle_evolution_message(
     ctx: &HandlerContext,
 ) -> Result<bool, String> {
     route::handle_message(client_msg, socket, ctx).await
+}
+
+pub(crate) async fn query_evolution_snapshot(
+    _project: Option<&str>,
+    _workspace: Option<&str>,
+    ctx: &HandlerContext,
+) -> Result<ServerMessage, String> {
+    let Some(manager) = maybe_manager() else {
+        return Err("evolution manager init failed".to_string());
+    };
+    let snapshot = manager.build_snapshot(ctx).await;
+    Ok(ServerMessage::EvoSnapshot {
+        scheduler: snapshot.scheduler,
+        workspace_items: snapshot.workspace_items,
+    })
+}
+
+pub(crate) async fn query_evolution_agent_profile(
+    project: &str,
+    workspace: &str,
+    ctx: &HandlerContext,
+) -> Result<ServerMessage, String> {
+    let Some(manager) = maybe_manager() else {
+        return Err("evolution manager init failed".to_string());
+    };
+    let saved = manager.get_agent_profile(project, workspace, ctx).await;
+    Ok(ServerMessage::EvoAgentProfile {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        stage_profiles: saved,
+    })
+}
+
+pub(crate) async fn query_evolution_cycle_history(
+    project: &str,
+    workspace: &str,
+    ctx: &HandlerContext,
+) -> Result<ServerMessage, String> {
+    let Some(manager) = maybe_manager() else {
+        return Err("evolution manager init failed".to_string());
+    };
+    let cycles = manager.list_cycle_history(project, workspace, ctx).await?;
+    Ok(ServerMessage::EvoCycleHistory {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        cycles,
+    })
+}
+
+pub(crate) async fn query_evolution_stage_chat(
+    project: &str,
+    workspace: &str,
+    cycle_id: &str,
+    stage: &str,
+) -> Result<ServerMessage, String> {
+    let Some(manager) = maybe_manager() else {
+        return Err("evolution manager init failed".to_string());
+    };
+    match manager
+        .open_stage_chat(project, workspace, cycle_id, stage)
+        .await
+    {
+        Some((ai_tool, session_id)) => Ok(ServerMessage::EvoStageChatOpened {
+            project: project.to_string(),
+            workspace: workspace.to_string(),
+            cycle_id: cycle_id.to_string(),
+            stage: stage.to_string(),
+            ai_tool,
+            session_id,
+        }),
+        None => Err(format!(
+            "evo_chat_session_not_found: project={}, workspace={}, cycle_id={}, stage={}",
+            project, workspace, cycle_id, stage
+        )),
+    }
 }
 
 fn maybe_manager() -> Option<Arc<EvolutionManager>> {

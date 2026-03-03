@@ -61,6 +61,12 @@ fn map_session_config_options(
 const AI_SESSION_MESSAGES_DEFAULT_PAGE_SIZE: usize = 50;
 const AI_SESSION_MESSAGES_MAX_PAGE_SIZE: usize = 200;
 
+async fn touch_directory_last_used(ai_state: &SharedAIState, ai_tool: &str, directory: &str) {
+    let mut ai = ai_state.lock().await;
+    let dir_key = tool_directory_key(ai_tool, directory);
+    ai.directory_last_used_ms.insert(dir_key, now_ms());
+}
+
 #[derive(Debug, Clone)]
 struct AiSessionMessagesPage {
     requested_before_message_id: Option<String>,
@@ -150,32 +156,51 @@ fn recompute_ai_session_page_meta_after_truncate(
     }
 }
 
-pub(super) async fn handle_ai_session_list(
+pub(super) async fn handle_ai_read_via_http_required(
     msg: &ClientMessage,
     socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    ai_state: &SharedAIState,
 ) -> Result<bool, String> {
-    let ClientMessage::AISessionList {
-        project_name,
-        workspace_name,
-        ai_tool,
-        limit,
-    } = msg
-    else {
+    let action = match msg {
+        ClientMessage::AISessionList { .. } => Some("ai_session_list"),
+        ClientMessage::AISessionMessages { .. } => Some("ai_session_messages"),
+        ClientMessage::AISessionStatus { .. } => Some("ai_session_status"),
+        ClientMessage::AIProviderList { .. } => Some("ai_provider_list"),
+        ClientMessage::AIAgentList { .. } => Some("ai_agent_list"),
+        ClientMessage::AISlashCommands { .. } => Some("ai_slash_commands"),
+        ClientMessage::AISessionConfigOptions { .. } => Some("ai_session_config_options"),
+        _ => None,
+    };
+    let Some(action) = action else {
         return Ok(false);
     };
-    let ai_tool = normalize_ai_tool(ai_tool)?;
 
+    send_message(
+        socket,
+        &ServerMessage::Error {
+            code: "read_via_http_required".to_string(),
+            message: format!(
+                "{} must be fetched via HTTP API (/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/...)",
+                action
+            ),
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
+pub(crate) async fn query_ai_session_list(
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    limit: Option<u32>,
+) -> Result<ServerMessage, String> {
+    let ai_tool = normalize_ai_tool(ai_tool)?;
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
     let agent = ensure_agent(ai_state, &ai_tool).await?;
     ensure_maintenance(ai_state).await;
-
-    {
-        let mut ai = ai_state.lock().await;
-        let dir_key = tool_directory_key(&ai_tool, &directory);
-        ai.directory_last_used_ms.insert(dir_key, now_ms());
-    }
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
 
     info!(
         "AISessionList: project={}, workspace={}, ai_tool={}, directory={}",
@@ -193,7 +218,7 @@ pub(super) async fn handle_ai_session_list(
         }
     }
     let total_sessions = sessions.len();
-    if let Some(limit) = *limit {
+    if let Some(limit) = limit {
         if limit > 0 {
             sessions.truncate(limit as usize);
         }
@@ -211,56 +236,37 @@ pub(super) async fn handle_ai_session_list(
     let sessions: Vec<_> = sessions
         .into_iter()
         .map(|s| crate::server::protocol::ai::SessionInfo {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
+            project_name: project_name.to_string(),
+            workspace_name: workspace_name.to_string(),
             id: s.id,
             title: s.title,
             updated_at: s.updated_at,
         })
         .collect();
 
-    send_message(
-        socket,
-        &crate::server::protocol::ServerMessage::AISessionListV2 {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            sessions,
-        },
-    )
-    .await?;
-
-    Ok(true)
+    Ok(ServerMessage::AISessionListV2 {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        sessions,
+    })
 }
 
-pub(super) async fn handle_ai_session_messages(
-    msg: &ClientMessage,
-    socket: &mut WebSocket,
+pub(crate) async fn query_ai_session_messages(
     app_state: &SharedAppState,
     ai_state: &SharedAIState,
-) -> Result<bool, String> {
-    let ClientMessage::AISessionMessages {
-        project_name,
-        workspace_name,
-        ai_tool,
-        session_id,
-        before_message_id,
-        limit,
-    } = msg
-    else {
-        return Ok(false);
-    };
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+    before_message_id: Option<String>,
+    limit: Option<i64>,
+) -> Result<ServerMessage, String> {
     let ai_tool = normalize_ai_tool(ai_tool)?;
-
     let directory = resolve_directory(app_state, project_name, workspace_name).await?;
     let agent = ensure_agent(ai_state, &ai_tool).await?;
     ensure_maintenance(ai_state).await;
-
-    {
-        let mut ai = ai_state.lock().await;
-        let dir_key = tool_directory_key(&ai_tool, &directory);
-        ai.directory_last_used_ms.insert(dir_key, now_ms());
-    }
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
 
     info!(
         "AISessionMessages: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, directory={}",
@@ -285,20 +291,20 @@ pub(super) async fn handle_ai_session_messages(
         snapshot.messages
     } else {
         agent
-                .list_messages(&directory, session_id, None)
-                .await
-                .map_err(|e| {
-                    warn!(
-                        "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, error={}",
-                        project_name, workspace_name, ai_tool, session_id, before_message_id, limit, e
-                    );
-                    e
-                })?
-                .into_iter()
-                .map(map_ai_message_for_wire)
-                .collect()
+            .list_messages(&directory, session_id, None)
+            .await
+            .map_err(|e| {
+                warn!(
+                    "AISessionMessages failed: project={}, workspace={}, ai_tool={}, session_id={}, requested_before={:?}, limit={:?}, error={}",
+                    project_name, workspace_name, ai_tool, session_id, before_message_id, limit, e
+                );
+                e
+            })?
+            .into_iter()
+            .map(map_ai_message_for_wire)
+            .collect()
     };
-    let page_size = normalize_ai_session_messages_page_size(*limit);
+    let page_size = normalize_ai_session_messages_page_size(limit);
     let mut page =
         paginate_ai_session_messages(&all_messages, before_message_id.as_deref(), page_size);
     if page.requested_before_message_id.is_some() && page.applied_before_message_id.is_none() {
@@ -339,7 +345,6 @@ pub(super) async fn handle_ai_session_messages(
             .flatten()
             .unwrap_or_default();
         let inferred_hint = infer_selection_hint_from_messages(&messages);
-        // 真实接口数据优先，消息元数据推断仅作兜底。
         merge_session_selection_hint(adapter_hint, inferred_hint)
     };
     if let Some(hint) = selection_hint.as_ref() {
@@ -461,24 +466,227 @@ pub(super) async fn handle_ai_session_messages(
         truncated
     );
 
-    send_message(
-        socket,
-        &crate::server::protocol::ServerMessage::AISessionMessages {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            session_id: session_id.clone(),
-            before_message_id: page.applied_before_message_id.clone(),
-            messages,
-            has_more: page.has_more,
-            next_before_message_id: page.next_before_message_id.clone(),
-            selection_hint,
-            truncated: if truncated { Some(true) } else { None },
-        },
-    )
-    .await?;
+    Ok(ServerMessage::AISessionMessages {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        session_id: session_id.to_string(),
+        before_message_id: page.applied_before_message_id.clone(),
+        messages,
+        has_more: page.has_more,
+        next_before_message_id: page.next_before_message_id.clone(),
+        selection_hint,
+        truncated: if truncated { Some(true) } else { None },
+    })
+}
 
-    Ok(true)
+pub(crate) async fn query_ai_session_config_options(
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: Option<String>,
+) -> Result<ServerMessage, String> {
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    let options = agent
+        .list_session_config_options(&directory, session_id.as_deref())
+        .await?;
+    Ok(ServerMessage::AISessionConfigOptions {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        session_id,
+        options: map_session_config_options(options),
+    })
+}
+
+pub(crate) async fn query_ai_session_status(
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+) -> Result<ServerMessage, String> {
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    let store = {
+        let guard = ai_state.lock().await;
+        guard.session_statuses.clone()
+    };
+
+    let mut status = store
+        .get_status(&ai_tool, &directory, session_id)
+        .unwrap_or(AiSessionStatus::Idle);
+
+    if store.get_status(&ai_tool, &directory, session_id).is_none() {
+        if let Ok(s) = agent.get_session_status(&directory, session_id).await {
+            status = s;
+        }
+    }
+
+    let context_remaining_percent = agent
+        .get_session_context_usage(&directory, session_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|usage| usage.context_remaining_percent);
+
+    store.set_status_with_meta(
+        AiSessionStatusMeta {
+            project_name: project_name.to_string(),
+            workspace_name: workspace_name.to_string(),
+            ai_tool: ai_tool.clone(),
+            directory: directory.clone(),
+            session_id: session_id.to_string(),
+        },
+        status.clone(),
+    );
+
+    Ok(ServerMessage::AISessionStatusResult {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        session_id: session_id.to_string(),
+        status: status_to_info(&status, context_remaining_percent),
+    })
+}
+
+pub(crate) async fn query_ai_provider_list(
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+) -> Result<ServerMessage, String> {
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    let providers = agent.list_providers(&directory).await?;
+    let providers: Vec<_> = providers
+        .into_iter()
+        .map(|p| crate::server::protocol::ai::ProviderInfo {
+            id: p.id.clone(),
+            name: p.name,
+            models: p
+                .models
+                .into_iter()
+                .map(|m| crate::server::protocol::ai::ModelInfo {
+                    id: m.id,
+                    name: m.name,
+                    provider_id: m.provider_id,
+                    supports_image_input: m.supports_image_input,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(ServerMessage::AIProviderListResult {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        providers,
+    })
+}
+
+pub(crate) async fn query_ai_agent_list(
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+) -> Result<ServerMessage, String> {
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    let agents = agent.list_agents(&directory).await?;
+    let agents: Vec<_> = agents
+        .into_iter()
+        .filter(|a| matches!(a.mode.as_deref(), Some("primary") | Some("all")))
+        .map(|a| crate::server::protocol::ai::AgentInfo {
+            name: a.name,
+            description: a.description,
+            mode: a.mode,
+            color: a.color,
+            default_provider_id: a.default_provider_id,
+            default_model_id: a.default_model_id,
+        })
+        .collect();
+
+    Ok(ServerMessage::AIAgentListResult {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        agents,
+    })
+}
+
+pub(crate) async fn query_ai_slash_commands(
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: Option<String>,
+) -> Result<ServerMessage, String> {
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+
+    use crate::server::protocol::ai::SlashCommandInfo;
+    use std::collections::BTreeMap;
+
+    let mut command_map: BTreeMap<String, SlashCommandInfo> = BTreeMap::new();
+    if let Ok(agent) = ensure_agent(ai_state, &ai_tool).await {
+        ensure_maintenance(ai_state).await;
+        if let Ok(dynamic_commands) = agent
+            .list_slash_commands(&directory, session_id.as_deref())
+            .await
+        {
+            for cmd in dynamic_commands {
+                let info = SlashCommandInfo {
+                    name: cmd.name,
+                    description: cmd.description,
+                    action: cmd.action,
+                    input_hint: cmd.input_hint,
+                };
+                command_map.insert(info.name.clone(), info);
+            }
+        }
+    }
+
+    let local_new = SlashCommandInfo {
+        name: "new".to_string(),
+        description: "新建会话".to_string(),
+        action: "client".to_string(),
+        input_hint: None,
+    };
+    command_map.insert(local_new.name.clone(), local_new);
+
+    let commands: Vec<SlashCommandInfo> = command_map.into_values().collect();
+
+    Ok(ServerMessage::AISlashCommandsResult {
+        project_name: project_name.to_string(),
+        workspace_name: workspace_name.to_string(),
+        ai_tool,
+        session_id,
+        commands,
+    })
 }
 
 pub(super) async fn handle_ai_session_delete(
@@ -524,49 +732,6 @@ pub(super) async fn handle_ai_session_delete(
 
     let _ = agent.delete_session(&directory, session_id).await;
 
-    Ok(true)
-}
-
-pub(super) async fn handle_ai_session_config_options(
-    msg: &ClientMessage,
-    socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    ai_state: &SharedAIState,
-) -> Result<bool, String> {
-    let ClientMessage::AISessionConfigOptions {
-        project_name,
-        workspace_name,
-        ai_tool,
-        session_id,
-    } = msg
-    else {
-        return Ok(false);
-    };
-    let ai_tool = normalize_ai_tool(ai_tool)?;
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state, &ai_tool).await?;
-    ensure_maintenance(ai_state).await;
-
-    {
-        let mut ai = ai_state.lock().await;
-        let dir_key = tool_directory_key(&ai_tool, &directory);
-        ai.directory_last_used_ms.insert(dir_key, now_ms());
-    }
-
-    let options = agent
-        .list_session_config_options(&directory, session_id.as_deref())
-        .await?;
-    send_message(
-        socket,
-        &ServerMessage::AISessionConfigOptions {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            session_id: session_id.clone(),
-            options: map_session_config_options(options),
-        },
-    )
-    .await?;
     Ok(true)
 }
 
@@ -616,267 +781,6 @@ pub(super) async fn handle_ai_session_set_config_option(
         },
     )
     .await?;
-    Ok(true)
-}
-
-pub(super) async fn handle_ai_session_status(
-    msg: &ClientMessage,
-    socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    ai_state: &SharedAIState,
-) -> Result<bool, String> {
-    let ClientMessage::AISessionStatus {
-        project_name,
-        workspace_name,
-        ai_tool,
-        session_id,
-    } = msg
-    else {
-        return Ok(false);
-    };
-    let ai_tool = normalize_ai_tool(ai_tool)?;
-
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state, &ai_tool).await?;
-    ensure_maintenance(ai_state).await;
-
-    {
-        let mut ai = ai_state.lock().await;
-        let dir_key = tool_directory_key(&ai_tool, &directory);
-        ai.directory_last_used_ms.insert(dir_key, now_ms());
-    }
-
-    let store = {
-        let guard = ai_state.lock().await;
-        guard.session_statuses.clone()
-    };
-
-    let mut status = store
-        .get_status(&ai_tool, &directory, session_id)
-        .unwrap_or(AiSessionStatus::Idle);
-
-    if store.get_status(&ai_tool, &directory, session_id).is_none() {
-        if let Ok(s) = agent.get_session_status(&directory, session_id).await {
-            status = s;
-        }
-    }
-
-    let context_remaining_percent = agent
-        .get_session_context_usage(&directory, session_id)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|usage| usage.context_remaining_percent);
-
-    // 写入 meta，便于后续推送 update
-    store.set_status_with_meta(
-        AiSessionStatusMeta {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool: ai_tool.clone(),
-            directory: directory.clone(),
-            session_id: session_id.clone(),
-        },
-        status.clone(),
-    );
-
-    send_message(
-        socket,
-        &ServerMessage::AISessionStatusResult {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            session_id: session_id.clone(),
-            status: status_to_info(&status, context_remaining_percent),
-        },
-    )
-    .await?;
-
-    Ok(true)
-}
-
-pub(super) async fn handle_ai_provider_list(
-    msg: &ClientMessage,
-    socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    ai_state: &SharedAIState,
-) -> Result<bool, String> {
-    let ClientMessage::AIProviderList {
-        project_name,
-        workspace_name,
-        ai_tool,
-    } = msg
-    else {
-        return Ok(false);
-    };
-    let ai_tool = normalize_ai_tool(ai_tool)?;
-
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state, &ai_tool).await?;
-    ensure_maintenance(ai_state).await;
-
-    {
-        let mut ai = ai_state.lock().await;
-        let dir_key = tool_directory_key(&ai_tool, &directory);
-        ai.directory_last_used_ms.insert(dir_key, now_ms());
-    }
-
-    let providers = agent.list_providers(&directory).await?;
-    let providers: Vec<_> = providers
-        .into_iter()
-        .map(|p| crate::server::protocol::ai::ProviderInfo {
-            id: p.id.clone(),
-            name: p.name,
-            models: p
-                .models
-                .into_iter()
-                .map(|m| crate::server::protocol::ai::ModelInfo {
-                    id: m.id,
-                    name: m.name,
-                    provider_id: m.provider_id,
-                    supports_image_input: m.supports_image_input,
-                })
-                .collect(),
-        })
-        .collect();
-
-    send_message(
-        socket,
-        &crate::server::protocol::ServerMessage::AIProviderListResult {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            providers,
-        },
-    )
-    .await?;
-
-    Ok(true)
-}
-
-pub(super) async fn handle_ai_agent_list(
-    msg: &ClientMessage,
-    socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    ai_state: &SharedAIState,
-) -> Result<bool, String> {
-    let ClientMessage::AIAgentList {
-        project_name,
-        workspace_name,
-        ai_tool,
-    } = msg
-    else {
-        return Ok(false);
-    };
-    let ai_tool = normalize_ai_tool(ai_tool)?;
-
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state, &ai_tool).await?;
-    ensure_maintenance(ai_state).await;
-
-    {
-        let mut ai = ai_state.lock().await;
-        let dir_key = tool_directory_key(&ai_tool, &directory);
-        ai.directory_last_used_ms.insert(dir_key, now_ms());
-    }
-
-    let agents = agent.list_agents(&directory).await?;
-    // 返回 primary 和 all 模式的 agent，subagent/hidden 等不展示
-    let agents: Vec<_> = agents
-        .into_iter()
-        .filter(|a| matches!(a.mode.as_deref(), Some("primary") | Some("all")))
-        .map(|a| crate::server::protocol::ai::AgentInfo {
-            name: a.name,
-            description: a.description,
-            mode: a.mode,
-            color: a.color,
-            default_provider_id: a.default_provider_id,
-            default_model_id: a.default_model_id,
-        })
-        .collect();
-
-    send_message(
-        socket,
-        &crate::server::protocol::ServerMessage::AIAgentListResult {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            agents,
-        },
-    )
-    .await?;
-
-    Ok(true)
-}
-
-/// 返回 AI 聊天可用的斜杠命令列表
-/// 命令分为 client（前端本地执行）和 agent（发送给 AI 代理）两类
-pub(super) async fn handle_ai_slash_commands(
-    msg: &ClientMessage,
-    socket: &mut WebSocket,
-    app_state: &SharedAppState,
-    ai_state: &SharedAIState,
-) -> Result<bool, String> {
-    let ClientMessage::AISlashCommands {
-        project_name,
-        workspace_name,
-        ai_tool,
-        session_id,
-    } = msg
-    else {
-        return Ok(false);
-    };
-    let ai_tool = normalize_ai_tool(ai_tool)?;
-
-    // 验证工作空间存在，并作为 /command 的目录路由依据
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-
-    use crate::server::protocol::ai::SlashCommandInfo;
-    use std::collections::BTreeMap;
-
-    // 动态命令来源：后端代理（ACP/OpenCode 等）
-    let mut command_map: BTreeMap<String, SlashCommandInfo> = BTreeMap::new();
-    if let Ok(agent) = ensure_agent(ai_state, &ai_tool).await {
-        ensure_maintenance(ai_state).await;
-        if let Ok(dynamic_commands) = agent
-            .list_slash_commands(&directory, session_id.as_deref())
-            .await
-        {
-            for cmd in dynamic_commands {
-                let info = SlashCommandInfo {
-                    name: cmd.name,
-                    description: cmd.description,
-                    action: cmd.action,
-                    input_hint: cmd.input_hint,
-                };
-                command_map.insert(info.name.clone(), info);
-            }
-        }
-    }
-
-    // 内置兜底命令：按当前产品约定，仅保留 /new 本地命令，且优先本地语义。
-    let local_new = SlashCommandInfo {
-        name: "new".to_string(),
-        description: "新建会话".to_string(),
-        action: "client".to_string(),
-        input_hint: None,
-    };
-    command_map.insert(local_new.name.clone(), local_new);
-
-    let commands: Vec<SlashCommandInfo> = command_map.into_values().collect();
-
-    send_message(
-        socket,
-        &crate::server::protocol::ServerMessage::AISlashCommandsResult {
-            project_name: project_name.clone(),
-            workspace_name: workspace_name.clone(),
-            ai_tool,
-            session_id: session_id.clone(),
-            commands,
-        },
-    )
-    .await?;
-
     Ok(true)
 }
 

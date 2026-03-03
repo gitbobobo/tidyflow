@@ -1,5 +1,4 @@
 use axum::extract::ws::WebSocket;
-use chrono::Utc;
 use tracing::{info, warn};
 
 use crate::server::context::{resolve_workspace, HandlerContext};
@@ -8,6 +7,20 @@ use crate::server::ws::send_message;
 
 use super::profile::{direction_model_label, normalize_profiles_lenient};
 use super::{maybe_manager, StartWorkspaceReq, DEFAULT_LOOP_ROUND_LIMIT};
+
+async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Result<(), String> {
+    send_message(
+        socket,
+        &ServerMessage::Error {
+            code: "read_via_http_required".to_string(),
+            message: format!(
+                "{} must be fetched via HTTP API (/api/v1/evolution/...)",
+                action
+            ),
+        },
+    )
+    .await
+}
 
 pub(super) async fn handle_message(
     client_msg: &ClientMessage,
@@ -59,52 +72,11 @@ pub(super) async fn handle_message(
             Ok(true)
         }
         ClientMessage::EvoGetSnapshot { .. } => {
-            send_snapshot(socket, &manager, ctx).await?;
+            send_read_via_http_required(socket, "evo_get_snapshot").await?;
             Ok(true)
         }
-        ClientMessage::EvoOpenStageChat {
-            project,
-            workspace,
-            cycle_id,
-            stage,
-        } => {
-            match manager
-                .open_stage_chat(project, workspace, cycle_id, stage)
-                .await
-            {
-                Some((ai_tool, session_id)) => {
-                    send_message(
-                        socket,
-                        &ServerMessage::EvoStageChatOpened {
-                            project: project.clone(),
-                            workspace: workspace.clone(),
-                            cycle_id: cycle_id.clone(),
-                            stage: stage.clone(),
-                            ai_tool,
-                            session_id,
-                        },
-                    )
-                    .await?;
-                }
-                None => {
-                    send_message(
-                        socket,
-                        &ServerMessage::EvoError {
-                            event_id: None,
-                            event_seq: None,
-                            project: Some(project.clone()),
-                            workspace: Some(workspace.clone()),
-                            cycle_id: Some(cycle_id.clone()),
-                            ts: Utc::now().to_rfc3339(),
-                            source: "system".to_string(),
-                            code: "evo_chat_session_not_found".to_string(),
-                            message: format!("stage '{}' session not found", stage),
-                            context: None,
-                        },
-                    )
-                    .await?;
-                }
-            }
+        ClientMessage::EvoOpenStageChat { .. } => {
+            send_read_via_http_required(socket, "evo_open_stage_chat").await?;
             Ok(true)
         }
         ClientMessage::EvoUpdateAgentProfile {
@@ -142,16 +114,7 @@ pub(super) async fn handle_message(
                 "Inbound EvoGetAgentProfile: conn_id={}, remote={}, project={}, workspace={}",
                 ctx.conn_meta.conn_id, ctx.conn_meta.is_remote, project, workspace
             );
-            let saved = manager.get_agent_profile(project, workspace, ctx).await;
-            send_message(
-                socket,
-                &ServerMessage::EvoAgentProfile {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    stage_profiles: saved,
-                },
-            )
-            .await?;
+            send_read_via_http_required(socket, "evo_get_agent_profile").await?;
             Ok(true)
         }
         ClientMessage::EvoResolveBlockers {
@@ -165,17 +128,8 @@ pub(super) async fn handle_message(
             send_snapshot(socket, &manager, ctx).await?;
             Ok(true)
         }
-        ClientMessage::EvoListCycleHistory { project, workspace } => {
-            let cycles = manager.list_cycle_history(project, workspace, ctx).await?;
-            send_message(
-                socket,
-                &ServerMessage::EvoCycleHistory {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    cycles,
-                },
-            )
-            .await?;
+        ClientMessage::EvoListCycleHistory { .. } => {
+            send_read_via_http_required(socket, "evo_list_cycle_history").await?;
             Ok(true)
         }
         ClientMessage::EvoAutoCommit { project, workspace } => {

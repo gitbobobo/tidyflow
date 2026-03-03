@@ -77,15 +77,9 @@ pub(crate) async fn handle_session_routes(
     ai_state: &SharedAIState,
 ) -> Result<bool, String> {
     dispatch_handlers!(
-        session::handle_ai_session_list(client_msg, socket, app_state, ai_state),
-        session::handle_ai_session_messages(client_msg, socket, app_state, ai_state),
+        session::handle_ai_read_via_http_required(client_msg, socket),
         session::handle_ai_session_delete(client_msg, app_state, ai_state),
-        session::handle_ai_session_status(client_msg, socket, app_state, ai_state),
-        session::handle_ai_session_config_options(client_msg, socket, app_state, ai_state),
         session::handle_ai_session_set_config_option(client_msg, socket, app_state, ai_state),
-        session::handle_ai_provider_list(client_msg, socket, app_state, ai_state),
-        session::handle_ai_agent_list(client_msg, socket, app_state, ai_state),
-        session::handle_ai_slash_commands(client_msg, socket, app_state, ai_state),
     );
 
     Ok(false)
@@ -135,15 +129,10 @@ mod tests {
         trace: Arc<Mutex<Vec<&'static str>>>,
     ) -> Result<bool, String> {
         dispatch_handlers!(
-            push_and_return(trace.clone(), "session_list", false),
-            push_and_return(trace.clone(), "session_messages", false),
+            push_and_return(trace.clone(), "read_via_http_required", false),
             push_and_return(trace.clone(), "session_delete", false),
-            push_and_return(trace.clone(), "session_status", false),
-            push_and_return(trace.clone(), "session_config_options", false),
             push_and_return(trace.clone(), "session_set_config_option", false),
-            push_and_return(trace.clone(), "provider_list", true),
-            push_and_return(trace.clone(), "agent_list", true),
-            push_and_return(trace.clone(), "slash_commands", true),
+            push_and_return(trace.clone(), "session_set_config_option_2", true),
         );
         Ok(false)
     }
@@ -173,13 +162,10 @@ mod tests {
         assert_eq!(
             *trace.lock().expect("lock trace"),
             vec![
-                "session_list",
-                "session_messages",
+                "read_via_http_required",
                 "session_delete",
-                "session_status",
-                "session_config_options",
                 "session_set_config_option",
-                "provider_list"
+                "session_set_config_option_2"
             ]
         );
     }

@@ -4,6 +4,7 @@ use crate::server::protocol::ServerMessage;
 
 mod connection;
 mod dispatch;
+mod http_api;
 mod pairing;
 mod request_scope;
 mod server_runtime;

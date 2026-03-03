@@ -13,7 +13,7 @@ mod ai_test;
 pub mod file_ref;
 
 mod route;
-mod session;
+pub(crate) mod session;
 mod stream;
 mod utils;
 

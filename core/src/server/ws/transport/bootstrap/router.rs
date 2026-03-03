@@ -23,5 +23,61 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             "/pair/revoke",
             post(crate::server::ws::pairing::pair_revoke_handler),
         )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions",
+            get(crate::server::ws::http_api::ai_sessions_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/messages",
+            get(crate::server::ws::http_api::ai_session_messages_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/sessions/:session_id/status",
+            get(crate::server::ws::http_api::ai_session_status_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/providers",
+            get(crate::server::ws::http_api::ai_provider_list_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/agents",
+            get(crate::server::ws::http_api::ai_agent_list_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/slash-commands",
+            get(crate::server::ws::http_api::ai_session_slash_commands_handler),
+        )
+        .route(
+            "/api/v1/projects/:project/workspaces/:workspace/ai/:ai_tool/session-config-options",
+            get(crate::server::ws::http_api::ai_session_config_options_handler),
+        )
+        .route(
+            "/api/v1/evolution/snapshot",
+            get(crate::server::ws::http_api::evolution_snapshot_handler),
+        )
+        .route(
+            "/api/v1/evolution/projects/:project/workspaces/:workspace/agent-profile",
+            get(crate::server::ws::http_api::evolution_agent_profile_handler),
+        )
+        .route(
+            "/api/v1/evolution/projects/:project/workspaces/:workspace/cycle-history",
+            get(crate::server::ws::http_api::evolution_cycle_history_handler),
+        )
+        .route(
+            "/api/v1/evolution/projects/:project/workspaces/:workspace/stage-chat",
+            get(crate::server::ws::http_api::evolution_stage_chat_handler),
+        )
+        .route(
+            "/api/v1/evidence/projects/:project/workspaces/:workspace/snapshot",
+            get(crate::server::ws::http_api::evidence_snapshot_handler),
+        )
+        .route(
+            "/api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt",
+            get(crate::server::ws::http_api::evidence_rebuild_prompt_handler),
+        )
+        .route(
+            "/api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk",
+            get(crate::server::ws::http_api::evidence_item_chunk_handler),
+        )
         .with_state(ctx)
 }

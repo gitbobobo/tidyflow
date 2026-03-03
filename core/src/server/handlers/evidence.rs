@@ -74,6 +74,20 @@ struct EvidenceChunkPayload {
     content: Vec<u8>,
 }
 
+async fn send_read_via_http_required(socket: &mut WebSocket, action: &str) -> Result<(), String> {
+    send_message(
+        socket,
+        &ServerMessage::Error {
+            code: "read_via_http_required".to_string(),
+            message: format!(
+                "{} must be fetched via HTTP API (/api/v1/evidence/...)",
+                action
+            ),
+        },
+    )
+    .await
+}
+
 #[derive(Debug, Deserialize)]
 struct EvidenceIndexRaw {
     #[serde(rename = "$schema_version")]
@@ -122,75 +136,83 @@ struct ValidatedEvidenceIndex {
 pub async fn handle_evidence_message(
     client_msg: &ClientMessage,
     socket: &mut WebSocket,
-    ctx: &HandlerContext,
+    _ctx: &HandlerContext,
 ) -> Result<bool, String> {
     match client_msg {
-        ClientMessage::EvidenceGetSnapshot { project, workspace } => {
-            let payload = get_evidence_snapshot(project, workspace, ctx).await?;
-            send_message(
-                socket,
-                &ServerMessage::EvidenceSnapshot {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    evidence_root: payload.evidence_root,
-                    index_file: payload.index_file,
-                    index_exists: payload.index_exists,
-                    detected_subsystems: payload.detected_subsystems,
-                    detected_device_types: payload.detected_device_types,
-                    items: payload.items,
-                    issues: payload.issues,
-                    updated_at: payload.updated_at,
-                },
-            )
-            .await?;
+        ClientMessage::EvidenceGetSnapshot { .. } => {
+            send_read_via_http_required(socket, "evidence_get_snapshot").await?;
             Ok(true)
         }
-        ClientMessage::EvidenceGetRebuildPrompt { project, workspace } => {
-            let payload = get_evidence_rebuild_prompt(project, workspace, ctx).await?;
-            send_message(
-                socket,
-                &ServerMessage::EvidenceRebuildPrompt {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    prompt: payload.prompt,
-                    evidence_root: payload.evidence_root,
-                    index_file: payload.index_file,
-                    detected_subsystems: payload.detected_subsystems,
-                    detected_device_types: payload.detected_device_types,
-                    generated_at: payload.generated_at,
-                },
-            )
-            .await?;
+        ClientMessage::EvidenceGetRebuildPrompt { .. } => {
+            send_read_via_http_required(socket, "evidence_get_rebuild_prompt").await?;
             Ok(true)
         }
-        ClientMessage::EvidenceReadItem {
-            project,
-            workspace,
-            item_id,
-            offset,
-            limit,
-        } => {
-            let payload =
-                read_evidence_item_chunk(project, workspace, item_id, *offset, *limit, ctx).await?;
-            send_message(
-                socket,
-                &ServerMessage::EvidenceItemChunk {
-                    project: project.clone(),
-                    workspace: workspace.clone(),
-                    item_id: payload.item_id,
-                    offset: payload.offset,
-                    next_offset: payload.next_offset,
-                    eof: payload.eof,
-                    total_size_bytes: payload.total_size_bytes,
-                    mime_type: payload.mime_type,
-                    content: payload.content,
-                },
-            )
-            .await?;
+        ClientMessage::EvidenceReadItem { .. } => {
+            send_read_via_http_required(socket, "evidence_read_item").await?;
             Ok(true)
         }
         _ => Ok(false),
     }
+}
+
+pub(crate) async fn query_evidence_snapshot(
+    project: &str,
+    workspace: &str,
+    ctx: &HandlerContext,
+) -> Result<ServerMessage, String> {
+    let payload = get_evidence_snapshot(project, workspace, ctx).await?;
+    Ok(ServerMessage::EvidenceSnapshot {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        evidence_root: payload.evidence_root,
+        index_file: payload.index_file,
+        index_exists: payload.index_exists,
+        detected_subsystems: payload.detected_subsystems,
+        detected_device_types: payload.detected_device_types,
+        items: payload.items,
+        issues: payload.issues,
+        updated_at: payload.updated_at,
+    })
+}
+
+pub(crate) async fn query_evidence_rebuild_prompt(
+    project: &str,
+    workspace: &str,
+    ctx: &HandlerContext,
+) -> Result<ServerMessage, String> {
+    let payload = get_evidence_rebuild_prompt(project, workspace, ctx).await?;
+    Ok(ServerMessage::EvidenceRebuildPrompt {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        prompt: payload.prompt,
+        evidence_root: payload.evidence_root,
+        index_file: payload.index_file,
+        detected_subsystems: payload.detected_subsystems,
+        detected_device_types: payload.detected_device_types,
+        generated_at: payload.generated_at,
+    })
+}
+
+pub(crate) async fn query_evidence_item_chunk(
+    project: &str,
+    workspace: &str,
+    item_id: &str,
+    offset: u64,
+    limit: Option<u32>,
+    ctx: &HandlerContext,
+) -> Result<ServerMessage, String> {
+    let payload = read_evidence_item_chunk(project, workspace, item_id, offset, limit, ctx).await?;
+    Ok(ServerMessage::EvidenceItemChunk {
+        project: project.to_string(),
+        workspace: workspace.to_string(),
+        item_id: payload.item_id,
+        offset: payload.offset,
+        next_offset: payload.next_offset,
+        eof: payload.eof,
+        total_size_bytes: payload.total_size_bytes,
+        mime_type: payload.mime_type,
+        content: payload.content,
+    })
 }
 
 async fn get_evidence_snapshot(
