@@ -20,6 +20,7 @@ pub(super) struct WorkspaceRunState {
     pub(super) priority: i32,
     pub(super) status: String,
     pub(super) cycle_id: String,
+    pub(super) cycle_title: Option<String>,
     pub(super) current_stage: String,
     pub(super) global_loop_round: u32,
     pub(super) loop_round_limit: u32,

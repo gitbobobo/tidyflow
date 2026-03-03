@@ -485,6 +485,19 @@ fn read_json_file(cycle_dir: &Path, file_name: &str) -> Result<serde_json::Value
         .map_err(|e| format!("解析 {} 失败: {}", file_name, e))
 }
 
+fn parse_non_empty_string_field(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
+    parse_non_empty_string_field(stage_json.get("cycle_title")).or_else(|| {
+        parse_non_empty_string_field(stage_json.pointer("/decision/context/selected_title"))
+    })
+}
+
 fn git_repo_has_changes(workspace_root: &Path) -> Result<bool, String> {
     let output = Command::new("git")
         .args(["status", "--porcelain"])
@@ -1679,6 +1692,33 @@ impl EvolutionManager {
                 expected_ids, actual_ids
             ));
         }
+        Ok(())
+    }
+
+    async fn sync_cycle_title_from_direction_stage(
+        &self,
+        key: &str,
+        cycle_id: &str,
+    ) -> Result<(), String> {
+        let workspace_root = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return Err("workspace state missing".to_string());
+            };
+            entry.workspace_root.clone()
+        };
+        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+        let direction_stage = read_json_file(&cycle_dir, "stage.direction.json")?;
+        let cycle_title = extract_cycle_title_from_direction_stage(&direction_stage);
+
+        let mut state = self.state.lock().await;
+        let Some(entry) = state.workspaces.get_mut(key) else {
+            return Err("workspace state missing".to_string());
+        };
+        if entry.cycle_id != cycle_id {
+            return Ok(());
+        }
+        entry.cycle_title = cycle_title;
         Ok(())
     }
 
@@ -3009,6 +3049,17 @@ impl EvolutionManager {
         )
         .await
         .ok();
+        if stage == "direction" {
+            if let Err(err) = self
+                .sync_cycle_title_from_direction_stage(key, cycle_id)
+                .await
+            {
+                warn!(
+                    "sync cycle title from direction stage failed: key={}, cycle_id={}, error={}",
+                    key, cycle_id, err
+                );
+            }
+        }
         if let Err(err) = self.persist_cycle_file(key).await {
             warn!(
                 "evolution run_stage done persist_cycle_file failed: key={}, cycle_id={}, stage={}, session_id={}, error={}",
@@ -3505,6 +3556,7 @@ impl EvolutionManager {
             entry.global_loop_round += 1;
             entry.verify_iteration = 0;
             entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
+            entry.cycle_title = None;
             entry.created_at = Utc::now().to_rfc3339();
             entry.current_stage = "direction".to_string();
             entry.status = "queued".to_string();

@@ -1429,6 +1429,8 @@ pub enum ServerMessage {
         project: String,
         workspace: String,
         cycle_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
         ts: String,
         source: String,
         status: String,
@@ -1805,6 +1807,8 @@ pub struct EvolutionWorkspaceItem {
     pub project: String,
     pub workspace: String,
     pub cycle_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub status: String,
     pub current_stage: String,
     pub global_loop_round: u32,
@@ -1859,6 +1863,8 @@ pub struct EvolutionBlockerResolutionInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionCycleHistoryItem {
     pub cycle_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub status: String,
     pub global_loop_round: u32,
     pub created_at: String,

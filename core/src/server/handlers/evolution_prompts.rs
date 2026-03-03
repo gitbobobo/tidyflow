@@ -60,6 +60,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 `stage.direction.json` 成功态：
 - `stage="direction"`
 - `status="done"`
+- `cycle_title` 必须是非空字符串（本轮循环标题，供 UI 展示）
 - `decision.result="n/a"`
 - `decision.reason` 说明已完成方向收敛
 - `decision.context.capability_assessment` 必须包含：`ui_capability`、`test_capability`、`build_capability`、`runtime_capability`、`rationale`

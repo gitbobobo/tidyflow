@@ -231,6 +231,7 @@ mod tests {
                     priority: 0,
                     status: "running".to_string(),
                     cycle_id: "cycle-1".to_string(),
+                    cycle_title: None,
                     current_stage: "verify".to_string(),
                     global_loop_round: 1,
                     loop_round_limit: 1,

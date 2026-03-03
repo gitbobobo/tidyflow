@@ -35,6 +35,23 @@ fn non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> Option<String> {
+    non_empty_string(stage_json.get("cycle_title"))
+        .or_else(|| non_empty_string(stage_json.pointer("/decision/context/selected_title")))
+}
+
+fn extract_cycle_title_from_cycle_file(cycle_json: &serde_json::Value) -> Option<String> {
+    non_empty_string(cycle_json.get("title"))
+        .or_else(|| non_empty_string(cycle_json.get("cycle_title")))
+}
+
+fn resolve_cycle_history_title(
+    direction_stage_title: Option<String>,
+    cycle_file_title: Option<String>,
+) -> Option<String> {
+    direction_stage_title.or(cycle_file_title)
+}
+
 fn parse_stage_session_executions(
     stage_name: &str,
     stage_json: &serde_json::Value,
@@ -222,6 +239,7 @@ impl EvolutionManager {
                     priority: req.priority,
                     status: "queued".to_string(),
                     cycle_id: cycle_id.clone(),
+                    cycle_title: None,
                     current_stage: "direction".to_string(),
                     global_loop_round: round,
                     loop_round_limit: req.loop_round_limit.max(1),
@@ -469,6 +487,7 @@ impl EvolutionManager {
                 project: w.project.clone(),
                 workspace: w.workspace.clone(),
                 cycle_id: w.cycle_id.clone(),
+                title: w.cycle_title.clone(),
                 status: w.status.clone(),
                 current_stage: w.current_stage.clone(),
                 global_loop_round: w.global_loop_round,
@@ -560,6 +579,8 @@ impl EvolutionManager {
             let global_loop_round = json["global_loop_round"].as_u64().unwrap_or(0) as u32;
             let created_at = json["created_at"].as_str().unwrap_or("").to_string();
             let updated_at = json["updated_at"].as_str().unwrap_or("").to_string();
+            let cycle_file_title = extract_cycle_title_from_cycle_file(&json);
+            let mut direction_stage_title: Option<String> = None;
             let terminal_reason_code = json["terminal_reason_code"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -586,6 +607,9 @@ impl EvolutionManager {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
+                if *stage_name == "direction" && direction_stage_title.is_none() {
+                    direction_stage_title = extract_cycle_title_from_direction_stage(&stage_json);
+                }
 
                 executions.extend(parse_stage_session_executions(stage_name, &stage_json));
 
@@ -641,9 +665,11 @@ impl EvolutionManager {
             if stages.is_empty() && executions.is_empty() {
                 continue;
             }
+            let cycle_title = resolve_cycle_history_title(direction_stage_title, cycle_file_title);
 
             cycles.push(EvolutionCycleHistoryItem {
                 cycle_id,
+                title: cycle_title,
                 status,
                 global_loop_round,
                 created_at,
@@ -667,7 +693,10 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{initial_global_loop_round, parse_stage_session_executions};
+    use super::{
+        extract_cycle_title_from_cycle_file, extract_cycle_title_from_direction_stage,
+        initial_global_loop_round, parse_stage_session_executions, resolve_cycle_history_title,
+    };
 
     #[test]
     fn start_round_should_reset_to_one() {
@@ -741,5 +770,56 @@ mod tests {
         assert_eq!(executions.len(), 2);
         assert_eq!(executions[0].stage, "verify");
         assert_eq!(executions[0].duration_ms, Some(8000));
+    }
+
+    #[test]
+    fn extract_cycle_title_from_direction_stage_should_prefer_cycle_title() {
+        let stage_json = serde_json::json!({
+            "cycle_title": "  新标题  ",
+            "decision": {
+                "context": {
+                    "selected_title": "旧标题"
+                }
+            }
+        });
+        let title = extract_cycle_title_from_direction_stage(&stage_json);
+        assert_eq!(title.as_deref(), Some("新标题"));
+    }
+
+    #[test]
+    fn extract_cycle_title_from_direction_stage_should_fallback_to_selected_title() {
+        let stage_json = serde_json::json!({
+            "decision": {
+                "context": {
+                    "selected_title": "  方向标题  "
+                }
+            }
+        });
+        let title = extract_cycle_title_from_direction_stage(&stage_json);
+        assert_eq!(title.as_deref(), Some("方向标题"));
+    }
+
+    #[test]
+    fn extract_cycle_title_from_cycle_file_should_support_legacy_cycle_title_key() {
+        let cycle_json = serde_json::json!({
+            "cycle_title": "  兼容标题  "
+        });
+        let title = extract_cycle_title_from_cycle_file(&cycle_json);
+        assert_eq!(title.as_deref(), Some("兼容标题"));
+    }
+
+    #[test]
+    fn resolve_cycle_history_title_should_prefer_direction_stage_title() {
+        let title = resolve_cycle_history_title(
+            Some("方向标题".to_string()),
+            Some("cycle 文件标题".to_string()),
+        );
+        assert_eq!(title.as_deref(), Some("方向标题"));
+    }
+
+    #[test]
+    fn resolve_cycle_history_title_should_fallback_to_cycle_file_title() {
+        let title = resolve_cycle_history_title(None, Some("cycle 文件标题".to_string()));
+        assert_eq!(title.as_deref(), Some("cycle 文件标题"));
     }
 }
