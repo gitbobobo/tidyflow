@@ -316,15 +316,9 @@ pub enum ClientMessage {
         custom_commands: Vec<CustomCommandInfo>,
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
-        /// 用于提交操作的 AI Agent
-        #[serde(default)]
-        commit_ai_agent: Option<String>,
         /// 用于合并操作的 AI Agent
         #[serde(default)]
         merge_ai_agent: Option<String>,
-        /// 旧字段，兼容旧客户端
-        #[serde(default)]
-        selected_ai_agent: Option<String>,
         /// 固定端口，0 表示动态分配
         #[serde(default)]
         fixed_port: Option<u16>,
@@ -370,15 +364,6 @@ pub enum ClientMessage {
         workspace: String,
         old_path: String, // 源文件相对路径
         new_dir: String,  // 目标目录相对路径
-    },
-
-    // v1.26: AI Git commit
-    #[serde(rename = "git_ai_commit")]
-    GitAICommit {
-        project: String,
-        workspace: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        ai_agent: Option<String>,
     },
 
     // v1.33: AI Git merge
@@ -673,6 +658,11 @@ pub enum ClientMessage {
     },
     #[serde(rename = "evo_list_cycle_history")]
     EvoListCycleHistory {
+        project: String,
+        workspace: String,
+    },
+    #[serde(rename = "evo_auto_commit")]
+    EvoAutoCommit {
         project: String,
         workspace: String,
     },
@@ -1024,8 +1014,6 @@ pub enum ServerMessage {
         custom_commands: Vec<CustomCommandInfo>,
         workspace_shortcuts: std::collections::HashMap<String, String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        commit_ai_agent: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
         fixed_port: u16,
         app_language: String,
@@ -1095,16 +1083,6 @@ pub enum ServerMessage {
         success: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
-    },
-
-    // v1.26: AI Git commit result
-    #[serde(rename = "git_ai_commit_result")]
-    GitAICommitResult {
-        project: String,
-        workspace: String,
-        success: bool,
-        message: String,
-        commits: Vec<AIGitCommit>,
     },
 
     // v1.33: AI Git merge result
@@ -1501,6 +1479,14 @@ pub enum ServerMessage {
         project: String,
         workspace: String,
         cycles: Vec<EvolutionCycleHistoryItem>,
+    },
+    #[serde(rename = "evo_auto_commit_result")]
+    EvoAutoCommitResult {
+        project: String,
+        workspace: String,
+        success: bool,
+        message: String,
+        commits: Vec<AIGitCommit>,
     },
     #[serde(rename = "evidence_snapshot")]
     EvidenceSnapshot {

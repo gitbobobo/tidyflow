@@ -141,12 +141,6 @@ pub enum GitRequest {
         workspace: String,
         sha: String,
     },
-    GitAICommit {
-        project: String,
-        workspace: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        ai_agent: Option<String>,
-    },
 }
 
 /// Git 相关的服务端消息
@@ -303,10 +297,5 @@ pub enum GitResponse {
     GitStatusChanged {
         project: String,
         workspace: String,
-    },
-    GitAICommitResult {
-        success: bool,
-        message: String,
-        commits: Vec<super::AIGitCommit>,
     },
 }

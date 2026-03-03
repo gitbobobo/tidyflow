@@ -12,11 +12,7 @@ pub enum SettingsRequest {
         #[serde(default)]
         workspace_shortcuts: std::collections::HashMap<String, String>,
         #[serde(default)]
-        commit_ai_agent: Option<String>,
-        #[serde(default)]
         merge_ai_agent: Option<String>,
-        #[serde(default)]
-        selected_ai_agent: Option<String>,
         #[serde(default)]
         fixed_port: Option<u16>,
         #[serde(default)]
@@ -33,8 +29,6 @@ pub enum SettingsResponse {
     ClientSettingsResult {
         custom_commands: Vec<super::CustomCommandInfo>,
         workspace_shortcuts: std::collections::HashMap<String, String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        commit_ai_agent: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
         fixed_port: u16,
