@@ -9,7 +9,7 @@ use super::SharedAIState;
 use crate::ai::session_status::AiSessionStatus;
 use crate::ai::{
     AiAgent, AiSessionSelectionHint, ClaudeCodeAgent, CodexAppServerAgent, CodexAppServerManager,
-    CopilotAcpAgent, KimiWireAgent, OpenCodeAgent, OpenCodeManager,
+    CopilotAcpAgent, KimiAcpAgent, OpenCodeAgent, OpenCodeManager,
 };
 use crate::server::context::{SharedAppState, TaskBroadcastEvent, TaskBroadcastTx};
 use crate::server::protocol::ServerMessage;
@@ -397,8 +397,15 @@ pub(crate) fn create_agent(tool: &str) -> Result<Arc<dyn AiAgent>, String> {
             Ok(Arc::new(CopilotAcpAgent::new_copilot(Arc::new(manager))))
         }
         "kimi" => {
-            // Kimi Wire 使用专用协议，按会话懒启动 `kimi --wire --yolo`。
-            Ok(Arc::new(KimiWireAgent::new()))
+            let manager = CodexAppServerManager::new_with_command_and_protocol(
+                std::env::temp_dir(),
+                "kimi",
+                // Kimi ACP 使用标准启动参数；会话级 `/yolo` 由适配器在首次发言前自动注入。
+                vec!["acp".to_string()],
+                "Kimi ACP server",
+                Some(1),
+            );
+            Ok(Arc::new(KimiAcpAgent::new_kimi(Arc::new(manager))))
         }
         "claude_code" => Ok(Arc::new(ClaudeCodeAgent::new())),
         other => Err(format!("Unsupported AI tool: {}", other)),
