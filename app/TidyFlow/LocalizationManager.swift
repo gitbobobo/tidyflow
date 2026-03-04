@@ -3,9 +3,11 @@ import SwiftUI
 /// 国际化管理器：管理当前语言 Bundle，支持运行时切换语言
 final class LocalizationManager: ObservableObject {
     static let shared = LocalizationManager()
+    static let appLanguageUserDefaultsKey = "tidyflow.app_language"
 
     @Published var appLanguage: String {
         didSet {
+            UserDefaults.standard.set(appLanguage, forKey: Self.appLanguageUserDefaultsKey)
             applyLanguage(appLanguage)
         }
     }
@@ -14,7 +16,7 @@ final class LocalizationManager: ObservableObject {
     @Published var bundle: Bundle
 
     private init() {
-        let lang = AppConfig.readClientSettingsFromDisk().appLanguage
+        let lang = UserDefaults.standard.string(forKey: Self.appLanguageUserDefaultsKey) ?? "system"
         let resolved = LocalizationManager.resolveLanguage(lang)
         self.appLanguage = lang
         self.locale = Locale(identifier: resolved)

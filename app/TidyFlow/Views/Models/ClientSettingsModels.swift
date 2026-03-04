@@ -29,8 +29,6 @@ struct ClientSettings: Codable {
     var fixedPort: Int
     /// 是否开启远程访问（开启后 Core 会监听 0.0.0.0）
     var remoteAccessEnabled: Bool
-    /// 应用语言：system / en / zh-Hans
-    var appLanguage: String
     /// Evolution 代理配置（key: "project/workspace"）
     var evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]]
 
@@ -40,7 +38,6 @@ struct ClientSettings: Codable {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
-        case appLanguage = "app_language"
         case evolutionAgentProfiles = "evolution_agent_profiles"
     }
 
@@ -50,7 +47,6 @@ struct ClientSettings: Codable {
         mergeAIAgent: String? = nil,
         fixedPort: Int = 0,
         remoteAccessEnabled: Bool = false,
-        appLanguage: String = "system",
         evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:]
     ) {
         self.customCommands = customCommands
@@ -58,7 +54,6 @@ struct ClientSettings: Codable {
         self.mergeAIAgent = mergeAIAgent
         self.fixedPort = fixedPort
         self.remoteAccessEnabled = remoteAccessEnabled
-        self.appLanguage = appLanguage
         self.evolutionAgentProfiles = evolutionAgentProfiles
     }
 
@@ -69,7 +64,6 @@ struct ClientSettings: Codable {
         mergeAIAgent = try container.decodeIfPresent(String.self, forKey: .mergeAIAgent)
         fixedPort = try container.decodeIfPresent(Int.self, forKey: .fixedPort) ?? 0
         remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
-        appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? "system"
         evolutionAgentProfiles = [:]
     }
 
@@ -80,7 +74,6 @@ struct ClientSettings: Codable {
         try container.encodeIfPresent(mergeAIAgent, forKey: .mergeAIAgent)
         try container.encode(fixedPort, forKey: .fixedPort)
         try container.encode(remoteAccessEnabled, forKey: .remoteAccessEnabled)
-        try container.encode(appLanguage, forKey: .appLanguage)
     }
 }
 

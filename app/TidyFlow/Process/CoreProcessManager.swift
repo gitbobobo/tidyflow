@@ -5,7 +5,7 @@ import os
 /// Status of the Core process with detailed state
 enum CoreStatus: Equatable {
     case stopped
-    case starting(attempt: Int, port: Int)
+    case starting(attempt: Int, port: Int?)
     case running(port: Int, pid: Int32)
     case restarting(attempt: Int, maxAttempts: Int, lastError: String?)
     case failed(message: String)
@@ -52,13 +52,31 @@ enum CoreStatus: Equatable {
     }
 }
 
+private struct CoreBootstrapInfo: Decodable {
+    let port: Int
+    let bindAddr: String
+    let fixedPort: Int
+    let remoteAccessEnabled: Bool
+    let protocolVersion: Int
+    let coreVersion: String
+
+    enum CodingKeys: String, CodingKey {
+        case port
+        case bindAddr = "bind_addr"
+        case fixedPort = "fixed_port"
+        case remoteAccessEnabled = "remote_access_enabled"
+        case protocolVersion = "protocol_version"
+        case coreVersion = "core_version"
+    }
+}
+
 /// Manages the lifecycle of the tidyflow-core subprocess
 /// Responsibilities:
 /// - Locate Core binary in app bundle
-/// - Start/stop Core process with dynamic port allocation
-/// - Monitor process status with retry on port conflict
+/// - Start/stop Core process
+/// - Monitor process status with retry
 /// - Auto-restart on crash with exponential backoff
-/// - Inject port configuration via environment variable
+/// - 解析 Core 启动 bootstrap 信息并驱动 WS 建连
 class CoreProcessManager: ObservableObject {
     @Published private(set) var status: CoreStatus = .stopped
 
@@ -85,6 +103,10 @@ class CoreProcessManager: ObservableObject {
     private var launchedBindAddress: String?
     /// 当前 Core 进程对应的 WebSocket 鉴权 token
     private var currentWSToken: String?
+    /// 当前进程 stdout 剩余缓冲（按行解析 bootstrap）
+    private var stdoutBuffer: String = ""
+    /// 当前启动进程是否已收到 bootstrap
+    private var pendingBootstrap: CoreBootstrapInfo?
 
     /// Callback when Core is ready (WS connection succeeded)
     var onCoreReady: ((Int) -> Void)?
@@ -334,49 +356,14 @@ class CoreProcessManager: ObservableObject {
             return
         }
 
-        // 固定端口优先
-        let fixedPort = AppConfig.configuredFixedPort
-        let port: Int
-        if fixedPort > 0 && fixedPort <= 65535 {
-            if PortAllocator.isPortAvailable(fixedPort) {
-                port = fixedPort
-            } else {
-                let msg = "Fixed port \(fixedPort) is unavailable"
-                TFLog.core.error("\(msg, privacy: .public)")
-                DispatchQueue.main.async {
-                    self.status = .failed(message: msg)
-                    self.isStarting = false
-                    self.currentWSToken = nil
-                    self.onCoreFailed?(msg)
-                }
-                return
-            }
-        } else {
-            // 优先尝试默认端口，不可用时动态分配
-            let preferred = AppConfig.defaultPort
-            if PortAllocator.isPortAvailable(preferred) {
-                port = preferred
-            } else {
-                guard let dynamicPort = PortAllocator.findAvailablePort() else {
-                    let msg = "Failed to allocate port"
-                    TFLog.core.error("\(msg, privacy: .public)")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                        self?.startWithRetry()
-                    }
-                    return
-                }
-                port = dynamicPort
-            }
-        }
-
         DispatchQueue.main.async {
-            self.status = .starting(attempt: self.currentAttempt, port: port)
+            self.status = .starting(attempt: self.currentAttempt, port: nil)
         }
 
-        startProcess(port: port)
+        startProcess()
     }
 
-    private func startProcess(port: Int) {
+    private func startProcess() {
         // Locate binary in bundle
         guard let binaryURL = locateCoreBinary() else {
             let msg = "Core binary not found in bundle"
@@ -392,13 +379,10 @@ class CoreProcessManager: ObservableObject {
         // Create process
         let proc = Process()
         proc.executableURL = binaryURL
-        proc.arguments = ["serve", "--port", "\(port)"]
+        proc.arguments = ["serve"]
 
         // Set environment variable
         var env = ProcessInfo.processInfo.environment
-        let bindAddress = AppConfig.coreBindAddress
-        env["TIDYFLOW_PORT"] = "\(port)"
-        env["TIDYFLOW_BIND_ADDR"] = bindAddress
         if let token = currentWSToken, !token.isEmpty {
             env["TIDYFLOW_WS_TOKEN"] = token
         }
@@ -415,24 +399,22 @@ class CoreProcessManager: ObservableObject {
         proc.standardError = stderr
         self.stdoutPipe = stdout
         self.stderrPipe = stderr
+        self.pendingBootstrap = nil
+        self.stdoutBuffer = ""
 
-        // Handle stdout - write to memory buffer for UI
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        // Handle stdout - 写日志 + 解析 bootstrap 行
+        stdout.fileHandleForReading.readabilityHandler = { [weak self, weak proc] handle in
             let data = handle.availableData
-            if !data.isEmpty {
-                if let str = String(data: data, encoding: .utf8) {
-                    self?.appendLog("[stdout] \(str)")
-                }
-            }
+            guard !data.isEmpty else { return }
+            guard let self, let proc else { return }
+            self.handleStdoutChunk(data, process: proc)
         }
 
         // Handle stderr - write to memory buffer for UI
         stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty {
-                if let str = String(data: data, encoding: .utf8) {
-                    self?.appendLog("[stderr] \(str)")
-                }
+            if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                self?.appendLog("[stderr] \(str)")
             }
         }
 
@@ -484,10 +466,10 @@ class CoreProcessManager: ObservableObject {
         do {
             try proc.run()
             self.process = proc
-            self.launchedBindAddress = bindAddress
+            self.launchedBindAddress = nil
             let pid = proc.processIdentifier
-            TFLog.core.info("Process started with PID: \(pid, privacy: .public) on port \(port, privacy: .public)")
-            waitForCoreReady(proc: proc, port: port, pid: pid, launchedAt: Date())
+            TFLog.core.info("Process started with PID: \(pid, privacy: .public), waiting for bootstrap")
+            waitForBootstrap(proc: proc, pid: pid, launchedAt: Date())
         } catch {
             let msg = "Failed to start: \(error.localizedDescription)"
             TFLog.core.error("\(msg, privacy: .public)")
@@ -585,8 +567,68 @@ class CoreProcessManager: ObservableObject {
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         stdoutPipe = nil
         stderrPipe = nil
+        stdoutBuffer = ""
+        pendingBootstrap = nil
         process = nil
         launchedBindAddress = nil
+    }
+
+    private func handleStdoutChunk(_ data: Data, process: Process) {
+        guard self.process === process else { return }
+        guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
+
+        appendLog("[stdout] \(chunk)")
+        stdoutBuffer.append(chunk)
+
+        while let lineBreak = stdoutBuffer.firstIndex(of: "\n") {
+            let line = String(stdoutBuffer[..<lineBreak])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            stdoutBuffer.removeSubrange(...lineBreak)
+            guard !line.isEmpty else { continue }
+            handleStdoutLine(line)
+        }
+    }
+
+    private func handleStdoutLine(_ line: String) {
+        let prefix = "TIDYFLOW_BOOTSTRAP "
+        guard line.hasPrefix(prefix) else { return }
+        let payload = String(line.dropFirst(prefix.count))
+        guard let data = payload.data(using: .utf8) else { return }
+        guard let bootstrap = try? JSONDecoder().decode(CoreBootstrapInfo.self, from: data) else {
+            TFLog.core.warning("Failed to decode bootstrap payload: \(payload, privacy: .public)")
+            return
+        }
+
+        pendingBootstrap = bootstrap
+        launchedBindAddress = bootstrap.bindAddr
+        if case .starting(let attempt, _) = status {
+            status = .starting(attempt: attempt, port: bootstrap.port)
+        }
+
+        TFLog.core.info(
+            "Received bootstrap: port=\(bootstrap.port, privacy: .public), bind=\(bootstrap.bindAddr, privacy: .public), fixed_port=\(bootstrap.fixedPort, privacy: .public), remote_access=\(bootstrap.remoteAccessEnabled, privacy: .public), protocol=\(bootstrap.protocolVersion, privacy: .public), core=\(bootstrap.coreVersion, privacy: .public)"
+        )
+    }
+
+    private func waitForBootstrap(proc: Process, pid: Int32, launchedAt: Date) {
+        guard process === proc, proc.isRunning else { return }
+        if let bootstrap = pendingBootstrap {
+            waitForCoreReady(proc: proc, port: bootstrap.port, pid: pid, launchedAt: launchedAt)
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(launchedAt)
+        if elapsed >= AppConfig.coreReadyTimeout {
+            TFLog.core.error(
+                "Core bootstrap not received within \(AppConfig.coreReadyTimeout, privacy: .public)s"
+            )
+            proc.terminate()
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.waitForBootstrap(proc: proc, pid: pid, launchedAt: launchedAt)
+        }
     }
 
     /// 等待 Core 端口可连接后再回调 ready，避免“进程已启动但 WS 尚未监听”导致首连失败。

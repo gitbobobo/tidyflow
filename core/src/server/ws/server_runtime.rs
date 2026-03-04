@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::net::SocketAddr;
 
 use tracing::info;
@@ -11,8 +12,14 @@ pub(in crate::server::ws) async fn run_server(port: u16) -> Result<(), Box<dyn s
     crate::server::ws::transport::lifecycle::spawn_parent_monitor(shutdown_tx.clone());
 
     let (ctx, bind_addr) = crate::server::ws::transport::bootstrap::build_app_context().await;
+    let (fixed_port, remote_access_enabled) = {
+        let state = ctx.app_state.read().await;
+        (
+            state.client_settings.fixed_port,
+            state.client_settings.remote_access_enabled,
+        )
+    };
     let ai_state = ctx.ai_state.clone();
-    let app = crate::server::ws::transport::bootstrap::build_router(ctx);
 
     let addr = format!("{}:{}", bind_addr, port);
     let listener = match tokio::net::TcpListener::bind(&addr).await {
@@ -22,10 +29,26 @@ pub(in crate::server::ws) async fn run_server(port: u16) -> Result<(), Box<dyn s
             return Err(Box::new(e));
         }
     };
+    let local_addr = listener.local_addr()?;
+
+    let bootstrap = serde_json::json!({
+        "port": local_addr.port(),
+        "bind_addr": bind_addr,
+        "fixed_port": fixed_port,
+        "remote_access_enabled": remote_access_enabled,
+        "protocol_version": PROTOCOL_VERSION,
+        "core_version": env!("CARGO_PKG_VERSION"),
+    });
+    if let Ok(payload) = serde_json::to_string(&bootstrap) {
+        println!("TIDYFLOW_BOOTSTRAP {}", payload);
+        let _ = std::io::stdout().flush();
+    }
+
+    let app = crate::server::ws::transport::bootstrap::build_router(ctx);
 
     info!(
         "Listening on ws://{}/ws (protocol v{})",
-        addr, PROTOCOL_VERSION
+        local_addr, PROTOCOL_VERSION
     );
 
     crate::server::ws::transport::lifecycle::spawn_shutdown_signal_listener(shutdown_tx.clone());

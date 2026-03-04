@@ -76,8 +76,6 @@ struct CustomCommandsSection: View {
                     get: { localizationManager.appLanguage },
                     set: { newLang in
                         localizationManager.appLanguage = newLang
-                        appState.clientSettings.appLanguage = newLang
-                        appState.saveClientSettings()
                     }
                 )) {
                     Text("settings.language.system".localized).tag("system")

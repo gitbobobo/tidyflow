@@ -174,7 +174,6 @@ final class MobileAppState: ObservableObject {
     @Published var evolutionDefaultProfiles: [EvolutionStageProfileInfoV2] = []
     private var clientFixedPort: Int = 0
     private var clientRemoteAccessEnabled: Bool = false
-    private var clientAppLanguage: String = "system"
     // AI Chat 状态（iOS 端完整对齐 macOS）
     @Published var aiActiveProject: String = ""
     @Published var aiActiveWorkspace: String = ""
@@ -654,7 +653,6 @@ final class MobileAppState: ObservableObject {
             mergeAIAgent: mergeAIAgent,
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
-            appLanguage: clientAppLanguage,
             evolutionAgentProfiles: [:]
         )
         wsClient.requestSaveClientSettings(settings: payload)
@@ -3968,7 +3966,6 @@ final class MobileAppState: ObservableObject {
             self.mergeAIAgent = settings.mergeAIAgent
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
-            self.clientAppLanguage = settings.appLanguage
             self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles
             self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }

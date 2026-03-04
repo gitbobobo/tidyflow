@@ -5,10 +5,6 @@ import Foundation
 enum AppConfig {
     /// Host for Core server (localhost only)
     static let coreHost: String = "127.0.0.1"
-    /// Core 监听地址（安全默认仅 loopback；开启远程访问后切换为 0.0.0.0）
-    static var coreBindAddress: String {
-        readClientSettingsFromDisk().remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1"
-    }
 
     // MARK: - Port Configuration
 
@@ -23,26 +19,6 @@ enum AppConfig {
     /// 是否为开发构建（run-app.sh 产出 TidyFlow-Debug.app）
     static var isDevelopmentBuild: Bool {
         Bundle.main.bundleURL.lastPathComponent == "TidyFlow-Debug.app"
-    }
-
-    /// 固定端口：从 tidyflow.json 读取，0 表示动态分配
-    static var configuredFixedPort: Int {
-        readClientSettingsFromDisk().fixedPort
-    }
-
-    /// 从磁盘直接读取 client_settings（Core 启动前使用）
-    static func readClientSettingsFromDisk() -> (fixedPort: Int, appLanguage: String, remoteAccessEnabled: Bool) {
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-        let path = home.appendingPathComponent(".tidyflow/tidyflow.json")
-        guard let data = try? Data(contentsOf: path),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let cs = root["client_settings"] as? [String: Any] else {
-            return (fixedPort: 0, appLanguage: "system", remoteAccessEnabled: false)
-        }
-        let fixedPort = cs["fixed_port"] as? Int ?? 0
-        let appLanguage = cs["app_language"] as? String ?? "system"
-        let remoteAccessEnabled = cs["remote_access_enabled"] as? Bool ?? false
-        return (fixedPort: fixedPort, appLanguage: appLanguage, remoteAccessEnabled: remoteAccessEnabled)
     }
 
     // MARK: - Logging Configuration

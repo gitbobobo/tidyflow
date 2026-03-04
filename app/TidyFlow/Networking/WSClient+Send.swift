@@ -100,7 +100,6 @@ private struct SaveClientSettingsRequest: Encodable {
     let workspaceShortcuts: [String: String]
     let mergeAIAgent: String?
     let fixedPort: Int
-    let appLanguage: String
     let remoteAccessEnabled: Bool
 
     struct CustomCommandPayload: Encodable {
@@ -116,7 +115,6 @@ private struct SaveClientSettingsRequest: Encodable {
         case workspaceShortcuts = "workspace_shortcuts"
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
-        case appLanguage = "app_language"
         case remoteAccessEnabled = "remote_access_enabled"
     }
 }
@@ -759,7 +757,6 @@ extension WSClient {
             workspaceShortcuts: settings.workspaceShortcuts,
             mergeAIAgent: settings.mergeAIAgent,
             fixedPort: settings.fixedPort,
-            appLanguage: settings.appLanguage,
             remoteAccessEnabled: settings.remoteAccessEnabled
         )
         sendTyped(payload, requestId: UUID().uuidString)

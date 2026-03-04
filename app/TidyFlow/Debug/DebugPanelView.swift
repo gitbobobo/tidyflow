@@ -144,7 +144,8 @@ struct DebugPanelView: View {
         case .stopped:
             return ("Stopped", .gray)
         case .starting(let attempt, let port):
-            return ("Starting (try \(attempt), port \(port))", .yellow)
+            let portText = port.map(String.init) ?? "?"
+            return ("Starting (try \(attempt), port \(portText))", .yellow)
         case .running(let port, let pid):
             return ("Running (:\(port), pid \(pid))", .green)
         case .restarting(let attempt, let max, _):

@@ -108,7 +108,6 @@ final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
         appState.clientSettings = settings
         appState.clientSettingsLoaded = true
         appState.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
-        LocalizationManager.shared.appLanguage = settings.appLanguage
     }
 
     func handleClientSettingsSaved(_ ok: Bool, _ message: String?) {

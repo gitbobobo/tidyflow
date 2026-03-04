@@ -35,7 +35,8 @@ struct CoreStatusView: View {
         case .running(let port, let pid):
             return "Core running on port \(port) (PID: \(pid))\nCmd+R to restart"
         case .starting(let attempt, let port):
-            return "Starting on port \(port) (attempt \(attempt)/\(AppConfig.maxPortRetries))"
+            let portText = port.map(String.init) ?? "?"
+            return "Starting on port \(portText) (attempt \(attempt)/\(AppConfig.maxPortRetries))"
         case .restarting(let attempt, let max, let lastError):
             var text = "Auto-restarting (attempt \(attempt)/\(max))"
             if let err = lastError {

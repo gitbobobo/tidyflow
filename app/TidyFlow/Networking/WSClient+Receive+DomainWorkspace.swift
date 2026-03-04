@@ -146,7 +146,6 @@ extension WSClient {
             let mergeAIAgent = json["merge_ai_agent"] as? String
             let fixedPort = json["fixed_port"] as? Int ?? 0
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
-            let appLanguage = json["app_language"] as? String ?? "system"
             let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
             let settings = ClientSettings(
                 customCommands: commands,
@@ -154,7 +153,6 @@ extension WSClient {
                 mergeAIAgent: mergeAIAgent,
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
-                appLanguage: appLanguage,
                 evolutionAgentProfiles: evolutionAgentProfiles
             )
             if let handler = settingsMessageHandler {
