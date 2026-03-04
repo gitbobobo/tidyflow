@@ -166,17 +166,18 @@ impl StateStore {
         for row in evolution_rows {
             let workspace_key: String = row.try_get("workspace_key").unwrap_or_default();
             let stage: String = row.try_get("stage").unwrap_or_default();
-            let ai_tool: String = row.try_get("ai_tool").unwrap_or_else(|_| "codex".to_string());
+            let ai_tool: String = row
+                .try_get("ai_tool")
+                .unwrap_or_else(|_| "codex".to_string());
             let mode: Option<String> = row.try_get("mode").ok();
             let provider_id: Option<String> = row.try_get("model_provider_id").ok();
             let model_id: Option<String> = row.try_get("model_id").ok();
             let config_options_json: String = row
                 .try_get("config_options_json")
                 .unwrap_or_else(|_| "{}".to_string());
-            let config_options = serde_json::from_str::<HashMap<String, serde_json::Value>>(
-                &config_options_json,
-            )
-            .unwrap_or_default();
+            let config_options =
+                serde_json::from_str::<HashMap<String, serde_json::Value>>(&config_options_json)
+                    .unwrap_or_default();
 
             let model = match (provider_id, model_id) {
                 (Some(provider_id), Some(model_id))
@@ -297,7 +298,10 @@ impl StateStore {
                 .and_then(|s| parse_rfc3339_utc(&s))
                 .unwrap_or_else(Utc::now);
 
-            let setup_success = row.try_get::<Option<i64>, _>("setup_success").ok().flatten();
+            let setup_success = row
+                .try_get::<Option<i64>, _>("setup_success")
+                .ok()
+                .flatten();
             let setup_result = if let Some(success) = setup_success {
                 let steps_total = row
                     .try_get::<Option<i64>, _>("setup_steps_total")
@@ -311,7 +315,10 @@ impl StateStore {
                     .flatten()
                     .and_then(|v| usize::try_from(v).ok())
                     .unwrap_or(0);
-                let last_error = row.try_get::<Option<String>, _>("setup_last_error").ok().flatten();
+                let last_error = row
+                    .try_get::<Option<String>, _>("setup_last_error")
+                    .ok()
+                    .flatten();
                 let completed_at = row
                     .try_get::<Option<String>, _>("setup_completed_at")
                     .ok()
@@ -331,7 +338,10 @@ impl StateStore {
 
             let workspace = Workspace {
                 name: name.clone(),
-                worktree_path: PathBuf::from(row.try_get::<String, _>("worktree_path").unwrap_or_default()),
+                worktree_path: PathBuf::from(
+                    row.try_get::<String, _>("worktree_path")
+                        .unwrap_or_default(),
+                ),
                 branch: row.try_get("branch").unwrap_or_default(),
                 status: parse_workspace_status(&status_raw),
                 created_at,
@@ -357,9 +367,13 @@ impl StateStore {
                 name.clone(),
                 Project {
                     name: name.clone(),
-                    root_path: PathBuf::from(row.try_get::<String, _>("root_path").unwrap_or_default()),
+                    root_path: PathBuf::from(
+                        row.try_get::<String, _>("root_path").unwrap_or_default(),
+                    ),
                     remote_url: row.try_get("remote_url").ok(),
-                    default_branch: row.try_get("default_branch").unwrap_or_else(|_| "main".to_string()),
+                    default_branch: row
+                        .try_get("default_branch")
+                        .unwrap_or_else(|_| "main".to_string()),
                     created_at,
                     workspaces: project_workspaces.remove(&name).unwrap_or_default(),
                     commands: project_commands.remove(&name).unwrap_or_default(),
@@ -881,10 +895,7 @@ mod tests {
         };
         state.projects.insert(project.name.clone(), project);
 
-        store
-            .save(&state)
-            .await
-            .expect("state save should succeed");
+        store.save(&state).await.expect("state save should succeed");
         let loaded = store.load().await.expect("state load should succeed");
 
         assert_eq!(loaded.version, 42);
@@ -913,6 +924,9 @@ mod tests {
             .get("feature-a")
             .expect("workspace should exist");
         assert!(matches!(loaded_workspace.status, WorkspaceStatus::Ready));
-        assert!(loaded_workspace.setup_result.as_ref().is_some_and(|r| r.success));
+        assert!(loaded_workspace
+            .setup_result
+            .as_ref()
+            .is_some_and(|r| r.success));
     }
 }

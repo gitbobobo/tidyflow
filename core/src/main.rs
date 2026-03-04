@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use chrono::Utc;
+use clap::{Parser, Subcommand};
 use std::env;
 use std::path::PathBuf;
 use tidyflow_core::workspace::{AppState, ProjectManager, StateStore, WorkspaceManager};
@@ -159,7 +159,10 @@ async fn resolve_server_port_and_bind(
     (port, bind_addr)
 }
 
-async fn persist_state(store: &StateStore, state: &mut AppState) -> Result<(), Box<dyn std::error::Error>> {
+async fn persist_state(
+    store: &StateStore,
+    state: &mut AppState,
+) -> Result<(), Box<dyn std::error::Error>> {
     state.last_updated = Some(Utc::now());
     store.save(state).await?;
     Ok(())

@@ -42,7 +42,10 @@ impl AiSessionStatus {
 
     /// 检查是否为活跃状态（running 或 awaiting_input）
     pub fn is_active(&self) -> bool {
-        matches!(self, AiSessionStatus::Running | AiSessionStatus::AwaitingInput)
+        matches!(
+            self,
+            AiSessionStatus::Running | AiSessionStatus::AwaitingInput
+        )
     }
 
     /// 检查是否为终态（success, failure, cancelled）
@@ -223,7 +226,13 @@ impl AiSessionStateStore {
         let ai_tool = meta.ai_tool.clone();
         let directory = meta.directory.clone();
         let session_id = meta.session_id.clone();
-        self.set_status_throttled_with_meta_inner(&ai_tool, &directory, &session_id, status, Some(meta))
+        self.set_status_throttled_with_meta_inner(
+            &ai_tool,
+            &directory,
+            &session_id,
+            status,
+            Some(meta),
+        )
     }
 
     fn set_status_throttled_with_meta_inner(
@@ -261,10 +270,13 @@ impl AiSessionStateStore {
                     }
                 }
                 None => {
-                    throttle_guard.insert(key.clone(), StatusThrottleState {
-                        last_emit_time: now,
-                        pending_status: None,
-                    });
+                    throttle_guard.insert(
+                        key.clone(),
+                        StatusThrottleState {
+                            last_emit_time: now,
+                            pending_status: None,
+                        },
+                    );
                     true
                 }
             }
@@ -392,9 +404,18 @@ mod tests {
     fn test_status_str() {
         assert_eq!(AiSessionStatus::Idle.status_str(), "idle");
         assert_eq!(AiSessionStatus::Running.status_str(), "running");
-        assert_eq!(AiSessionStatus::AwaitingInput.status_str(), "awaiting_input");
+        assert_eq!(
+            AiSessionStatus::AwaitingInput.status_str(),
+            "awaiting_input"
+        );
         assert_eq!(AiSessionStatus::Success.status_str(), "success");
-        assert_eq!(AiSessionStatus::Failure { message: "err".to_string() }.status_str(), "failure");
+        assert_eq!(
+            AiSessionStatus::Failure {
+                message: "err".to_string()
+            }
+            .status_str(),
+            "failure"
+        );
         assert_eq!(AiSessionStatus::Cancelled.status_str(), "cancelled");
     }
 
@@ -404,7 +425,10 @@ mod tests {
         assert!(AiSessionStatus::Running.is_active());
         assert!(AiSessionStatus::AwaitingInput.is_active());
         assert!(!AiSessionStatus::Success.is_active());
-        assert!(!AiSessionStatus::Failure { message: "err".to_string() }.is_active());
+        assert!(!AiSessionStatus::Failure {
+            message: "err".to_string()
+        }
+        .is_active());
         assert!(!AiSessionStatus::Cancelled.is_active());
     }
 
@@ -414,7 +438,10 @@ mod tests {
         assert!(!AiSessionStatus::Running.is_terminal());
         assert!(!AiSessionStatus::AwaitingInput.is_terminal());
         assert!(AiSessionStatus::Success.is_terminal());
-        assert!(AiSessionStatus::Failure { message: "err".to_string() }.is_terminal());
+        assert!(AiSessionStatus::Failure {
+            message: "err".to_string()
+        }
+        .is_terminal());
         assert!(AiSessionStatus::Cancelled.is_terminal());
     }
 
@@ -422,7 +449,8 @@ mod tests {
     fn test_throttle_terminal_status_bypasses_throttle() {
         let store = AiSessionStateStore::new();
         // 终态应该立即发送
-        let changed = store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::Success);
+        let changed =
+            store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::Success);
         assert!(changed);
         assert_eq!(
             store.get_status("opencode", "/tmp/a", "s1"),
@@ -434,11 +462,13 @@ mod tests {
     fn test_throttle_non_terminal_status() {
         let store = AiSessionStateStore::new();
         // 首次非终态应该立即发送
-        let changed1 = store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::Running);
+        let changed1 =
+            store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::Running);
         assert!(changed1);
 
         // 立即再次调用应该被节流
-        let changed2 = store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::AwaitingInput);
+        let changed2 =
+            store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::AwaitingInput);
         // 由于节流，这次调用可能被跳过（取决于执行速度）
         // 无论如何，状态应该已更新
         let status = store.get_status("opencode", "/tmp/a", "s1");
