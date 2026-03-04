@@ -705,6 +705,68 @@ fn collect_unique_ids(
     Ok(ids)
 }
 
+/// 为 judge requirement 生成“覆盖匹配键”集合，用于与 verify 未通过项对齐。
+///
+/// 兼容场景：
+/// - 旧格式：仅包含 `criteria_id`/`id`
+/// - 新格式：同时包含 `id` + `criteria_id` + `source_criteria_id`
+/// - 字符串条目：`["AC-001", ...]`
+///
+/// 注意：这里不做“唯一主键”判定，而是收集所有可用标识。
+/// 这样可以避免当 requirement 同时携带 `id` 与 `criteria_id` 时，
+/// 由于主键选择顺序不同导致误判“未覆盖 verify 未通过项”。
+fn collect_requirement_match_keys(
+    items: &[serde_json::Value],
+    label: &str,
+) -> Result<HashSet<String>, String> {
+    const CANDIDATE_KEYS: &[&str] = &[
+        "criteria_id",
+        "source_criteria_id",
+        "criterion_id",
+        "requirement_id",
+        "failure_backlog_id",
+        "backlog_id",
+        "id",
+        "item_id",
+        "title",
+        "check_id",
+        "source_check_id",
+    ];
+
+    let mut keys = HashSet::new();
+    for (idx, item) in items.iter().enumerate() {
+        let mut matched = false;
+
+        if let Some(value) = item.as_str() {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                keys.insert(normalized.to_string());
+                matched = true;
+            }
+        }
+
+        if let Some(obj) = item.as_object() {
+            for key in CANDIDATE_KEYS {
+                if let Some(value) = obj.get(*key).and_then(|v| v.as_str()) {
+                    let normalized = value.trim();
+                    if !normalized.is_empty() {
+                        keys.insert(normalized.to_string());
+                        matched = true;
+                    }
+                }
+            }
+        }
+
+        if !matched {
+            return Err(format!(
+                "{}[{}] 缺少可匹配标识（至少包含 criteria_id/source_criteria_id/id/item_id/title 之一）",
+                label, idx
+            ));
+        }
+    }
+    Ok(keys)
+}
+
 fn as_failing_status(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
@@ -1674,12 +1736,8 @@ impl EvolutionManager {
             "judge.result.json 缺少 full_next_iteration_requirements（重实现轮必须提供）"
                 .to_string()
         })?;
-        let requirement_ids = collect_unique_ids(
-            &requirements,
-            &["id", "item_id", "criteria_id", "title"],
-            "full_next_iteration_requirements",
-        )?;
-        let requirement_set: HashSet<String> = requirement_ids.into_iter().collect();
+        let requirement_set =
+            collect_requirement_match_keys(&requirements, "full_next_iteration_requirements")?;
 
         let acceptance = verify_value
             .pointer("/acceptance_evaluation")
@@ -4680,6 +4738,37 @@ mod tests {
         );
         EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 2)
             .expect("v2 judge 完整 selector 应通过");
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_accept_judge_requirements_with_mixed_id_fields() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1", "status": "insufficient_evidence"}
+                ],
+                "carryover_verification": {
+                    "items": [{"id": "f-1", "status": "missing"}],
+                    "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}
+                }
+            }),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "full_next_iteration_requirements": [
+                    {
+                        "id": "f-1",
+                        "criteria_id": "ac-1"
+                    }
+                ]
+            }),
+        );
+
+        EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 1)
+            .expect("judge requirement 同时包含 id 和 criteria_id 应视为覆盖 verify 未通过项");
     }
 
     #[test]
