@@ -295,7 +295,7 @@ impl AiAgent for CodexAppServerAgent {
     ) -> Result<AiSessionStatus, String> {
         let is_busy = self.active_turns.lock().await.contains_key(session_id);
         Ok(if is_busy {
-            AiSessionStatus::Busy
+            AiSessionStatus::Running
         } else {
             AiSessionStatus::Idle
         })

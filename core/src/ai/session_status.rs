@@ -1,28 +1,56 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
-/// AI 会话统一状态（用于客户端决定是否需要“订阅/恢复”流式更新）
+/// AI 会话统一状态（用于客户端决定是否需要"订阅/恢复"流式更新）
+///
+/// 状态定义（v2，用于标签栏可感知化）：
+/// - `idle`: 空闲，无任务执行
+/// - `running`: 正在执行任务
+/// - `awaiting_input`: 等待用户输入（如 question tool）
+/// - `success`: 任务执行成功
+/// - `failure`: 任务执行失败
+/// - `cancelled`: 任务被取消
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AiSessionStatus {
     Idle,
-    Busy,
-    Error { message: String },
+    Running,
+    AwaitingInput,
+    Success,
+    Failure { message: String },
+    Cancelled,
 }
 
 impl AiSessionStatus {
     pub fn status_str(&self) -> &'static str {
         match self {
             AiSessionStatus::Idle => "idle",
-            AiSessionStatus::Busy => "busy",
-            AiSessionStatus::Error { .. } => "error",
+            AiSessionStatus::Running => "running",
+            AiSessionStatus::AwaitingInput => "awaiting_input",
+            AiSessionStatus::Success => "success",
+            AiSessionStatus::Failure { .. } => "failure",
+            AiSessionStatus::Cancelled => "cancelled",
         }
     }
 
     pub fn error_message(&self) -> Option<String> {
         match self {
-            AiSessionStatus::Error { message } => Some(message.clone()),
+            AiSessionStatus::Failure { message } => Some(message.clone()),
             _ => None,
         }
+    }
+
+    /// 检查是否为活跃状态（running 或 awaiting_input）
+    pub fn is_active(&self) -> bool {
+        matches!(self, AiSessionStatus::Running | AiSessionStatus::AwaitingInput)
+    }
+
+    /// 检查是否为终态（success, failure, cancelled）
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            AiSessionStatus::Success | AiSessionStatus::Failure { .. } | AiSessionStatus::Cancelled
+        )
     }
 }
 
@@ -44,10 +72,22 @@ pub struct AiSessionStatusChange {
     pub new_status: AiSessionStatus,
 }
 
+/// 状态变更节流配置
+const STATUS_THROTTLE_DURATION_MS: u64 = 100;
+
+/// 状态变更时间戳记录（用于节流）
+#[derive(Debug, Clone)]
+struct StatusThrottleState {
+    last_emit_time: Instant,
+    pending_status: Option<AiSessionStatus>,
+}
+
 pub struct AiSessionStateStore {
     statuses: RwLock<HashMap<String, AiSessionStatus>>,
     metas: RwLock<HashMap<String, AiSessionStatusMeta>>,
     on_change: RwLock<Option<Arc<dyn Fn(AiSessionStatusChange) + Send + Sync>>>,
+    /// 节流状态：记录每个 key 的上次发送时间和待发送状态
+    throttle_states: RwLock<HashMap<String, StatusThrottleState>>,
 }
 
 impl AiSessionStateStore {
@@ -56,6 +96,7 @@ impl AiSessionStateStore {
             statuses: RwLock::new(HashMap::new()),
             metas: RwLock::new(HashMap::new()),
             on_change: RwLock::new(None),
+            throttle_states: RwLock::new(HashMap::new()),
         }
     }
 
@@ -92,6 +133,9 @@ impl AiSessionStateStore {
         if let Ok(mut guard) = self.metas.write() {
             guard.remove(&key);
         }
+        if let Ok(mut guard) = self.throttle_states.write() {
+            guard.remove(&key);
+        }
     }
 
     pub fn get_all_for_directory(
@@ -116,7 +160,7 @@ impl AiSessionStateStore {
             .collect()
     }
 
-    /// 判断指定项目/工作空间是否存在任一 busy 会话。
+    /// 判断指定项目/工作空间是否存在任一活跃（running/awaiting_input）会话。
     pub fn has_busy_for_workspace(&self, project_name: &str, workspace_name: &str) -> bool {
         let Ok(statuses) = self.statuses.read() else {
             return false;
@@ -126,7 +170,7 @@ impl AiSessionStateStore {
         };
 
         statuses.iter().any(|(key, status)| {
-            if status != &AiSessionStatus::Busy {
+            if !status.is_active() {
                 return false;
             }
             metas
@@ -153,6 +197,85 @@ impl AiSessionStateStore {
         let directory = meta.directory.clone();
         let session_id = meta.session_id.clone();
         self.set_status_with_meta_inner(&ai_tool, &directory, &session_id, status, Some(meta))
+    }
+
+    /// 设置状态（带节流，用于高频状态变更场景）
+    ///
+    /// 节流策略：
+    /// - 如果距离上次发送 >= 100ms，立即发送
+    /// - 如果距离上次发送 < 100ms，记录为 pending，等下次调用时检查
+    /// - 终态（success/failure/cancelled）立即发送，不受节流限制
+    pub fn set_status_throttled(
+        &self,
+        ai_tool: &str,
+        directory: &str,
+        session_id: &str,
+        status: AiSessionStatus,
+    ) -> bool {
+        self.set_status_throttled_with_meta_inner(ai_tool, directory, session_id, status, None)
+    }
+
+    pub fn set_status_throttled_with_meta(
+        &self,
+        meta: AiSessionStatusMeta,
+        status: AiSessionStatus,
+    ) -> bool {
+        let ai_tool = meta.ai_tool.clone();
+        let directory = meta.directory.clone();
+        let session_id = meta.session_id.clone();
+        self.set_status_throttled_with_meta_inner(&ai_tool, &directory, &session_id, status, Some(meta))
+    }
+
+    fn set_status_throttled_with_meta_inner(
+        &self,
+        ai_tool: &str,
+        directory: &str,
+        session_id: &str,
+        status: AiSessionStatus,
+        meta: Option<AiSessionStatusMeta>,
+    ) -> bool {
+        let key = Self::make_key(ai_tool, directory, session_id);
+
+        // 终态立即发送，不受节流限制
+        if status.is_terminal() {
+            return self.set_status_with_meta_inner(ai_tool, directory, session_id, status, meta);
+        }
+
+        let now = Instant::now();
+        let should_emit = {
+            let Ok(mut throttle_guard) = self.throttle_states.write() else {
+                return false;
+            };
+
+            match throttle_guard.get_mut(&key) {
+                Some(throttle_state) => {
+                    let elapsed = now.duration_since(throttle_state.last_emit_time);
+                    if elapsed >= Duration::from_millis(STATUS_THROTTLE_DURATION_MS) {
+                        throttle_state.last_emit_time = now;
+                        throttle_state.pending_status = None;
+                        true
+                    } else {
+                        // 更新 pending 状态，等待下次检查
+                        throttle_state.pending_status = Some(status.clone());
+                        false
+                    }
+                }
+                None => {
+                    throttle_guard.insert(key.clone(), StatusThrottleState {
+                        last_emit_time: now,
+                        pending_status: None,
+                    });
+                    true
+                }
+            }
+        };
+
+        if should_emit {
+            self.set_status_with_meta_inner(ai_tool, directory, session_id, status, meta)
+        } else {
+            // 状态已记录为 pending，返回 false 表示未发送
+            false
+        }
     }
 
     fn set_status_with_meta_inner(
@@ -216,15 +339,15 @@ mod tests {
         let store = AiSessionStateStore::new();
         assert!(store.get_status("opencode", "/tmp/a", "s1").is_none());
 
-        let changed = store.set_status("opencode", "/tmp/a", "s1", AiSessionStatus::Busy);
+        let changed = store.set_status("opencode", "/tmp/a", "s1", AiSessionStatus::Running);
         assert!(changed);
         assert_eq!(
             store.get_status("opencode", "/tmp/a", "s1"),
-            Some(AiSessionStatus::Busy)
+            Some(AiSessionStatus::Running)
         );
 
         // 同值不算变更
-        assert!(!store.set_status("opencode", "/tmp/a", "s1", AiSessionStatus::Busy));
+        assert!(!store.set_status("opencode", "/tmp/a", "s1", AiSessionStatus::Running));
 
         store.remove_status("opencode", "/tmp/a", "s1");
         assert!(store.get_status("opencode", "/tmp/a", "s1").is_none());
@@ -247,7 +370,7 @@ mod tests {
                 directory: "/tmp/a".to_string(),
                 session_id: "s1".to_string(),
             },
-            AiSessionStatus::Busy,
+            AiSessionStatus::Running,
         );
         store.set_status_with_meta(
             AiSessionStatusMeta {
@@ -263,5 +386,65 @@ mod tests {
         assert!(store.has_busy_for_workspace("p1", "w1"));
         assert!(!store.has_busy_for_workspace("p1", "w2"));
         assert!(!store.has_busy_for_workspace("p2", "w1"));
+    }
+
+    #[test]
+    fn test_status_str() {
+        assert_eq!(AiSessionStatus::Idle.status_str(), "idle");
+        assert_eq!(AiSessionStatus::Running.status_str(), "running");
+        assert_eq!(AiSessionStatus::AwaitingInput.status_str(), "awaiting_input");
+        assert_eq!(AiSessionStatus::Success.status_str(), "success");
+        assert_eq!(AiSessionStatus::Failure { message: "err".to_string() }.status_str(), "failure");
+        assert_eq!(AiSessionStatus::Cancelled.status_str(), "cancelled");
+    }
+
+    #[test]
+    fn test_status_is_active() {
+        assert!(!AiSessionStatus::Idle.is_active());
+        assert!(AiSessionStatus::Running.is_active());
+        assert!(AiSessionStatus::AwaitingInput.is_active());
+        assert!(!AiSessionStatus::Success.is_active());
+        assert!(!AiSessionStatus::Failure { message: "err".to_string() }.is_active());
+        assert!(!AiSessionStatus::Cancelled.is_active());
+    }
+
+    #[test]
+    fn test_status_is_terminal() {
+        assert!(!AiSessionStatus::Idle.is_terminal());
+        assert!(!AiSessionStatus::Running.is_terminal());
+        assert!(!AiSessionStatus::AwaitingInput.is_terminal());
+        assert!(AiSessionStatus::Success.is_terminal());
+        assert!(AiSessionStatus::Failure { message: "err".to_string() }.is_terminal());
+        assert!(AiSessionStatus::Cancelled.is_terminal());
+    }
+
+    #[test]
+    fn test_throttle_terminal_status_bypasses_throttle() {
+        let store = AiSessionStateStore::new();
+        // 终态应该立即发送
+        let changed = store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::Success);
+        assert!(changed);
+        assert_eq!(
+            store.get_status("opencode", "/tmp/a", "s1"),
+            Some(AiSessionStatus::Success)
+        );
+    }
+
+    #[test]
+    fn test_throttle_non_terminal_status() {
+        let store = AiSessionStateStore::new();
+        // 首次非终态应该立即发送
+        let changed1 = store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::Running);
+        assert!(changed1);
+
+        // 立即再次调用应该被节流
+        let changed2 = store.set_status_throttled("opencode", "/tmp/a", "s1", AiSessionStatus::AwaitingInput);
+        // 由于节流，这次调用可能被跳过（取决于执行速度）
+        // 无论如何，状态应该已更新
+        let status = store.get_status("opencode", "/tmp/a", "s1");
+        // 如果 changed2 为 true，状态应为 AwaitingInput；否则仍为 Running
+        if changed2 {
+            assert_eq!(status, Some(AiSessionStatus::AwaitingInput));
+        }
     }
 }

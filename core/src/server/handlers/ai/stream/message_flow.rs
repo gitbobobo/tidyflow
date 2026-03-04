@@ -401,7 +401,7 @@ pub(crate) async fn handle_ai_chat_send(
         directory: directory.clone(),
         session_id: session_id.clone(),
     };
-    status_store.set_status_with_meta(status_meta.clone(), AiSessionStatus::Busy);
+    status_store.set_status_with_meta(status_meta.clone(), AiSessionStatus::Running);
 
     info!(
         "AIChatSend: project={}, workspace={}, session_id={}, message_len={}",
@@ -577,7 +577,7 @@ pub(crate) async fn handle_ai_chat_send(
                 );
                 status_store_cloned.set_status_with_meta(
                     status_meta_cloned.clone(),
-                    AiSessionStatus::Error { message: e.clone() },
+                    AiSessionStatus::Failure { message: e.clone() },
                 );
                 if let Some(snapshot) =
                     mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
@@ -730,6 +730,11 @@ pub(crate) async fn handle_ai_chat_send(
                                     true
                                 }
                                 AiEvent::QuestionAsked { request } => {
+                                    // 设置等待用户输入状态
+                                    status_store_cloned.set_status_with_meta(
+                                        status_meta_cloned.clone(),
+                                        AiSessionStatus::AwaitingInput,
+                                    );
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -771,6 +776,11 @@ pub(crate) async fn handle_ai_chat_send(
                                     true
                                 }
                                 AiEvent::QuestionCleared { request_id, .. } => {
+                                    // 恢复执行状态
+                                    status_store_cloned.set_status_with_meta(
+                                        status_meta_cloned.clone(),
+                                        AiSessionStatus::Running,
+                                    );
                                     let _ = emit_server_message_with_state(
                                         &output_tx,
                                         task_broadcast_tx,
@@ -869,7 +879,7 @@ pub(crate) async fn handle_ai_chat_send(
                                     );
                                     status_store_cloned.set_status_with_meta(
                                         status_meta_cloned.clone(),
-                                        AiSessionStatus::Error { message: message.clone() },
+                                        AiSessionStatus::Failure { message: message.clone() },
                                     );
                                     if let Some(snapshot) =
                                         mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
@@ -914,7 +924,19 @@ pub(crate) async fn handle_ai_chat_send(
                                     false
                                 }
                                 AiEvent::Done { stop_reason } => {
-                                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
+                                    // 根据 stop_reason 设置终态
+                                    let final_status = match stop_reason.as_deref() {
+                                        Some("cancel" | "cancelled" | "abort" | "aborted") => {
+                                            AiSessionStatus::Cancelled
+                                        }
+                                        Some("error" | "failure") => {
+                                            AiSessionStatus::Failure {
+                                                message: "Task failed".to_string(),
+                                            }
+                                        }
+                                        _ => AiSessionStatus::Success,
+                                    };
+                                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), final_status);
                                     let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                         &agent,
                                         &directory,
@@ -982,7 +1004,7 @@ pub(crate) async fn handle_ai_chat_send(
                             );
                             status_store_cloned.set_status_with_meta(
                                 status_meta_cloned.clone(),
-                                AiSessionStatus::Error { message: e.clone() },
+                                AiSessionStatus::Failure { message: e.clone() },
                             );
                             if let Some(snapshot) = mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await {
                                 emit_ai_session_messages_update_with_ops(
@@ -1161,7 +1183,7 @@ pub(crate) async fn handle_ai_chat_command(
         directory: directory.clone(),
         session_id: session_id.clone(),
     };
-    status_store.set_status_with_meta(status_meta.clone(), AiSessionStatus::Busy);
+    status_store.set_status_with_meta(status_meta.clone(), AiSessionStatus::Running);
 
     info!(
         "AIChatCommand: project={}, workspace={}, session_id={}, command={}, arguments_len={}",
@@ -1329,7 +1351,7 @@ pub(crate) async fn handle_ai_chat_command(
                 );
                 status_store_cloned.set_status_with_meta(
                     status_meta_cloned.clone(),
-                    AiSessionStatus::Error { message: e.clone() },
+                    AiSessionStatus::Failure { message: e.clone() },
                 );
                 if let Some(snapshot) =
                     mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
@@ -1557,7 +1579,7 @@ pub(crate) async fn handle_ai_chat_command(
                                 AiEvent::Error { message } => {
                                     status_store_cloned.set_status_with_meta(
                                         status_meta_cloned.clone(),
-                                        AiSessionStatus::Error { message: message.clone() },
+                                        AiSessionStatus::Failure { message: message.clone() },
                                     );
                                     if let Some(snapshot) =
                                         mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await
@@ -1602,7 +1624,19 @@ pub(crate) async fn handle_ai_chat_command(
                                     false
                                 }
                                 AiEvent::Done { stop_reason } => {
-                                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), AiSessionStatus::Idle);
+                                    // 根据 stop_reason 设置终态
+                                    let final_status = match stop_reason.as_deref() {
+                                        Some("cancel" | "cancelled" | "abort" | "aborted") => {
+                                            AiSessionStatus::Cancelled
+                                        }
+                                        Some("error" | "failure") => {
+                                            AiSessionStatus::Failure {
+                                                message: "Task failed".to_string(),
+                                            }
+                                        }
+                                        _ => AiSessionStatus::Success,
+                                    };
+                                    status_store_cloned.set_status_with_meta(status_meta_cloned.clone(), final_status);
                                     let selection_hint = resolve_selection_hint_for_done_with_timeout(
                                         &agent,
                                         &directory,
@@ -1666,7 +1700,7 @@ pub(crate) async fn handle_ai_chat_command(
                         Some(Err(e)) => {
                             status_store_cloned.set_status_with_meta(
                                 status_meta_cloned.clone(),
-                                AiSessionStatus::Error { message: e.clone() },
+                                AiSessionStatus::Failure { message: e.clone() },
                             );
                             if let Some(snapshot) = mark_stream_snapshot_terminal(&ai_state_cloned, &abort_key, None).await {
                                 emit_ai_session_messages_update_with_ops(

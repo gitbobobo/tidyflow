@@ -350,12 +350,12 @@ impl AiAgent for OpenCodeAgent {
 
         let status = match raw.as_str() {
             "idle" => AiSessionStatus::Idle,
-            // OpenCode 可能返回 busy/retry 等，统一映射为 busy
-            "busy" | "retry" | "running" => AiSessionStatus::Busy,
+            // OpenCode 可能返回 busy/retry 等，统一映射为 running
+            "busy" | "retry" | "running" | "awaiting_input" => AiSessionStatus::Running,
             other => {
-                // 未知状态不视为 error，避免误伤；倾向认为仍在进行中。
+                // 未知状态不视为 failure，避免误伤；倾向认为仍在进行中。
                 tracing::debug!("Unknown OpenCode session status type: {}", other);
-                AiSessionStatus::Busy
+                AiSessionStatus::Running
             }
         };
 

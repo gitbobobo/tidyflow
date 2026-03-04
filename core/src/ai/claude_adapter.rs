@@ -1744,7 +1744,7 @@ impl AiAgent for ClaudeCodeAgent {
     ) -> Result<AiSessionStatus, String> {
         let key = Self::runtime_key(directory, session_id);
         if self.active_turns.lock().await.contains(&key) {
-            Ok(AiSessionStatus::Busy)
+            Ok(AiSessionStatus::Running)
         } else {
             Ok(AiSessionStatus::Idle)
         }

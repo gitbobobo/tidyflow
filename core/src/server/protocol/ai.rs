@@ -8,9 +8,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// AI 会话状态信息（用于协议传输）
+///
+/// 状态值（v2，用于标签栏可感知化）：
+/// - "idle": 空闲，无任务执行
+/// - "running": 正在执行任务
+/// - "awaiting_input": 等待用户输入（如 question tool）
+/// - "success": 任务执行成功
+/// - "failure": 任务执行失败
+/// - "cancelled": 任务被取消
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiSessionStatusInfo {
-    /// "idle" | "busy" | "error"
+    /// 状态字符串："idle" | "running" | "awaiting_input" | "success" | "failure" | "cancelled"
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,

@@ -802,6 +802,43 @@ pub enum ServerMessage {
         truncated: bool,
     },
 
+    // v1.10: File external change conflict detection
+    /// 文件外部变更冲突检测通知（由 watcher 触发）
+    FileConflictDetected {
+        project: String,
+        workspace: String,
+        path: String,
+        /// 本地修改时间（Unix ms）
+        local_modified_at: i64,
+        /// 外部修改时间（Unix ms）
+        external_modified_at: i64,
+        /// 本地内容哈希（用于比较）
+        local_hash: String,
+        /// 外部内容哈希（用于比较）
+        external_hash: String,
+    },
+    /// 文件冲突解决请求（客户端 -> 服务端）
+    FileConflictResolve {
+        project: String,
+        workspace: String,
+        path: String,
+        /// "reload" | "overwrite" | "diff"
+        action: String,
+    },
+    /// 文件冲突解决结果（服务端 -> 客户端）
+    FileConflictResolveResult {
+        project: String,
+        workspace: String,
+        path: String,
+        success: bool,
+        action: String,
+        /// 如果是 reload 或 diff，返回外部内容
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<Vec<u8>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+
     // v1.5: Git tools results
     GitStatusResult {
         project: String,
