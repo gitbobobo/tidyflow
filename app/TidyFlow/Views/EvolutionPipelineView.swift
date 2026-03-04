@@ -851,12 +851,6 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: height / 2)
                         .fill(stageColor(segment.entry.stage))
                         .frame(width: max(0, drawableWidth * segment.ratio), height: height)
-                        .help(stageTooltip(
-                            stage: segment.entry.stage,
-                            agent: segment.entry.agent,
-                            aiTool: segment.entry.aiToolName,
-                            duration: tooltipDurationText(segment.entry.durationSeconds)
-                        ))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1325,12 +1319,6 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
-                        .help(stageTooltip(
-                            stage: entry.stage,
-                            agent: entry.agent,
-                            aiTool: entry.aiToolName,
-                            duration: tooltipDurationText(entry.durationSeconds)
-                        ))
                         .onTapGesture {
                             if normalizedStageKey(entry.stage) != "auto_commit" {
                                 openStageChat(stage: entry.stage)
@@ -1372,12 +1360,6 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
-                        .help(stageTooltip(
-                            stage: entry.stage,
-                            agent: entry.agent,
-                            aiTool: entry.aiToolName,
-                            duration: tooltipDurationText(entry.durationSeconds)
-                        ))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1407,28 +1389,6 @@ struct EvolutionPipelineView: View {
                 }
             }
         }
-    }
-
-    /// 生成阶段悬停提示文本
-    private func stageTooltip(stage: String, agent: String, aiTool: String, duration: String?) -> String {
-        var parts = [stageDisplayName(stage)]
-        if !agent.isEmpty {
-            parts.append("evolution.page.pipeline.agentLabel".localized + ": \(agent)")
-        }
-        if !aiTool.isEmpty {
-            parts.append("AI: \(aiTool)")
-        }
-        if let duration {
-            parts.append("evolution.page.pipeline.durationLabel".localized + ": \(duration)")
-        }
-        return parts.joined(separator: "\n")
-    }
-
-    private func tooltipDurationText(_ durationSeconds: TimeInterval) -> String {
-        if durationSeconds > 0 {
-            return Self.formatDuration(durationSeconds)
-        }
-        return "evolution.page.pipeline.durationUnknown".localized
     }
 
     // MARK: - 本轮循环已完成时间线（上方详情）
@@ -1535,12 +1495,6 @@ struct EvolutionPipelineView: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(stageColor(entry.stage))
                         .frame(height: 6)
-                        .help(stageTooltip(
-                            stage: entry.stage,
-                            agent: entry.agent,
-                            aiTool: entry.aiToolName,
-                            duration: tooltipDurationText(entry.durationSeconds)
-                        ))
                 }
             }
             .frame(maxWidth: .infinity)
