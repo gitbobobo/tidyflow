@@ -59,6 +59,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 
 `stage.direction.json` 成功态：
 - `stage="direction"`
+- `cycle_id` 与 `CYCLE_FILE_PATH.cycle_id` 一致
 - `status="done"`
 - `cycle_title` 必须是非空字符串（本轮循环标题，供 UI 展示）
 - `decision.result="n/a"`
@@ -94,6 +95,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 `plan.execution.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`selected_direction_type`、`goal`、`scope`、`work_items`、`verification_plan`、`updated_at`
+- `selected_direction_type` 必须等于 `cycle.json.direction.selected_type`
 - `work_items` 非空，每项至少含：
   - `id`（唯一）
   - `implementation_agent`（只能是 `implement_general` 或 `implement_visual`
@@ -101,8 +103,10 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 - `verification_plan.checks` 非空，每项必须有唯一 `id`
 - `verification_plan.acceptance_mapping` 非空，每项必须有：
   - `criteria_id`
+  - `description`（非空）
   - `check_ids`（非空，且都在 checks 中）
   - 且至少关联到一个 `work_item`
+- `verification_plan.acceptance_mapping[*].criteria_id` 必须完整覆盖 `cycle.json.llm_defined_acceptance.criteria[*].criteria_id`
 
 分配规则：
 - 若 `ui_capability = "none"`，所有 `work_items[*].implementation_agent` 必须为 `implement_general`。
@@ -155,7 +159,9 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - 记录真实变更文件、执行命令与快速检查结论。
 
 `implement_<lane>.result.json` 最小结构：
-- 顶层：`$schema_version`、`cycle_id`、`summary`、`work_item_results`、`changed_files`、`commands_executed`、`quick_checks`、`updated_at`
+- 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`status`、`summary`、`work_item_results`、`changed_files`、`commands_executed`、`quick_checks`、`updated_at`
+- `verify_iteration` 必须等于当前 `VERIFY_ITERATION`
+- `status` 只能是 `done|failed|blocked|skipped`
 - 当 `VERIFY_ITERATION > 0`，额外强制：
   - 当 `BACKLOG_CONTRACT_VERSION >= 2`：必须提供 `backlog_resolution_updates` 数组，每项必须包含：
     - `source_criteria_id`
@@ -216,6 +222,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`summary`、`check_results`、`acceptance_evaluation`、`verification_overall`、`updated_at`
 - `acceptance_evaluation` 必须覆盖全部验收标准，状态只能是 `pass|fail|insufficient_evidence`
 - `verification_overall.result` 只能是 `pass|fail`
+- `acceptance_evaluation` 只要存在未通过项（`fail|insufficient_evidence`），`verification_overall.result` 必须是 `fail`
 - 当 `VERIFY_ITERATION > 0`，必须提供：
   - `carryover_verification.items`（覆盖全部 backlog id；当 `BACKLOG_CONTRACT_VERSION >= 2` 时以 `MANAGED_FAILURE_BACKLOG_PATH` 为准）
   - `carryover_verification.summary.total/covered/missing/blocked`（数字）
@@ -259,6 +266,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 
 `judge.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`verify_iteration_limit`、`criteria_judgement`、`overall_result`、`next_action`、`full_next_iteration_requirements`、`updated_at`
+- `verify_iteration_limit` 必须大于 0
 - `criteria_judgement` 必须覆盖全部验收标准
 - `overall_result.result` 只能是 `pass|fail`
 - `next_action` 规则：
@@ -326,7 +334,9 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - `stage="report"`
 - `status="done"`
 - `decision.result="n/a"`
-- `next_action={"type":"finish_cycle","target":null}`
+- `next_action` 允许两种：
+  - `{"type":"goto_stage","target":"auto_commit"}`（推荐）
+  - `{"type":"finish_cycle","target":null}`
 - `outputs` 至少包含 `report.result.json`、`report.md` 与 `handoff.md`
 - `error=null`
 
@@ -359,9 +369,11 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
   - 构建产物/缓存/临时文件禁止提交；
   - 必须保证提交后工作区干净或剩余变更有明确说明。
 3. 若发现应忽略文件，可更新 `.gitignore` 并纳入首个提交。
+4. 若阶段结束后工作区仍有未提交变更，`decision.reason` 必须明确包含“无可提交变更”或 `no changes to commit`，否则视为失败。
 
 `stage.auto_commit.json` 成功态：
 - `stage="auto_commit"`
+- `cycle_id` 与 `CYCLE_FILE_PATH.cycle_id` 一致
 - `status="done"`
 - `decision.result="n/a"`
 - `next_action={"type":"goto_stage","target":"direction"}`

@@ -24,7 +24,7 @@ use super::profile::profile_for_stage;
 use super::utils::{cycle_dir_path, write_json};
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
-const VALIDATION_REMINDER_MAX_RETRIES: u32 = 2;
+const VALIDATION_REMINDER_MAX_RETRIES: u32 = 3;
 const IMPLEMENT_CONFIG_RESERVED_PREFIX: &str = "__evo_internal_";
 const STAGE_STREAM_IDLE_TIMEOUT_SECS: u64 = 600;
 const STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS: u32 = 2;
@@ -33,6 +33,33 @@ const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.json";
 const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.json";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
+const VALID_DIRECTION_TYPES: &[&str] = &[
+    "feature",
+    "performance",
+    "bugfix",
+    "architecture",
+    "ui",
+    "ux",
+    "security",
+    "reliability",
+    "testing",
+    "tech-debt",
+    "refactor",
+    "devx",
+    "cicd",
+    "observability",
+    "docs",
+    "deps",
+    "compliance",
+    "a11y",
+    "i18n",
+    "compatibility",
+    "data",
+    "infra",
+    "scalability",
+    "analytics",
+    "onboarding",
+];
 
 async fn touch_session_index_updated_at_for_evolution(
     ctx: &HandlerContext,
@@ -184,6 +211,34 @@ struct StageRunContext {
     model: Option<AiModelSelection>,
     mode: Option<String>,
     config_overrides: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone)]
+struct StageValidationContext {
+    cycle_id: String,
+    verify_iteration: u32,
+    backlog_contract_version: u32,
+    stage_started_at: Option<chrono::DateTime<Utc>>,
+    workspace_root: String,
+}
+
+#[derive(Debug, Clone)]
+struct ArtifactValidationError {
+    code: &'static str,
+    message: String,
+}
+
+impl ArtifactValidationError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn to_stage_error(&self) -> String {
+        format!("evo_stage_output_invalid:{}: {}", self.code, self.message)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -531,6 +586,72 @@ fn extract_cycle_title_from_direction_stage(stage_json: &serde_json::Value) -> O
     parse_non_empty_string_field(stage_json.get("cycle_title")).or_else(|| {
         parse_non_empty_string_field(stage_json.pointer("/decision/context/selected_title"))
     })
+}
+
+fn parse_rfc3339_utc(raw: &str) -> Option<chrono::DateTime<Utc>> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|v| v.with_timezone(&Utc))
+}
+
+fn extract_artifact_updated_at(value: &serde_json::Value) -> Option<chrono::DateTime<Utc>> {
+    for pointer in [
+        "/updated_at",
+        "/system_metadata/updated_at",
+        "/timing/completed_at",
+    ] {
+        if let Some(ts) = value.pointer(pointer).and_then(|v| v.as_str()) {
+            if let Some(parsed) = parse_rfc3339_utc(ts.trim()) {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
+fn ensure_artifact_freshness(
+    label: &str,
+    value: &serde_json::Value,
+    started_at: Option<chrono::DateTime<Utc>>,
+) -> Result<(), String> {
+    let Some(started_at) = started_at else {
+        return Ok(());
+    };
+    let updated_at = extract_artifact_updated_at(value).ok_or_else(|| {
+        format!(
+            "{} 缺少可解析时间戳(updated_at/system_metadata.updated_at/timing.completed_at)",
+            label
+        )
+    })?;
+    if updated_at < started_at {
+        return Err(format!(
+            "{} 时间戳早于本次阶段开始时间: updated_at={}, stage_started_at={}",
+            label,
+            updated_at.to_rfc3339(),
+            started_at.to_rfc3339()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_cycle_id_matches(
+    label: &str,
+    value: &serde_json::Value,
+    expected_cycle_id: &str,
+) -> Result<(), String> {
+    let cycle_id = value
+        .get("cycle_id")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{} 缺少 cycle_id", label))?;
+    if cycle_id != expected_cycle_id {
+        return Err(format!(
+            "{}.cycle_id 不匹配: {} != {}",
+            label, cycle_id, expected_cycle_id
+        ));
+    }
+    Ok(())
 }
 
 fn git_repo_has_changes(workspace_root: &Path) -> Result<bool, String> {
@@ -933,9 +1054,100 @@ fn should_force_advanced_reimplementation(verify_iteration: u32) -> bool {
 }
 
 impl EvolutionManager {
-    fn validate_plan_artifact(cycle_dir: &Path) -> Result<(), String> {
+    fn validate_plan_artifact(
+        cycle_dir: &Path,
+        validation_ctx: Option<&StageValidationContext>,
+    ) -> Result<(), String> {
         let value = read_json_file(cycle_dir, "plan.execution.json")?;
         parse_plan_routing_tables(&value)?;
+
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("plan.execution.json", &value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("plan.execution.json", &value, ctx.stage_started_at)?;
+        }
+
+        let selected_direction = value
+            .get("selected_direction_type")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "plan.execution.json 缺少 selected_direction_type".to_string())?;
+        if !VALID_DIRECTION_TYPES.contains(&selected_direction.as_str()) {
+            return Err(format!(
+                "selected_direction_type 非法: {}",
+                selected_direction
+            ));
+        }
+
+        let cycle_value = read_json_file(cycle_dir, "cycle.json")?;
+        let cycle_direction = cycle_value
+            .pointer("/direction/selected_type")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "cycle.json 缺少 direction.selected_type".to_string())?;
+        if cycle_direction != selected_direction {
+            return Err(format!(
+                "selected_direction_type 与 cycle.direction.selected_type 不一致: {} != {}",
+                selected_direction, cycle_direction
+            ));
+        }
+
+        let plan_criteria: HashSet<String> = value
+            .pointer("/verification_plan/acceptance_mapping")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
+            })?
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                id_from_value(item, &["criteria_id"])
+                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
+            })
+            .collect::<Result<HashSet<String>, String>>()?;
+        if plan_criteria.is_empty() {
+            return Err("verification_plan.acceptance_mapping 不能为空".to_string());
+        }
+
+        let cycle_criteria = cycle_value
+            .pointer("/llm_defined_acceptance/criteria")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "cycle.json 缺少 llm_defined_acceptance.criteria".to_string())?;
+        let cycle_criteria_ids: HashSet<String> = cycle_criteria
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let criteria_id = id_from_value(item, &["criteria_id"]).ok_or_else(|| {
+                    format!(
+                        "cycle.llm_defined_acceptance.criteria[{}] 缺少 criteria_id",
+                        idx
+                    )
+                })?;
+                let description = item
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim())
+                    .unwrap_or_default();
+                if description.is_empty() {
+                    return Err(format!(
+                        "cycle.llm_defined_acceptance.criteria[{}].description 不能为空",
+                        idx
+                    ));
+                }
+                Ok(criteria_id)
+            })
+            .collect::<Result<HashSet<String>, String>>()?;
+        if cycle_criteria_ids.is_empty() {
+            return Err("cycle.llm_defined_acceptance.criteria 不能为空".to_string());
+        }
+        if plan_criteria != cycle_criteria_ids {
+            return Err(format!(
+                "plan.acceptance_mapping 与 cycle.llm_defined_acceptance.criteria 不一致: plan={:?}, cycle={:?}",
+                plan_criteria, cycle_criteria_ids
+            ));
+        }
+
         Ok(())
     }
 
@@ -1656,16 +1868,123 @@ impl EvolutionManager {
     }
 
     fn validate_implement_artifact(
+        stage: &str,
         cycle_dir: &Path,
         verify_iteration: u32,
         backlog_contract_version: u32,
+        validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
-        if verify_iteration == 0 {
-            return Ok(());
+        let file_name = Self::implement_result_file_for_stage(stage)
+            .ok_or_else(|| format!("未知 implement stage: {}", stage))?;
+        let value = read_json_file(cycle_dir, file_name)?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches(file_name, &value, &ctx.cycle_id)?;
+            ensure_artifact_freshness(file_name, &value, ctx.stage_started_at)?;
         }
-        if backlog_contract_version >= 2 {
+
+        let file_verify_iteration = value
+            .get("verify_iteration")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| format!("{} 缺少 verify_iteration", file_name))?
+            as u32;
+        if file_verify_iteration != verify_iteration {
+            return Err(format!(
+                "{}.verify_iteration 不匹配: {} != {}",
+                file_name, file_verify_iteration, verify_iteration
+            ));
+        }
+
+        let status = value
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| format!("{} 缺少 status", file_name))?;
+        if !matches!(status.as_str(), "done" | "failed" | "blocked" | "skipped") {
+            return Err(format!(
+                "{}.status 非法: {}（必须是 done|failed|blocked|skipped）",
+                file_name, status
+            ));
+        }
+
+        for key in [
+            "work_item_results",
+            "changed_files",
+            "commands_executed",
+            "quick_checks",
+        ] {
+            if value.get(key).and_then(|v| v.as_array()).is_none() {
+                return Err(format!("{} 缺少 {} 数组", file_name, key));
+            }
+        }
+        if value.get("summary").and_then(|v| v.as_str()).is_none() {
+            return Err(format!("{} 缺少 summary 字段", file_name));
+        }
+
+        if verify_iteration > 0 && backlog_contract_version >= 2 {
+            let updates = value
+                .pointer("/backlog_resolution_updates")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| format!("{} 缺少 backlog_resolution_updates", file_name))?;
+            for (idx, item) in updates.iter().enumerate() {
+                let parsed = serde_json::from_value::<BacklogResolutionUpdate>(item.clone())
+                    .map_err(|e| {
+                        format!(
+                            "{}.backlog_resolution_updates[{}] 非法: {}",
+                            file_name, idx, e
+                        )
+                    })?;
+                if parsed.source_criteria_id.trim().is_empty()
+                    || parsed.source_check_id.trim().is_empty()
+                    || parsed.work_item_id.trim().is_empty()
+                {
+                    return Err(format!(
+                        "{}.backlog_resolution_updates[{}] selector 字段不能为空",
+                        file_name, idx
+                    ));
+                }
+                if parsed.implementation_agent.trim() != stage {
+                    return Err(format!(
+                        "{}.backlog_resolution_updates[{}].implementation_agent 必须等于 {}",
+                        file_name, idx, stage
+                    ));
+                }
+                if normalize_backlog_status(&parsed.status).is_none() {
+                    return Err(format!(
+                        "{}.backlog_resolution_updates[{}].status 必须是 done|blocked|not_done",
+                        file_name, idx
+                    ));
+                }
+            }
+
             let backlog = Self::read_managed_failure_backlog(cycle_dir)?;
             let coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+            if let Some(ctx) = validation_ctx {
+                if backlog.cycle_id != ctx.cycle_id {
+                    return Err(format!(
+                        "{}.cycle_id 不匹配: {} != {}",
+                        MANAGED_FAILURE_BACKLOG_FILE, backlog.cycle_id, ctx.cycle_id
+                    ));
+                }
+                if coverage.cycle_id != ctx.cycle_id {
+                    return Err(format!(
+                        "{}.cycle_id 不匹配: {} != {}",
+                        MANAGED_BACKLOG_COVERAGE_FILE, coverage.cycle_id, ctx.cycle_id
+                    ));
+                }
+            }
+            if backlog.verify_iteration != verify_iteration {
+                return Err(format!(
+                    "{}.verify_iteration 不匹配: {} != {}",
+                    MANAGED_FAILURE_BACKLOG_FILE, backlog.verify_iteration, verify_iteration
+                ));
+            }
+            if coverage.verify_iteration != verify_iteration {
+                return Err(format!(
+                    "{}.verify_iteration 不匹配: {} != {}",
+                    MANAGED_BACKLOG_COVERAGE_FILE, coverage.verify_iteration, verify_iteration
+                ));
+            }
+
             let mut backlog_ids = HashSet::new();
             for (idx, item) in backlog.items.iter().enumerate() {
                 if item.id.trim().is_empty() {
@@ -1704,40 +2023,44 @@ impl EvolutionManager {
             return Ok(());
         }
 
-        let (backlog, coverage) =
-            Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
-        for (idx, item) in backlog.iter().enumerate() {
-            let Some(obj) = item.as_object() else {
-                return Err(format!("failure_backlog[{}] 必须是对象", idx));
-            };
-            let agent = obj
-                .get("implementation_agent")
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim().to_ascii_lowercase())
-                .ok_or_else(|| {
-                    format!("failure_backlog[{}].implementation_agent 缺失或非法", idx)
-                })?;
-            if !is_valid_implementation_agent(agent.as_str()) {
+        if verify_iteration > 0 && backlog_contract_version < 2 {
+            let (backlog, coverage) =
+                Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
+            for (idx, item) in backlog.iter().enumerate() {
+                let Some(obj) = item.as_object() else {
+                    return Err(format!("failure_backlog[{}] 必须是对象", idx));
+                };
+                let agent = obj
+                    .get("implementation_agent")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .ok_or_else(|| {
+                        format!("failure_backlog[{}].implementation_agent 缺失或非法", idx)
+                    })?;
+                if !is_valid_implementation_agent(agent.as_str()) {
+                    return Err(format!(
+                        "failure_backlog[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
+                        idx
+                    ));
+                }
+            }
+            let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
+            let coverage_ids =
+                collect_unique_ids(&coverage, &["id", "item_id"], "backlog_coverage")?;
+            if backlog_ids.len() != coverage_ids.len() {
                 return Err(format!(
-                    "failure_backlog[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
-                    idx
+                    "failure_backlog 与 backlog_coverage 数量不一致: {} vs {}",
+                    backlog_ids.len(),
+                    coverage_ids.len()
                 ));
             }
+            let backlog_set: HashSet<String> = backlog_ids.into_iter().collect();
+            let coverage_set: HashSet<String> = coverage_ids.into_iter().collect();
+            if backlog_set != coverage_set {
+                return Err("backlog_coverage 未完整覆盖 failure_backlog".to_string());
+            }
         }
-        let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
-        let coverage_ids = collect_unique_ids(&coverage, &["id", "item_id"], "backlog_coverage")?;
-        if backlog_ids.len() != coverage_ids.len() {
-            return Err(format!(
-                "failure_backlog 与 backlog_coverage 数量不一致: {} vs {}",
-                backlog_ids.len(),
-                coverage_ids.len()
-            ));
-        }
-        let backlog_set: HashSet<String> = backlog_ids.into_iter().collect();
-        let coverage_set: HashSet<String> = coverage_ids.into_iter().collect();
-        if backlog_set != coverage_set {
-            return Err("backlog_coverage 未完整覆盖 failure_backlog".to_string());
-        }
+
         Ok(())
     }
 
@@ -1745,15 +2068,43 @@ impl EvolutionManager {
         cycle_dir: &Path,
         verify_iteration: u32,
         backlog_contract_version: u32,
+        validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
-        if verify_iteration == 0 {
-            return Ok(());
-        }
         let verify_value = read_json_file(cycle_dir, "verify.result.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("verify.result.json", &verify_value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("verify.result.json", &verify_value, ctx.stage_started_at)?;
+        }
+        let verify_file_iteration = verify_value
+            .get("verify_iteration")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| "verify.result.json 缺少 verify_iteration".to_string())?
+            as u32;
+        if verify_file_iteration != verify_iteration {
+            return Err(format!(
+                "verify.result.json.verify_iteration 不匹配: {} != {}",
+                verify_file_iteration, verify_iteration
+            ));
+        }
         let acceptance_items = verify_value
             .pointer("/acceptance_evaluation")
             .and_then(|v| v.as_array())
             .ok_or_else(|| "verify.result.json 缺少 acceptance_evaluation".to_string())?;
+        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.execution.json")?
+            .pointer("/verification_plan/acceptance_mapping")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
+            })?
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                id_from_value(item, &["criteria_id"])
+                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
+            })
+            .collect::<Result<HashSet<String>, String>>()?;
+        let mut actual_criteria = HashSet::new();
+        let mut has_failing_acceptance = false;
         for (idx, item) in acceptance_items.iter().enumerate() {
             let criteria_id = id_from_value(item, &["criteria_id"])
                 .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 criteria_id", idx))?;
@@ -1767,7 +2118,40 @@ impl EvolutionManager {
                     idx, status, criteria_id
                 ));
             }
+            if as_failing_status(status) {
+                has_failing_acceptance = true;
+            }
+            actual_criteria.insert(criteria_id);
         }
+        if actual_criteria != expected_criteria {
+            return Err(format!(
+                "acceptance_evaluation 覆盖不完整: expected={:?}, actual={:?}",
+                expected_criteria, actual_criteria
+            ));
+        }
+
+        let verification_overall_result = verify_value
+            .pointer("/verification_overall/result")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| "verify.result.json 缺少 verification_overall.result".to_string())?;
+        if !matches!(verification_overall_result.as_str(), "pass" | "fail") {
+            return Err(format!(
+                "verify.result.json.verification_overall.result 非法: {}",
+                verification_overall_result
+            ));
+        }
+        if has_failing_acceptance && verification_overall_result == "pass" {
+            return Err(
+                "acceptance_evaluation 存在未通过项时 verification_overall.result 不得为 pass"
+                    .to_string(),
+            );
+        }
+
+        if verify_iteration == 0 {
+            return Ok(());
+        }
+
         let (backlog, _) =
             Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
         let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
@@ -1827,6 +2211,16 @@ impl EvolutionManager {
                 missing_ids
             ));
         }
+        let carry_missing = carry_summary
+            .get("missing")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_default();
+        if carry_missing > 0 && verification_overall_result == "pass" {
+            return Err(
+                "carryover_verification.summary.missing > 0 时 verification_overall.result 不得为 pass"
+                    .to_string(),
+            );
+        }
         Ok(())
     }
 
@@ -1834,13 +2228,127 @@ impl EvolutionManager {
         cycle_dir: &Path,
         verify_iteration: u32,
         backlog_contract_version: u32,
+        validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
         let judge_value = read_json_file(cycle_dir, "judge.result.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("judge.result.json", &judge_value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("judge.result.json", &judge_value, ctx.stage_started_at)?;
+        }
+        let judge_verify_iteration = judge_value
+            .get("verify_iteration")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| "judge.result.json 缺少 verify_iteration".to_string())?
+            as u32;
+        if judge_verify_iteration != verify_iteration {
+            return Err(format!(
+                "judge.result.json.verify_iteration 不匹配: {} != {}",
+                judge_verify_iteration, verify_iteration
+            ));
+        }
+        let judge_verify_iteration_limit = judge_value
+            .get("verify_iteration_limit")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| "judge.result.json 缺少 verify_iteration_limit".to_string())?
+            as u32;
+        if judge_verify_iteration_limit == 0 {
+            return Err("judge.result.json.verify_iteration_limit 必须大于 0".to_string());
+        }
+
+        let plan_value = read_json_file(cycle_dir, "plan.execution.json")?;
+        let expected_criteria: HashSet<String> = plan_value
+            .pointer("/verification_plan/acceptance_mapping")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
+            })?
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                id_from_value(item, &["criteria_id"])
+                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
+            })
+            .collect::<Result<HashSet<String>, String>>()?;
+        let criteria_judgement = judge_value
+            .pointer("/criteria_judgement")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "judge.result.json 缺少 criteria_judgement".to_string())?;
+        let mut actual_criteria: HashSet<String> = HashSet::new();
+        for (idx, item) in criteria_judgement.iter().enumerate() {
+            let criteria_id = id_from_value(item, &["criteria_id"])
+                .ok_or_else(|| format!("criteria_judgement[{}] 缺少 criteria_id", idx))?;
+            let result = item
+                .get("result")
+                .or_else(|| item.get("status"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_ascii_lowercase())
+                .ok_or_else(|| format!("criteria_judgement[{}] 缺少 result/status", idx))?;
+            if !matches!(result.as_str(), "pass" | "fail" | "insufficient_evidence") {
+                return Err(format!(
+                    "criteria_judgement[{}].result/status 非法: {}",
+                    idx, result
+                ));
+            }
+            actual_criteria.insert(criteria_id);
+        }
+        if actual_criteria != expected_criteria {
+            return Err(format!(
+                "criteria_judgement 覆盖不完整: expected={:?}, actual={:?}",
+                expected_criteria, actual_criteria
+            ));
+        }
+
         let judge_failed = judge_value
             .pointer("/overall_result/result")
             .and_then(|v| v.as_str())
             .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "fail" | "failed"))
             .unwrap_or(false);
+        let judge_passed = judge_value
+            .pointer("/overall_result/result")
+            .and_then(|v| v.as_str())
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "pass"))
+            .unwrap_or(false);
+        if !judge_failed && !judge_passed {
+            return Err("judge.result.json.overall_result.result 必须是 pass 或 fail".to_string());
+        }
+
+        let next_action_type = judge_value
+            .pointer("/next_action/type")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| "judge.result.json 缺少 next_action.type".to_string())?;
+        let next_action_target = judge_value.pointer("/next_action/target");
+        if judge_passed {
+            let target = next_action_target
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if next_action_type != "goto_stage" || target != "report" {
+                return Err(
+                    "judge pass 时 next_action 必须是 {type:goto_stage,target:report}".to_string(),
+                );
+            }
+        } else if verify_iteration < judge_verify_iteration_limit {
+            let target = next_action_target
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if next_action_type != "goto_stage"
+                || !matches!(target.as_str(), "implement_general" | "implement_advanced")
+            {
+                return Err(
+                    "judge fail 且未达到 verify_iteration_limit 时 next_action 必须跳转 implement_general 或 implement_advanced"
+                        .to_string(),
+                );
+            }
+        } else if next_action_type != "stop_cycle"
+            || !next_action_target.is_some_and(|v| v.is_null())
+        {
+            return Err(
+                "judge fail 且达到 verify_iteration_limit 时 next_action 必须是 {type:stop_cycle,target:null}"
+                    .to_string(),
+            );
+        }
 
         let mut requirements: Vec<serde_json::Value> = Vec::new();
         let mut requirements_loaded = false;
@@ -1884,8 +2392,9 @@ impl EvolutionManager {
                         .and_then(|v| v.as_str())
                         .unwrap_or("missing");
                     if as_failing_status(status) {
-                        let item_id = id_from_value(item, &["id", "item_id"])
-                            .ok_or_else(|| format!("carryover_verification.items[{}] 缺少 id", idx))?;
+                        let item_id = id_from_value(item, &["id", "item_id"]).ok_or_else(|| {
+                            format!("carryover_verification.items[{}] 缺少 id", idx)
+                        })?;
                         expected.insert(item_id);
                     }
                 }
@@ -1901,6 +2410,17 @@ impl EvolutionManager {
                     missing_expected
                 ));
             }
+
+            let carry_missing = verify_value
+                .pointer("/carryover_verification/summary/missing")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default();
+            if carry_missing > 0 && judge_passed {
+                return Err(
+                    "verify.carryover_verification.summary.missing > 0 时 judge 不得判定 pass"
+                        .to_string(),
+                );
+            }
         }
 
         let should_validate_v2_selector =
@@ -1912,7 +2432,6 @@ impl EvolutionManager {
                         .to_string()
                 })?;
             }
-            let plan_value = read_json_file(cycle_dir, "plan.execution.json")?;
             let tables = parse_plan_routing_tables(&plan_value)?;
             let check_to_work_items = Self::parse_check_to_work_items(&plan_value)?;
             for (idx, requirement) in requirements.iter().enumerate() {
@@ -1978,31 +2497,492 @@ impl EvolutionManager {
         Ok(())
     }
 
-    fn validate_stage_artifacts(
+    fn validate_direction_artifact(
+        cycle_dir: &Path,
+        validation_ctx: Option<&StageValidationContext>,
+    ) -> Result<(), String> {
+        let stage_value = read_json_file(cycle_dir, "stage.direction.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("stage.direction.json", &stage_value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("stage.direction.json", &stage_value, ctx.stage_started_at)?;
+        }
+        let cycle_title = extract_cycle_title_from_direction_stage(&stage_value)
+            .ok_or_else(|| "stage.direction.json 缺少 cycle_title".to_string())?;
+        if cycle_title.trim().is_empty() {
+            return Err("stage.direction.json.cycle_title 不能为空".to_string());
+        }
+        let capability = stage_value
+            .pointer("/decision/context/capability_assessment")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| {
+                "stage.direction.json 缺少 decision.context.capability_assessment".to_string()
+            })?;
+        for key in [
+            "ui_capability",
+            "test_capability",
+            "build_capability",
+            "runtime_capability",
+            "rationale",
+        ] {
+            let valid = capability
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            if !valid {
+                return Err(format!(
+                    "stage.direction.json.decision.context.capability_assessment.{} 不能为空",
+                    key
+                ));
+            }
+        }
+        let next_type = stage_value
+            .pointer("/next_action/type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let next_target = stage_value
+            .pointer("/next_action/target")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if next_type != "goto_stage" || next_target != "plan" {
+            return Err(
+                "stage.direction.json.next_action 必须是 {type:goto_stage,target:plan}".to_string(),
+            );
+        }
+
+        let lifecycle_scan = read_json_file(cycle_dir, "direction.lifecycle_scan.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches(
+                "direction.lifecycle_scan.json",
+                &lifecycle_scan,
+                &ctx.cycle_id,
+            )?;
+            ensure_artifact_freshness(
+                "direction.lifecycle_scan.json",
+                &lifecycle_scan,
+                ctx.stage_started_at,
+            )?;
+        }
+        for key in ["project_type", "ui_capability", "updated_at"] {
+            if lifecycle_scan
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().is_empty())
+                .unwrap_or(true)
+            {
+                return Err(format!("direction.lifecycle_scan.json.{} 不能为空", key));
+            }
+        }
+        let domains = lifecycle_scan
+            .get("domains")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "direction.lifecycle_scan.json 缺少 domains".to_string())?;
+        if domains.is_empty() {
+            return Err("direction.lifecycle_scan.json.domains 不能为空".to_string());
+        }
+        for (idx, domain) in domains.iter().enumerate() {
+            let obj = domain.as_object().ok_or_else(|| {
+                format!("direction.lifecycle_scan.json.domains[{}] 必须是对象", idx)
+            })?;
+            for key in ["domain", "status"] {
+                if obj
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    return Err(format!(
+                        "direction.lifecycle_scan.json.domains[{}].{} 不能为空",
+                        idx, key
+                    ));
+                }
+            }
+            if obj
+                .get("evidence_paths")
+                .and_then(|v| v.as_array())
+                .is_none()
+            {
+                return Err(format!(
+                    "direction.lifecycle_scan.json.domains[{}].evidence_paths 缺少数组",
+                    idx
+                ));
+            }
+            if obj.get("findings").and_then(|v| v.as_array()).is_none() {
+                return Err(format!(
+                    "direction.lifecycle_scan.json.domains[{}].findings 缺少数组",
+                    idx
+                ));
+            }
+            let opportunities = obj
+                .get("opportunities")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    format!(
+                        "direction.lifecycle_scan.json.domains[{}].opportunities 缺少数组",
+                        idx
+                    )
+                })?;
+            for (op_idx, op) in opportunities.iter().enumerate() {
+                let mapped_direction = op
+                    .get("mapped_direction_type")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .ok_or_else(|| {
+                        format!(
+                            "direction.lifecycle_scan.json.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
+                            idx, op_idx
+                        )
+                    })?;
+                if !VALID_DIRECTION_TYPES.contains(&mapped_direction.as_str()) {
+                    return Err(format!(
+                        "direction.lifecycle_scan.json.domains[{}].opportunities[{}].mapped_direction_type 非法: {}",
+                        idx, op_idx, mapped_direction
+                    ));
+                }
+            }
+        }
+
+        let cycle_value = read_json_file(cycle_dir, "cycle.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("cycle.json", &cycle_value, &ctx.cycle_id)?;
+        }
+        let selected_type = cycle_value
+            .pointer("/direction/selected_type")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| "cycle.json.direction.selected_type 缺失".to_string())?;
+        if !VALID_DIRECTION_TYPES.contains(&selected_type.as_str()) {
+            return Err(format!(
+                "cycle.json.direction.selected_type 非法: {}",
+                selected_type
+            ));
+        }
+        let candidate_scores = cycle_value
+            .pointer("/direction/candidate_scores")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "cycle.json.direction.candidate_scores 缺失".to_string())?;
+        if candidate_scores.len() < 3 || candidate_scores.len() > 5 {
+            return Err(format!(
+                "cycle.json.direction.candidate_scores 数量必须在 3..=5，当前 {}",
+                candidate_scores.len()
+            ));
+        }
+        let mut previous_score: Option<f64> = None;
+        for (idx, score_item) in candidate_scores.iter().enumerate() {
+            let direction_type = score_item
+                .get("direction_type")
+                .or_else(|| score_item.get("type"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_ascii_lowercase())
+                .ok_or_else(|| {
+                    format!(
+                        "cycle.json.direction.candidate_scores[{}] 缺少 direction_type",
+                        idx
+                    )
+                })?;
+            if !VALID_DIRECTION_TYPES.contains(&direction_type.as_str()) {
+                return Err(format!(
+                    "cycle.json.direction.candidate_scores[{}].direction_type 非法: {}",
+                    idx, direction_type
+                ));
+            }
+            let score = score_item
+                .get("score")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| format!("candidate_scores[{}].score 缺失", idx))?;
+            if !(0.0..=1.0).contains(&score) {
+                return Err(format!(
+                    "candidate_scores[{}].score 必须在 0..=1，当前 {}",
+                    idx, score
+                ));
+            }
+            if let Some(prev) = previous_score {
+                if score > prev {
+                    return Err("direction.candidate_scores 必须按 score 降序排列".to_string());
+                }
+            }
+            previous_score = Some(score);
+        }
+        let final_reason = cycle_value
+            .pointer("/direction/final_reason")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .unwrap_or_default();
+        if final_reason.is_empty() {
+            return Err("cycle.json.direction.final_reason 不能为空".to_string());
+        }
+        let criteria = cycle_value
+            .pointer("/llm_defined_acceptance/criteria")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "cycle.json.llm_defined_acceptance.criteria 缺失".to_string())?;
+        if criteria.is_empty() {
+            return Err("cycle.json.llm_defined_acceptance.criteria 不能为空".to_string());
+        }
+        for (idx, item) in criteria.iter().enumerate() {
+            let _criteria_id = id_from_value(item, &["criteria_id"]).ok_or_else(|| {
+                format!(
+                    "cycle.json.llm_defined_acceptance.criteria[{}] 缺少 criteria_id",
+                    idx
+                )
+            })?;
+            let description = item
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim())
+                .unwrap_or_default();
+            if description.is_empty() {
+                return Err(format!(
+                    "cycle.json.llm_defined_acceptance.criteria[{}].description 不能为空",
+                    idx
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_report_artifact(
+        cycle_dir: &Path,
+        verify_iteration: u32,
+        validation_ctx: Option<&StageValidationContext>,
+    ) -> Result<(), String> {
+        let stage_report = read_json_file(cycle_dir, "stage.report.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("stage.report.json", &stage_report, &ctx.cycle_id)?;
+            ensure_artifact_freshness("stage.report.json", &stage_report, ctx.stage_started_at)?;
+        }
+        let next_type = stage_report
+            .pointer("/next_action/type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let next_target = stage_report.pointer("/next_action/target");
+        let next_target_str = next_target
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let valid_next = (next_type == "goto_stage" && next_target_str == "auto_commit")
+            || (next_type == "finish_cycle" && next_target.is_some_and(|v| v.is_null()));
+        if !valid_next {
+            return Err("stage.report.json.next_action 非法".to_string());
+        }
+
+        let report_result = read_json_file(cycle_dir, "report.result.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("report.result.json", &report_result, &ctx.cycle_id)?;
+            ensure_artifact_freshness("report.result.json", &report_result, ctx.stage_started_at)?;
+        }
+        for key in [
+            "final_result",
+            "direction_summary",
+            "acceptance_summary",
+            "implementation_summary",
+            "verification_summary",
+        ] {
+            if report_result.get(key).is_none() {
+                return Err(format!("report.result.json 缺少 {}", key));
+            }
+        }
+
+        let judge_result_from_report = report_result
+            .pointer("/final_result/judge_result")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| "report.result.json 缺少 final_result.judge_result".to_string())?;
+        if !matches!(judge_result_from_report.as_str(), "pass" | "fail") {
+            return Err(format!(
+                "report.result.json.final_result.judge_result 非法: {}",
+                judge_result_from_report
+            ));
+        }
+        let judge_result_from_file = read_json_file(cycle_dir, "judge.result.json")?
+            .pointer("/overall_result/result")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| "judge.result.json 缺少 overall_result.result".to_string())?;
+        if judge_result_from_report != judge_result_from_file {
+            return Err(format!(
+                "report.final_result.judge_result 与 judge.result 不一致: {} != {}",
+                judge_result_from_report, judge_result_from_file
+            ));
+        }
+
+        let recommended_status = report_result
+            .pointer("/final_result/recommended_cycle_status")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .ok_or_else(|| {
+                "report.result.json 缺少 final_result.recommended_cycle_status".to_string()
+            })?;
+        if !matches!(
+            recommended_status.as_str(),
+            "completed" | "failed_exhausted"
+        ) {
+            return Err(format!(
+                "recommended_cycle_status 非法: {}",
+                recommended_status
+            ));
+        }
+        if judge_result_from_report == "pass" && recommended_status != "completed" {
+            return Err(
+                "judge_result=pass 时 recommended_cycle_status 必须是 completed".to_string(),
+            );
+        }
+
+        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.execution.json")?
+            .pointer("/verification_plan/acceptance_mapping")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
+            })?
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                id_from_value(item, &["criteria_id"])
+                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
+            })
+            .collect::<Result<HashSet<String>, String>>()?;
+        let criteria_details = report_result
+            .pointer("/acceptance_summary/criteria_details")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "report.result.json.acceptance_summary 缺少 criteria_details".to_string()
+            })?;
+        let actual_criteria: HashSet<String> = criteria_details
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                id_from_value(item, &["criteria_id"])
+                    .ok_or_else(|| format!("criteria_details[{}] 缺少 criteria_id", idx))
+            })
+            .collect::<Result<HashSet<String>, String>>()?;
+        if expected_criteria != actual_criteria {
+            return Err(format!(
+                "report.acceptance_summary 覆盖不完整: expected={:?}, actual={:?}",
+                expected_criteria, actual_criteria
+            ));
+        }
+
+        if verify_iteration > 0
+            && report_result
+                .pointer("/verification_summary/remediation_tracking")
+                .and_then(|v| v.as_array())
+                .is_none()
+        {
+            return Err(
+                "verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空"
+                    .to_string(),
+            );
+        }
+
+        let report_md_path = cycle_dir.join("report.md");
+        let report_md = std::fs::read_to_string(&report_md_path)
+            .map_err(|e| format!("读取 report.md 失败: {}", e))?;
+        if report_md.trim().is_empty() {
+            return Err("report.md 不能为空".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_auto_commit_artifact(
+        cycle_dir: &Path,
+        validation_ctx: Option<&StageValidationContext>,
+    ) -> Result<(), String> {
+        let stage_auto_commit = read_json_file(cycle_dir, "stage.auto_commit.json")?;
+        if let Some(ctx) = validation_ctx {
+            ensure_cycle_id_matches("stage.auto_commit.json", &stage_auto_commit, &ctx.cycle_id)?;
+            ensure_artifact_freshness(
+                "stage.auto_commit.json",
+                &stage_auto_commit,
+                ctx.stage_started_at,
+            )?;
+        }
+        let next_type = stage_auto_commit
+            .pointer("/next_action/type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let next_target = stage_auto_commit
+            .pointer("/next_action/target")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if next_type != "goto_stage" || next_target != "direction" {
+            return Err(
+                "stage.auto_commit.json.next_action 必须是 {type:goto_stage,target:direction}"
+                    .to_string(),
+            );
+        }
+
+        if let Some(ctx) = validation_ctx {
+            let workspace_root = Path::new(ctx.workspace_root.as_str());
+            let repo_dirty = git_repo_has_changes(workspace_root)?;
+            if repo_dirty {
+                let reason = stage_auto_commit
+                    .pointer("/decision/reason")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_ascii_lowercase())
+                    .unwrap_or_default();
+                let no_changes_declared =
+                    reason.contains("无可提交变更") || reason.contains("no changes to commit");
+                if !no_changes_declared {
+                    return Err(
+                        "auto_commit 阶段结束后工作区仍有未提交变更，且未声明“无可提交变更”"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_stage_artifacts_with_context(
         stage: &str,
         cycle_dir: &Path,
         verify_iteration: u32,
         backlog_contract_version: u32,
+        validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
         match stage {
-            "plan" => Self::validate_plan_artifact(cycle_dir),
+            "direction" => Self::validate_direction_artifact(cycle_dir, validation_ctx),
+            "plan" => Self::validate_plan_artifact(cycle_dir, validation_ctx),
             "implement_general" | "implement_visual" | "implement_advanced" => {
                 Self::validate_implement_artifact(
+                    stage,
                     cycle_dir,
                     verify_iteration,
                     backlog_contract_version,
+                    validation_ctx,
                 )
             }
             "verify" => Self::validate_verify_artifact(
                 cycle_dir,
                 verify_iteration,
                 backlog_contract_version,
+                validation_ctx,
             ),
-            "judge" => {
-                Self::validate_judge_artifact(cycle_dir, verify_iteration, backlog_contract_version)
-            }
+            "judge" => Self::validate_judge_artifact(
+                cycle_dir,
+                verify_iteration,
+                backlog_contract_version,
+                validation_ctx,
+            ),
+            "report" => Self::validate_report_artifact(cycle_dir, verify_iteration, validation_ctx),
+            "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
             _ => Ok(()),
         }
+    }
+
+    #[cfg(test)]
+    fn validate_stage_artifacts(
+        stage: &str,
+        cycle_dir: &Path,
+        verify_iteration: u32,
+        backlog_contract_version: u32,
+    ) -> Result<(), String> {
+        Self::validate_stage_artifacts_with_context(
+            stage,
+            cycle_dir,
+            verify_iteration,
+            backlog_contract_version,
+            None,
+        )
     }
 
     fn extract_acceptance_mapping_criteria(
@@ -2359,6 +3339,35 @@ impl EvolutionManager {
         lanes.iter().any(|lane| *lane == target_lane)
     }
 
+    fn stage_owned_artifact_paths(stage: &str, cycle_dir: &Path) -> Vec<PathBuf> {
+        match stage {
+            "direction" => vec![cycle_dir.join("direction.lifecycle_scan.json")],
+            "plan" => vec![cycle_dir.join("plan.execution.json")],
+            "implement_general" => vec![cycle_dir.join("implement_general.result.json")],
+            "implement_visual" => vec![cycle_dir.join("implement_visual.result.json")],
+            "implement_advanced" => vec![cycle_dir.join("implement_advanced.result.json")],
+            "verify" => vec![cycle_dir.join("verify.result.json")],
+            "judge" => vec![cycle_dir.join("judge.result.json")],
+            "report" => vec![
+                cycle_dir.join("report.result.json"),
+                cycle_dir.join("report.md"),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn reset_stage_owned_artifacts(stage: &str, cycle_dir: &Path) -> Result<(), String> {
+        for path in Self::stage_owned_artifact_paths(stage, cycle_dir) {
+            if !path.exists() {
+                continue;
+            }
+            if let Err(err) = std::fs::remove_file(&path) {
+                return Err(format!("清理旧产物失败 ({}): {}", path.display(), err));
+            }
+        }
+        Ok(())
+    }
+
     fn persist_empty_implement_result_file(
         cycle_dir: &Path,
         stage: &str,
@@ -2704,12 +3713,15 @@ impl EvolutionManager {
     fn supports_validation_reminder(stage: &str) -> bool {
         matches!(
             stage,
-            "plan"
+            "direction"
+                | "plan"
                 | "implement_general"
                 | "implement_visual"
                 | "implement_advanced"
                 | "verify"
                 | "judge"
+                | "report"
+                | "auto_commit"
         )
     }
 
@@ -2721,6 +3733,67 @@ impl EvolutionManager {
         format!(
             "<system-reminder>{stage} 阶段产物有问题：{validation_err}。请修复</system-reminder>"
         )
+    }
+
+    fn parse_validation_error_code_and_message(validation_err: &str) -> (String, String) {
+        let trimmed = validation_err.trim();
+        let payload = trimmed
+            .strip_prefix("evo_stage_output_invalid:")
+            .unwrap_or(trimmed)
+            .trim();
+        if let Some((code, message)) = payload.split_once(':') {
+            let normalized_code = code.trim();
+            let normalized_message = message.trim();
+            if !normalized_code.is_empty() && !normalized_message.is_empty() {
+                return (normalized_code.to_string(), normalized_message.to_string());
+            }
+        }
+        (
+            "artifact_contract_violation".to_string(),
+            payload.to_string(),
+        )
+    }
+
+    fn append_stage_validation_attempt(
+        cycle_dir: &Path,
+        stage: &str,
+        attempt: u32,
+        session_id: &str,
+        validation_err: &str,
+    ) -> Result<(), String> {
+        let stage_file = cycle_dir.join(format!("stage.{}.json", stage));
+        let mut value = if stage_file.exists() {
+            let content = std::fs::read_to_string(&stage_file)
+                .map_err(|e| format!("读取 {} 失败: {}", stage_file.display(), e))?;
+            serde_json::from_str::<serde_json::Value>(&content)
+                .map_err(|e| format!("解析 {} 失败: {}", stage_file.display(), e))?
+        } else {
+            serde_json::json!({})
+        };
+        let obj = value
+            .as_object_mut()
+            .ok_or_else(|| format!("{} 顶层必须是对象", stage_file.display()))?;
+        let system_metadata = obj
+            .entry("system_metadata".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        let system_obj = system_metadata
+            .as_object_mut()
+            .ok_or_else(|| format!("{}.system_metadata 必须是对象", stage_file.display()))?;
+        let attempts = system_obj
+            .entry("validation_attempts".to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        let attempts_array = attempts
+            .as_array_mut()
+            .ok_or_else(|| format!("{}.validation_attempts 必须是数组", stage_file.display()))?;
+        let (error_code, message) = Self::parse_validation_error_code_and_message(validation_err);
+        attempts_array.push(serde_json::json!({
+            "attempt": attempt,
+            "error_code": error_code,
+            "message": message,
+            "ts": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+        }));
+        write_json(&stage_file, &value)
     }
 
     async fn consume_stage_stream(
@@ -3141,30 +4214,54 @@ impl EvolutionManager {
     ) -> Result<(), String> {
         let validation_ctx = {
             let state = self.state.lock().await;
-            state.workspaces.get(key).map(|entry| {
-                (
-                    entry.workspace_root.clone(),
-                    entry.verify_iteration,
-                    entry.backlog_contract_version,
-                )
-            })
+            state
+                .workspaces
+                .get(key)
+                .map(|entry| StageValidationContext {
+                    cycle_id: cycle_id.to_string(),
+                    verify_iteration: entry.verify_iteration,
+                    backlog_contract_version: entry.backlog_contract_version,
+                    stage_started_at: entry
+                        .stage_started_ats
+                        .get(stage)
+                        .and_then(|v| parse_rfc3339_utc(v)),
+                    workspace_root: entry.workspace_root.clone(),
+                })
         };
-        if let Some((workspace_root, verify_iteration, backlog_contract_version)) = validation_ctx {
-            let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-            let contract_version = if backlog_contract_version == 0 {
+        if let Some(mut ctx) = validation_ctx {
+            let cycle_dir = cycle_dir_path(&ctx.workspace_root, cycle_id)?;
+            let contract_version = if ctx.backlog_contract_version == 0 {
                 backlog_contract_version_from_cycle(&cycle_dir)?
             } else {
-                backlog_contract_version
+                ctx.backlog_contract_version
             };
-            if verify_iteration > 0
+            ctx.backlog_contract_version = contract_version;
+            if ctx.verify_iteration > 0
                 && contract_version >= 2
                 && Self::lane_for_stage(stage).is_some()
             {
-                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage)
-                    .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
+                Self::sync_managed_backlog_for_implement_stage(&cycle_dir, stage).map_err(|e| {
+                    ArtifactValidationError::new("managed_backlog_sync_failed", e).to_stage_error()
+                })?;
             }
-            Self::validate_stage_artifacts(stage, &cycle_dir, verify_iteration, contract_version)
-                .map_err(|e| format!("evo_stage_output_invalid: {}", e))?;
+            Self::validate_stage_artifacts_with_context(
+                stage,
+                &cycle_dir,
+                ctx.verify_iteration,
+                contract_version,
+                Some(&ctx),
+            )
+            .map_err(|e| {
+                ArtifactValidationError::new("artifact_contract_violation", e).to_stage_error()
+            })?;
+            if stage == "direction" {
+                self.sync_cycle_title_from_direction_stage(key, cycle_id)
+                    .await
+                    .map_err(|e| {
+                        ArtifactValidationError::new("direction_title_sync_failed", e)
+                            .to_stage_error()
+                    })?;
+            }
         }
         Ok(())
     }
@@ -3319,6 +4416,8 @@ impl EvolutionManager {
             }
         }
 
+        Self::reset_stage_owned_artifacts(stage, &cycle_dir)?;
+
         self.set_stage_status(key, stage, "running").await;
         self.reset_stage_tool_call_tracking(key, stage).await;
         self.persist_cycle_file(key).await.ok();
@@ -3383,6 +4482,20 @@ impl EvolutionManager {
             match self.validate_stage_outputs(key, stage, cycle_id).await {
                 Ok(()) => break,
                 Err(validation_err) => {
+                    let validation_attempt_no = reminder_attempts + 1;
+                    if let Err(log_err) = Self::append_stage_validation_attempt(
+                        &cycle_dir,
+                        stage,
+                        validation_attempt_no,
+                        &run_ctx.session_id,
+                        &validation_err,
+                    ) {
+                        warn!(
+                            "append validation attempt failed: key={}, stage={}, attempt={}, error={}",
+                            key, stage, validation_attempt_no, log_err
+                        );
+                    }
+
                     if !Self::should_retry_validation_with_reminder(stage, &validation_err) {
                         let tool_call_count = self.stage_tool_call_count(key, stage).await;
                         self.finalize_session_execution(
@@ -3532,19 +4645,6 @@ impl EvolutionManager {
             return Err("evo_human_blocking_required:stage_blocker_file".to_string());
         }
 
-        if let Some(file_name) = Self::implement_result_file_for_stage(stage) {
-            let path = cycle_dir.join(file_name);
-            if !path.exists() {
-                Self::persist_empty_implement_result_file(
-                    &cycle_dir,
-                    stage,
-                    verify_iteration,
-                    backlog_contract_version,
-                    "done",
-                )?;
-            }
-        }
-
         let tool_call_count = self.stage_tool_call_count(key, stage).await;
         self.finalize_session_execution(key, stage, &run_ctx.session_id, "done", tool_call_count)
             .await;
@@ -3570,17 +4670,6 @@ impl EvolutionManager {
         )
         .await
         .ok();
-        if stage == "direction" {
-            if let Err(err) = self
-                .sync_cycle_title_from_direction_stage(key, cycle_id)
-                .await
-            {
-                warn!(
-                    "sync cycle title from direction stage failed: key={}, cycle_id={}, error={}",
-                    key, cycle_id, err
-                );
-            }
-        }
         if let Err(err) = self.persist_cycle_file(key).await {
             warn!(
                 "evolution run_stage done persist_cycle_file failed: key={}, cycle_id={}, stage={}, session_id={}, error={}",
@@ -3859,6 +4948,7 @@ impl EvolutionManager {
         let mut auto_next_cycle = false;
         let mut auto_loop_gate: Option<(String, String, String, String)> = None;
         let mut should_start_next_round_after_auto_commit = false;
+        let mut managed_backlog_generation_error: Option<String> = None;
 
         {
             let mut state = self.state.lock().await;
@@ -3984,85 +5074,101 @@ impl EvolutionManager {
                                         &cycle_dir,
                                         entry.verify_iteration,
                                     ) {
-                                        warn!(
+                                        managed_backlog_generation_error = Some(format!(
                                             "managed backlog generation failed (project={}, workspace={}, cycle_id={}, verify_iteration={}): {}",
                                             entry.project,
                                             entry.workspace,
                                             entry.cycle_id,
                                             entry.verify_iteration,
                                             err
-                                        );
+                                        ));
+                                        entry.status = "failed_system".to_string();
+                                        entry.terminal_reason_code =
+                                            Some("evo_backlog_generation_failed".to_string());
+                                        entry.terminal_error_message =
+                                            managed_backlog_generation_error.clone();
+                                        next_stage = previous.clone();
                                     }
                                 }
                                 Err(err) => {
-                                    warn!(
+                                    managed_backlog_generation_error = Some(format!(
                                         "managed backlog generation skipped: resolve cycle dir failed (project={}, workspace={}, cycle_id={}): {}",
                                         entry.project, entry.workspace, entry.cycle_id, err
-                                    );
+                                    ));
+                                    entry.status = "failed_system".to_string();
+                                    entry.terminal_reason_code =
+                                        Some("evo_backlog_generation_failed".to_string());
+                                    entry.terminal_error_message =
+                                        managed_backlog_generation_error.clone();
+                                    next_stage = previous.clone();
                                 }
                             }
                         }
-                        if should_force_advanced_reimplementation(entry.verify_iteration) {
-                            entry
-                                .stage_statuses
-                                .insert("implement_general".to_string(), "skipped".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert("implement_general".to_string(), 0);
-                            entry
-                                .stage_statuses
-                                .insert("implement_visual".to_string(), "skipped".to_string());
-                            entry
-                                .stage_tool_call_counts
-                                .insert("implement_visual".to_string(), 0);
-                            next_stage = "implement_advanced".to_string();
-                        } else {
-                            let lanes = match cycle_dir_path(&entry.workspace_root, &entry.cycle_id)
-                            {
-                                Ok(cycle_dir) => match Self::resolve_implement_lanes(
-                                    &cycle_dir,
-                                    entry.verify_iteration,
+                        if managed_backlog_generation_error.is_none() {
+                            if should_force_advanced_reimplementation(entry.verify_iteration) {
+                                entry
+                                    .stage_statuses
+                                    .insert("implement_general".to_string(), "skipped".to_string());
+                                entry
+                                    .stage_tool_call_counts
+                                    .insert("implement_general".to_string(), 0);
+                                entry
+                                    .stage_statuses
+                                    .insert("implement_visual".to_string(), "skipped".to_string());
+                                entry
+                                    .stage_tool_call_counts
+                                    .insert("implement_visual".to_string(), 0);
+                                next_stage = "implement_advanced".to_string();
+                            } else {
+                                let lanes = match cycle_dir_path(
+                                    &entry.workspace_root,
+                                    &entry.cycle_id,
                                 ) {
-                                    Ok(value) => value,
+                                    Ok(cycle_dir) => match Self::resolve_implement_lanes(
+                                        &cycle_dir,
+                                        entry.verify_iteration,
+                                    ) {
+                                        Ok(value) => value,
+                                        Err(err) => {
+                                            warn!(
+                                                "resolve implement lanes failed (project={}, workspace={}, verify_iteration={}): {}",
+                                                entry.project,
+                                                entry.workspace,
+                                                entry.verify_iteration,
+                                                err
+                                            );
+                                            vec![ImplementLane::General]
+                                        }
+                                    },
                                     Err(err) => {
                                         warn!(
-                                            "resolve implement lanes failed (project={}, workspace={}, verify_iteration={}): {}",
-                                            entry.project,
-                                            entry.workspace,
-                                            entry.verify_iteration,
-                                            err
+                                            "resolve cycle dir failed (project={}, workspace={}): {}",
+                                            entry.project, entry.workspace, err
                                         );
                                         vec![ImplementLane::General]
                                     }
-                                },
-                                Err(err) => {
-                                    warn!(
-                                        "resolve cycle dir failed (project={}, workspace={}): {}",
-                                        entry.project, entry.workspace, err
-                                    );
-                                    vec![ImplementLane::General]
+                                };
+                                let has_general_or_visual = lanes.iter().any(|lane| {
+                                    matches!(lane, ImplementLane::General | ImplementLane::Visual)
+                                });
+                                let has_advanced =
+                                    lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
+                                if has_general_or_visual {
+                                    next_stage = "implement_general".to_string();
+                                } else if has_advanced {
+                                    next_stage = "implement_advanced".to_string();
+                                } else {
+                                    next_stage = "implement_general".to_string();
                                 }
-                            };
-                            let has_general_or_visual = lanes.iter().any(|lane| {
-                                matches!(lane, ImplementLane::General | ImplementLane::Visual)
-                            });
-                            let has_advanced =
-                                lanes.iter().any(|lane| *lane == ImplementLane::Advanced);
-                            if has_general_or_visual {
-                                next_stage = "implement_general".to_string();
-                            } else if has_advanced {
-                                next_stage = "implement_advanced".to_string();
-                            } else {
-                                next_stage = "implement_general".to_string();
                             }
+                            emit_judge = Some((
+                                entry.project.clone(),
+                                entry.workspace.clone(),
+                                entry.cycle_id.clone(),
+                                "fail".to_string(),
+                                format!("goto_stage:{}", next_stage),
+                            ));
                         }
-                        emit_judge = Some((
-                            entry.project.clone(),
-                            entry.workspace.clone(),
-                            entry.cycle_id.clone(),
-                            "fail".to_string(),
-                            format!("goto_stage:{}", next_stage),
-                        ));
                     } else {
                         entry.status = "failed_exhausted".to_string();
                         entry.terminal_reason_code =
@@ -4123,7 +5229,7 @@ impl EvolutionManager {
                 "report" => next_stage == "auto_commit",
                 "auto_commit" => false,
                 _ => true,
-            };
+            } && next_stage != previous;
             if should_advance {
                 entry.current_stage = next_stage.clone();
                 stage_changed = Some((
@@ -4134,6 +5240,11 @@ impl EvolutionManager {
                     next_stage,
                 ));
             }
+        }
+        if let Some(err) = managed_backlog_generation_error {
+            self.mark_failed_with_code(key, "evo_backlog_generation_failed", &err, ctx)
+                .await;
+            return false;
         }
         if !matches!(stage, "auto_commit") && stage_changed.is_none() {
             warn!(
@@ -4466,9 +5577,11 @@ mod tests {
     use super::super::{stage::next_stage, STAGES};
     use super::{
         parse_judge_result_from_json, should_force_advanced_reimplementation,
-        should_start_next_round, EvolutionManager, ImplementLane,
+        should_start_next_round, EvolutionManager, ImplementLane, StageValidationContext,
     };
+    use chrono::Utc;
     use std::path::Path;
+    use std::process::Command;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -4493,10 +5606,11 @@ mod tests {
                     {"id": "v-2"}
                 ],
                 "acceptance_mapping": [
-                    {"criteria_id": "ac-1", "check_ids": ["v-1"]},
-                    {"criteria_id": "ac-2", "check_ids": ["v-2"]}
+                    {"criteria_id": "ac-1", "description": "验收标准 1", "check_ids": ["v-1"]},
+                    {"criteria_id": "ac-2", "description": "验收标准 2", "check_ids": ["v-2"]}
                 ]
-            }
+            },
+            "updated_at": "2026-03-02T00:00:00Z"
         })
     }
 
@@ -4518,6 +5632,15 @@ mod tests {
             .filter(|item| item.get("status").and_then(|v| v.as_str()) == Some("not_done"))
             .count() as u64;
         serde_json::json!({
+            "$schema_version": "1.0",
+            "cycle_id": "c-1",
+            "verify_iteration": 1,
+            "status": "done",
+            "summary": "ok",
+            "work_item_results": [],
+            "changed_files": [],
+            "commands_executed": [],
+            "quick_checks": [],
             "failure_backlog": backlog,
             "backlog_coverage": coverage,
             "backlog_coverage_summary": {
@@ -4525,8 +5648,21 @@ mod tests {
                 "done": done,
                 "blocked": blocked,
                 "not_done": not_done
-            }
+            },
+            "updated_at": "2026-03-02T00:00:00Z"
         })
+    }
+
+    fn base_implement_result_with_updates(updates: Vec<serde_json::Value>) -> serde_json::Value {
+        let mut value = base_implement_result_json(Vec::new(), Vec::new());
+        value
+            .as_object_mut()
+            .expect("implement result must be object")
+            .insert(
+                "backlog_resolution_updates".to_string(),
+                serde_json::Value::Array(updates),
+            );
+        value
     }
 
     fn write_empty_implement_result_triplet(dir: &Path) {
@@ -4587,6 +5723,142 @@ mod tests {
         );
     }
 
+    fn write_valid_direction_artifacts(dir: &Path) {
+        write_json(
+            &dir.join("stage.direction.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "cycle_title": "标题",
+                "decision": {
+                    "context": {
+                        "capability_assessment": {
+                            "ui_capability": "full",
+                            "test_capability": "full",
+                            "build_capability": "full",
+                            "runtime_capability": "full",
+                            "rationale": "ok"
+                        }
+                    }
+                },
+                "next_action": {"type": "goto_stage", "target": "plan"},
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+        write_json(
+            &dir.join("direction.lifecycle_scan.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "project_type": "macos",
+                "ui_capability": "full",
+                "domains": [{
+                    "domain": "core",
+                    "status": "active",
+                    "evidence_paths": [],
+                    "findings": [],
+                    "opportunities": [{
+                        "mapped_direction_type": "architecture"
+                    }]
+                }],
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+        write_json(
+            &dir.join("cycle.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "direction": {
+                    "selected_type": "architecture",
+                    "candidate_scores": [
+                        {"direction_type": "architecture", "score": 0.9},
+                        {"direction_type": "performance", "score": 0.7},
+                        {"direction_type": "docs", "score": 0.5}
+                    ],
+                    "final_reason": "reason"
+                },
+                "llm_defined_acceptance": {
+                    "criteria": [
+                        {"criteria_id": "ac-1", "description": "d1"}
+                    ]
+                }
+            }),
+        );
+    }
+
+    fn write_valid_report_artifacts(dir: &Path, verify_iteration: u32) {
+        write_json(
+            &dir.join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
+            &dir.join("judge.result.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": verify_iteration,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "pass"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
+                "overall_result": {"result": "pass"},
+                "next_action": {"type": "goto_stage", "target": "report"},
+                "full_next_iteration_requirements": [],
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+        write_json(
+            &dir.join("stage.report.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "next_action": {"type": "goto_stage", "target": "auto_commit"},
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+        let verification_summary = if verify_iteration > 0 {
+            serde_json::json!({"remediation_tracking": []})
+        } else {
+            serde_json::json!({})
+        };
+        write_json(
+            &dir.join("report.result.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "final_result": {
+                    "judge_result": "pass",
+                    "recommended_cycle_status": "completed"
+                },
+                "direction_summary": {},
+                "acceptance_summary": {
+                    "criteria_details": [
+                        {"criteria_id": "ac-1"},
+                        {"criteria_id": "ac-2"}
+                    ]
+                },
+                "implementation_summary": {},
+                "verification_summary": verification_summary,
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+        std::fs::write(dir.join("report.md"), "report").expect("write report.md should succeed");
+    }
+
     #[test]
     fn parse_judge_result_json_schema() {
         let value = serde_json::json!({
@@ -4609,6 +5881,10 @@ mod tests {
 
     #[test]
     fn should_retry_validation_with_reminder_should_match_supported_stage_and_error() {
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "direction",
+            "evo_stage_output_invalid: x"
+        ));
         assert!(EvolutionManager::should_retry_validation_with_reminder(
             "implement_visual",
             "evo_stage_output_invalid: x"
@@ -4633,10 +5909,23 @@ mod tests {
             "implement_general",
             "evo_stage_output_invalid: x"
         ));
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "report",
+            "evo_stage_output_invalid: x"
+        ));
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "auto_commit",
+            "evo_stage_output_invalid: x"
+        ));
         assert!(!EvolutionManager::should_retry_validation_with_reminder(
             "judge",
             "stage stream timeout"
         ));
+    }
+
+    #[test]
+    fn validation_reminder_max_retries_should_be_three() {
+        assert_eq!(super::VALIDATION_REMINDER_MAX_RETRIES, 3);
     }
 
     #[test]
@@ -4799,19 +6088,272 @@ mod tests {
     }
 
     #[test]
+    fn validate_stage_artifacts_should_reject_direction_missing_cycle_title() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_direction_artifacts(dir.path());
+
+        let mut stage_direction = super::read_json_file(dir.path(), "stage.direction.json")
+            .expect("stage.direction.json should be readable");
+        stage_direction
+            .as_object_mut()
+            .expect("stage.direction.json should be object")
+            .remove("cycle_title");
+        write_json(&dir.path().join("stage.direction.json"), stage_direction);
+
+        let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
+            .expect_err("missing cycle_title should fail");
+        assert!(err.contains("cycle_title"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_report_missing_direction_summary() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_valid_report_artifacts(dir.path(), 0);
+
+        let mut report_result = super::read_json_file(dir.path(), "report.result.json")
+            .expect("report.result.json should be readable");
+        report_result
+            .as_object_mut()
+            .expect("report.result.json should be object")
+            .remove("direction_summary");
+        write_json(&dir.path().join("report.result.json"), report_result);
+
+        let err = EvolutionManager::validate_stage_artifacts("report", dir.path(), 0, 1)
+            .expect_err("missing direction_summary should fail");
+        assert!(err.contains("direction_summary"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_first_round_missing_implement_result_file() {
+        let dir = tempdir().expect("tempdir should succeed");
+        let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 0, 1)
+            .expect_err("first round missing implement result should fail");
+        assert!(err.contains("implement_general.result.json"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_first_round_verify_missing_acceptance_evaluation() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 0,
+                "summary": "verify",
+                "check_results": [],
+                "verification_overall": {"result": "pass"},
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+
+        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 0, 1)
+            .expect_err("missing acceptance_evaluation should fail");
+        assert!(err.contains("acceptance_evaluation"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_first_round_judge_missing_criteria_coverage() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
+            &dir.path().join("judge.result.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 0,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "pass"}
+                ],
+                "overall_result": {"result": "pass"},
+                "next_action": {"type": "goto_stage", "target": "report"},
+                "full_next_iteration_requirements": [],
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+
+        let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 0, 1)
+            .expect_err("first round missing criteria coverage should fail");
+        assert!(err.contains("criteria_judgement 覆盖不完整"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_managed_backlog_verify_iteration_mismatch() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            2,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "ac-1",
+                "description": "",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "ac-1",
+                "source_check_id": "v-1",
+                "work_item_id": "w-1",
+                "implementation_agent": "implement_general",
+                "status": "done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            base_implement_result_with_updates(Vec::new()),
+        );
+
+        let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
+            .expect_err("managed backlog verify_iteration mismatch should fail");
+        assert!(err.contains("managed.failure_backlog.json.verify_iteration"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_with_context_should_reject_stale_artifact_timestamp() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_empty_implement_result_triplet(dir.path());
+
+        let mut result = super::read_json_file(dir.path(), "implement_general.result.json")
+            .expect("implement result should be readable");
+        result
+            .as_object_mut()
+            .expect("implement result should be object")
+            .insert(
+                "updated_at".to_string(),
+                serde_json::json!("2026-03-01T00:00:00Z"),
+            );
+        write_json(&dir.path().join("implement_general.result.json"), result);
+
+        let started_at = chrono::DateTime::parse_from_rfc3339("2026-03-02T12:00:00Z")
+            .expect("parse started_at should succeed")
+            .with_timezone(&Utc);
+        let ctx = StageValidationContext {
+            cycle_id: "c-1".to_string(),
+            verify_iteration: 1,
+            backlog_contract_version: 1,
+            stage_started_at: Some(started_at),
+            workspace_root: dir.path().display().to_string(),
+        };
+        let err = EvolutionManager::validate_stage_artifacts_with_context(
+            "implement_general",
+            dir.path(),
+            1,
+            1,
+            Some(&ctx),
+        )
+        .expect_err("stale artifact should fail freshness check");
+        assert!(err.contains("时间戳早于本次阶段开始时间"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_with_context_should_reject_dirty_auto_commit_without_reason() {
+        let dir = tempdir().expect("tempdir should succeed");
+        let init_status = Command::new("git")
+            .arg("init")
+            .current_dir(dir.path())
+            .status()
+            .expect("git init should run");
+        assert!(init_status.success(), "git init should succeed");
+        std::fs::write(dir.path().join("dirty.txt"), "dirty")
+            .expect("write dirty file should succeed");
+
+        write_json(
+            &dir.path().join("stage.auto_commit.json"),
+            serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "decision": {"reason": "auto commit done"},
+                "next_action": {"type": "goto_stage", "target": "direction"},
+                "updated_at": "2026-03-02T00:00:00Z"
+            }),
+        );
+
+        let started_at = chrono::DateTime::parse_from_rfc3339("2026-03-01T12:00:00Z")
+            .expect("parse started_at should succeed")
+            .with_timezone(&Utc);
+        let ctx = StageValidationContext {
+            cycle_id: "c-1".to_string(),
+            verify_iteration: 0,
+            backlog_contract_version: 1,
+            stage_started_at: Some(started_at),
+            workspace_root: dir.path().display().to_string(),
+        };
+        let err = EvolutionManager::validate_stage_artifacts_with_context(
+            "auto_commit",
+            dir.path(),
+            0,
+            1,
+            Some(&ctx),
+        )
+        .expect_err("dirty auto_commit without reason should fail");
+        assert!(err.contains("工作区仍有未提交变更"));
+    }
+
+    #[test]
     fn validate_stage_artifacts_should_reject_missing_failure_backlog_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
             &dir.path().join("implement_general.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "status": "done",
+                "summary": "ok",
+                "work_item_results": [],
+                "changed_files": [],
+                "commands_executed": [],
+                "quick_checks": [],
                 "backlog_coverage": [],
                 "backlog_coverage_summary": {
                     "total": 0,
                     "done": 0,
                     "blocked": 0,
                     "not_done": 0
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("implement_visual", dir.path(), 1, 1)
@@ -4826,13 +6368,23 @@ mod tests {
         write_json(
             &dir.path().join("implement_general.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "status": "done",
+                "summary": "ok",
+                "work_item_results": [],
+                "changed_files": [],
+                "commands_executed": [],
+                "quick_checks": [],
                 "failure_backlog": [],
                 "backlog_coverage_summary": {
                     "total": 0,
                     "done": 0,
                     "blocked": 0,
                     "not_done": 0
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 1)
@@ -4864,6 +6416,22 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
             &dir.path().join("implement_general.result.json"),
             base_implement_result_json(
                 vec![
@@ -4879,11 +6447,21 @@ mod tests {
         write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
-                "acceptance_evaluation": [],
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1", "status": "pass"},
+                    {"criteria_id": "ac-2", "status": "pass"}
+                ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [{"id": "f-1", "status": "done"}],
                     "summary": {"total": 2, "covered": 1, "missing": 1, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
@@ -4896,6 +6474,22 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
             &dir.path().join("implement_general.result.json"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
@@ -4905,13 +6499,21 @@ mod tests {
         write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
                 "acceptance_evaluation": [
-                    {"criteria_id": "ac-1"}
+                    {"criteria_id": "ac-1"},
+                    {"criteria_id": "ac-2", "status": "pass"}
                 ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [{"id": "f-1", "status": "done"}],
                     "summary": {"total": 1, "covered": 1, "missing": 0, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
@@ -4924,6 +6526,22 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
             &dir.path().join("implement_general.result.json"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
@@ -4933,13 +6551,21 @@ mod tests {
         write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
                 "acceptance_evaluation": [
-                    {"criteria_id": "ac-1", "status": "failed"}
+                    {"criteria_id": "ac-1", "status": "failed"},
+                    {"criteria_id": "ac-2", "status": "pass"}
                 ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [{"id": "f-1", "status": "done"}],
                     "summary": {"total": 1, "covered": 1, "missing": 0, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
@@ -4951,23 +6577,58 @@ mod tests {
     fn validate_stage_artifacts_should_reject_judge_missing_verify_failed_requirements() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
                 "acceptance_evaluation": [
-                    {"criteria_id": "ac-1", "status": "fail"}
+                    {"criteria_id": "ac-1", "status": "fail"},
+                    {"criteria_id": "ac-2", "status": "pass"}
                 ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [{"id": "f-1", "status": "missing"}],
                     "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         write_json(
             &dir.path().join("judge.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "fail"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
+                "overall_result": {"result": "fail"},
+                "next_action": {"type": "goto_stage", "target": "implement_general"},
                 "full_next_iteration_requirements": [
                     {"id": "ac-1"}
-                ]
+                ],
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 1)
@@ -5012,21 +6673,40 @@ mod tests {
         write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
                 "acceptance_evaluation": [
-                    {"criteria_id": "ac-1", "status": "fail"}
+                    {"criteria_id": "ac-1", "status": "fail"},
+                    {"criteria_id": "ac-2", "status": "pass"}
                 ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [],
                     "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         write_json(
             &dir.path().join("judge.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "fail"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
+                "overall_result": {"result": "fail"},
+                "next_action": {"type": "goto_stage", "target": "implement_general"},
                 "full_next_iteration_requirements": [
                     {"criteria_id": "ac-1"}
-                ]
+                ],
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 2)
@@ -5071,18 +6751,36 @@ mod tests {
         write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
                 "acceptance_evaluation": [
-                    {"criteria_id": "ac-1", "status": "fail"}
+                    {"criteria_id": "ac-1", "status": "fail"},
+                    {"criteria_id": "ac-2", "status": "pass"}
                 ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [],
                     "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         write_json(
             &dir.path().join("judge.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "fail"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
+                "overall_result": {"result": "fail"},
+                "next_action": {"type": "goto_stage", "target": "implement_general"},
                 "full_next_iteration_requirements": [
                     {
                         "id": "ac-1",
@@ -5092,7 +6790,8 @@ mod tests {
                         "work_item_id": "w-1",
                         "implementation_agent": "implement_general"
                     }
-                ]
+                ],
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         EvolutionManager::validate_stage_artifacts("judge", dir.path(), 1, 2)
@@ -5137,10 +6836,20 @@ mod tests {
         write_json(
             &dir.path().join("judge.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 0,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "fail"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
                 "overall_result": {"result": "fail"},
+                "next_action": {"type": "goto_stage", "target": "implement_general"},
                 "full_next_iteration_requirements": [
                     {"criteria_id": "ac-1"}
-                ]
+                ],
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         let err = EvolutionManager::validate_stage_artifacts("judge", dir.path(), 0, 2)
@@ -5186,7 +6895,16 @@ mod tests {
         write_json(
             &dir.path().join("judge.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 0,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "fail"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
                 "overall_result": {"result": "fail"},
+                "next_action": {"type": "goto_stage", "target": "implement_general"},
                 "full_next_iteration_requirements": [
                     {
                         "source_criteria_id": "ac-1",
@@ -5194,7 +6912,8 @@ mod tests {
                         "work_item_id": "w-1",
                         "implementation_agent": "implement_general"
                     }
-                ]
+                ],
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         EvolutionManager::validate_stage_artifacts("judge", dir.path(), 0, 2)
@@ -5205,26 +6924,61 @@ mod tests {
     fn validate_stage_artifacts_should_accept_judge_requirements_with_mixed_id_fields() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
+            &dir.path().join("plan.execution.json"),
+            base_plan_json(vec![serde_json::json!({
+                "id": "w-1",
+                "title": "x",
+                "type": "code",
+                "priority": "p0",
+                "depends_on": [],
+                "targets": ["core/src/lib.rs"],
+                "definition_of_done": ["done"],
+                "risk": "low",
+                "rollback": "git restore",
+                "implementation_agent": "implement_general",
+                "linked_check_ids": ["v-1", "v-2"]
+            })]),
+        );
+        write_json(
             &dir.path().join("verify.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "summary": "verify",
+                "check_results": [],
                 "acceptance_evaluation": [
-                    {"criteria_id": "ac-1", "status": "insufficient_evidence"}
+                    {"criteria_id": "ac-1", "status": "insufficient_evidence"},
+                    {"criteria_id": "ac-2", "status": "pass"}
                 ],
+                "verification_overall": {"result": "fail"},
                 "carryover_verification": {
                     "items": [{"id": "f-1", "status": "missing"}],
                     "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}
-                }
+                },
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         write_json(
             &dir.path().join("judge.result.json"),
             serde_json::json!({
+                "$schema_version": "1.0",
+                "cycle_id": "c-1",
+                "verify_iteration": 1,
+                "verify_iteration_limit": 2,
+                "criteria_judgement": [
+                    {"criteria_id": "ac-1", "result": "fail"},
+                    {"criteria_id": "ac-2", "result": "pass"}
+                ],
+                "overall_result": {"result": "fail"},
+                "next_action": {"type": "goto_stage", "target": "implement_general"},
                 "full_next_iteration_requirements": [
                     {
                         "id": "f-1",
                         "criteria_id": "ac-1"
                     }
-                ]
+                ],
+                "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
 
@@ -5802,6 +7556,10 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             })],
         );
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            base_implement_result_with_updates(Vec::new()),
+        );
         EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
             .expect("v2 managed backlog should pass validation");
     }
@@ -5838,8 +7596,7 @@ mod tests {
         );
         write_json(
             &dir.path().join("implement_general.result.json"),
-            serde_json::json!({
-                "backlog_resolution_updates": [{
+            base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "ac-404",
                     "source_check_id": "v-404",
                     "work_item_id": "w-x",
@@ -5847,8 +7604,7 @@ mod tests {
                     "status": "done",
                     "evidence": {"proof": "x"},
                     "notes": "x"
-                }]
-            }),
+            })]),
         );
         let err = EvolutionManager::sync_managed_backlog_for_implement_stage(
             dir.path(),
@@ -5916,8 +7672,7 @@ mod tests {
         );
         write_json(
             &dir.path().join("implement_general.result.json"),
-            serde_json::json!({
-                "backlog_resolution_updates": [{
+            base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
@@ -5925,8 +7680,7 @@ mod tests {
                     "status": "done",
                     "evidence": {"proof": "x"},
                     "notes": "x"
-                }]
-            }),
+            })]),
         );
         let err = EvolutionManager::sync_managed_backlog_for_implement_stage(
             dir.path(),
@@ -5968,8 +7722,7 @@ mod tests {
         );
         write_json(
             &dir.path().join("implement_general.result.json"),
-            serde_json::json!({
-                "backlog_resolution_updates": [{
+            base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
                     "work_item_id": "w-1",
@@ -5977,8 +7730,7 @@ mod tests {
                     "status": "done",
                     "evidence": {"proof": "done"},
                     "notes": "resolved"
-                }]
-            }),
+            })]),
         );
         EvolutionManager::sync_managed_backlog_for_implement_stage(dir.path(), "implement_general")
             .expect("sync should succeed");
@@ -6028,8 +7780,7 @@ mod tests {
         );
         write_json(
             &dir.path().join("implement_general.result.json"),
-            serde_json::json!({
-                "backlog_resolution_updates": [{
+            base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "AC-005",
                     "source_check_id": "check_unit_integration_tests",
                     "work_item_id": "NIR-AC005-TESTS-001",
@@ -6037,8 +7788,7 @@ mod tests {
                     "status": "done",
                     "evidence": {"proof": "fixed"},
                     "notes": "resolved via requirement_ref"
-                }]
-            }),
+            })]),
         );
 
         EvolutionManager::sync_managed_backlog_for_implement_stage(dir.path(), "implement_general")
