@@ -245,6 +245,8 @@
 
 /* Tab 栏 */
 "tab.close" = "关闭";
+"tab.pin" = "固定标签";
+"tab.unpin" = "取消固定标签";
 "tab.closeOthers" = "关闭其他";
 "tab.closeRight" = "关闭右侧标签页";
 "tab.closeSaved" = "关闭已保存 [⌘K U]";

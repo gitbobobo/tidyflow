@@ -243,6 +243,8 @@
 
 /* Tab Bar */
 "tab.close" = "Close";
+"tab.pin" = "Pin";
+"tab.unpin" = "Unpin";
 "tab.closeOthers" = "Close Others";
 "tab.closeRight" = "Close Tabs to the Right";
 "tab.closeSaved" = "Close Saved [⌘K U]";
