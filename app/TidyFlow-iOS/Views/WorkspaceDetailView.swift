@@ -2492,12 +2492,13 @@ struct MobileEvolutionView: View {
             Section("evolution.page.pipeline.historyCycles".localized) {
                 ForEach(cycles, id: \.cycleID) { cycle in
                     let entries = mobileCycleBarEntries(cycle)
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(mobileCycleDisplayTitle(cycle.title))
                                     .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 HStack(spacing: 8) {
                                     Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
                                         .font(.caption)
@@ -2538,7 +2539,7 @@ struct MobileEvolutionView: View {
                                 .lineLimit(2)
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         selectedCycleDetail = mobileCycleDetailPayload(cycle)

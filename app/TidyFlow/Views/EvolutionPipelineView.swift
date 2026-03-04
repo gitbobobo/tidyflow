@@ -744,17 +744,33 @@ struct EvolutionPipelineView: View {
         // 计算总耗时
         let totalDuration: TimeInterval = stageEntries?.reduce(0) { $0 + $1.durationSeconds } ?? 0
 
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
                 roundBadge(round: round, color: color)
 
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.primary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer()
 
+                if let onReportTap {
+                    Button(action: onReportTap) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("evolution.page.action.previewReport".localized)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(color)
+            }
+
+            HStack(spacing: 8) {
                 HStack(spacing: 2) {
                     Image(systemName: "clock")
                         .font(.system(size: 8))
@@ -781,19 +797,6 @@ struct EvolutionPipelineView: View {
                         .padding(.vertical, 1)
                         .background(Capsule().fill(color.opacity(0.8)))
                 }
-
-                if let onReportTap {
-                    Button(action: onReportTap) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("evolution.page.action.previewReport".localized)
-                }
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(color)
             }
 
             // 分段彩色线条
