@@ -129,6 +129,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - 允许改代码与配置，但禁止破坏性操作。
 - 中间产物只能写入 `CYCLE_DIR`，禁止写入业务目录。
 - 只使用程序注入上下文中的路径。
+- `managed.failure_backlog.json` 与 `managed.backlog_coverage.json` 为系统托管文件，只读，严禁写入/覆盖/删除/重命名。
 
 必须读取：
 - `CYCLE_FILE_PATH`
@@ -192,6 +193,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 - 默认禁止修改业务代码。
 - 只使用程序注入上下文中的路径。
 - 手工验证项交由实现代理添加端到端测试，由于技术限制无法验证的默认通过。
+- `managed.failure_backlog.json` 与 `managed.backlog_coverage.json` 为系统托管文件，只读，严禁写入/覆盖/删除/重命名。
 
 必须读取：
 - `CYCLE_FILE_PATH`
@@ -239,6 +241,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - 默认禁止修改业务代码。
 - 只使用程序注入上下文中的路径。
 - 手工验证项交由实现代理添加端到端测试，由于技术限制无法验证的默认通过。
+- `managed.failure_backlog.json` 与 `managed.backlog_coverage.json` 为系统托管文件，只读，严禁写入/覆盖/删除/重命名。
 
 必须读取：
 - `CYCLE_FILE_PATH`
@@ -264,12 +267,12 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 - 当 `VERIFY_ITERATION > 0`：
   - 若 `verify.result.json.carryover_verification.summary.missing > 0`，不得判 `pass`
   - `full_next_iteration_requirements` 必须覆盖全部未通过项（验收失败 + carryover 失败）
-  - 当 `BACKLOG_CONTRACT_VERSION >= 2` 时，`full_next_iteration_requirements[*]` 每项必须包含并填写：
-    - `source_criteria_id`
-    - `source_check_id`
-    - `work_item_id`
-    - `implementation_agent`（只能是 `implement_general|implement_visual|implement_advanced`）
-    - 上述字段值不得为空，且不得为 `unknown`
+- 当 `BACKLOG_CONTRACT_VERSION >= 2` 且 `overall_result.result="fail"` 时，`full_next_iteration_requirements[*]` 每项必须包含并填写：
+  - `source_criteria_id`
+  - `source_check_id`
+  - `work_item_id`
+  - `implementation_agent`（只能是 `implement_general|implement_visual|implement_advanced`）
+  - 上述字段值不得为空，且不得为 `unknown`
 
 `stage.judge.json` 成功态：
 - `stage="judge"`
