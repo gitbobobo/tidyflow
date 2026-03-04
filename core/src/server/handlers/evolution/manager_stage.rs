@@ -2554,6 +2554,7 @@ impl EvolutionManager {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn run_with_retry<F, Fut>(
         max_attempts: u32,
         retry_delay: Duration,
