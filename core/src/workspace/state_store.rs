@@ -7,12 +7,12 @@
 //! - 首次从 legacy JSON (`~/.tidyflow/tidyflow.json`) 一次性迁移
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Pool, Row, Sqlite};
 
+use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
     PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError, Workspace,
@@ -28,29 +28,23 @@ pub struct StateStore {
 
 impl StateStore {
     pub fn db_path() -> PathBuf {
-        let home = dirs::home_dir().expect("Cannot find home directory");
-        home.join(".tidyflow").join("tidyflow.db")
+        sqlite_store::default_db_path()
     }
 
     pub fn legacy_json_path() -> PathBuf {
-        let home = dirs::home_dir().expect("Cannot find home directory");
-        home.join(".tidyflow").join("tidyflow.json")
+        sqlite_store::legacy_json_path()
     }
 
     pub async fn open_default() -> Result<Self, StateError> {
         let db_path = Self::db_path();
-        if let Some(parent) = db_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| StateError::WriteError(e.to_string()))?;
-        }
-
-        let db_url = sqlite_url(&db_path);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(&db_url)
+        sqlite_store::ensure_parent_dir_async(&db_path)
             .await
-            .map_err(|e| StateError::WriteError(e.to_string()))?;
+            .map_err(StateError::WriteError)?;
+
+        let db_url = sqlite_store::sqlite_url(&db_path);
+        let pool = sqlite_store::open_single_connection_pool(&db_url)
+            .await
+            .map_err(StateError::WriteError)?;
 
         let store = Self { pool };
         store.init_schema().await?;
@@ -60,7 +54,7 @@ impl StateStore {
 
     #[cfg(test)]
     pub async fn open_in_memory_for_test() -> Result<Self, StateError> {
-        let pool = SqlitePoolOptions::new()
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
@@ -776,10 +770,6 @@ impl StateStore {
         }
         Ok(())
     }
-}
-
-fn sqlite_url(path: &Path) -> String {
-    format!("sqlite://{}", path.display())
 }
 
 fn parse_rfc3339_utc(raw: &str) -> Option<DateTime<Utc>> {

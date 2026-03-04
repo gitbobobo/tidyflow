@@ -9,6 +9,7 @@
 pub mod config;
 pub mod project;
 pub mod setup;
+pub(crate) mod sqlite_store;
 pub mod state;
 pub mod state_store;
 pub mod state_saver;

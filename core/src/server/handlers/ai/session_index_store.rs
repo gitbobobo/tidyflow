@@ -1,12 +1,10 @@
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Pool, Row, Sqlite};
 use tokio::sync::Mutex;
 
-use crate::workspace::state_store::StateStore;
+use crate::workspace::sqlite_store;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiSessionIndexEntry {
@@ -28,14 +26,12 @@ pub struct AiSessionIndexStore {
 
 impl AiSessionIndexStore {
     pub fn open_default() -> Result<Self, String> {
-        let db_path = StateStore::db_path();
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create db parent directory: {}", e))?;
-        }
+        let db_path = sqlite_store::default_db_path();
+        sqlite_store::ensure_parent_dir(&db_path)
+            .map_err(|e| format!("failed to create db parent directory: {}", e))?;
 
         Ok(Self {
-            db_url: sqlite_url(&db_path),
+            db_url: sqlite_store::sqlite_url(&db_path),
             pool: Mutex::new(None),
             schema_initialized: Arc::new(AtomicBool::new(false)),
         })
@@ -283,18 +279,12 @@ impl AiSessionIndexStore {
             return Ok(pool.clone());
         }
 
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(&self.db_url)
+        let pool = sqlite_store::open_single_connection_pool(&self.db_url)
             .await
             .map_err(|e| format!("failed to connect ai session index pool: {}", e))?;
         *guard = Some(pool.clone());
         Ok(pool)
     }
-}
-
-fn sqlite_url(path: &Path) -> String {
-    format!("sqlite://{}", path.display())
 }
 
 #[cfg(test)]
