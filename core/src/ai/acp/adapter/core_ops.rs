@@ -321,6 +321,102 @@ impl AcpAgent {
         metadata_state::normalize_non_empty_token(raw)
     }
 
+    pub(super) fn canonical_mode_uri_by_token(token: &str) -> Option<&'static str> {
+        match token {
+            "agent" => Some("https://agentclientprotocol.com/protocol/session-modes#agent"),
+            "plan" => Some("https://agentclientprotocol.com/protocol/session-modes#plan"),
+            "autopilot" | "auto_pilot" => {
+                Some("https://agentclientprotocol.com/protocol/session-modes#autopilot")
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn mode_semantic_token(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if let Some((_, fragment)) = trimmed.rsplit_once('#') {
+            let normalized = Self::normalize_mode_name(fragment);
+            if !normalized.is_empty() {
+                return Some(normalized);
+            }
+        }
+        let normalized = Self::normalize_mode_name(trimmed);
+        if Self::canonical_mode_uri_by_token(&normalized).is_some() {
+            Some(normalized)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn canonicalize_mode_id(
+        metadata: &AcpSessionMetadata,
+        mode_id: &str,
+    ) -> Option<String> {
+        let raw_mode_id = Self::normalize_non_empty_token(mode_id)?;
+        if let Some(found) = metadata
+            .modes
+            .iter()
+            .find(|mode| mode.id == raw_mode_id || mode.id.eq_ignore_ascii_case(&raw_mode_id))
+        {
+            return Some(found.id.clone());
+        }
+
+        let normalized = Self::normalize_mode_name(&raw_mode_id);
+        if !normalized.is_empty() {
+            if let Some(found) = metadata.modes.iter().find(|mode| {
+                Self::normalize_mode_name(&mode.id) == normalized
+                    || Self::normalize_mode_name(&mode.name) == normalized
+                    || Self::mode_semantic_token(&mode.id).as_deref() == Some(normalized.as_str())
+                    || Self::mode_semantic_token(&mode.name).as_deref() == Some(normalized.as_str())
+            }) {
+                return Some(found.id.clone());
+            }
+            if let Some(uri) = Self::canonical_mode_uri_by_token(&normalized) {
+                return Some(uri.to_string());
+            }
+        }
+
+        Some(raw_mode_id)
+    }
+
+    pub(super) fn rewrite_mode_config_value(value: Value, mode_id: &str) -> Value {
+        let next_mode_id = mode_id.trim();
+        if next_mode_id.is_empty() {
+            return value;
+        }
+        match value {
+            Value::Object(mut obj) => {
+                if obj.contains_key("id") {
+                    obj.insert("id".to_string(), Value::String(next_mode_id.to_string()));
+                    return Value::Object(obj);
+                }
+                if obj.contains_key("modeId") {
+                    obj.insert(
+                        "modeId".to_string(),
+                        Value::String(next_mode_id.to_string()),
+                    );
+                    return Value::Object(obj);
+                }
+                if obj.contains_key("mode_id") {
+                    obj.insert(
+                        "mode_id".to_string(),
+                        Value::String(next_mode_id.to_string()),
+                    );
+                    return Value::Object(obj);
+                }
+                if obj.contains_key("value") {
+                    obj.insert("value".to_string(), Value::String(next_mode_id.to_string()));
+                    return Value::Object(obj);
+                }
+                Value::String(next_mode_id.to_string())
+            }
+            _ => Value::String(next_mode_id.to_string()),
+        }
+    }
+
     pub(super) fn is_set_mode_unsupported(err: &str) -> bool {
         let normalized = err.to_lowercase();
         normalized.contains("-32601")
@@ -702,12 +798,8 @@ impl AcpAgent {
             return;
         };
 
-        let resolved_mode_id = metadata
-            .modes
-            .iter()
-            .find(|mode| mode.id == raw_mode_id || mode.id.eq_ignore_ascii_case(&raw_mode_id))
-            .map(|mode| mode.id.clone())
-            .unwrap_or_else(|| raw_mode_id.clone());
+        let resolved_mode_id =
+            Self::canonicalize_mode_id(metadata, &raw_mode_id).unwrap_or(raw_mode_id.clone());
         metadata.current_mode_id = Some(resolved_mode_id.clone());
 
         let exists = metadata.modes.iter().any(|mode| {
@@ -941,25 +1033,25 @@ impl AcpAgent {
                     if let Some(mode) = metadata
                         .modes
                         .iter()
-                        .find(|m| m.id.to_lowercase().contains("#agent"))
+                        .find(|m| Self::mode_semantic_token(&m.id).as_deref() == Some("agent"))
                     {
-                        return Some(mode.id.clone());
+                        return Self::canonicalize_mode_id(metadata, &mode.id);
                     }
                 }
                 if normalized == "plan" {
                     if let Some(mode) = metadata
                         .modes
                         .iter()
-                        .find(|m| m.id.to_lowercase().contains("#plan"))
+                        .find(|m| Self::mode_semantic_token(&m.id).as_deref() == Some("plan"))
                     {
-                        return Some(mode.id.clone());
+                        return Self::canonicalize_mode_id(metadata, &mode.id);
                     }
                 }
                 if let Some(mode) = metadata.modes.iter().find(|m| {
                     Self::normalize_mode_name(&m.id) == normalized
                         || Self::normalize_mode_name(&m.name) == normalized
                 }) {
-                    return Some(mode.id.clone());
+                    return Self::canonicalize_mode_id(metadata, &mode.id);
                 }
             }
         }
@@ -968,6 +1060,7 @@ impl AcpAgent {
             .current_mode_id
             .clone()
             .or_else(|| metadata.modes.first().map(|m| m.id.clone()))
+            .and_then(|mode_id| Self::canonicalize_mode_id(metadata, &mode_id))
     }
 
     pub(super) fn current_agent_name(metadata: &AcpSessionMetadata) -> Option<String> {
@@ -1591,7 +1684,7 @@ impl AcpAgent {
         keys.sort();
 
         for option_id in keys {
-            let Some(option_value) = overrides.get(&option_id).cloned() else {
+            let Some(mut option_value) = overrides.get(&option_id).cloned() else {
                 continue;
             };
             let option_meta = metadata
@@ -1608,24 +1701,54 @@ impl AcpAgent {
                     Self::normalized_category(option.category.as_deref(), &option.option_id)
                 })
                 .unwrap_or_else(|| option_id.trim().to_lowercase());
-
-            let set_result: Result<(), String> = if supports_set_config_option {
-                match self
-                    .client
-                    .session_set_config_option(session_id, &option_id, option_value.clone())
-                    .await
+            if category == "mode" {
+                if let Some(raw_mode_id) = option_meta
+                    .as_ref()
+                    .and_then(|option| Self::resolve_mode_id_from_option(option, &option_value))
+                    .or_else(|| Self::value_to_string(&option_value))
                 {
-                    Ok(()) => Ok(()),
-                    Err(err) if Self::is_session_not_found(&err) && supports_load_session => {
-                        self.client.session_load(directory, session_id).await?;
-                        self.client
-                            .session_set_config_option(session_id, &option_id, option_value.clone())
-                            .await
+                    if let Some(canonical_mode_id) =
+                        Self::canonicalize_mode_id(metadata, &raw_mode_id)
+                    {
+                        if canonical_mode_id != raw_mode_id {
+                            option_value =
+                                Self::rewrite_mode_config_value(option_value, &canonical_mode_id);
+                        }
                     }
-                    Err(err) => Err(err),
                 }
-            } else {
-                Err("session/set_config_option capability unsupported".to_string())
+            }
+
+            if !supports_set_config_option {
+                warn!(
+                    "{}: set_config_option unsupported, apply local override only: option_id={}, category={}",
+                    self.profile.tool_id, option_id, category
+                );
+                Self::apply_local_override_without_set_config(
+                    metadata,
+                    &option_id,
+                    option_meta.as_ref(),
+                    &category,
+                    &mut option_value,
+                    &mut effective_model,
+                    &mut effective_agent,
+                    &self.profile.provider_id,
+                );
+                continue;
+            }
+
+            let set_result: Result<(), String> = match self
+                .client
+                .session_set_config_option(session_id, &option_id, option_value.clone())
+                .await
+            {
+                Ok(()) => Ok(()),
+                Err(err) if Self::is_session_not_found(&err) && supports_load_session => {
+                    self.client.session_load(directory, session_id).await?;
+                    self.client
+                        .session_set_config_option(session_id, &option_id, option_value.clone())
+                        .await
+                }
+                Err(err) => Err(err),
             };
 
             match set_result {
@@ -1641,114 +1764,78 @@ impl AcpAgent {
                         effective_model = None;
                     }
                 }
-                Err(err)
-                    if Self::is_set_config_option_unsupported(&err)
-                        || !supports_set_config_option =>
-                {
-                    if category == "mode" {
-                        let mode_id = option_meta
-                            .as_ref()
-                            .and_then(|option| {
-                                Self::resolve_mode_id_from_option(option, &option_value)
-                            })
-                            .or_else(|| Self::value_to_string(&option_value));
-                        if let Some(mode_id) = mode_id {
-                            let mode_result =
-                                match self.client.session_set_mode(session_id, &mode_id).await {
-                                    Ok(()) => Ok(()),
-                                    Err(mode_err)
-                                        if Self::is_session_not_found(&mode_err)
-                                            && supports_load_session =>
-                                    {
-                                        self.client.session_load(directory, session_id).await?;
-                                        self.client.session_set_mode(session_id, &mode_id).await
-                                    }
-                                    Err(mode_err) => Err(mode_err),
-                                };
-                            match mode_result {
-                                Ok(()) => {
-                                    Self::apply_current_mode_to_metadata(metadata, &mode_id);
-                                    Self::apply_config_value_to_metadata(
-                                        metadata,
-                                        &option_id,
-                                        option_value.clone(),
-                                    );
-                                    effective_agent = None;
-                                    warn!(
-                                        "{}: fallback to session/set_mode for config option '{}'",
-                                        self.profile.tool_id, option_id
-                                    );
-                                }
-                                Err(mode_err) => return Err(mode_err),
-                            }
-                        } else {
-                            warn!(
-                                "{}: config option '{}' category=mode fallback failed: unresolved mode id",
-                                self.profile.tool_id, option_id
-                            );
-                        }
-                    } else if category == "model" {
-                        let model_id = option_meta
-                            .as_ref()
-                            .and_then(|option| {
-                                Self::resolve_model_id_from_option(option, &option_value)
-                            })
-                            .or_else(|| Self::value_to_string(&option_value));
-                        if let Some(model_id) = model_id {
-                            let provider_id = effective_model
-                                .as_ref()
-                                .map(|model| model.provider_id.clone())
-                                .unwrap_or_else(|| self.profile.provider_id.clone());
-                            effective_model = Some(AiModelSelection {
-                                provider_id,
-                                model_id: model_id.clone(),
-                            });
-                            Self::apply_current_model_to_metadata(metadata, &model_id);
-                            Self::apply_config_value_to_metadata(
-                                metadata,
-                                &option_id,
-                                option_value.clone(),
-                            );
-                            warn!(
-                                "{}: fallback to prompt.model for config option '{}'",
-                                self.profile.tool_id, option_id
-                            );
-                        }
-                    } else if category == "thought_level" {
-                        debug!(
-                            "{}: config option '{}' category=thought_level has no legacy fallback: {}",
-                            self.profile.tool_id, option_id, err
-                        );
-                        Self::apply_config_value_to_metadata(
-                            metadata,
-                            &option_id,
-                            option_value.clone(),
-                        );
-                    } else {
-                        warn!(
-                            "{}: ignore config option '{}' (category={}) fallback because set_config_option unsupported: {}",
-                            self.profile.tool_id, option_id, category, err
-                        );
-                        Self::apply_config_value_to_metadata(
-                            metadata,
-                            &option_id,
-                            option_value.clone(),
-                        );
-                    }
+                Err(err) if Self::is_set_config_option_unsupported(&err) => {
+                    warn!(
+                        "{}: set_config_option runtime unsupported, apply local override only: option_id={}, category={}, error={}",
+                        self.profile.tool_id, option_id, category, err
+                    );
+                    Self::apply_local_override_without_set_config(
+                        metadata,
+                        &option_id,
+                        option_meta.as_ref(),
+                        &category,
+                        &mut option_value,
+                        &mut effective_model,
+                        &mut effective_agent,
+                        &self.profile.provider_id,
+                    );
                 }
-                Err(err) => {
-                    if category == "thought_level" {
-                        debug!(
-                            "{}: apply thought_level config '{}' failed (ignored): {}",
-                            self.profile.tool_id, option_id, err
-                        );
-                        continue;
-                    }
-                    return Err(err);
-                }
+                Err(err) => return Err(err),
             }
         }
 
         Ok((effective_model, effective_agent))
+    }
+
+    fn apply_local_override_without_set_config(
+        metadata: &mut AcpSessionMetadata,
+        option_id: &str,
+        option_meta: Option<&AcpConfigOptionInfo>,
+        category: &str,
+        option_value: &mut Value,
+        effective_model: &mut Option<AiModelSelection>,
+        effective_agent: &mut Option<String>,
+        default_provider_id: &str,
+    ) {
+        match category {
+            "mode" => {
+                if let Some(raw_mode_id) = option_meta
+                    .and_then(|option| Self::resolve_mode_id_from_option(option, option_value))
+                    .or_else(|| Self::value_to_string(option_value))
+                {
+                    if let Some(canonical_mode_id) =
+                        Self::canonicalize_mode_id(metadata, &raw_mode_id)
+                    {
+                        Self::apply_current_mode_to_metadata(metadata, &canonical_mode_id);
+                        *option_value = Self::rewrite_mode_config_value(
+                            option_value.clone(),
+                            &canonical_mode_id,
+                        );
+                    }
+                }
+                Self::apply_config_value_to_metadata(metadata, option_id, option_value.clone());
+                *effective_agent = None;
+            }
+            "model" => {
+                if let Some(model_id) = option_meta
+                    .and_then(|option| Self::resolve_model_id_from_option(option, option_value))
+                    .or_else(|| Self::value_to_string(option_value))
+                {
+                    let provider_id = effective_model
+                        .as_ref()
+                        .map(|model| model.provider_id.clone())
+                        .unwrap_or_else(|| default_provider_id.to_string());
+                    *effective_model = Some(AiModelSelection {
+                        provider_id,
+                        model_id: model_id.clone(),
+                    });
+                    Self::apply_current_model_to_metadata(metadata, &model_id);
+                }
+                Self::apply_config_value_to_metadata(metadata, option_id, option_value.clone());
+            }
+            _ => {
+                Self::apply_config_value_to_metadata(metadata, option_id, option_value.clone());
+            }
+        }
     }
 }

@@ -804,6 +804,21 @@ impl AiAgent for AcpAgent {
             .as_ref()
             .map(|option| Self::normalized_category(option.category.as_deref(), &option.option_id))
             .unwrap_or_else(|| option_id.trim().to_lowercase());
+        let mut value = value;
+        if category == "mode" {
+            if let Some(raw_mode_id) = option_meta
+                .as_ref()
+                .and_then(|option| Self::resolve_mode_id_from_option(option, &value))
+                .or_else(|| Self::value_to_string(&value))
+            {
+                if let Some(canonical_mode_id) = Self::canonicalize_mode_id(&metadata, &raw_mode_id)
+                {
+                    if canonical_mode_id != raw_mode_id {
+                        value = Self::rewrite_mode_config_value(value, &canonical_mode_id);
+                    }
+                }
+            }
+        }
 
         let set_result = if supports_set_config {
             match self
@@ -827,47 +842,6 @@ impl AiAgent for AcpAgent {
         match set_result {
             Ok(()) => {
                 Self::apply_config_value_to_metadata(&mut metadata, option_id, value.clone());
-            }
-            Err(err) if Self::is_set_config_option_unsupported(&err) || !supports_set_config => {
-                if category == "mode" {
-                    let mode_id = option_meta
-                        .as_ref()
-                        .and_then(|option| Self::resolve_mode_id_from_option(option, &value))
-                        .or_else(|| Self::value_to_string(&value))
-                        .ok_or_else(|| {
-                            format!(
-                                "session/set_config_option fallback failed: unresolved mode for option '{}'",
-                                option_id
-                            )
-                        })?;
-                    match self.client.session_set_mode(session_id, &mode_id).await {
-                        Ok(()) => {
-                            Self::apply_current_mode_to_metadata(&mut metadata, &mode_id);
-                            Self::apply_config_value_to_metadata(
-                                &mut metadata,
-                                option_id,
-                                value.clone(),
-                            );
-                        }
-                        Err(mode_err)
-                            if Self::is_session_not_found(&mode_err) && supports_load_session =>
-                        {
-                            self.client.session_load(directory, session_id).await?;
-                            self.client.session_set_mode(session_id, &mode_id).await?;
-                            Self::apply_current_mode_to_metadata(&mut metadata, &mode_id);
-                            Self::apply_config_value_to_metadata(
-                                &mut metadata,
-                                option_id,
-                                value.clone(),
-                            );
-                        }
-                        Err(mode_err) => return Err(mode_err),
-                    }
-                } else if category == "model" || category == "thought_level" {
-                    Self::apply_config_value_to_metadata(&mut metadata, option_id, value.clone());
-                } else {
-                    return Err(err);
-                }
             }
             Err(err) => return Err(err),
         }

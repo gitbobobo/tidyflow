@@ -1342,6 +1342,49 @@ fn apply_current_mode_to_metadata_should_add_unknown_mode() {
 }
 
 #[test]
+fn apply_current_mode_to_metadata_should_canonicalize_known_mode_token() {
+    let mut metadata = crate::ai::acp_client::AcpSessionMetadata::default();
+    AcpAgent::apply_current_mode_to_metadata(&mut metadata, "agent");
+    assert_eq!(
+        metadata.current_mode_id.as_deref(),
+        Some("https://agentclientprotocol.com/protocol/session-modes#agent")
+    );
+    assert_eq!(metadata.modes.len(), 1);
+    assert_eq!(
+        metadata.modes[0].id,
+        "https://agentclientprotocol.com/protocol/session-modes#agent"
+    );
+}
+
+#[test]
+fn resolve_mode_id_should_match_mode_semantic_token_and_return_canonical_mode_id() {
+    let metadata = crate::ai::acp_client::AcpSessionMetadata {
+        modes: vec![crate::ai::acp_client::AcpModeInfo {
+            id: "https://agentclientprotocol.com/protocol/session-modes#plan".to_string(),
+            name: "Plan".to_string(),
+            description: None,
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        AcpAgent::resolve_mode_id(&metadata, Some("plan")).as_deref(),
+        Some("https://agentclientprotocol.com/protocol/session-modes#plan")
+    );
+}
+
+#[test]
+fn resolve_mode_id_should_canonicalize_fallback_current_mode_token() {
+    let metadata = crate::ai::acp_client::AcpSessionMetadata {
+        current_mode_id: Some("autopilot".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        AcpAgent::resolve_mode_id(&metadata, None).as_deref(),
+        Some("https://agentclientprotocol.com/protocol/session-modes#autopilot")
+    );
+}
+
+#[test]
 fn extract_current_mode_id_should_support_common_payload_shapes() {
     let top_level = json!({
         "currentModeId": "code"
