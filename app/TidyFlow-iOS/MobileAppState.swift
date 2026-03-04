@@ -82,6 +82,7 @@ private struct MobileTerminalPresentation {
     let icon: String
     let name: String
     let sourceCommand: String?
+    var isPinned: Bool
 }
 
 struct MobileEvidenceReadRequestState {
@@ -318,6 +319,8 @@ final class MobileAppState: ObservableObject {
     private var lastRenderedTermId: String = ""
     /// term_id -> 展示信息（图标/名称）
     private var terminalPresentationById: [String: MobileTerminalPresentation] = [:]
+    /// 固定终端集合（固定后不会被“关闭其他/关闭右侧”关闭）
+    private var pinnedTerminalIds: Set<String> = []
     /// AI 提交结果不带 project/workspace，按触发顺序匹配
     private var aiCommitPendingTaskIds: [String] = []
     /// AI 合并按 project 匹配
@@ -871,12 +874,51 @@ final class MobileAppState: ObservableObject {
 
     /// 获取指定项目+工作空间的活跃终端
     func terminalsForWorkspace(project: String, workspace: String) -> [TerminalSessionInfo] {
-        activeTerminals.filter { $0.project == project && $0.workspace == workspace && $0.isRunning }
+        let terminals = activeTerminals.filter { $0.project == project && $0.workspace == workspace && $0.isRunning }
+        let indexMap = Dictionary(uniqueKeysWithValues: terminals.enumerated().map { ($1.termId, $0) })
+        return terminals.sorted { lhs, rhs in
+            let lhsPinned = pinnedTerminalIds.contains(lhs.termId)
+            let rhsPinned = pinnedTerminalIds.contains(rhs.termId)
+            if lhsPinned != rhsPinned { return lhsPinned && !rhsPinned }
+            return (indexMap[lhs.termId] ?? 0) < (indexMap[rhs.termId] ?? 0)
+        }
     }
 
-    func terminalPresentation(for termId: String) -> (icon: String, name: String)? {
+    func terminalPresentation(for termId: String) -> (icon: String, name: String, isPinned: Bool)? {
         guard let presentation = terminalPresentationById[termId] else { return nil }
-        return (presentation.icon, presentation.name)
+        return (presentation.icon, presentation.name, presentation.isPinned)
+    }
+
+    func isTerminalPinned(termId: String) -> Bool {
+        pinnedTerminalIds.contains(termId)
+    }
+
+    func toggleTerminalPinned(termId: String) {
+        if pinnedTerminalIds.contains(termId) {
+            pinnedTerminalIds.remove(termId)
+        } else {
+            pinnedTerminalIds.insert(termId)
+        }
+        if var presentation = terminalPresentationById[termId] {
+            presentation.isPinned = pinnedTerminalIds.contains(termId)
+            terminalPresentationById[termId] = presentation
+        }
+    }
+
+    func closeOtherTerminals(project: String, workspace: String, keepTermId: String) {
+        let terminals = terminalsForWorkspace(project: project, workspace: workspace)
+        for term in terminals where term.termId != keepTermId && !pinnedTerminalIds.contains(term.termId) {
+            closeTerminal(termId: term.termId)
+        }
+    }
+
+    func closeTerminalsToRight(project: String, workspace: String, termId: String) {
+        let terminals = terminalsForWorkspace(project: project, workspace: workspace)
+        guard let index = terminals.firstIndex(where: { $0.termId == termId }) else { return }
+        let right = terminals.suffix(from: terminals.index(after: index))
+        for term in right where !pinnedTerminalIds.contains(term.termId) {
+            closeTerminal(termId: term.termId)
+        }
     }
 
     func gitSummaryForWorkspace(project: String, workspace: String) -> MobileWorkspaceGitSummary {
@@ -903,7 +945,7 @@ final class MobileAppState: ObservableObject {
         let prefix = "\(project)::\(workspace)::"
         for tool in AIChatTool.allCases {
             if let statuses = aiSessionStatusesByTool[tool],
-               statuses.contains(where: { $0.key.hasPrefix(prefix) && $0.value.isBusy }) {
+               statuses.contains(where: { $0.key.hasPrefix(prefix) && $0.value.isActive }) {
                 return true
             }
         }
@@ -911,6 +953,24 @@ final class MobileAppState: ObservableObject {
             return aiIsStreaming || aiIsSendingPending || aiAbortPendingSessionId != nil
         }
         return false
+    }
+
+    func workspaceAIStatus(project: String, workspace: String) -> AISessionStatusSnapshot? {
+        let prefix = "\(project)::\(workspace)::"
+        var snapshots: [AISessionStatusSnapshot] = []
+        for tool in AIChatTool.allCases {
+            if let statuses = aiSessionStatusesByTool[tool] {
+                snapshots.append(contentsOf: statuses
+                    .filter { $0.key.hasPrefix(prefix) }
+                    .map(\.value))
+            }
+        }
+        guard !snapshots.isEmpty else { return nil }
+        if let active = snapshots.first(where: { $0.isActive }) { return active }
+        if let failure = snapshots.first(where: { $0.isError }) { return failure }
+        if let success = snapshots.first(where: { $0.normalizedStatus == "success" }) { return success }
+        if let cancelled = snapshots.first(where: { $0.normalizedStatus == "cancelled" }) { return cancelled }
+        return snapshots.first
     }
 
     func hasWorkspaceActiveEvolutionLoop(project: String, workspace: String) -> Bool {
@@ -3237,9 +3297,13 @@ final class MobileAppState: ObservableObject {
     ) {
         let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
         var dict = aiSessionStatusesByTool[aiTool] ?? [:]
+        let normalizedStatus = status
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let normalizedError = errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
         dict[key] = AISessionStatusSnapshot(
-            status: status,
-            errorMessage: errorMessage,
+            status: normalizedStatus.isEmpty ? status : normalizedStatus,
+            errorMessage: normalizedError?.isEmpty == true ? nil : normalizedError,
             contextRemainingPercent: contextRemainingPercent
         )
         aiSessionStatusesByTool[aiTool] = dict
@@ -3633,6 +3697,7 @@ final class MobileAppState: ObservableObject {
             self.activeTerminals = result.items
             let liveIds = Set(result.items.map(\.termId))
             self.terminalPresentationById = self.terminalPresentationById.filter { liveIds.contains($0.key) }
+            self.pinnedTerminalIds = self.pinnedTerminalIds.intersection(liveIds)
 
             // 从服务端恢复展示信息（重连场景：本地无缓存但 Core 有记录）
             for term in result.items {
@@ -3641,7 +3706,8 @@ final class MobileAppState: ObservableObject {
                     self.terminalPresentationById[term.termId] = MobileTerminalPresentation(
                         icon: term.icon ?? "terminal",
                         name: name,
-                        sourceCommand: nil
+                        sourceCommand: nil,
+                        isPinned: self.pinnedTerminalIds.contains(term.termId)
                     )
                 }
             }
@@ -3671,7 +3737,8 @@ final class MobileAppState: ObservableObject {
                 self.terminalPresentationById[result.termId] = MobileTerminalPresentation(
                     icon: commandIcon.isEmpty ? "terminal" : commandIcon,
                     name: commandName.isEmpty ? "终端" : commandName,
-                    sourceCommand: self.pendingCustomCommand
+                    sourceCommand: self.pendingCustomCommand,
+                    isPinned: self.pinnedTerminalIds.contains(result.termId)
                 )
             }
 
@@ -3710,7 +3777,8 @@ final class MobileAppState: ObservableObject {
                 self.terminalPresentationById[result.termId] = MobileTerminalPresentation(
                     icon: result.icon ?? "terminal",
                     name: name,
-                    sourceCommand: nil
+                    sourceCommand: nil,
+                    isPinned: self.pinnedTerminalIds.contains(result.termId)
                 )
             }
             // 写入 scrollback 到 SwiftTerm
@@ -3747,6 +3815,7 @@ final class MobileAppState: ObservableObject {
         wsClient.onTermClosed = { [weak self] termId in
             guard let self else { return }
             self.terminalPresentationById.removeValue(forKey: termId)
+            self.pinnedTerminalIds.remove(termId)
             self.termOutputUnackedBytesByTermId.removeValue(forKey: termId)
             self.termAttachRequestedAtByTermId.removeValue(forKey: termId)
             self.termDetachRequestedAtByTermId.removeValue(forKey: termId)
@@ -4369,7 +4438,7 @@ final class MobileAppState: ObservableObject {
                self.aiActiveWorkspace == ev.workspaceName,
                self.aiChatTool == ev.aiTool,
                self.aiCurrentSessionId == ev.sessionId,
-               ev.status.status.lowercased() == "idle" {
+               !AISessionStatusSnapshot(status: ev.status.status, errorMessage: ev.status.errorMessage, contextRemainingPercent: ev.status.contextRemainingPercent).isActive {
                 self.aiIsStreaming = false
                 self.aiIsSendingPending = false
             }
@@ -4390,7 +4459,7 @@ final class MobileAppState: ObservableObject {
                self.aiActiveWorkspace == ev.workspaceName,
                self.aiChatTool == ev.aiTool,
                self.aiCurrentSessionId == ev.sessionId,
-               ev.status.status.lowercased() == "idle" {
+               !AISessionStatusSnapshot(status: ev.status.status, errorMessage: ev.status.errorMessage, contextRemainingPercent: ev.status.contextRemainingPercent).isActive {
                 self.aiIsStreaming = false
                 self.aiIsSendingPending = false
             }

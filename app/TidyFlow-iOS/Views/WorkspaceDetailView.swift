@@ -48,6 +48,9 @@ struct WorkspaceDetailView: View {
                 NavigationLink(value: MobileRoute.workspaceExplorer(project: project, workspace: workspace)) {
                     Label("浏览项目文件", systemImage: "folder")
                 }
+                Text("iOS 暂不支持外部改动冲突的重载/覆盖/比较三路处理，请在 macOS 端完成。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
 
             Section("活跃终端") {
@@ -74,8 +77,33 @@ struct WorkspaceDetailView: View {
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
+                                if presentation?.isPinned == true {
+                                    Image(systemName: "pin.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                             .padding(.vertical, 2)
+                        }
+                        .contextMenu {
+                            Button(appState.isTerminalPinned(termId: term.termId) ? "取消固定" : "固定") {
+                                appState.toggleTerminalPinned(termId: term.termId)
+                            }
+                            Divider()
+                            Button("关闭其他") {
+                                appState.closeOtherTerminals(project: project, workspace: workspace, keepTermId: term.termId)
+                            }
+                            let hasRight = index < terminals.count - 1
+                            Button("关闭右侧") {
+                                appState.closeTerminalsToRight(project: project, workspace: workspace, termId: term.termId)
+                            }
+                            .disabled(!hasRight)
+                            Divider()
+                            Button(role: .destructive) {
+                                appState.closeTerminal(termId: term.termId)
+                            } label: {
+                                Label("终止", systemImage: "xmark.circle")
+                            }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {

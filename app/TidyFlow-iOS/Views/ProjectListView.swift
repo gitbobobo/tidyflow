@@ -86,8 +86,21 @@ struct ProjectListView: View {
 
     private func workspaceActivityIndicators(project: String, workspace: String) -> [MobileWorkspaceActivityIndicator] {
         var items: [MobileWorkspaceActivityIndicator] = []
-        if appState.hasWorkspaceStreamingChat(project: project, workspace: workspace) {
-            items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
+        if let status = appState.workspaceAIStatus(project: project, workspace: workspace) {
+            switch status.normalizedStatus {
+            case "running":
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bolt.circle.fill", color: .blue))
+            case "awaiting_input":
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "hourglass.circle.fill", color: .yellow))
+            case "success":
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "checkmark.circle.fill", color: .green))
+            case "failure", "error":
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "xmark.octagon.fill", color: .red))
+            case "cancelled":
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "minus.circle.fill", color: .secondary))
+            default:
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .secondary))
+            }
         }
         if appState.hasWorkspaceActiveEvolutionLoop(project: project, workspace: workspace) {
             items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "brain.head.profile", color: .purple))
