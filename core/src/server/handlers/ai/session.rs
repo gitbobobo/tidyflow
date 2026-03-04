@@ -197,40 +197,21 @@ pub(crate) async fn query_ai_session_list(
     limit: Option<u32>,
 ) -> Result<ServerMessage, String> {
     let ai_tool = normalize_ai_tool(ai_tool)?;
-    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
-    let agent = ensure_agent(ai_state, &ai_tool).await?;
-    ensure_maintenance(ai_state).await;
-    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+    resolve_directory(app_state, project_name, workspace_name).await?;
 
     info!(
-        "AISessionList: project={}, workspace={}, ai_tool={}, directory={}",
-        project_name, workspace_name, ai_tool, directory
+        "AISessionList(DB): project={}, workspace={}, ai_tool={}",
+        project_name, workspace_name, ai_tool
     );
 
-    let mut sessions = agent.list_sessions(&directory).await?;
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    if ai_tool == "opencode" {
-        if let Some(invalid) = sessions.iter().find(|s| !s.id.starts_with("ses")) {
-            warn!(
-                "AISessionList: opencode session id format unexpected, project={}, workspace={}, session_id={}, possible_cross_tool_mismatch=true",
-                project_name, workspace_name, invalid.id
-            );
-        }
-    }
+    let sessions =
+        super::list_session_index_entries(ai_state, project_name, workspace_name, &ai_tool, limit)
+            .await?;
     let total_sessions = sessions.len();
-    if let Some(limit) = limit {
-        if limit > 0 {
-            sessions.truncate(limit as usize);
-        }
-    }
+
     info!(
-        "AISessionList: project={}, workspace={}, ai_tool={}, sessions_count={}, returned_count={}, limit={:?}",
-        project_name,
-        workspace_name,
-        ai_tool,
-        total_sessions,
-        sessions.len(),
-        limit
+        "AISessionList(DB): project={}, workspace={}, ai_tool={}, returned_count={}, limit={:?}",
+        project_name, workspace_name, ai_tool, total_sessions, limit
     );
 
     let sessions: Vec<_> = sessions
@@ -238,9 +219,9 @@ pub(crate) async fn query_ai_session_list(
         .map(|s| crate::server::protocol::ai::SessionInfo {
             project_name: project_name.to_string(),
             workspace_name: workspace_name.to_string(),
-            id: s.id,
+            id: s.session_id,
             title: s.title,
-            updated_at: s.updated_at,
+            updated_at: s.updated_at_ms,
         })
         .collect();
 
@@ -730,6 +711,21 @@ pub(super) async fn handle_ai_session_delete(
         store.remove_status(&ai_tool, &directory, session_id);
     }
 
+    if let Err(e) = super::delete_session_index_entry(
+        ai_state,
+        project_name,
+        workspace_name,
+        &ai_tool,
+        session_id,
+    )
+    .await
+    {
+        warn!(
+            "AISessionDelete: remove index failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+            project_name, workspace_name, ai_tool, session_id, e
+        );
+    }
+
     let _ = agent.delete_session(&directory, session_id).await;
 
     Ok(true)
@@ -861,6 +857,12 @@ pub(super) async fn handle_ai_session_unsubscribe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::handlers::ai::{AIState, AiSessionIndexStore};
+    use crate::server::protocol::ServerMessage;
+    use crate::workspace::state::Project;
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn build_messages(count: usize) -> Vec<crate::server::protocol::ai::MessageInfo> {
         (1..=count)
@@ -978,5 +980,133 @@ mod tests {
         recompute_ai_session_page_meta_after_truncate(&messages, &mut page);
         assert!(page.has_more);
         assert_eq!(page.next_before_message_id.as_deref(), Some("msg_010"));
+    }
+
+    fn build_test_app_state() -> SharedAppState {
+        let mut app = crate::workspace::state::AppState::default();
+        app.add_project(Project {
+            name: "demo".to_string(),
+            root_path: "/tmp/demo".into(),
+            remote_url: None,
+            default_branch: "main".to_string(),
+            created_at: Utc::now(),
+            workspaces: HashMap::new(),
+            commands: Vec::new(),
+        });
+        Arc::new(tokio::sync::RwLock::new(app))
+    }
+
+    fn build_test_ai_state_with_in_memory_index() -> SharedAIState {
+        let mut ai = AIState::new();
+        ai.session_index_store = Arc::new(
+            AiSessionIndexStore::open_in_memory_for_test().expect("open in-memory index store"),
+        );
+        Arc::new(tokio::sync::Mutex::new(ai))
+    }
+
+    #[tokio::test]
+    async fn query_ai_session_list_should_read_from_db_and_sort_by_updated_at() {
+        let app_state = build_test_app_state();
+        let ai_state = build_test_ai_state_with_in_memory_index();
+
+        super::super::record_session_index_created(
+            &ai_state,
+            "demo",
+            "default",
+            "codex",
+            "/tmp/demo",
+            "s1",
+            "会话 1",
+            100,
+        )
+        .await
+        .expect("record s1");
+        super::super::record_session_index_created(
+            &ai_state,
+            "demo",
+            "default",
+            "codex",
+            "/tmp/demo",
+            "s2",
+            "会话 2",
+            200,
+        )
+        .await
+        .expect("record s2");
+        super::super::touch_session_index_updated_at(
+            &ai_state, "demo", "default", "codex", "s1", 300,
+        )
+        .await
+        .expect("touch s1");
+
+        let resp = query_ai_session_list(&app_state, &ai_state, "demo", "default", "codex", None)
+            .await
+            .expect("query list");
+
+        match resp {
+            ServerMessage::AISessionListV2 { sessions, .. } => {
+                assert_eq!(sessions.len(), 2);
+                assert_eq!(sessions[0].id, "s1");
+                assert_eq!(sessions[0].updated_at, 300);
+                assert_eq!(sessions[1].id, "s2");
+                assert_eq!(sessions[1].updated_at, 200);
+            }
+            _ => panic!("expected ai_session_list response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn query_ai_session_list_should_keep_limit_semantics() {
+        let app_state = build_test_app_state();
+        let ai_state = build_test_ai_state_with_in_memory_index();
+
+        super::super::record_session_index_created(
+            &ai_state,
+            "demo",
+            "default",
+            "codex",
+            "/tmp/demo",
+            "s1",
+            "会话 1",
+            100,
+        )
+        .await
+        .expect("record s1");
+        super::super::record_session_index_created(
+            &ai_state,
+            "demo",
+            "default",
+            "codex",
+            "/tmp/demo",
+            "s2",
+            "会话 2",
+            200,
+        )
+        .await
+        .expect("record s2");
+
+        let resp_limit_zero =
+            query_ai_session_list(&app_state, &ai_state, "demo", "default", "codex", Some(0))
+                .await
+                .expect("query list with limit 0");
+        let resp_limit_one =
+            query_ai_session_list(&app_state, &ai_state, "demo", "default", "codex", Some(1))
+                .await
+                .expect("query list with limit 1");
+
+        match resp_limit_zero {
+            ServerMessage::AISessionListV2 { sessions, .. } => {
+                assert_eq!(sessions.len(), 2);
+            }
+            _ => panic!("expected ai_session_list response"),
+        }
+
+        match resp_limit_one {
+            ServerMessage::AISessionListV2 { sessions, .. } => {
+                assert_eq!(sessions.len(), 1);
+                assert_eq!(sessions[0].id, "s2");
+            }
+            _ => panic!("expected ai_session_list response"),
+        }
     }
 }

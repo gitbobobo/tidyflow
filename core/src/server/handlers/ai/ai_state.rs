@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
 use super::utils::AiStreamSnapshot;
+use super::AiSessionIndexStore;
 use crate::ai::session_status::AiSessionStateStore;
 use crate::ai::AiAgent;
 
@@ -16,6 +17,8 @@ pub struct AIState {
     pub(crate) stream_snapshots: HashMap<String, AiStreamSnapshot>,
     /// AI 会话状态存储（跨工具统一）
     pub session_statuses: Arc<AiSessionStateStore>,
+    /// AI 会话索引存储（会话列表仅依赖此索引）
+    pub session_index_store: Arc<AiSessionIndexStore>,
     /// tool+directory 使用情况：用于 idle dispose
     pub directory_last_used_ms: HashMap<String, i64>,
     pub directory_active_streams: HashMap<String, usize>,
@@ -29,11 +32,16 @@ pub struct AIState {
 
 impl AIState {
     pub fn new() -> Self {
+        let session_index_store = Arc::new(
+            AiSessionIndexStore::open_default()
+                .unwrap_or_else(|e| panic!("failed to initialize ai session index store: {}", e)),
+        );
         Self {
             active_streams: HashMap::new(),
             stream_snapshots: HashMap::new(),
             agents: HashMap::new(),
             session_statuses: AiSessionStateStore::new_shared(),
+            session_index_store,
             directory_last_used_ms: HashMap::new(),
             directory_active_streams: HashMap::new(),
             maintenance_started: false,
