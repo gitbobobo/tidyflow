@@ -1368,18 +1368,22 @@ impl EvolutionManager {
                 ));
             };
 
-            let matched_indexes = managed_backlog
-                .items
-                .iter()
-                .enumerate()
-                .filter(|(_, backlog)| {
-                    backlog.source_criteria_id == parsed.source_criteria_id
-                        && backlog.source_check_id == parsed.source_check_id
-                        && backlog.work_item_id == parsed.work_item_id
-                        && backlog.implementation_agent == parsed.implementation_agent
-                })
-                .map(|(i, _)| i)
-                .collect::<Vec<usize>>();
+            let (matched_indexes, matched_by) =
+                Self::match_managed_backlog_indexes(&managed_backlog.items, &parsed);
+
+            if !matched_indexes.is_empty() && matched_by != "work_item_id" {
+                warn!(
+                    "evo_backlog_mapping_fallback: cycle_dir={}, stage={}, selector=({}, {}, {}, {}), resolved_by={}, candidates={}",
+                    cycle_dir.display(),
+                    stage,
+                    parsed.source_criteria_id,
+                    parsed.source_check_id,
+                    parsed.work_item_id,
+                    parsed.implementation_agent,
+                    matched_by,
+                    matched_indexes.len()
+                );
+            }
 
             if matched_indexes.is_empty() {
                 warn!(
@@ -1516,6 +1520,58 @@ impl EvolutionManager {
         managed_backlog.updated_at = Utc::now().to_rfc3339();
         Self::write_managed_failure_backlog(cycle_dir, &managed_backlog)?;
         Ok(())
+    }
+
+    fn match_managed_backlog_indexes(
+        backlog_items: &[ManagedFailureBacklogItem],
+        parsed: &BacklogResolutionUpdate,
+    ) -> (Vec<usize>, &'static str) {
+        let by_work_item_id = backlog_items
+            .iter()
+            .enumerate()
+            .filter(|(_, backlog)| {
+                backlog.source_criteria_id == parsed.source_criteria_id
+                    && backlog.source_check_id == parsed.source_check_id
+                    && backlog.work_item_id == parsed.work_item_id
+                    && backlog.implementation_agent == parsed.implementation_agent
+            })
+            .map(|(i, _)| i)
+            .collect::<Vec<usize>>();
+        if !by_work_item_id.is_empty() {
+            return (by_work_item_id, "work_item_id");
+        }
+
+        let by_requirement_ref = backlog_items
+            .iter()
+            .enumerate()
+            .filter(|(_, backlog)| {
+                backlog.source_criteria_id == parsed.source_criteria_id
+                    && backlog.source_check_id == parsed.source_check_id
+                    && backlog.requirement_ref == parsed.work_item_id
+                    && backlog.implementation_agent == parsed.implementation_agent
+            })
+            .map(|(i, _)| i)
+            .collect::<Vec<usize>>();
+        if !by_requirement_ref.is_empty() {
+            return (by_requirement_ref, "requirement_ref");
+        }
+
+        let by_backlog_id = backlog_items
+            .iter()
+            .enumerate()
+            .filter(|(_, backlog)| {
+                backlog.source_criteria_id == parsed.source_criteria_id
+                    && backlog.source_check_id == parsed.source_check_id
+                    && backlog.id == parsed.work_item_id
+                    && backlog.implementation_agent == parsed.implementation_agent
+            })
+            .map(|(i, _)| i)
+            .collect::<Vec<usize>>();
+        if !by_backlog_id.is_empty() {
+            return (by_backlog_id, "backlog_id");
+        }
+
+        (Vec::new(), "work_item_id")
     }
 
     fn collect_reimplementation_backlog(
@@ -5938,6 +5994,70 @@ mod tests {
         );
         EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
             .expect("v2 validation should pass");
+    }
+
+    #[test]
+    fn sync_managed_backlog_should_fallback_to_requirement_ref_when_work_item_id_mismatched() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_managed_backlog_files(
+            dir.path(),
+            "c-1",
+            1,
+            vec![serde_json::json!({
+                "id": "fb-1",
+                "source_criteria_id": "AC-005",
+                "source_check_id": "check_unit_integration_tests",
+                "work_item_id": "wi_feature_tests_quality_004",
+                "implementation_agent": "implement_general",
+                "requirement_ref": "NIR-AC005-TESTS-001",
+                "description": "",
+                "created_at": "2026-03-02T00:00:00Z",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+            vec![serde_json::json!({
+                "backlog_id": "fb-1",
+                "source_criteria_id": "AC-005",
+                "source_check_id": "check_unit_integration_tests",
+                "work_item_id": "wi_feature_tests_quality_004",
+                "implementation_agent": "implement_general",
+                "status": "not_done",
+                "evidence": null,
+                "notes": "",
+                "updated_at": "2026-03-02T00:00:00Z"
+            })],
+        );
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            serde_json::json!({
+                "backlog_resolution_updates": [{
+                    "source_criteria_id": "AC-005",
+                    "source_check_id": "check_unit_integration_tests",
+                    "work_item_id": "NIR-AC005-TESTS-001",
+                    "implementation_agent": "implement_general",
+                    "status": "done",
+                    "evidence": {"proof": "fixed"},
+                    "notes": "resolved via requirement_ref"
+                }]
+            }),
+        );
+
+        EvolutionManager::sync_managed_backlog_for_implement_stage(dir.path(), "implement_general")
+            .expect("should fallback by requirement_ref");
+
+        let coverage = super::read_json_file(dir.path(), "managed.backlog_coverage.json")
+            .expect("coverage should be readable");
+        assert_eq!(coverage["items"][0]["status"], serde_json::json!("done"));
+
+        let result = super::read_json_file(dir.path(), "implement_general.result.json")
+            .expect("result should be readable");
+        assert_eq!(
+            result["failure_backlog"][0]["work_item_id"],
+            serde_json::json!("wi_feature_tests_quality_004")
+        );
+        assert_eq!(
+            result["backlog_coverage"][0]["work_item_id"],
+            serde_json::json!("wi_feature_tests_quality_004")
+        );
     }
 
     #[test]

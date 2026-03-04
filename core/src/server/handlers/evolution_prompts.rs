@@ -161,6 +161,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
     - `source_criteria_id`
     - `source_check_id`
     - `work_item_id`
+      - 必须使用 `MANAGED_FAILURE_BACKLOG_PATH.items[*].work_item_id` 的原值，禁止填写 `requirement_ref` 或 backlog 主键 `id`
     - `implementation_agent`（必须等于当前 lane）
     - `status`（只能是 `done|blocked|not_done`）
     - `evidence`
