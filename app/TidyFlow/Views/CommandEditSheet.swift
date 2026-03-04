@@ -287,9 +287,13 @@ struct CommandIconView: View {
                 }
             } else {
                 // SF Symbol
-                Image(systemName: iconName)
-                    .font(.system(size: size * 0.7))
-                    .frame(width: size, height: size)
+                if isSystemSymbolAvailable(iconName) {
+                    Image(systemName: iconName)
+                        .font(.system(size: size * 0.7))
+                        .frame(width: size, height: size)
+                } else {
+                    fallbackIcon
+                }
             }
         }
     }
@@ -298,6 +302,17 @@ struct CommandIconView: View {
         Image(systemName: "terminal")
             .font(.system(size: size * 0.7))
             .frame(width: size, height: size)
+    }
+
+    private func isSystemSymbolAvailable(_ name: String) -> Bool {
+        #if canImport(AppKit)
+        if #available(macOS 11.0, *) {
+            return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+        }
+        return false
+        #else
+        return true
+        #endif
     }
     
     private func loadCustomIconImage(_ filename: String) -> NSImage? {

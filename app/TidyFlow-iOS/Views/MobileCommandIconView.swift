@@ -30,9 +30,13 @@ struct MobileCommandIconView: View {
                     fallbackIcon
                 }
             } else {
-                Image(systemName: iconName)
-                    .font(.system(size: size * 0.7))
-                    .frame(width: size, height: size)
+                if UIImage(systemName: iconName) != nil {
+                    Image(systemName: iconName)
+                        .font(.system(size: size * 0.7))
+                        .frame(width: size, height: size)
+                } else {
+                    fallbackIcon
+                }
             }
         }
     }
