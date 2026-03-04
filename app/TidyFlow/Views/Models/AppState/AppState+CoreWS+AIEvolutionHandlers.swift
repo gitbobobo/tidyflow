@@ -157,9 +157,11 @@ extension AppState {
     }
 
     func handleAISessionMessages(_ ev: AISessionMessagesV2) {
+        #if os(iOS)
         if consumeEvolutionReplayMessagesIfNeeded(ev) {
             return
         }
+        #endif
         if consumeSubAgentViewerMessagesIfNeeded(ev) {
             return
         }
@@ -240,7 +242,9 @@ extension AppState {
     }
 
     func handleAISessionMessagesUpdate(_ ev: AISessionMessagesUpdateV2) {
+        #if os(iOS)
         _ = consumeEvolutionReplayMessagesUpdateIfNeeded(ev)
+        #endif
         _ = consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
@@ -411,7 +415,9 @@ extension AppState {
     }
 
     func handleAIChatDone(_ ev: AIChatDoneV2) {
+        #if os(iOS)
         consumeEvolutionReplayDoneIfNeeded(ev)
+        #endif
         consumeSubAgentViewerDoneIfNeeded(ev)
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
@@ -443,7 +449,9 @@ extension AppState {
     }
 
     func handleAIChatError(_ ev: AIChatErrorV2) {
+        #if os(iOS)
         consumeEvolutionReplayErrorIfNeeded(ev)
+        #endif
         consumeSubAgentViewerErrorIfNeeded(ev)
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
