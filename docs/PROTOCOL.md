@@ -34,6 +34,7 @@
 - 鉴权规则：
   - 当监听地址为非 loopback（例如 `0.0.0.0`）或设置了 `TIDYFLOW_WS_TOKEN` 时，`/ws` 需携带 `token` 查询参数；
   - `/api/v1/*` 在相同条件下也必须鉴权，支持 `Authorization: Bearer <token>`，并兼容 `?token=<token>`；
+  - 例外：`GET /api/v1/system/snapshot` 为公开只读端点，始终免鉴权；
   - `token` 可为启动 token，或 `/pair/exchange` 返回的配对 token；
   - `/pair/start` 与 `/pair/revoke` 仍仅允许 loopback 请求；
   - 配对 token 过期后不可继续用于连接；
@@ -58,6 +59,30 @@
   - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/snapshot`
   - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/rebuild-prompt`
   - `GET /api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk`
+- System：
+  - `GET /api/v1/system/snapshot`
+
+## 系统快照（`/api/v1/system/snapshot`）
+
+- 接口：
+  - `GET /api/v1/system/snapshot`
+- 鉴权：
+  - 不需要 `Authorization` 或 `token` 查询参数（全场景免鉴权）。
+- 响应字段：
+  - `type`: 固定为 `system_snapshot`
+  - `core_version`: Core 语义版本（来自 `env!("CARGO_PKG_VERSION")`）
+  - `protocol_version`: 协议版本常量（`PROTOCOL_VERSION`）
+  - `workspace_items`: 全量工作空间（含 `default`），按 `(project, workspace)` 升序
+- `workspace_items` 字段：
+  - `project`
+  - `workspace`
+  - `path`
+  - `branch`
+  - `workspace_status`
+  - `evolution_status`（无运行态记录时为 `not_started`）
+  - `evolution_cycle_id`（无循环时为 `null`）
+  - `cycle_title`（有循环且已生成标题时有值，否则为 `null`）
+  - `failure_reason`（失败原因汇总，无失败时为 `null`；优先级：`terminal_error_message` > `rate_limit_error_message` > `terminal_reason_code`）
 
 ## WS 读取动作移除
 

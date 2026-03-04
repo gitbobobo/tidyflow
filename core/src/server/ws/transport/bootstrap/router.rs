@@ -79,5 +79,9 @@ pub(in crate::server::ws) fn build_router(ctx: AppContext) -> Router {
             "/api/v1/evidence/projects/:project/workspaces/:workspace/items/:item_id/chunk",
             get(crate::server::ws::http_api::evidence_item_chunk_handler),
         )
+        .route(
+            "/api/v1/system/snapshot",
+            get(crate::server::ws::http_api::system_snapshot_handler),
+        )
         .with_state(ctx)
 }

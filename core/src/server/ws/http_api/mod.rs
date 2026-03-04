@@ -3,6 +3,7 @@ mod auth;
 mod common;
 mod evidence;
 mod evolution;
+mod system;
 
 pub(in crate::server::ws) use ai::{
     ai_agent_list_handler, ai_provider_list_handler, ai_session_config_options_handler,
@@ -16,3 +17,4 @@ pub(in crate::server::ws) use evolution::{
     evolution_agent_profile_handler, evolution_cycle_history_handler, evolution_snapshot_handler,
     evolution_stage_chat_handler,
 };
+pub(in crate::server::ws) use system::system_snapshot_handler;
