@@ -57,4 +57,4 @@ Set `TIDYFLOW_PORT` environment variable to change the WebSocket port (default: 
 
 ## Protocol
 
-使用 WebSocket + MessagePack（Protocol v6 包络），协议说明见 `../docs/PROTOCOL.md`。
+使用 WebSocket + MessagePack（Protocol v7 包络，结构沿用 v6），协议说明见 `../docs/PROTOCOL.md`。

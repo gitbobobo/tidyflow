@@ -1,4 +1,4 @@
-# TidyFlow Protocol v6
+# TidyFlow Protocol v7
 
 本文档描述 TidyFlow 客户端（macOS / iOS）与 Rust Core 之间的通信约定。
 
@@ -11,10 +11,10 @@
 - 可通过 `TIDYFLOW_BIND_ADDR` 切换监听地址（例如 `0.0.0.0` 以支持局域网客户端）
 - WebSocket 编码：`MessagePack`（二进制）
 - 配对 HTTP 编码：`JSON`
-- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 6`
-- 协议 schema 权威源：`schema/protocol/v6/`
+- 协议版本常量：`core/src/server/protocol/mod.rs` 中 `PROTOCOL_VERSION = 7`
+- 协议 schema 权威源：`schema/protocol/v7/`
 
-## 消息模型（v6 包络）
+## 消息模型（v7 包络，结构沿用 v6）
 
 - 客户端请求：
 - `ClientEnvelopeV6 { request_id, domain, action, payload, client_ts }`
@@ -23,6 +23,17 @@
   - `kind`：`result` / `event` / `error`
 - 业务消息体仍由 `ClientMessage` / `ServerMessage` 定义并映射到 `action + payload`
 - 定义位置：`core/src/server/protocol/mod.rs`
+
+## Core 启动 Bootstrap（stdout）
+
+- Core 监听成功后会输出一行：`TIDYFLOW_BOOTSTRAP {json}`
+- `json` 字段：
+  - `port`
+  - `bind_addr`
+  - `fixed_port`
+  - `remote_access_enabled`
+  - `protocol_version`
+  - `core_version`
 
 ## 远程配对（pairing_v1）
 
@@ -95,15 +106,23 @@
   - AI/Evolution 实时推送事件
   - 所有写操作 action
 
-## 客户端设置扩展字段
+## 客户端设置字段（v7）
 
-- `ClientSettingsResult` 新增 `remote_access_enabled`（`bool`），用于在 macOS 端展示局域网连接状态；
-- `SaveClientSettings` 请求新增 `remote_access_enabled`（`bool`），用于持久化用户在设置页的远程访问开关。
+- `SaveClientSettings` 与 `ClientSettingsResult` 不再包含 `app_language`。
+- `app_language` 改为客户端本地偏好：
+  - macOS 使用 `UserDefaults`
+  - iOS 使用本地存储（不经 Core 同步）
+- 保留并继续同步：
+  - `custom_commands`
+  - `workspace_shortcuts`
+  - `merge_ai_agent`
+  - `fixed_port`
+  - `remote_access_enabled`
 
 ## 兼容策略
 
-- 本版本不向后兼容 v5。
-- 客户端必须发送 v6 包络；服务端统一返回 v6 包络。
+- 本版本不向后兼容 v6。
+- 客户端必须发送 v7 包络；服务端统一返回 v7 包络。
 
 ## 主要能力范围
 
