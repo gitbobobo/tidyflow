@@ -152,7 +152,7 @@ pub async fn has_active_workspace(project: &str, workspace: &str) -> bool {
     let Some(manager) = maybe_manager() else {
         return false;
     };
-    let key = format!("{}:{}", project, workspace);
+    let key = utils::workspace_key(project, workspace);
     let state = manager.state.lock().await;
     state
         .workspaces

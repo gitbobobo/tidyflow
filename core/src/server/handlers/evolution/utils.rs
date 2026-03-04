@@ -25,5 +25,31 @@ pub(super) fn evolution_workspace_dir(workspace_root: &str) -> Result<PathBuf, S
 }
 
 pub(super) fn workspace_key(project: &str, workspace: &str) -> String {
-    format!("{}:{}", project, workspace)
+    // 使用长度前缀避免键碰撞：("a:b","c") 与 ("a","b:c") 不再冲突。
+    format!(
+        "p{}:{}|w{}:{}",
+        project.len(),
+        project,
+        workspace.len(),
+        workspace
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::workspace_key;
+
+    #[test]
+    fn workspace_key_should_avoid_delimiter_collision() {
+        let lhs = workspace_key("a:b", "c");
+        let rhs = workspace_key("a", "b:c");
+        assert_ne!(lhs, rhs);
+    }
+
+    #[test]
+    fn workspace_key_should_remain_stable_for_same_input() {
+        let first = workspace_key("demo", "default");
+        let second = workspace_key("demo", "default");
+        assert_eq!(first, second);
+    }
 }
