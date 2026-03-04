@@ -5,6 +5,12 @@ extension AppState {
 
     /// Select a workspace within a project
     func selectWorkspace(projectId: UUID, workspaceName: String) {
+        // 先切项目名，再切工作空间，避免同名 workspace 跨项目切换时上下文短暂错位。
+        if let project = projects.first(where: { $0.id == projectId }) {
+            selectedProjectName = project.name
+        } else {
+            TFLog.app.error("selectWorkspace failed: project not found for id=\(projectId.uuidString, privacy: .public)")
+        }
         selectedProjectId = projectId
         selectedWorkspaceKey = workspaceName
         // 选中工作空间时关闭项目配置页面
@@ -13,13 +19,7 @@ extension AppState {
         clearAISelectorBootstrapContexts()
         // 切换工作空间时清理会话列表 loading，避免旧请求残留导致界面长期转圈。
         aiSessionListLoadingTools.removeAll()
-        
-        // Update selectedProjectName for WS protocol
-        // 注意：使用原始项目名称，不进行格式转换，因为服务端使用原始名称索引项目
-        if let project = projects.first(where: { $0.id == projectId }) {
-            selectedProjectName = project.name
-        }
-        
+
         // 使用全局工作空间键（包含项目名称）来区分不同项目的同名工作空间
         guard let globalKey = currentGlobalWorkspaceKey else {
             TFLog.app.warning("Could not generate global workspace key")

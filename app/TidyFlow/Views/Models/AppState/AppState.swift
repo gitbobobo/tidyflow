@@ -642,7 +642,7 @@ class AppState: ObservableObject {
     let coreProcessManager = CoreProcessManager()
 
     // Project name (for WS protocol)
-    var selectedProjectName: String = "default"
+    @Published var selectedProjectName: String = "default"
     /// 首次进入 ready 后锁定，不再回退到启动页
     private var hasFinishedStartupPhase = false
 
