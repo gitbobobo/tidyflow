@@ -10,7 +10,6 @@ pub struct SaveClientSettingsParams {
     pub workspace_shortcuts: std::collections::HashMap<String, String>,
     pub merge_ai_agent: Option<String>,
     pub fixed_port: Option<u16>,
-    pub app_language: Option<String>,
     pub remote_access_enabled: Option<bool>,
 }
 
@@ -40,7 +39,6 @@ pub async fn get_client_settings_message(app_state: &SharedAppState) -> ServerMe
         workspace_shortcuts: state.client_settings.workspace_shortcuts.clone(),
         merge_ai_agent: state.client_settings.merge_ai_agent.clone(),
         fixed_port: state.client_settings.fixed_port,
-        app_language: state.client_settings.app_language.clone(),
         remote_access_enabled: state.client_settings.remote_access_enabled,
         evolution_agent_profiles,
     }
@@ -64,9 +62,6 @@ pub async fn save_client_settings(app_state: &SharedAppState, params: SaveClient
 
     if let Some(port) = params.fixed_port {
         state.client_settings.fixed_port = port;
-    }
-    if let Some(lang) = params.app_language {
-        state.client_settings.app_language = lang;
     }
     if let Some(enabled) = params.remote_access_enabled {
         state.client_settings.remote_access_enabled = enabled;
@@ -104,7 +99,6 @@ mod tests {
             workspace_shortcuts: HashMap::new(),
             merge_ai_agent: None,
             fixed_port: None,
-            app_language: None,
             remote_access_enabled: None,
         }
     }
@@ -114,7 +108,6 @@ mod tests {
         let app_state: SharedAppState = Arc::new(RwLock::new(AppState::default()));
         let mut params = empty_params();
         params.fixed_port = Some(48111);
-        params.app_language = Some("zh-Hans".to_string());
         params.remote_access_enabled = Some(true);
         params
             .workspace_shortcuts
@@ -124,7 +117,6 @@ mod tests {
 
         let state = app_state.read().await;
         assert_eq!(state.client_settings.fixed_port, 48111);
-        assert_eq!(state.client_settings.app_language, "zh-Hans");
         assert!(state.client_settings.remote_access_enabled);
         assert_eq!(
             state

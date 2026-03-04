@@ -13,6 +13,7 @@ use crate::server::terminal_registry::{
     spawn_scrollback_writer, SharedTerminalRegistry, TerminalRegistry,
 };
 use crate::workspace::state::AppState;
+use crate::workspace::state_store::StateStore;
 use crate::workspace::state_saver::spawn_state_saver;
 
 /// WebSocket 服务器上下文，包含共享状态和防抖保存通道
@@ -64,10 +65,15 @@ fn log_bootstrap_config(expected_ws_token: Option<&str>, bind_addr: &str) {
 }
 
 pub(in crate::server::ws) async fn build_app_context() -> (AppContext, String) {
-    let app_state = AppState::load().unwrap_or_default();
+    let state_store = Arc::new(
+        StateStore::open_default()
+            .await
+            .unwrap_or_else(|_| panic!("failed to initialize state store")),
+    );
+    let app_state = state_store.load().await.unwrap_or_else(|_| AppState::default());
     let shared_state: SharedAppState = Arc::new(tokio::sync::RwLock::new(app_state));
 
-    let save_tx = spawn_state_saver(shared_state.clone());
+    let save_tx = spawn_state_saver(shared_state.clone(), state_store.clone());
     let terminal_registry: SharedTerminalRegistry = Arc::new(Mutex::new(TerminalRegistry::new()));
     let scrollback_tx = spawn_scrollback_writer(terminal_registry.clone());
 

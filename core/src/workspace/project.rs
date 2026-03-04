@@ -65,7 +65,6 @@ impl ProjectManager {
         };
 
         state.add_project(project.clone());
-        state.save()?;
 
         info!(project = name, "Project imported successfully");
         Ok(project)
@@ -216,8 +215,6 @@ impl ProjectManager {
                 name.to_string(),
             )));
         }
-
-        state.save()?;
 
         info!(project = name, "Project removed from TidyFlow");
         Ok(())

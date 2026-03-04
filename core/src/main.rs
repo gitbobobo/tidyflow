@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand};
+use chrono::Utc;
 use std::env;
 use std::path::PathBuf;
-use tidyflow_core::workspace::{AppState, ProjectManager, WorkspaceManager};
+use tidyflow_core::workspace::{AppState, ProjectManager, StateStore, WorkspaceManager};
 use tracing::info;
 
 /// 默认端口：开发环境 3439，生产环境 8439
@@ -113,6 +114,57 @@ enum ListCommands {
     },
 }
 
+fn parse_env_port() -> Option<u16> {
+    env::var("TIDYFLOW_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+}
+
+fn sanitize_bind_addr(value: Option<String>) -> Option<String> {
+    value
+        .map(|addr| addr.trim().to_string())
+        .filter(|addr| !addr.is_empty())
+}
+
+async fn resolve_server_port_and_bind(
+    cli_port: Option<u16>,
+    cli_bind_addr: Option<String>,
+    state_store: &StateStore,
+) -> (u16, String) {
+    let state = state_store.load().await.unwrap_or_default();
+    let fixed_port = state.client_settings.fixed_port;
+    let remote_access_enabled = state.client_settings.remote_access_enabled;
+
+    let port = cli_port
+        .or_else(parse_env_port)
+        .or_else(|| {
+            if fixed_port > 0 {
+                Some(fixed_port)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(default_port);
+
+    let bind_addr = sanitize_bind_addr(cli_bind_addr)
+        .or_else(|| sanitize_bind_addr(env::var("TIDYFLOW_BIND_ADDR").ok()))
+        .unwrap_or_else(|| {
+            if remote_access_enabled {
+                "0.0.0.0".to_string()
+            } else {
+                "127.0.0.1".to_string()
+            }
+        });
+
+    (port, bind_addr)
+}
+
+async fn persist_state(store: &StateStore, state: &mut AppState) -> Result<(), Box<dyn std::error::Error>> {
+    state.last_updated = Some(Utc::now());
+    store.save(state).await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tidyflow_core::util::init_logging();
@@ -121,32 +173,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         None | Some(Commands::Serve { .. }) => {
-            // Default: start server
-            let (port, bind_addr_arg) = match &cli.command {
+            let state_store = StateStore::open_default().await?;
+            let (port, bind_addr) = match &cli.command {
                 Some(Commands::Serve { port, bind_addr }) => {
-                    let resolved_port = port.unwrap_or_else(|| {
-                        env::var("TIDYFLOW_PORT")
-                            .ok()
-                            .and_then(|p| p.parse::<u16>().ok())
-                            .unwrap_or_else(default_port)
-                    });
-                    (resolved_port, bind_addr.clone())
+                    resolve_server_port_and_bind(*port, bind_addr.clone(), &state_store).await
                 }
-                _ => {
-                    let resolved_port = env::var("TIDYFLOW_PORT")
-                        .ok()
-                        .and_then(|p| p.parse::<u16>().ok())
-                        .unwrap_or_else(default_port);
-                    (resolved_port, None)
-                }
+                _ => resolve_server_port_and_bind(None, None, &state_store).await,
             };
-            if let Some(bind_addr) = bind_addr_arg
-                .map(|addr| addr.trim().to_string())
-                .filter(|addr| !addr.is_empty())
-            {
-                // `run_server` 统一从环境变量读取绑定地址，CLI 参数优先覆盖
-                env::set_var("TIDYFLOW_BIND_ADDR", bind_addr);
-            }
+            env::set_var("TIDYFLOW_BIND_ADDR", bind_addr);
             info!("Starting TidyFlow Core server on port {}", port);
             tidyflow_core::server::run_server(port).await?;
         }
@@ -156,16 +190,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             git,
             branch,
         }) => {
-            let mut state = AppState::load()?;
+            let state_store = StateStore::open_default().await?;
+            let mut state = state_store.load().await?;
 
             if let Some(local_path) = path {
                 let project = ProjectManager::import_local(&mut state, &name, &local_path)?;
+                persist_state(&state_store, &mut state).await?;
                 println!("Project imported: {}", project.name);
                 println!("  Path: {}", project.root_path.display());
                 println!("  Branch: {}", project.default_branch);
             } else if let Some(url) = git {
                 let project =
                     ProjectManager::import_git(&mut state, &name, &url, branch.as_deref(), None)?;
+                persist_state(&state_store, &mut state).await?;
                 println!("Project cloned and imported: {}", project.name);
                 println!("  Path: {}", project.root_path.display());
                 println!("  Branch: {}", project.default_branch);
@@ -180,20 +217,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 from_branch,
                 no_setup,
             } => {
-                let mut state = AppState::load()?;
+                let state_store = StateStore::open_default().await?;
+                let mut state = state_store.load().await?;
                 let ws = WorkspaceManager::create(
                     &mut state,
                     &project,
                     from_branch.as_deref(),
                     !no_setup,
                 )?;
+                persist_state(&state_store, &mut state).await?;
                 println!("Workspace created: {}", ws.name);
                 println!("  Path: {}", ws.worktree_path.display());
                 println!("  Branch: {}", ws.branch);
                 println!("  Status: {:?}", ws.status);
             }
             WsCommands::Show { project, workspace } => {
-                let state = AppState::load()?;
+                let state_store = StateStore::open_default().await?;
+                let state = state_store.load().await?;
                 let path = WorkspaceManager::get_root_path(&state, &project, &workspace)?;
 
                 let proj = state.get_project(&project).unwrap();
@@ -214,8 +254,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             WsCommands::Setup { project, workspace } => {
-                let mut state = AppState::load()?;
+                let state_store = StateStore::open_default().await?;
+                let mut state = state_store.load().await?;
                 let ws = WorkspaceManager::run_setup(&mut state, &project, &workspace)?;
+                persist_state(&state_store, &mut state).await?;
                 println!("Setup completed for workspace: {}", ws.name);
                 println!("  Status: {:?}", ws.status);
                 if let Some(ref result) = ws.setup_result {
@@ -226,14 +268,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             WsCommands::Remove { project, workspace } => {
-                let mut state = AppState::load()?;
+                let state_store = StateStore::open_default().await?;
+                let mut state = state_store.load().await?;
                 WorkspaceManager::remove(&mut state, &project, &workspace)?;
+                persist_state(&state_store, &mut state).await?;
                 println!("Workspace removed: {}", workspace);
             }
         },
         Some(Commands::List { what }) => match what {
             ListCommands::Projects => {
-                let state = AppState::load()?;
+                let state_store = StateStore::open_default().await?;
+                let state = state_store.load().await?;
                 let projects = state.list_projects();
                 if projects.is_empty() {
                     println!("No projects imported");
@@ -246,7 +291,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             ListCommands::Workspaces { project } => {
-                let state = AppState::load()?;
+                let state_store = StateStore::open_default().await?;
+                let state = state_store.load().await?;
                 let proj = state
                     .get_project(&project)
                     .ok_or_else(|| format!("Project not found: {}", project))?;

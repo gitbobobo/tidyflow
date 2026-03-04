@@ -19,7 +19,6 @@ pub async fn handle_mutate_message(
             workspace_shortcuts,
             merge_ai_agent,
             fixed_port,
-            app_language,
             remote_access_enabled,
         } => {
             info!("SaveClientSettings request");
@@ -30,7 +29,6 @@ pub async fn handle_mutate_message(
                     workspace_shortcuts: workspace_shortcuts.clone(),
                     merge_ai_agent: merge_ai_agent.clone(),
                     fixed_port: *fixed_port,
-                    app_language: app_language.clone(),
                     remote_access_enabled: *remote_access_enabled,
                 },
             )

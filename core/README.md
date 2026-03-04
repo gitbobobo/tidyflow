@@ -7,7 +7,7 @@ Rust-based PTY host with WebSocket server and Workspace Engine.
 - PTY session management (spawn shell, read/write, resize)
 - WebSocket server on configurable port
 - **Workspace Engine v1**: Project and workspace management using git worktree
-- Protocol v6 with MessagePack binary envelopes
+- Protocol v7 with MessagePack binary envelopes (envelope structure continues from v6)
 - Structured logging with tracing
 
 ## Building
@@ -147,7 +147,10 @@ See `design/05-project-config-schema.md` for the full schema.
 
 ## State Persistence
 
-State is stored at `~/.tidyflow/state.json`.
+State is stored at `~/.tidyflow/tidyflow.db` (SQLite).
+
+- Legacy `~/.tidyflow/tidyflow.json` is imported once on first startup, then renamed to `~/.tidyflow/tidyflow.json.migrated.bak`.
+- Workflow contract JSON files (for example `stage.*.json`, `plan.execution.json`, `evidence.index.json`) are not part of this migration and remain unchanged.
 
 ## Protocol
 

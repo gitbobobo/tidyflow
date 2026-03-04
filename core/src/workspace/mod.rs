@@ -10,6 +10,7 @@ pub mod config;
 pub mod project;
 pub mod setup;
 pub mod state;
+pub mod state_store;
 pub mod state_saver;
 pub mod workspace;
 
@@ -18,4 +19,5 @@ pub use project::ProjectManager;
 pub use setup::{SetupExecutor, SetupResult, StepResult};
 pub use state::{AppState, PersistedTokenEntry, Project, Workspace, WorkspaceStatus};
 pub use state_saver::spawn_state_saver;
+pub use state_store::StateStore;
 pub use workspace::WorkspaceManager;

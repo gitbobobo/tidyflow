@@ -26,6 +26,7 @@ pub async fn handle_admin_message(
             }
             send_message(socket, &msg).await?;
             if success {
+                let _ = ctx.save_tx.send(()).await;
                 broadcast_projects_snapshot(ctx).await;
                 broadcast_workspaces_snapshot(ctx, name).await;
             }
@@ -40,6 +41,7 @@ pub async fn handle_admin_message(
             let success = matches!(msg, ServerMessage::WorkspaceCreated { .. });
             send_message(socket, &msg).await?;
             if success {
+                let _ = ctx.save_tx.send(()).await;
                 broadcast_projects_snapshot(ctx).await;
                 broadcast_workspaces_snapshot(ctx, project).await;
             }
@@ -62,6 +64,7 @@ pub async fn handle_admin_message(
             }
             send_message(socket, &msg).await?;
             if matches!(msg, ServerMessage::ProjectRemoved { ok: true, .. }) {
+                let _ = ctx.save_tx.send(()).await;
                 broadcast_projects_snapshot(ctx).await;
             }
             Ok(true)
@@ -99,6 +102,7 @@ pub async fn handle_admin_message(
             }
             send_message(socket, &msg).await?;
             if matches!(msg, ServerMessage::WorkspaceRemoved { ok: true, .. }) {
+                let _ = ctx.save_tx.send(()).await;
                 broadcast_projects_snapshot(ctx).await;
                 broadcast_workspaces_snapshot(ctx, project).await;
             }

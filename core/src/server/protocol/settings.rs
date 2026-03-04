@@ -16,8 +16,6 @@ pub enum SettingsRequest {
         #[serde(default)]
         fixed_port: Option<u16>,
         #[serde(default)]
-        app_language: Option<String>,
-        #[serde(default)]
         remote_access_enabled: Option<bool>,
     },
 }
@@ -32,7 +30,6 @@ pub enum SettingsResponse {
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
         fixed_port: u16,
-        app_language: String,
         remote_access_enabled: bool,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles:

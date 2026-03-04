@@ -248,7 +248,7 @@ mod tests {
         state
     }
 
-    fn make_test_context(
+    async fn make_test_context(
         app_state: AppState,
     ) -> crate::server::ws::transport::bootstrap::AppContext {
         let shared_state: crate::server::context::SharedAppState =
@@ -381,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn system_snapshot_should_allow_request_without_token() {
-        let ctx = make_test_context(make_test_state());
+        let ctx = make_test_context(make_test_state()).await;
         let response = system_snapshot_handler(State(ctx))
             .await
             .expect("handler should return response")

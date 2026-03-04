@@ -194,7 +194,6 @@ impl WorkspaceManager {
             let project = state.get_project_mut(project_name).unwrap();
             project.add_workspace(workspace.clone());
         }
-        state.save()?;
 
         // Run setup if requested
         if run_setup {
@@ -211,7 +210,6 @@ impl WorkspaceManager {
                 ws.status = WorkspaceStatus::Ready;
                 workspace.status = WorkspaceStatus::Ready;
             }
-            state.save()?;
         }
 
         Ok(workspace)
@@ -249,7 +247,6 @@ impl WorkspaceManager {
                 ws.status = WorkspaceStatus::Initializing;
             }
         }
-        state.save()?;
 
         // Load config and run setup
         let config = ProjectConfig::load(worktree_path).unwrap_or_default();
@@ -280,7 +277,6 @@ impl WorkspaceManager {
         workspace.last_accessed = Utc::now();
 
         let ws_clone = workspace.clone();
-        state.save()?;
 
         if result.success {
             info!(
@@ -343,7 +339,6 @@ impl WorkspaceManager {
         // Remove from state
         let project = state.get_project_mut(project_name).unwrap();
         project.remove_workspace(workspace_name);
-        state.save()?;
 
         info!(
             project = project_name,

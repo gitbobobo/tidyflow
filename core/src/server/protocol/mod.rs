@@ -15,14 +15,14 @@ mod action_table_test;
 #[cfg(test)]
 mod ai_session_update_test;
 
-/// Protocol version: 6 (MessagePack binary encoding + domain/action envelope)
-pub const PROTOCOL_VERSION: u32 = 6;
+/// Protocol version: 7 (MessagePack binary encoding + domain/action envelope)
+pub const PROTOCOL_VERSION: u32 = 7;
 
 // ============================================================================
-// v6 包络
+// v6 包络结构（在 v7 继续沿用）
 // ============================================================================
 
-/// v6 客户端请求包络
+/// 客户端请求包络（结构沿用 v6）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientEnvelopeV6 {
     pub request_id: String,
@@ -35,7 +35,7 @@ pub struct ClientEnvelopeV6 {
     pub client_ts: u64,
 }
 
-/// v6 服务端响应包络
+/// 服务端响应包络（结构沿用 v6）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerEnvelopeV6 {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -324,9 +324,6 @@ pub enum ClientMessage {
         /// 固定端口，0 表示动态分配
         #[serde(default)]
         fixed_port: Option<u16>,
-        /// 应用语言
-        #[serde(default)]
-        app_language: Option<String>,
         /// 是否开启远程访问（开启后允许局域网连接）
         #[serde(default)]
         remote_access_enabled: Option<bool>,
@@ -1020,7 +1017,6 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         merge_ai_agent: Option<String>,
         fixed_port: u16,
-        app_language: String,
         remote_access_enabled: bool,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,

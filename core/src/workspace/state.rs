@@ -3,7 +3,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -79,19 +78,12 @@ pub struct ClientSettings {
     /// 固定端口，0 表示动态分配
     #[serde(default)]
     pub fixed_port: u16,
-    /// 应用语言：system / en / zh-Hans
-    #[serde(default = "default_app_language")]
-    pub app_language: String,
     /// 是否开启远程访问（开启后 Core 绑定 0.0.0.0）
     #[serde(default)]
     pub remote_access_enabled: bool,
     /// Evolution 代理配置（key: "project/workspace"）
     #[serde(default)]
     pub evolution_agent_profiles: HashMap<String, Vec<EvolutionStageProfile>>,
-}
-
-fn default_app_language() -> String {
-    "system".to_string()
 }
 
 fn default_evolution_ai_tool() -> String {
@@ -113,7 +105,7 @@ pub struct PersistedTokenEntry {
     pub expires_at_unix: u64,
 }
 
-/// Application state - persisted to JSON
+/// Application state - 持久化由 StateStore（SQLite）负责
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     pub version: u32,
@@ -184,45 +176,6 @@ pub struct SetupResultSummary {
 }
 
 impl AppState {
-    /// Get the state file path
-    pub fn state_path() -> PathBuf {
-        let home = dirs::home_dir().expect("Cannot find home directory");
-        home.join(".tidyflow").join("tidyflow.json")
-    }
-
-    /// Load state from disk
-    pub fn load() -> Result<Self, StateError> {
-        let path = Self::state_path();
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        let content =
-            fs::read_to_string(&path).map_err(|e| StateError::ReadError(e.to_string()))?;
-
-        let mut state: Self =
-            serde_json::from_str(&content).map_err(|e| StateError::ParseError(e.to_string()))?;
-        state.client_settings.migrate();
-        Ok(state)
-    }
-
-    /// Save state to disk
-    pub fn save(&mut self) -> Result<(), StateError> {
-        let path = Self::state_path();
-
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| StateError::WriteError(e.to_string()))?;
-        }
-
-        self.last_updated = Some(Utc::now());
-
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| StateError::WriteError(e.to_string()))?;
-
-        fs::write(&path, content).map_err(|e| StateError::WriteError(e.to_string()))
-    }
-
     /// Add a project
     pub fn add_project(&mut self, project: Project) {
         self.projects.insert(project.name.clone(), project);
