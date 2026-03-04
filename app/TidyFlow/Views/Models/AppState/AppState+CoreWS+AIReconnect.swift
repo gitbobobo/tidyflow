@@ -94,7 +94,10 @@ extension AppState {
         status: String
     ) {
         let normalizedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalizedStatus == "busy" || normalizedStatus == "running" || normalizedStatus == "retry" {
+        if normalizedStatus == "busy" ||
+            normalizedStatus == "running" ||
+            normalizedStatus == "retry" ||
+            normalizedStatus == "awaiting_input" {
             return
         }
 

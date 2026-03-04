@@ -61,6 +61,9 @@ struct TabStripView: View {
             .padding(.leading, 6)
         }
 
+        aiStatusIndicator(globalKey: globalKey)
+            .padding(.horizontal, 2)
+
         panelToggleButton
             .padding(.horizontal, 2)
 
@@ -108,6 +111,9 @@ struct TabStripView: View {
             .environmentObject(appState)
             .padding(.horizontal, 4)
 
+        aiStatusIndicator(globalKey: globalKey)
+            .padding(.horizontal, 2)
+
         panelToggleButton
             .padding(.trailing, 6)
     }
@@ -129,6 +135,45 @@ struct TabStripView: View {
         }
         .buttonStyle(.borderless)
         .help(appState.tabPanelExpanded ? "tab.panel.collapse.tooltip".localized : "tab.panel.expand.tooltip".localized)
+    }
+
+    @ViewBuilder
+    private func aiStatusIndicator(globalKey _: String) -> some View {
+        if let indicator = aiStatus() {
+            Image(systemName: indicator.iconName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(indicator.color)
+                .help(indicator.hint)
+                .frame(width: 16, height: 16)
+        }
+    }
+
+    private func aiStatus() -> (iconName: String, color: Color, hint: String)? {
+        guard let workspaceKey = appState.selectedWorkspaceKey,
+              let sessionId = appState.aiStore(for: appState.aiChatTool).currentSessionId else { return nil }
+        let session = AISessionInfo(
+            projectName: appState.selectedProjectName,
+            workspaceName: workspaceKey,
+            aiTool: appState.aiChatTool,
+            id: sessionId,
+            title: "",
+            updatedAt: 0
+        )
+        guard let status = appState.aiSessionStatus(for: session) else { return nil }
+        switch status.normalizedStatus {
+        case "running":
+            return ("bolt.circle.fill", .blue, "AI：运行中")
+        case "awaiting_input":
+            return ("hourglass.circle.fill", .yellow, "AI：等待输入")
+        case "success":
+            return ("checkmark.circle.fill", .green, "AI：已完成")
+        case "failure", "error":
+            return ("xmark.octagon.fill", .red, status.errorMessage ?? "AI：失败")
+        case "cancelled":
+            return ("minus.circle.fill", .secondary, "AI：已取消")
+        default:
+            return ("circle.fill", .secondary, "AI：空闲")
+        }
     }
 }
 
@@ -174,6 +219,12 @@ struct TabItemView: View {
                 .lineLimit(1)
                 .foregroundColor(isActive ? .primary : .secondary)
 
+            if tab.kind == .terminal && tab.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+
             if isActive || isHovered {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -210,6 +261,13 @@ struct TabItemView: View {
             isHovered = hovering
         }
         .contextMenu {
+            if tab.kind == .terminal {
+                Button(tab.isPinned ? "tab.unpin".localized : "tab.pin".localized) {
+                    appState.toggleTerminalTabPinned(workspaceKey: workspaceKey, tabId: tab.id)
+                }
+                Divider()
+            }
+
             Button("tab.close".localized) {
                 onClose()
             }

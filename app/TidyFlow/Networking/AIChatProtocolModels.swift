@@ -191,7 +191,7 @@ struct AISessionMessagesUpdateV2 {
 }
 
 struct AISessionStatusInfoV2 {
-    /// "idle" | "busy" | "error"
+    /// "idle" | "running" | "awaiting_input" | "success" | "failure" | "cancelled"
     let status: String
     let errorMessage: String?
     let contextRemainingPercent: Double?

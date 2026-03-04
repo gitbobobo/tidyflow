@@ -60,7 +60,7 @@ extension AppState {
     /// 关闭其他标签页（保留指定 tab）
     func closeOtherTabs(workspaceKey: String, keepTabId: UUID) {
         guard let tabs = workspaceTabs[workspaceKey] else { return }
-        for tab in tabs where tab.id != keepTabId {
+        for tab in tabs where tab.id != keepTabId && !tab.isPinned {
             closeTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
     }
@@ -71,8 +71,16 @@ extension AppState {
               let index = tabs.firstIndex(where: { $0.id == ofTabId }) else { return }
         let rightTabs = tabs.suffix(from: tabs.index(after: index))
         for tab in rightTabs {
+            if tab.isPinned { continue }
             closeTab(workspaceKey: workspaceKey, tabId: tab.id)
         }
+    }
+
+    func toggleTerminalTabPinned(workspaceKey: String, tabId: UUID) {
+        guard var tabs = workspaceTabs[workspaceKey],
+              let index = tabs.firstIndex(where: { $0.id == tabId && $0.kind == .terminal }) else { return }
+        tabs[index].isPinned.toggle()
+        workspaceTabs[workspaceKey] = tabs
     }
 
     /// 关闭已保存的标签页（跳过 dirty 的编辑器 tab）

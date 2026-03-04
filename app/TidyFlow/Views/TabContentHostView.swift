@@ -258,6 +258,15 @@ struct EditorStatusBar: View {
                     appState.reloadEditorDocument(project: appState.selectedProjectName, workspace: workspace, path: path)
                 }
                 .buttonStyle(.borderless)
+                Button("覆盖保存") {
+                    guard let workspace = appState.selectedWorkspaceKey else { return }
+                    appState.saveEditorDocument(project: appState.selectedProjectName, workspace: workspace, path: path)
+                }
+                .buttonStyle(.borderless)
+                Button("比较差异") {
+                    appState.addDiffTab(workspaceKey: globalKey, path: path, mode: .working)
+                }
+                .buttonStyle(.borderless)
             } else if !editorStore.editorStatus.isEmpty {
                 Text(editorStore.editorStatus)
                     .font(.system(size: 11))

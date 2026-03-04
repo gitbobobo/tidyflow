@@ -68,6 +68,9 @@ struct TabModel: Identifiable, Codable, Equatable {
     // 终端快捷命令配置的图标（仅通过快捷命令创建的终端 tab 使用，用于 Tab 栏显示）
     var commandIcon: String? = nil
 
+    // 终端标签固定状态（固定后不会被“关闭其他/关闭右侧”批量关闭）
+    var isPinned: Bool = false
+
     // 编辑器 dirty 状态（文件有未保存更改）
     var isDirty: Bool = false
 }

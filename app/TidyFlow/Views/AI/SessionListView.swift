@@ -86,9 +86,25 @@ struct SessionRow: View {
             Spacer(minLength: 4)
 
             if let status {
-                if status.isBusy {
+                if status.normalizedStatus == "running" {
                     ProgressView()
                         .controlSize(.mini)
+                        .help("运行中")
+                } else if status.normalizedStatus == "awaiting_input" {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.yellow)
+                        .help("等待输入")
+                } else if status.normalizedStatus == "success" {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .help("已完成")
+                } else if status.normalizedStatus == "cancelled" {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .help("已取消")
                 } else if status.isError {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 12, weight: .semibold))

@@ -644,13 +644,24 @@ struct AISessionInfo: Identifiable, Equatable {
 
 /// 会话状态（由 Rust Core 统一维护并推送）
 struct AISessionStatusSnapshot: Equatable {
-    /// "idle" | "busy" | "error"
+    /// "idle" | "running" | "awaiting_input" | "success" | "failure" | "cancelled"
     let status: String
     let errorMessage: String?
     let contextRemainingPercent: Double?
 
-    var isBusy: Bool { status.lowercased() == "busy" }
-    var isError: Bool { status.lowercased() == "error" }
+    var normalizedStatus: String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    var isActive: Bool {
+        normalizedStatus == "busy" ||
+        normalizedStatus == "running" ||
+        normalizedStatus == "retry" ||
+        normalizedStatus == "awaiting_input"
+    }
+
+    var isBusy: Bool { isActive }
+    var isError: Bool { normalizedStatus == "error" || normalizedStatus == "failure" }
 }
 
 /// subscribe 发出后待 ack 的订阅上下文

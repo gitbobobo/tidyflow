@@ -412,14 +412,14 @@ struct AITabView: View {
             )
             return appState.aiSessionStatus(for: session)
         }()
-        let sessionBusy = sessionStatus?.isBusy == true
+        let sessionActive = sessionStatus?.isActive == true
         let contextRemainingPercent = sessionStatus?.contextRemainingPercent
         let localStreaming =
             aiChatStore.isStreaming ||
             aiChatStore.awaitingUserEcho
         let effectiveStreaming =
             aiChatStore.abortPendingSessionId != nil ||
-            sessionBusy ||
+            sessionActive ||
             localStreaming
 
         return ChatInputView(
@@ -428,7 +428,7 @@ struct AITabView: View {
             isStreaming: effectiveStreaming,
             canStopStreaming: aiChatStore.currentSessionId != nil &&
                 aiChatStore.abortPendingSessionId == nil &&
-                (sessionBusy || localStreaming),
+                (sessionActive || localStreaming),
             isSendingPending: aiChatStore.hasPendingFirstContent,
             onSend: {
                 sendMessage()

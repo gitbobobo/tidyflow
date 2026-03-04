@@ -821,13 +821,6 @@ class AppState: ObservableObject {
             return trimmed
         }()
 
-        if let existing = dict[key],
-           existing.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "busy",
-           normalizedStatus == "busy",
-           existing.errorMessage == normalizedErrorMessage {
-            return
-        }
-
         let next = AISessionStatusSnapshot(
             status: normalizedStatus.isEmpty ? status : normalizedStatus,
             errorMessage: normalizedErrorMessage,
