@@ -461,8 +461,8 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
 
 fn is_criteria_failure_status(status: &str) -> bool {
     matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "fail" | "insufficient_evidence"
+        normalize_acceptance_evaluation_status(status),
+        Some("fail" | "insufficient_evidence")
     )
 }
 
@@ -471,6 +471,15 @@ fn is_carryover_failure_status(status: &str) -> bool {
         status.trim().to_ascii_lowercase().as_str(),
         "missing" | "blocked"
     )
+}
+
+fn normalize_acceptance_evaluation_status(status: &str) -> Option<&'static str> {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "pass" => Some("pass"),
+        "fail" => Some("fail"),
+        "insufficient_evidence" => Some("insufficient_evidence"),
+        _ => None,
+    }
 }
 
 fn parse_judge_result_text(value: &str) -> Option<bool> {
@@ -1685,6 +1694,24 @@ impl EvolutionManager {
             return Ok(());
         }
         let verify_value = read_json_file(cycle_dir, "verify.result.json")?;
+        let acceptance_items = verify_value
+            .pointer("/acceptance_evaluation")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "verify.result.json 缺少 acceptance_evaluation".to_string())?;
+        for (idx, item) in acceptance_items.iter().enumerate() {
+            let criteria_id = id_from_value(item, &["criteria_id"])
+                .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 criteria_id", idx))?;
+            let status = item
+                .get("status")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("acceptance_evaluation[{}] 缺少 status", idx))?;
+            if normalize_acceptance_evaluation_status(status).is_none() {
+                return Err(format!(
+                    "acceptance_evaluation[{}].status 非法: {}（{}），必须是 pass|fail|insufficient_evidence",
+                    idx, status, criteria_id
+                ));
+            }
+        }
         let (backlog, _) =
             Self::collect_reimplementation_backlog(cycle_dir, backlog_contract_version)?;
         let backlog_ids = collect_unique_ids(&backlog, &["id"], "failure_backlog")?;
@@ -4788,6 +4815,62 @@ mod tests {
         let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
             .expect_err("verify missing backlog items should fail");
         assert!(err.contains("缺少 backlog 项"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_verify_missing_acceptance_status() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_empty_implement_result_triplet(dir.path());
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            base_implement_result_json(
+                vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
+                vec![serde_json::json!({"id": "f-1", "status": "done"})],
+            ),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1"}
+                ],
+                "carryover_verification": {
+                    "items": [{"id": "f-1", "status": "done"}],
+                    "summary": {"total": 1, "covered": 1, "missing": 0, "blocked": 0}
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+            .expect_err("verify acceptance 缺少 status 应失败");
+        assert!(err.contains("acceptance_evaluation[0] 缺少 status"));
+    }
+
+    #[test]
+    fn validate_stage_artifacts_should_reject_verify_invalid_acceptance_status() {
+        let dir = tempdir().expect("tempdir should succeed");
+        write_empty_implement_result_triplet(dir.path());
+        write_json(
+            &dir.path().join("implement_general.result.json"),
+            base_implement_result_json(
+                vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
+                vec![serde_json::json!({"id": "f-1", "status": "done"})],
+            ),
+        );
+        write_json(
+            &dir.path().join("verify.result.json"),
+            serde_json::json!({
+                "acceptance_evaluation": [
+                    {"criteria_id": "ac-1", "status": "failed"}
+                ],
+                "carryover_verification": {
+                    "items": [{"id": "f-1", "status": "done"}],
+                    "summary": {"total": 1, "covered": 1, "missing": 0, "blocked": 0}
+                }
+            }),
+        );
+        let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
+            .expect_err("verify acceptance 非法 status 应失败");
+        assert!(err.contains("acceptance_evaluation[0].status 非法"));
     }
 
     #[test]
