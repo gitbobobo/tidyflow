@@ -401,7 +401,7 @@ struct WorkspaceRowView: View {
             items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
         }
         if workspace.sidebarStatus.hasActiveEvolutionLoop {
-            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "person.crop.circle.badge.brain", color: .purple))
+            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "brain.head.profile", color: .purple))
         }
         if let taskIcon = workspace.sidebarStatus.taskIconName {
             items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))

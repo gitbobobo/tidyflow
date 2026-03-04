@@ -90,7 +90,7 @@ struct ProjectListView: View {
             items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
         }
         if appState.hasWorkspaceActiveEvolutionLoop(project: project, workspace: workspace) {
-            items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "person.crop.circle.badge.brain", color: .purple))
+            items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "brain.head.profile", color: .purple))
         }
         if let taskIcon = appState.activeTaskIconForWorkspace(project: project, workspace: workspace) {
             items.append(MobileWorkspaceActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))
