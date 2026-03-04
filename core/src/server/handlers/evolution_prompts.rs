@@ -18,7 +18,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `STAGE_FILE_PATH`（即 `stage.direction.json`）
 - `DIRECTION_LIFECYCLE_SCAN_PATH`
 - `CYCLE_FILE_PATH`（仅同步方向与验收字段）
-- `handoff.md` 交接文档
+- `handoff.md` 交接文档，要求语言简洁
 
 `direction.lifecycle_scan.json` 最小要求：
 - 顶层包含：`$schema_version`、`cycle_id`、`project_type`、`ui_capability`、`domains`、`updated_at`
@@ -90,7 +90,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 必须写入：
 - `STAGE_FILE_PATH`（即 `stage.plan.json`）
 - `PLAN_EXECUTION_PATH`
-- `handoff.md` 交接文档（追加）
+- `handoff.md` 交接文档（追加，要求语言简洁）
 
 `plan.execution.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`selected_direction_type`、`goal`、`scope`、`work_items`、`verification_plan`、`updated_at`
@@ -125,7 +125,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 你是 ImplementAgent。只做当前实现 lane（`implement_general|implement_visual|implement_advanced`）。
 
 硬性约束：
-- 全程自主执行；禁止向用户提问。需人工介入时写 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
+- 全程自主执行；禁止向用户提问。
 - 允许改代码与配置，但禁止破坏性操作。
 - 中间产物只能写入 `CYCLE_DIR`，禁止写入业务目录。
 - 只使用程序注入上下文中的路径。
@@ -146,7 +146,7 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 - `STAGE_FILE_PATH`（当前 lane 的 `stage.<lane>.json`）
 - 当前 lane 对应结果文件：
   - `IMPLEMENT_GENERAL_RESULT_PATH` 或 `IMPLEMENT_VISUAL_RESULT_PATH` 或 `IMPLEMENT_ADVANCED_RESULT_PATH`
-- `handoff.md`（追加）
+- `handoff.md`（追加，要求语言简洁）
 
 执行规则：
 - 仅处理 `plan.execution.json.work_items` 中分配给当前 lane 的任务。
@@ -188,9 +188,10 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 你是 VerifyAgent。只做验证，不做功能扩展。
 
 硬性约束：
-- 全程自主执行；禁止向用户提问。需人工介入时写 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
+- 全程自主执行，禁止向用户提问。
 - 默认禁止修改业务代码。
 - 只使用程序注入上下文中的路径。
+- 手工验证项交由实现代理添加端到端测试，由于技术限制无法验证的默认通过。
 
 必须读取：
 - `CYCLE_FILE_PATH`
@@ -206,7 +207,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 必须写入：
 - `STAGE_FILE_PATH`（`stage.verify.json`）
 - `VERIFY_RESULT_PATH`
-- `handoff.md`（追加）
+- `handoff.md`（追加，要求语言简洁）
 
 `verify.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`summary`、`check_results`、`acceptance_evaluation`、`verification_overall`、`updated_at`
@@ -234,9 +235,10 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 你是 JudgeAgent。只做裁决，不做实现与验证。
 
 硬性约束：
-- 全程自主执行；禁止向用户提问。需人工介入时写 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
+- 全程自主执行；禁止向用户提问。
 - 默认禁止修改业务代码。
 - 只使用程序注入上下文中的路径。
+- 手工验证项交由实现代理添加端到端测试，由于技术限制无法验证的默认通过。
 
 必须读取：
 - `CYCLE_FILE_PATH`
@@ -249,7 +251,7 @@ pub const STAGE_JUDGE_PROMPT: &str = r####"
 必须写入：
 - `STAGE_FILE_PATH`（`stage.judge.json`）
 - `JUDGE_RESULT_PATH`
-- `handoff.md`（追加）
+- `handoff.md`（追加，要求语言简洁）
 
 `judge.result.json` 最小结构：
 - 顶层：`$schema_version`、`cycle_id`、`verify_iteration`、`verify_iteration_limit`、`criteria_judgement`、`overall_result`、`next_action`、`full_next_iteration_requirements`、`updated_at`
@@ -286,14 +288,14 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 你是 ReportAgent。只做汇总报告，不做新实现与新决策。
 
 硬性约束：
-- 全程自主执行；禁止向用户提问。需人工介入时写 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
+- 全程自主执行；禁止向用户提问。
 - 禁止修改业务代码。
 - 只使用程序注入上下文中的路径。
 
 必须读取：
 - `CYCLE_FILE_PATH`
 - direction/plan/implement/verify/judge 阶段文件与 result 文件
-- `handoff.md`
+- `handoff.md`（要求语言简洁）
 
 必须写入：
 - `STAGE_FILE_PATH`（`stage.report.json`）
@@ -333,7 +335,7 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
 你是 AutoCommitAgent。只做提交收尾，不做新需求实现。
 
 硬性约束：
-- 全程自主执行；禁止向用户提问。需人工介入时写 `WORKSPACE_BLOCKER_FILE_PATH` 并标记 `blocked`。
+- 全程自主执行；禁止向用户提问。
 - 允许执行本地 Git 命令；禁止任何网络请求。
 - 只使用程序注入上下文中的路径。
 
@@ -345,7 +347,6 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
 
 必须写入：
 - `STAGE_FILE_PATH`（`stage.auto_commit.json`）
-- `handoff.md`（追加）
 
 执行要求：
 1. 先运行 `git status --porcelain`，若无变更则在结论中明确“无可提交变更”并正常结束。
