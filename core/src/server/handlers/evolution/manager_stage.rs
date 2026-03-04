@@ -15,7 +15,8 @@ use crate::server::handlers::ai::{
     apply_stream_snapshot_cache_op, build_ai_session_messages_update, ensure_agent,
     infer_selection_hint_from_messages, map_ai_messages_for_wire, map_ai_selection_hint_to_wire,
     mark_stream_snapshot_terminal, merge_session_selection_hint, normalize_part_for_wire,
-    resolve_directory, seed_stream_snapshot, split_utf8_text_by_max_bytes, stream_key,
+    record_session_index_created, resolve_directory, seed_stream_snapshot,
+    split_utf8_text_by_max_bytes, stream_key, touch_session_index_updated_at,
 };
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
@@ -32,6 +33,31 @@ const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.json";
 const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.json";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
+
+async fn touch_session_index_updated_at_for_evolution(
+    ctx: &HandlerContext,
+    project: &str,
+    workspace: &str,
+    ai_tool: &str,
+    session_id: &str,
+) {
+    let updated_at_ms = Utc::now().timestamp_millis();
+    if let Err(e) = touch_session_index_updated_at(
+        &ctx.ai_state,
+        project,
+        workspace,
+        ai_tool,
+        session_id,
+        updated_at_ms,
+    )
+    .await
+    {
+        warn!(
+            "evolution touch session index updated_at failed: project={}, workspace={}, ai_tool={}, session_id={}, updated_at_ms={}, error={}",
+            project, workspace, ai_tool, session_id, updated_at_ms, e
+        );
+    }
+}
 
 fn build_stage_part_updated_ops(
     message_id: String,
@@ -2305,6 +2331,31 @@ impl EvolutionManager {
 
         let title = format!("Evolution {} {}", stage, cycle_id);
         let session = agent.create_session(&directory, &title).await?;
+        let created_at_ms = Utc::now().timestamp_millis();
+        if let Err(err) = record_session_index_created(
+            &ctx.ai_state,
+            project,
+            workspace,
+            &ai_tool,
+            &directory,
+            &session.id,
+            &session.title,
+            created_at_ms,
+        )
+        .await
+        {
+            warn!(
+                "evolution create session persist index failed: project={}, workspace={}, stage={}, ai_tool={}, session_id={}, error={}",
+                project, workspace, stage, ai_tool, session.id, err
+            );
+            if let Err(delete_err) = agent.delete_session(&directory, &session.id).await {
+                warn!(
+                    "evolution create session rollback delete failed: project={}, workspace={}, stage={}, ai_tool={}, session_id={}, error={}",
+                    project, workspace, stage, ai_tool, session.id, delete_err
+                );
+            }
+            return Err(format!("failed to persist ai session index: {}", err));
+        }
         self.set_stage_session(key, stage, &ai_tool, &session.id)
             .await;
         self.record_session_execution_started(key, stage, &ai_tool, &session.id)
@@ -2340,6 +2391,14 @@ impl EvolutionManager {
                 let tool_call_count = self.stage_tool_call_count(key, stage).await;
                 self.finalize_session_execution(key, stage, &session.id, "failed", tool_call_count)
                     .await;
+                touch_session_index_updated_at_for_evolution(
+                    ctx,
+                    project,
+                    workspace,
+                    &ai_tool,
+                    &session.id,
+                )
+                .await;
                 return Err(err);
             }
         };
@@ -2370,6 +2429,14 @@ impl EvolutionManager {
             let tool_call_count = self.stage_tool_call_count(key, stage).await;
             self.finalize_session_execution(key, stage, &session.id, status, tool_call_count)
                 .await;
+            touch_session_index_updated_at_for_evolution(
+                ctx,
+                project,
+                workspace,
+                &ai_tool,
+                &session.id,
+            )
+            .await;
             return Err(err);
         }
 
@@ -2795,6 +2862,10 @@ impl EvolutionManager {
                                 tool_call_count,
                             )
                             .await;
+                            touch_session_index_updated_at_for_evolution(
+                                ctx, project, workspace, ai_tool, session_id,
+                            )
+                            .await;
                             self.block_current_stage_by_question(
                                 key, project, workspace, cycle_id, stage, &request, ctx,
                             )
@@ -3051,6 +3122,9 @@ impl EvolutionManager {
         &self,
         key: &str,
         stage: &str,
+        project: &str,
+        workspace: &str,
+        ai_tool: Option<&str>,
         session_id: Option<&str>,
         error_message: &str,
         ctx: &HandlerContext,
@@ -3060,6 +3134,12 @@ impl EvolutionManager {
             let tool_call_count = self.stage_tool_call_count(key, stage).await;
             self.finalize_session_execution(key, stage, session_id, "failed", tool_call_count)
                 .await;
+            if let Some(ai_tool) = ai_tool {
+                touch_session_index_updated_at_for_evolution(
+                    ctx, project, workspace, ai_tool, session_id,
+                )
+                .await;
+            }
         }
         self.persist_stage_file(key, stage, "failed", Some(error_message), None)
             .await
@@ -3185,6 +3265,14 @@ impl EvolutionManager {
                             tool_call_count,
                         )
                         .await;
+                        touch_session_index_updated_at_for_evolution(
+                            ctx,
+                            project,
+                            workspace,
+                            &run_ctx.ai_tool,
+                            &run_ctx.session_id,
+                        )
+                        .await;
                         return Err(err);
                     }
                 };
@@ -3203,6 +3291,14 @@ impl EvolutionManager {
                             tool_call_count,
                         )
                         .await;
+                        touch_session_index_updated_at_for_evolution(
+                            ctx,
+                            project,
+                            workspace,
+                            &run_ctx.ai_tool,
+                            &run_ctx.session_id,
+                        )
+                        .await;
                         return Err(validation_err);
                     }
 
@@ -3210,6 +3306,9 @@ impl EvolutionManager {
                         self.finalize_stage_failed(
                             key,
                             stage,
+                            project,
+                            workspace,
+                            Some(run_ctx.ai_tool.as_str()),
                             Some(&run_ctx.session_id),
                             &validation_err,
                             ctx,
@@ -3260,6 +3359,9 @@ impl EvolutionManager {
                             self.finalize_stage_failed(
                                 key,
                                 stage,
+                                project,
+                                workspace,
+                                Some(run_ctx.ai_tool.as_str()),
                                 Some(&run_ctx.session_id),
                                 &combined_err,
                                 ctx,
@@ -3306,6 +3408,14 @@ impl EvolutionManager {
                 tool_call_count,
             )
             .await;
+            touch_session_index_updated_at_for_evolution(
+                ctx,
+                project,
+                workspace,
+                &run_ctx.ai_tool,
+                &run_ctx.session_id,
+            )
+            .await;
             self.persist_stage_file(
                 key,
                 stage,
@@ -3336,6 +3446,14 @@ impl EvolutionManager {
         let tool_call_count = self.stage_tool_call_count(key, stage).await;
         self.finalize_session_execution(key, stage, &run_ctx.session_id, "done", tool_call_count)
             .await;
+        touch_session_index_updated_at_for_evolution(
+            ctx,
+            project,
+            workspace,
+            &run_ctx.ai_tool,
+            &run_ctx.session_id,
+        )
+        .await;
         self.set_stage_status(key, stage, "done").await;
         self.persist_stage_file(
             key,
@@ -3407,6 +3525,31 @@ impl EvolutionManager {
         let session = agent
             .create_session(&directory, "Evolution auto_commit 独立执行")
             .await?;
+        let created_at_ms = Utc::now().timestamp_millis();
+        if let Err(err) = record_session_index_created(
+            &ctx.ai_state,
+            project,
+            workspace,
+            &profile.ai_tool,
+            &directory,
+            &session.id,
+            &session.title,
+            created_at_ms,
+        )
+        .await
+        {
+            warn!(
+                "evolution auto_commit persist session index failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                project, workspace, profile.ai_tool, session.id, err
+            );
+            if let Err(delete_err) = agent.delete_session(&directory, &session.id).await {
+                warn!(
+                    "evolution auto_commit rollback delete failed: project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                    project, workspace, profile.ai_tool, session.id, delete_err
+                );
+            }
+            return Err(format!("failed to persist ai session index: {}", err));
+        }
 
         let model = profile.model.as_ref().map(|m| AiModelSelection {
             provider_id: m.provider_id.clone(),
@@ -3415,7 +3558,7 @@ impl EvolutionManager {
         let mode = profile.mode.clone();
         let config_overrides = sanitize_ai_config_options(&profile.config_options);
 
-        let mut stream = agent
+        let mut stream = match agent
             .send_message_with_config(
                 &directory,
                 &session.id,
@@ -3427,7 +3570,21 @@ impl EvolutionManager {
                 mode,
                 config_overrides,
             )
-            .await?;
+            .await
+        {
+            Ok(stream) => stream,
+            Err(err) => {
+                touch_session_index_updated_at_for_evolution(
+                    ctx,
+                    project,
+                    workspace,
+                    &profile.ai_tool,
+                    &session.id,
+                )
+                .await;
+                return Err(err);
+            }
+        };
 
         loop {
             let next = timeout(
@@ -3438,17 +3595,61 @@ impl EvolutionManager {
             match next {
                 Ok(Some(Ok(crate::ai::AiEvent::Done { .. }))) => break,
                 Ok(Some(Ok(crate::ai::AiEvent::Error { message }))) => {
+                    touch_session_index_updated_at_for_evolution(
+                        ctx,
+                        project,
+                        workspace,
+                        &profile.ai_tool,
+                        &session.id,
+                    )
+                    .await;
                     return Err(format!("auto_commit 会话失败: {}", message));
                 }
                 Ok(Some(Ok(crate::ai::AiEvent::QuestionAsked { .. }))) => {
+                    touch_session_index_updated_at_for_evolution(
+                        ctx,
+                        project,
+                        workspace,
+                        &profile.ai_tool,
+                        &session.id,
+                    )
+                    .await;
                     return Err("auto_commit 不支持人工提问".to_string());
                 }
                 Ok(Some(Ok(_))) => {}
-                Ok(Some(Err(err))) => return Err(err),
+                Ok(Some(Err(err))) => {
+                    touch_session_index_updated_at_for_evolution(
+                        ctx,
+                        project,
+                        workspace,
+                        &profile.ai_tool,
+                        &session.id,
+                    )
+                    .await;
+                    return Err(err);
+                }
                 Ok(None) => break,
-                Err(_) => return Err("auto_commit 会话超时".to_string()),
+                Err(_) => {
+                    touch_session_index_updated_at_for_evolution(
+                        ctx,
+                        project,
+                        workspace,
+                        &profile.ai_tool,
+                        &session.id,
+                    )
+                    .await;
+                    return Err("auto_commit 会话超时".to_string());
+                }
             }
         }
+        touch_session_index_updated_at_for_evolution(
+            ctx,
+            project,
+            workspace,
+            &profile.ai_tool,
+            &session.id,
+        )
+        .await;
 
         let after_head = git_head_sha(workspace_root)?;
         let commits = collect_commits_between(

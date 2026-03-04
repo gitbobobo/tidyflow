@@ -216,6 +216,31 @@ async fn emit_ai_session_messages_update_with_ops(
     .await;
 }
 
+async fn touch_session_index_updated_at_with_warn(
+    ai_state: &SharedAIState,
+    project_name: &str,
+    workspace_name: &str,
+    ai_tool: &str,
+    session_id: &str,
+) {
+    let updated_at_ms = now_ms();
+    if let Err(e) = super::super::touch_session_index_updated_at(
+        ai_state,
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        updated_at_ms,
+    )
+    .await
+    {
+        warn!(
+            "AI session index touch failed: project={}, workspace={}, ai_tool={}, session_id={}, updated_at_ms={}, error={}",
+            project_name, workspace_name, ai_tool, session_id, updated_at_ms, e
+        );
+    }
+}
+
 pub(crate) async fn handle_ai_chat_start(
     msg: &ClientMessage,
     socket: &mut WebSocket,
@@ -246,6 +271,31 @@ pub(crate) async fn handle_ai_chat_start(
     );
 
     let session = agent.create_session(&directory, &title).await?;
+    let created_at_ms = now_ms();
+    if let Err(e) = super::super::record_session_index_created(
+        ai_state,
+        project_name,
+        workspace_name,
+        &ai_tool,
+        &directory,
+        &session.id,
+        &session.title,
+        created_at_ms,
+    )
+    .await
+    {
+        warn!(
+            "AIChatStart: persist session index failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+            project_name, workspace_name, ai_tool, session.id, e
+        );
+        if let Err(delete_err) = agent.delete_session(&directory, &session.id).await {
+            warn!(
+                "AIChatStart: rollback delete_session failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+                project_name, workspace_name, ai_tool, session.id, delete_err
+            );
+        }
+        return Err(format!("failed to persist ai session index: {}", e));
+    }
 
     let selection_hint = match agent.session_selection_hint(&directory, &session.id).await {
         Ok(hint) => hint.and_then(|adapter_hint| {
@@ -561,6 +611,14 @@ pub(crate) async fn handle_ai_chat_send(
                     &mut emit_state,
                 )
                 .await;
+                touch_session_index_updated_at_with_warn(
+                    &ai_state_cloned,
+                    &project_name,
+                    &workspace_name,
+                    &ai_tool,
+                    &session_id,
+                )
+                .await;
                 cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
                 return;
             }
@@ -845,6 +903,14 @@ pub(crate) async fn handle_ai_chat_send(
                                         &mut emit_state,
                                     )
                                     .await;
+                                    touch_session_index_updated_at_with_warn(
+                                        &ai_state_cloned,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                        &session_id,
+                                    )
+                                    .await;
                                     false
                                 }
                                 AiEvent::Done { stop_reason } => {
@@ -894,6 +960,14 @@ pub(crate) async fn handle_ai_chat_send(
                                         &mut emit_state,
                                     )
                                     .await;
+                                    touch_session_index_updated_at_with_warn(
+                                        &ai_state_cloned,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                        &session_id,
+                                    )
+                                    .await;
                                     false
                                 }
                             };
@@ -938,6 +1012,14 @@ pub(crate) async fn handle_ai_chat_send(
                                     error: e,
                                 },
                                 &mut emit_state,
+                            )
+                            .await;
+                            touch_session_index_updated_at_with_warn(
+                                &ai_state_cloned,
+                                &project_name,
+                                &workspace_name,
+                                &ai_tool,
+                                &session_id,
                             )
                             .await;
                             break;
@@ -988,6 +1070,14 @@ pub(crate) async fn handle_ai_chat_send(
                                     stop_reason: None,
                                 },
                                 &mut emit_state,
+                            )
+                            .await;
+                            touch_session_index_updated_at_with_warn(
+                                &ai_state_cloned,
+                                &project_name,
+                                &workspace_name,
+                                &ai_tool,
+                                &session_id,
                             )
                             .await;
                             break;
@@ -1273,6 +1363,14 @@ pub(crate) async fn handle_ai_chat_command(
                     &mut emit_state,
                 )
                 .await;
+                touch_session_index_updated_at_with_warn(
+                    &ai_state_cloned,
+                    &project_name,
+                    &workspace_name,
+                    &ai_tool,
+                    &session_id,
+                )
+                .await;
                 cleanup_stream_state(&ai_state_cloned, &abort_key, &ai_tool, &directory).await;
                 return;
             }
@@ -1493,6 +1591,14 @@ pub(crate) async fn handle_ai_chat_command(
                                         &mut emit_state,
                                     )
                                     .await;
+                                    touch_session_index_updated_at_with_warn(
+                                        &ai_state_cloned,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                        &session_id,
+                                    )
+                                    .await;
                                     false
                                 }
                                 AiEvent::Done { stop_reason } => {
@@ -1542,6 +1648,14 @@ pub(crate) async fn handle_ai_chat_command(
                                         &mut emit_state,
                                     )
                                     .await;
+                                    touch_session_index_updated_at_with_warn(
+                                        &ai_state_cloned,
+                                        &project_name,
+                                        &workspace_name,
+                                        &ai_tool,
+                                        &session_id,
+                                    )
+                                    .await;
                                     false
                                 }
                             };
@@ -1582,6 +1696,14 @@ pub(crate) async fn handle_ai_chat_command(
                                     error: e,
                                 },
                                 &mut emit_state,
+                            )
+                            .await;
+                            touch_session_index_updated_at_with_warn(
+                                &ai_state_cloned,
+                                &project_name,
+                                &workspace_name,
+                                &ai_tool,
+                                &session_id,
                             )
                             .await;
                             break;
@@ -1631,6 +1753,14 @@ pub(crate) async fn handle_ai_chat_command(
                                     stop_reason: None,
                                 },
                                 &mut emit_state,
+                            )
+                            .await;
+                            touch_session_index_updated_at_with_warn(
+                                &ai_state_cloned,
+                                &project_name,
+                                &workspace_name,
+                                &ai_tool,
+                                &session_id,
                             )
                             .await;
                             break;
