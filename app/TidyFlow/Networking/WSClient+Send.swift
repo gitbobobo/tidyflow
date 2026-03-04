@@ -179,6 +179,58 @@ extension WSClient {
         return "misc"
     }
 
+    /// Evolution 动作里要求必须携带 `project/workspace` 的集合。
+    /// `evo_get_snapshot` 的 project/workspace 可选，`evo_stop_all` 不需要，因此不在此集合中。
+    private var evolutionActionsRequireProjectWorkspace: Set<String> {
+        [
+            "evo_start_workspace",
+            "evo_stop_workspace",
+            "evo_resume_workspace",
+            "evo_open_stage_chat",
+            "evo_update_agent_profile",
+            "evo_get_agent_profile",
+            "evo_list_cycle_history",
+            "evo_resolve_blockers",
+            "evo_auto_commit"
+        ]
+    }
+
+    /// 兼容旧键名：把 `project_name/workspace_name` 归一化到 `project/workspace`。
+    private func normalizeLegacyEvolutionFields(_ dict: [String: Any]) -> [String: Any] {
+        guard let action = dict["type"] as? String, action.hasPrefix("evo_") else {
+            return dict
+        }
+        var normalized = dict
+        if normalized["project"] == nil, let legacyProject = normalized["project_name"] {
+            normalized["project"] = legacyProject
+        }
+        if normalized["workspace"] == nil, let legacyWorkspace = normalized["workspace_name"] {
+            normalized["workspace"] = legacyWorkspace
+        }
+        return normalized
+    }
+
+    /// 出站消息基础校验，防止把明显非法的 payload 发送到服务端。
+    private func validateOutgoingMessage(_ dict: [String: Any]) -> String? {
+        guard let action = dict["type"] as? String, !action.isEmpty else {
+            return "消息缺少 type"
+        }
+        guard evolutionActionsRequireProjectWorkspace.contains(action) else {
+            return nil
+        }
+        let project = (dict["project"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if project.isEmpty {
+            return "消息 \(action) 缺少 project"
+        }
+        let workspace = (dict["workspace"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if workspace.isEmpty {
+            return "消息 \(action) 缺少 workspace"
+        }
+        return nil
+    }
+
     private func encodeEnvelope(dict: [String: Any], requestId: String?) throws -> Data {
         guard let action = dict["type"] as? String, !action.isEmpty else {
             throw NSError(domain: "WSClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Message missing type"])
@@ -216,8 +268,14 @@ extension WSClient {
 
     /// 发送消息，使用 MessagePack 编码
     func send(_ dict: [String: Any], requestId: String? = nil) {
+        let normalizedDict = normalizeLegacyEvolutionFields(dict)
+        if let validationError = validateOutgoingMessage(normalizedDict) {
+            TFLog.ws.error("Drop outbound message: \(validationError, privacy: .public)")
+            emitClientError(validationError)
+            return
+        }
         do {
-            let data = try encodeEnvelope(dict: dict, requestId: requestId)
+            let data = try encodeEnvelope(dict: normalizedDict, requestId: requestId)
             sendBinary(data)
         } catch {
             TFLog.ws.error("MessagePack encode failed: \(error.localizedDescription, privacy: .public)")
@@ -1294,10 +1352,19 @@ extension WSClient {
         loopRoundLimit: Int? = nil,
         stageProfiles: [EvolutionStageProfileInfoV2] = []
     ) {
+        let normalizedProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedWorkspace = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedProject.isEmpty, !normalizedWorkspace.isEmpty else {
+            TFLog.ws.error(
+                "requestEvoStartWorkspace aborted: empty project/workspace, project='\(project, privacy: .public)', workspace='\(workspace, privacy: .public)'"
+            )
+            emitClientError("无法启动循环：项目或工作空间为空")
+            return
+        }
         var msg: [String: Any] = [
             "type": "evo_start_workspace",
-            "project": project,
-            "workspace": workspace,
+            "project": normalizedProject,
+            "workspace": normalizedWorkspace,
             "priority": priority
         ]
         if let loopRoundLimit {
