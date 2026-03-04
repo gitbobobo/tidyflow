@@ -210,6 +210,87 @@ extension AppState {
         saveEditorDocument(project: parts[0], workspace: parts[1], path: tab.payload)
     }
 
+    // MARK: - 新建文件与另存为
+
+    /// 创建新的未命名编辑器文件
+    func createNewEditorFile() {
+        guard let globalKey = currentGlobalWorkspaceKey else { return }
+        let untitledName = editorStore.generateUntitledFileName()
+
+        // 在文档状态中创建一个未保存的新文档
+        var workspaceDocs = editorDocumentsByWorkspace[globalKey] ?? [:]
+        workspaceDocs[untitledName] = EditorDocumentState(
+            path: untitledName,
+            content: "",
+            originalContentHash: 0,  // 空内容的 hash
+            isDirty: true,  // 新文件标记为 dirty，需要保存
+            lastLoadedAt: Date(),
+            status: .ready,
+            conflictState: .none
+        )
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+
+        // 创建新的编辑器 Tab
+        addTab(workspaceKey: globalKey, kind: .editor, title: untitledName, payload: untitledName)
+    }
+
+    /// 请求另存为当前活动编辑器
+    func requestSaveAsForActiveEditor() {
+        guard let globalKey = currentGlobalWorkspaceKey,
+              let path = activeEditorPath else { return }
+
+        editorStore.pendingSaveAsPath = path
+        editorStore.pendingSaveAsWorkspaceKey = globalKey
+        editorStore.showSaveAsPanel = true
+    }
+
+    /// 执行另存为操作（在用户选择了目标路径后调用）
+    func performSaveAs(newPath: String) {
+        guard let globalKey = editorStore.pendingSaveAsWorkspaceKey,
+              let oldPath = editorStore.pendingSaveAsPath,
+              var workspaceDocs = editorDocumentsByWorkspace[globalKey],
+              let oldDoc = workspaceDocs[oldPath] else { return }
+
+        // 创建新文档（使用新路径）
+        let newDoc = EditorDocumentState(
+            path: newPath,
+            content: oldDoc.content,
+            originalContentHash: 0,  // 新文件，需要保存
+            isDirty: true,
+            lastLoadedAt: Date(),
+            status: .ready,
+            conflictState: .none
+        )
+        workspaceDocs.removeValue(forKey: oldPath)
+        workspaceDocs[newPath] = newDoc
+        editorDocumentsByWorkspace[globalKey] = workspaceDocs
+
+        // 更新 Tab 标题和 payload
+        if var tabs = workspaceTabs[globalKey],
+           let tabIndex = tabs.firstIndex(where: { $0.kind == .editor && $0.payload == oldPath }) {
+            tabs[tabIndex].payload = newPath
+            tabs[tabIndex].title = String(newPath.split(separator: "/").last ?? Substring(newPath))
+            workspaceTabs[globalKey] = tabs
+        }
+
+        // 清除另存为状态
+        editorStore.pendingSaveAsPath = nil
+        editorStore.pendingSaveAsWorkspaceKey = nil
+        editorStore.showSaveAsPanel = false
+
+        // 执行保存
+        let parts = globalKey.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        saveEditorDocument(project: parts[0], workspace: parts[1], path: newPath)
+    }
+
+    /// 取消另存为操作
+    func cancelSaveAs() {
+        editorStore.pendingSaveAsPath = nil
+        editorStore.pendingSaveAsWorkspaceKey = nil
+        editorStore.showSaveAsPanel = false
+    }
+
     /// Check if active tab is a diff tab
     var isActiveTabDiff: Bool {
         getActiveTab()?.kind == .diff

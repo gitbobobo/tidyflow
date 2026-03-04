@@ -83,12 +83,38 @@ class EditorStore: ObservableObject {
     /// 最近一次 diff 跳转上下文
     @Published var lastDiffNavigationContext: DiffNavigationContext?
 
+    // MARK: - 撤销/重做状态
+
+    /// 当前编辑器是否可撤销
+    @Published var canUndo: Bool = false
+    /// 当前编辑器是否可重做
+    @Published var canRedo: Bool = false
+
+    // MARK: - 新建文件状态
+
+    /// 新建文件计数器（用于生成 "Untitled-1", "Untitled-2" 等）
+    var untitledFileCounter: Int = 0
+
+    /// 另存为面板是否显示
+    @Published var showSaveAsPanel: Bool = false
+    /// 查找替换面板是否显示
+    @Published var showFindReplacePanel: Bool = false
+    /// 待另存为的文件路径
+    var pendingSaveAsPath: String?
+    /// 待另存为的工作空间 key
+    var pendingSaveAsWorkspaceKey: String?
+
     // MARK: - 回调
 
     /// 编辑器 Tab 关闭回调：(path)
     var onEditorTabClose: ((String) -> Void)?
     /// 编辑器文件磁盘变化回调：(project, workspace, paths, isDirtyFlags, kind)
     var onEditorFileChanged: ((String, String, [String], [Bool], String) -> Void)?
+
+    /// 编辑器撤销回调
+    var onEditorUndo: (() -> Void)?
+    /// 编辑器重做回调
+    var onEditorRedo: (() -> Void)?
 
     // MARK: - 编辑器状态方法
 
@@ -123,5 +149,36 @@ class EditorStore: ObservableObject {
         lastEditorPath = path
         editorStatus = "Saving..."
         editorStatusIsError = false
+    }
+
+    // MARK: - 撤销/重做方法
+
+    /// 请求撤销操作
+    func requestUndo() {
+        onEditorUndo?()
+    }
+
+    /// 请求重做操作
+    func requestRedo() {
+        onEditorRedo?()
+    }
+
+    /// 更新撤销/重做状态（由编辑器视图调用）
+    func updateUndoRedoState(canUndo: Bool, canRedo: Bool) {
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+    }
+
+    // MARK: - 新建文件方法
+
+    /// 生成新的未命名文件标题
+    func generateUntitledFileName() -> String {
+        untitledFileCounter += 1
+        return "Untitled-\(untitledFileCounter)"
+    }
+
+    /// 重置未命名文件计数器（新项目/工作空间时）
+    func resetUntitledCounter() {
+        untitledFileCounter = 0
     }
 }

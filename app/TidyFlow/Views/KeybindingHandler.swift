@@ -36,6 +36,22 @@ struct GlobalKeybindingHandler: ViewModifier {
                     Button("Save") { runCommand("workspace.save") }
                         .keyboardShortcut("s", modifiers: .command)
 
+                    // 编辑器撤销/重做、新建文件、另存为
+                    Button("Undo") { runCommand("workspace.undo") }
+                        .keyboardShortcut("z", modifiers: .command)
+
+                    Button("Redo") { runCommand("workspace.redo") }
+                        .keyboardShortcut("z", modifiers: [.command, .shift])
+
+                    Button("New File") { runCommand("workspace.newFile") }
+                        .keyboardShortcut("n", modifiers: .command)
+
+                    Button("Save As") { runCommand("workspace.saveAs") }
+                        .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                    Button("Find") { runCommand("workspace.find") }
+                        .keyboardShortcut("f", modifiers: .command)
+
                     // Debug Panel (hidden, developer only)
                     Button("Debug Panel") { appState.debugPanelPresented.toggle() }
                         .keyboardShortcut("d", modifiers: [.command, .shift])

@@ -103,6 +103,13 @@ struct CenterContentView: View {
         } message: {
             Text("tabContent.unsavedChanges.message".localized)
         }
+        .sheet(isPresented: $editorStore.showSaveAsPanel) {
+            SaveAsSheetView(
+                initialPath: editorStore.pendingSaveAsPath ?? "",
+                onCancel: { appState.cancelSaveAs() },
+                onConfirm: { appState.performSaveAs(newPath: $0) }
+            )
+        }
     }
 
     // MARK: - 展开状态的 Tab 面板
@@ -208,5 +215,43 @@ struct CenterContentView: View {
     /// 限制 Tab 面板高度在合理范围内
     private func clampedTabPanelHeight(totalHeight: CGFloat) -> CGFloat {
         clampedTabPanelHeightValue(appState.tabPanelHeight, totalHeight: totalHeight)
+    }
+}
+
+private struct SaveAsSheetView: View {
+    let initialPath: String
+    let onCancel: () -> Void
+    let onConfirm: (String) -> Void
+    @State private var targetPath: String = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("editor.saveAs".localized)
+                    .font(.headline)
+                TextField("editor.saveAs.targetPath".localized, text: $targetPath)
+                    .textFieldStyle(.roundedBorder)
+                Text("editor.saveAs.hint".localized)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                HStack {
+                    Button("common.cancel".localized, role: .cancel) {
+                        onCancel()
+                    }
+                    Spacer()
+                    Button("common.save".localized) {
+                        onConfirm(targetPath.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    .disabled(targetPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(16)
+            .navigationTitle("editor.saveAs".localized)
+        }
+        .frame(minWidth: 420, minHeight: 180)
+        .onAppear {
+            targetPath = initialPath
+        }
     }
 }

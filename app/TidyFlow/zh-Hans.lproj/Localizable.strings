@@ -264,6 +264,20 @@
 "tabContent.dontSave" = "不保存";
 "tabContent.unsavedChanges.message" = "如果不保存，你的更改将会丢失。";
 
+/* 编辑器命令 */
+"editor.undo" = "撤销";
+"editor.redo" = "重做";
+"editor.newFile" = "新建文件";
+"editor.saveAs" = "另存为...";
+"editor.newFile.untitled" = "未命名-%d";
+"editor.findReplace" = "查找/替换";
+"editor.find.placeholder" = "查找";
+"editor.replace.placeholder" = "替换";
+"editor.replace.one" = "替换";
+"editor.replace.all" = "全部替换";
+"editor.saveAs.targetPath" = "目标路径";
+"editor.saveAs.hint" = "输入新路径以保存当前文档。";
+
 /* 快捷操作 */
 "quickActions.switchWorkspace" = "切换工作空间";
 "quickActions.switchTab" = "切换 Tab";

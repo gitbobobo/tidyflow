@@ -268,6 +268,22 @@ extension AppState {
             Command(id: "workspace.save", title: "Save File", subtitle: nil, scope: .workspace, keyHint: "Cmd+S") { app in
                  app.saveActiveEditorFile()
             },
+            // 编辑器撤销/重做、新建文件、另存为
+            Command(id: "workspace.undo", title: "Undo", subtitle: "Undo last edit", scope: .workspace, keyHint: "Cmd+Z") { app in
+                app.editorStore.requestUndo()
+            },
+            Command(id: "workspace.redo", title: "Redo", subtitle: "Redo last undone edit", scope: .workspace, keyHint: "Cmd+Shift+Z") { app in
+                app.editorStore.requestRedo()
+            },
+            Command(id: "workspace.newFile", title: "New File", subtitle: "Create a new untitled file", scope: .workspace, keyHint: "Cmd+N") { app in
+                app.createNewEditorFile()
+            },
+            Command(id: "workspace.saveAs", title: "Save As...", subtitle: "Save file with a new name", scope: .workspace, keyHint: "Cmd+Shift+S") { app in
+                app.requestSaveAsForActiveEditor()
+            },
+            Command(id: "workspace.find", title: "Find / Replace", subtitle: "Find and replace in current file", scope: .workspace, keyHint: "Cmd+F") { app in
+                app.editorStore.showFindReplacePanel = true
+            },
             // UX-3a: Git rebase commands
             Command(id: "git.fetch", title: "Git: Fetch", subtitle: "Fetch from remote", scope: .workspace, keyHint: nil) { app in
                 guard let ws = app.selectedWorkspaceKey else { return }

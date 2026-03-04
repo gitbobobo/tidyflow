@@ -262,6 +262,20 @@
 "tabContent.dontSave" = "Don't Save";
 "tabContent.unsavedChanges.message" = "Your changes will be lost if you don't save.";
 
+/* Editor Commands */
+"editor.undo" = "Undo";
+"editor.redo" = "Redo";
+"editor.newFile" = "New File";
+"editor.saveAs" = "Save As...";
+"editor.newFile.untitled" = "Untitled-%d";
+"editor.findReplace" = "Find / Replace";
+"editor.find.placeholder" = "Find";
+"editor.replace.placeholder" = "Replace";
+"editor.replace.one" = "Replace";
+"editor.replace.all" = "Replace All";
+"editor.saveAs.targetPath" = "Target path";
+"editor.saveAs.hint" = "Enter a new path to save the current document.";
+
 /* Quick Actions */
 "quickActions.switchWorkspace" = "Switch Workspace";
 "quickActions.switchTab" = "Switch Tab";

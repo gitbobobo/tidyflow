@@ -273,6 +273,19 @@ struct TabItemView: View {
             }
             .keyboardShortcut("w", modifiers: .command)
 
+            if tab.kind == .editor {
+                Divider()
+                Button("editor.findReplace".localized) {
+                    appState.editorStore.showFindReplacePanel = true
+                }
+                Button("editor.newFile".localized) {
+                    appState.createNewEditorFile()
+                }
+                Button("editor.saveAs".localized) {
+                    appState.requestSaveAsForActiveEditor()
+                }
+            }
+
             let tabs = appState.workspaceTabs[workspaceKey] ?? []
             let otherTabs = tabs.filter { $0.id != tab.id }
 
