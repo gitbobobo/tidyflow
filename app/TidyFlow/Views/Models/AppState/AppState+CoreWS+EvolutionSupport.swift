@@ -29,6 +29,17 @@ extension AppState {
         wsClient.requestFileRead(project: project, workspace: workspace, path: path)
     }
 
+    // MARK: - Report 文档预览
+
+    func requestEvolutionReport(project: String, workspace: String, cycleID: String) {
+        let path = ".tidyflow/evolution/\(cycleID)/report.md"
+        evolutionReportContent = nil
+        evolutionReportLoading = true
+        evolutionReportError = nil
+        pendingReportReadPath = path
+        wsClient.requestFileRead(project: project, workspace: workspace, path: path)
+    }
+
     // MARK: - Evidence
 
     func requestEvidenceSnapshot(project: String, workspace: String) {
