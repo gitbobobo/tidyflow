@@ -13,9 +13,11 @@ struct EvolutionPipelineView: View {
 
     @State private var loopRoundLimit: Int = 1
     @State private var lastLoopRoundWorkspaceContext: String = ""
-    @State private var isSessionViewerPresented: Bool = false
     @State private var isBlockerSheetPresented: Bool = false
     @State private var isHandoffSheetPresented: Bool = false
+    @State private var isReportSheetPresented: Bool = false
+    @State private var selectedReportCycleID: String?
+    @State private var selectedCycleDetail: PipelineCycleDetailPayload?
     @State private var blockerDrafts: [String: EvolutionPipelineBlockerDraft] = [:]
 
     /// 已完成会话的时间线记录（本轮）
@@ -26,16 +28,8 @@ struct EvolutionPipelineView: View {
     @State private var lastRecordedRound: Int = 0
     /// 当前循环的开始时间
     @State private var cycleStartDate: Date = Date()
-    /// 当前选中的循环
-    @State private var selectedCycle: CycleSelection = .currentCycle
 
     private let untitledCycleTitle = "Untitled"
-
-    /// 循环选择类型
-    enum CycleSelection: Equatable {
-        case currentCycle
-        case history(id: String)
-    }
 
     private struct EvolutionPipelineBlockerDraft {
         var selected: Bool
@@ -133,12 +127,12 @@ struct EvolutionPipelineView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        // 上方内容区：根据选中的循环显示不同内容
+                        // 上方内容区：始终展示当前循环运行态
                         cycleDetailArea
 
                         Divider()
 
-                        // 下方循环列表：可选中切换
+                        // 下方循环列表：点击行弹出详情
                         cycleListArea
                     }
                     .padding(.horizontal, 12)
@@ -149,19 +143,16 @@ struct EvolutionPipelineView: View {
         .onAppear {
             refreshData()
             syncStartOptions()
-            normalizeCycleSelection(preferCurrent: true)
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             refreshData()
             syncStartOptions()
             resetLocalTimeline()
-            normalizeCycleSelection(preferCurrent: true)
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
             refreshData()
             syncStartOptions()
             resetLocalTimeline()
-            normalizeCycleSelection(preferCurrent: true)
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
@@ -170,7 +161,6 @@ struct EvolutionPipelineView: View {
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
             syncStartOptions()
             updateTimeline()
-            normalizeCycleSelection(preferCurrent: false)
         }
         .onReceive(appState.$evolutionBlockingRequired) { value in
             syncBlockerSheetState(value)
@@ -178,11 +168,17 @@ struct EvolutionPipelineView: View {
         .onReceive(appState.$evolutionCycleHistories) { _ in
             syncCycleHistoriesFromAPI()
         }
+        .sheet(item: $selectedCycleDetail) { payload in
+            cycleDetailSheet(payload)
+        }
         .sheet(isPresented: $isBlockerSheetPresented) {
             blockerSheet
         }
         .sheet(isPresented: $isHandoffSheetPresented) {
             handoffSheet
+        }
+        .sheet(isPresented: $isReportSheetPresented) {
+            reportSheet
         }
     }
 
@@ -474,28 +470,14 @@ struct EvolutionPipelineView: View {
         )
     }
 
-    // MARK: - 上方内容区（根据选中循环切换）
+    // MARK: - 上方内容区（当前循环）
 
-    @ViewBuilder
     private var cycleDetailArea: some View {
         VStack(alignment: .leading, spacing: 8) {
             controlSection
-
-            switch selectedCycle {
-            case .currentCycle:
-                // 本轮循环：运行中代理 + 待命
-                terminalReasonBanner
-                runningAgentSection
-                standbySection
-
-            case .history(let id):
-                // 历史循环：只读查看紧凑条形
-                if let cycle = cycleHistories.first(where: { $0.id == id }) {
-                    historyCycleCompactView(cycle)
-                } else {
-                    standbySection
-                }
-            }
+            terminalReasonBanner
+            runningAgentSection
+            standbySection
         }
     }
 
@@ -612,7 +594,7 @@ struct EvolutionPipelineView: View {
         return localized == key ? code : localized
     }
 
-    // MARK: - 下方循环列表（可选中切换）
+    // MARK: - 下方循环列表（点击弹出详情）
 
     private var cycleListArea: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -622,8 +604,8 @@ struct EvolutionPipelineView: View {
                     round: currentCycleRound,
                     color: .green,
                     title: currentCycleDisplayTitle,
-                    isSelected: selectedCycle == .currentCycle,
                     badge: currentCycleBadge,
+                    startTimeText: currentCycleStartTimeText,
                     stageEntries: completedTimeline.map { entry in
                         PipelineCycleStageEntry(
                             id: entry.id,
@@ -632,9 +614,16 @@ struct EvolutionPipelineView: View {
                             aiToolName: entry.aiToolName,
                             durationSeconds: entry.durationSeconds
                         )
-                    }
+                    },
+                    onReportTap: currentCycleHasReportDocument
+                        ? {
+                            if let cycleID = currentItem?.cycleID {
+                                openReportSheet(for: cycleID)
+                            }
+                        }
+                        : nil
                 ) {
-                    withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
+                    openCurrentCycleDetailSheet()
                 }
             }
 
@@ -644,12 +633,13 @@ struct EvolutionPipelineView: View {
                     round: cycle.round,
                     color: .indigo,
                     title: cycle.displayTitle,
-                    isSelected: selectedCycle == .history(id: cycle.id),
+                    startTimeText: cycleStartTimeText(cycle.startDate),
                     stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
                         PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
-                    } : cycle.stageEntries
+                    } : cycle.stageEntries,
+                    onReportTap: cycleHasReportDocument(cycle) ? { openReportSheet(for: cycle.id) } : nil
                 ) {
-                    withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .history(id: cycle.id) }
+                    openHistoryCycleDetailSheet(cycle)
                 }
             }
 
@@ -676,6 +666,41 @@ struct EvolutionPipelineView: View {
 
     private var hasRunningAgents: Bool {
         (currentItem?.agents ?? []).contains { normalizedStageStatus($0.status) == "running" }
+    }
+
+    private var currentCycleHasReportDocument: Bool {
+        guard let item = currentItem else { return false }
+        if item.executions.contains(where: {
+            normalizedStageKey($0.stage) == "report" && isExecutionCompletedStatus($0.status)
+        }) {
+            return true
+        }
+        return item.agents.contains(where: {
+            normalizedStageKey($0.stage) == "report" && isCompletedStatus(normalizedStageStatus($0.status))
+        })
+    }
+
+    private var currentCycleStartTimeText: String {
+        if let item = currentItem {
+            let earliest = item.executions
+                .compactMap { executionStartDate($0.startedAt) }
+                .min()
+            if let earliest {
+                return cycleStartTimeText(earliest)
+            }
+        }
+        return cycleStartTimeText(cycleStartDate)
+    }
+
+    private func cycleHasReportDocument(_ cycle: PipelineCycleHistory) -> Bool {
+        if cycle.stageEntries.contains(where: { normalizedStageKey($0.stage) == "report" }) {
+            return true
+        }
+        return cycle.stages.contains(where: { normalizedStageKey($0) == "report" })
+    }
+
+    private func cycleStartTimeText(_ date: Date) -> String {
+        Self.cycleStartDateFormatter.string(from: date)
     }
 
     private var currentCycleBadge: String? {
@@ -710,83 +735,98 @@ struct EvolutionPipelineView: View {
         round: Int,
         color: Color,
         title: String,
-        isSelected: Bool,
         badge: String? = nil,
+        startTimeText: String,
         stageEntries: [PipelineCycleStageEntry]? = nil,
+        onReportTap: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            // 计算总耗时
-            let totalDuration: TimeInterval = stageEntries?.reduce(0) { $0 + $1.durationSeconds } ?? 0
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    roundBadge(round: round, color: color, isSelected: isSelected)
+        // 计算总耗时
+        let totalDuration: TimeInterval = stageEntries?.reduce(0) { $0 + $1.durationSeconds } ?? 0
 
-                    Text(title)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundColor(isSelected ? .primary : .secondary)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                roundBadge(round: round, color: color)
 
-                    Spacer()
-                    
-                    // 总耗时
-                    if totalDuration > 0 {
-                        HStack(spacing: 2) {
-                            Image(systemName: "timer")
-                                .font(.system(size: 8))
-                            Text(Self.formatDuration(totalDuration))
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        }
-                        .foregroundColor(.secondary)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                HStack(spacing: 2) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 8))
+                    Text(startTimeText)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                }
+                .foregroundColor(.secondary)
+
+                if totalDuration > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "timer")
+                            .font(.system(size: 8))
+                        Text(Self.formatDuration(totalDuration))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
                     }
-
-                    if let badge {
-                        Text(badge)
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(color.opacity(0.8)))
-                    }
-
-                    if isSelected {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundColor(color)
-                    }
+                    .foregroundColor(.secondary)
                 }
 
-                // 分段彩色线条
-                if let entries = stageEntries, !entries.isEmpty {
-                    proportionalStageBar(entries: entries, height: 4)
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(color.opacity(0.8)))
                 }
+
+                if let onReportTap {
+                    Button(action: onReportTap) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("evolution.page.action.previewReport".localized)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(color)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? color.opacity(0.08) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isSelected ? color.opacity(0.25) : Color.clear, lineWidth: 1)
-            )
+
+            // 分段彩色线条
+            if let entries = stageEntries, !entries.isEmpty {
+                proportionalStageBar(entries: entries, height: 4)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(color.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(color.opacity(0.22), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onTapGesture(perform: action)
     }
 
-    private func roundBadge(round: Int, color: Color, isSelected: Bool) -> some View {
+    private func roundBadge(round: Int, color: Color) -> some View {
         Text("\(max(1, round))")
             .font(.system(size: 9, weight: .semibold, design: .monospaced))
-            .foregroundStyle(isSelected ? color : .secondary)
+            .foregroundStyle(color)
             .frame(width: 18, height: 18)
             .background(
                 Circle()
-                    .fill(isSelected ? color.opacity(0.14) : Color.secondary.opacity(0.12))
+                    .fill(color.opacity(0.14))
             )
             .overlay(
                 Circle()
-                    .stroke(isSelected ? color.opacity(0.45) : Color.secondary.opacity(0.25), lineWidth: 1)
+                    .stroke(color.opacity(0.45), lineWidth: 1)
             )
     }
 
@@ -843,6 +883,373 @@ struct EvolutionPipelineView: View {
         return zip(entries, weights).map { entry, weight in
             StageBarSegment(entry: entry, ratio: CGFloat(weight / totalWeight))
         }
+    }
+
+    private func openCurrentCycleDetailSheet() {
+        guard let item = currentItem else { return }
+        selectedCycleDetail = makeCurrentCycleDetailPayload(item)
+    }
+
+    private func openHistoryCycleDetailSheet(_ cycle: PipelineCycleHistory) {
+        selectedCycleDetail = makeHistoryCycleDetailPayload(cycle)
+    }
+
+    private func openReportSheet(for cycleID: String) {
+        guard let workspace else { return }
+        selectedReportCycleID = cycleID
+        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
+        isReportSheetPresented = true
+    }
+
+    private func refreshSelectedReport() {
+        guard let workspace, let cycleID = selectedReportCycleID else { return }
+        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
+    }
+
+    private func makeCurrentCycleDetailPayload(_ item: EvolutionWorkspaceItemV2) -> PipelineCycleDetailPayload {
+        let entries = timelineEntriesFromCurrentItem(item)
+        let totalSeconds = entries.compactMap(\.durationSeconds).reduce(0, +)
+        let earliestStart = entries.compactMap(\.startedAtDate).min()
+        return PipelineCycleDetailPayload(
+            id: "current:\(item.cycleID)",
+            cycleID: item.cycleID,
+            title: cycleDisplayTitle(item.title),
+            round: max(1, item.globalLoopRound),
+            status: item.status,
+            startTimeText: cycleStartTimeText(earliestStart ?? cycleStartDate),
+            totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
+            terminalReasonCode: item.terminalReasonCode,
+            terminalErrorMessage: item.terminalErrorMessage,
+            timelineEntries: entries
+        )
+    }
+
+    private func makeHistoryCycleDetailPayload(_ cycle: PipelineCycleHistory) -> PipelineCycleDetailPayload {
+        let entries = timelineEntriesFromHistoryCycle(cycle)
+        let totalSeconds = entries.compactMap(\.durationSeconds).reduce(0, +)
+        return PipelineCycleDetailPayload(
+            id: "history:\(cycle.id)",
+            cycleID: cycle.id,
+            title: cycle.displayTitle,
+            round: max(1, cycle.round),
+            status: nil,
+            startTimeText: cycleStartTimeText(cycle.startDate),
+            totalDurationText: totalSeconds > 0 ? Self.formatDuration(totalSeconds) : nil,
+            terminalReasonCode: cycle.terminalReasonCode,
+            terminalErrorMessage: cycle.terminalErrorMessage,
+            timelineEntries: entries
+        )
+    }
+
+    private func timelineEntriesFromCurrentItem(_ item: EvolutionWorkspaceItemV2) -> [PipelineCycleTimelineEntry] {
+        let executionEntries = item.executions
+            .sorted { lhs, rhs in
+                switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                case (false, false):
+                    if lhs.startedAt != rhs.startedAt {
+                        return lhs.startedAt < rhs.startedAt
+                    }
+                case (false, true):
+                    return true
+                case (true, false):
+                    return false
+                case (true, true):
+                    break
+                }
+                return lhs.sessionID < rhs.sessionID
+            }
+            .map { execution in
+                PipelineCycleTimelineEntry(
+                    id: execution.sessionID + "|" + execution.startedAt,
+                    stage: execution.stage,
+                    agent: execution.agent,
+                    aiToolName: execution.aiTool,
+                    status: execution.status,
+                    startedAt: trimmedNonEmptyText(execution.startedAt),
+                    durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 }
+                )
+            }
+        if !executionEntries.isEmpty {
+            return executionEntries
+        }
+
+        return item.agents.map { agent in
+            PipelineCycleTimelineEntry(
+                id: "agent:\(normalizedStageKey(agent.stage))",
+                stage: agent.stage,
+                agent: agent.agent,
+                aiToolName: findProfile(for: normalizedStageKey(agent.stage))?.aiTool.displayName ?? "",
+                status: agent.status,
+                startedAt: trimmedNonEmptyText(agent.startedAt),
+                durationSeconds: agent.durationMs.map { TimeInterval($0) / 1000.0 }
+            )
+        }
+    }
+
+    private func timelineEntriesFromHistoryCycle(_ cycle: PipelineCycleHistory) -> [PipelineCycleTimelineEntry] {
+        if !cycle.stageEntries.isEmpty {
+            return cycle.stageEntries.map { entry in
+                PipelineCycleTimelineEntry(
+                    id: entry.id,
+                    stage: entry.stage,
+                    agent: entry.agent,
+                    aiToolName: entry.aiToolName,
+                    status: entry.status ?? "",
+                    startedAt: entry.startedAt,
+                    durationSeconds: entry.durationSeconds > 0 ? entry.durationSeconds : nil
+                )
+            }
+        }
+        return cycle.stages.enumerated().map { index, stage in
+            PipelineCycleTimelineEntry(
+                id: "\(cycle.id)_\(index)_\(stage)",
+                stage: stage,
+                agent: "",
+                aiToolName: "",
+                status: "",
+                startedAt: nil,
+                durationSeconds: nil
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func cycleDetailSheet(_ payload: PipelineCycleDetailPayload) -> some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        roundBadge(round: payload.round, color: .indigo)
+                        Text(payload.title)
+                            .font(.title3.weight(.semibold))
+                            .lineLimit(1)
+                        Spacer()
+                        if let status = trimmedNonEmptyText(payload.status) {
+                            let info = cycleStatusInfo(status)
+                            Text(info.label)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(info.color)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(info.color.opacity(0.12)))
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        detailMetaBadge(
+                            icon: "clock",
+                            label: "evolution.page.pipeline.startTimeLabel".localized,
+                            value: payload.startTimeText
+                        )
+                        if let totalDurationText = payload.totalDurationText {
+                            detailMetaBadge(
+                                icon: "timer",
+                                label: "evolution.page.pipeline.durationLabel".localized,
+                                value: totalDurationText
+                            )
+                        }
+                    }
+
+                    if let reason = trimmedNonEmptyText(payload.terminalReasonCode) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                            Text(localizedTerminalReason(reason))
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    if let error = trimmedNonEmptyText(payload.terminalErrorMessage) {
+                        Text(error)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Divider()
+
+                    Text("evolution.page.pipeline.timelineTitle".localized)
+                        .font(.headline)
+
+                    if payload.timelineEntries.isEmpty {
+                        Text("evolution.page.pipeline.noTimeline".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 4)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(payload.timelineEntries) { entry in
+                                cycleTimelineRow(entry)
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle(String(format: "evolution.page.pipeline.roundLabel".localized, payload.round))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("common.close".localized) {
+                        selectedCycleDetail = nil
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 620, minHeight: 460)
+    }
+
+    private func cycleTimelineRow(_ entry: PipelineCycleTimelineEntry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: stageIconName(entry.stage))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(stageColor(entry.stage))
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(stageDisplayName(entry.stage))
+                        .font(.system(size: 12, weight: .semibold))
+                    if let agent = trimmedNonEmptyText(entry.agent) {
+                        Text(agent)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    detailTimelineText(icon: "clock", value: timelineStartTimeText(entry.startedAt))
+                    detailTimelineText(icon: "timer", value: timelineDurationText(entry))
+                    let aiTool = trimmedNonEmptyText(entry.aiToolName) ?? "-"
+                    detailTimelineText(icon: "sparkles", value: "\("evolution.page.pipeline.aiTool".localized): \(aiTool)")
+                }
+                .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(stageColor(entry.stage).opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(stageColor(entry.stage).opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func detailMetaBadge(icon: String, label: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(label)
+                .font(.system(size: 10))
+            Text(value)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+        }
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(Color.secondary.opacity(0.12))
+        )
+    }
+
+    private func detailTimelineText(icon: String, value: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+            Text(value)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .lineLimit(1)
+        }
+    }
+
+    private func timelineStartTimeText(_ startedAt: String?) -> String {
+        guard let date = executionStartDate(startedAt) else {
+            return "\("evolution.page.pipeline.startTimeLabel".localized): -"
+        }
+        return "\("evolution.page.pipeline.startTimeLabel".localized): \(Self.cycleDetailTimeFormatter.string(from: date))"
+    }
+
+    private func timelineDurationText(_ entry: PipelineCycleTimelineEntry) -> String {
+        if let durationSeconds = entry.durationSeconds, durationSeconds > 0 {
+            return "\("evolution.page.pipeline.durationLabel".localized): \(Self.formatDuration(durationSeconds))"
+        }
+        let normalized = normalizedStageStatus(entry.status)
+        if normalized == "running" || normalized == "进行中" {
+            return "\("evolution.page.pipeline.durationLabel".localized): \(formatElapsedTimeFrom(entry.startedAt))"
+        }
+        return "\("evolution.page.pipeline.durationLabel".localized): \("evolution.page.pipeline.durationUnknown".localized)"
+    }
+
+    private func executionStartDate(_ value: String?) -> Date? {
+        guard let value = trimmedNonEmptyText(value) else { return nil }
+        return Self.rfc3339Formatter.date(from: value)
+            ?? Self.rfc3339FallbackFormatter.date(from: value)
+    }
+
+    private var reportSheet: some View {
+        NavigationStack {
+            Group {
+                if appState.evolutionReportLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("evolution.page.report.loading".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = appState.evolutionReportError {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text(error)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let content = appState.evolutionReportContent {
+                    ScrollView {
+                        MarkdownTextView(text: content, baseFontSize: 13, textColor: .primary)
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text("evolution.page.report.empty".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle("evolution.page.report.title".localized)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        refreshSelectedReport()
+                    } label: {
+                        Label("evolution.page.report.refresh".localized, systemImage: "arrow.clockwise")
+                    }
+                    .disabled(selectedReportCycleID == nil)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("common.close".localized) {
+                        isReportSheetPresented = false
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 560, minHeight: 420)
     }
 
     // MARK: - 终止/异常原因提示（仅在终止或异常时显示）
@@ -1354,6 +1761,18 @@ struct EvolutionPipelineView: View {
         return f
     }()
 
+    private static let cycleStartDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter
+    }()
+
+    private static let cycleDetailTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter
+    }()
+
     /// 计算所有已完成代理的总耗时（核心累加）
     private var totalDurationText: String? {
         let executionDurations = (currentItem?.executions ?? [])
@@ -1450,7 +1869,6 @@ struct EvolutionPipelineView: View {
         cycleHistories.removeAll()
         lastRecordedRound = 0
         cycleStartDate = Date()
-        selectedCycle = .currentCycle
     }
 
     /// 将 API 返回的历史循环数据同步到本地视图模型
@@ -1491,6 +1909,8 @@ struct EvolutionPipelineView: View {
                             stage: normalizedStageKey(execution.stage),
                             agent: execution.agent,
                             aiToolName: execution.aiTool,
+                            startedAt: trimmedNonEmptyText(execution.startedAt),
+                            status: execution.status,
                             durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
                         )
                     }
@@ -1503,6 +1923,7 @@ struct EvolutionPipelineView: View {
                         stage: normalizedStageKey(stage.stage),
                         agent: stage.agent,
                         aiToolName: stage.aiTool,
+                        status: stage.status,
                         durationSeconds: stage.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
                     )
                 }
@@ -1518,7 +1939,6 @@ struct EvolutionPipelineView: View {
                 terminalErrorMessage: cycle.terminalErrorMessage
             )
         }
-        normalizeCycleSelection(preferCurrent: false)
     }
 
     // MARK: - Stage Chat
@@ -1794,8 +2214,6 @@ struct EvolutionPipelineView: View {
             profiles: profiles
         )
         resetLocalTimeline()
-        // 启动后自动切换到本轮循环
-        withAnimation(.easeInOut(duration: 0.25)) { selectedCycle = .currentCycle }
     }
 
     private func actionHelpText(_ base: String, reason: String?) -> String {
@@ -1804,40 +2222,6 @@ struct EvolutionPipelineView: View {
             return base
         }
         return "\(base)\n\(reason)"
-    }
-
-    private func normalizeCycleSelection(preferCurrent: Bool) {
-        let hasCurrent = hasCurrentCycleRow
-        let firstHistoryID = cycleHistories.first?.id
-
-        if preferCurrent {
-            if hasCurrent {
-                selectedCycle = .currentCycle
-                return
-            }
-            if let firstHistoryID {
-                selectedCycle = .history(id: firstHistoryID)
-                return
-            }
-            selectedCycle = .currentCycle
-            return
-        }
-
-        switch selectedCycle {
-        case .currentCycle:
-            if !hasCurrent, let firstHistoryID {
-                selectedCycle = .history(id: firstHistoryID)
-            }
-        case .history(let id):
-            guard let firstHistoryID else {
-                selectedCycle = .currentCycle
-                return
-            }
-            let stillExists = cycleHistories.contains { $0.id == id }
-            if !stillExists {
-                selectedCycle = hasCurrent ? .currentCycle : .history(id: firstHistoryID)
-            }
-        }
     }
 
     private func refreshData() {
@@ -1984,14 +2368,28 @@ struct PipelineCycleStageEntry: Identifiable, Equatable {
     let stage: String
     let agent: String
     let aiToolName: String
+    /// 阶段开始时间（RFC3339）
+    let startedAt: String?
+    /// 阶段状态（运行中/已完成等）
+    let status: String?
     /// 运行时长（秒）
     let durationSeconds: TimeInterval
 
-    init(id: String, stage: String, agent: String, aiToolName: String = "", durationSeconds: TimeInterval) {
+    init(
+        id: String,
+        stage: String,
+        agent: String,
+        aiToolName: String = "",
+        startedAt: String? = nil,
+        status: String? = nil,
+        durationSeconds: TimeInterval
+    ) {
         self.id = id
         self.stage = stage
         self.agent = agent
         self.aiToolName = aiToolName
+        self.startedAt = startedAt
+        self.status = status
         self.durationSeconds = durationSeconds
     }
 
@@ -2004,6 +2402,47 @@ struct PipelineCycleStageEntry: Identifiable, Equatable {
             return "\(minutes)m\(String(format: "%02d", seconds))s"
         }
     }
+}
+
+struct PipelineCycleTimelineEntry: Identifiable, Equatable {
+    let id: String
+    let stage: String
+    let agent: String
+    let aiToolName: String
+    let status: String
+    let startedAt: String?
+    let durationSeconds: TimeInterval?
+
+    var startedAtDate: Date? {
+        guard let startedAt else { return nil }
+        return PipelineCycleTimelineEntry.rfc3339Formatter.date(from: startedAt)
+            ?? PipelineCycleTimelineEntry.rfc3339FallbackFormatter.date(from: startedAt)
+    }
+
+    private static let rfc3339Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let rfc3339FallbackFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+}
+
+struct PipelineCycleDetailPayload: Identifiable, Equatable {
+    let id: String
+    let cycleID: String
+    let title: String
+    let round: Int
+    let status: String?
+    let startTimeText: String
+    let totalDurationText: String?
+    let terminalReasonCode: String?
+    let terminalErrorMessage: String?
+    let timelineEntries: [PipelineCycleTimelineEntry]
 }
 
 struct PipelineCycleHistory: Identifiable, Equatable {

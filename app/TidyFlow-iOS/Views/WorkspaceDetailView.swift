@@ -1240,6 +1240,9 @@ struct MobileEvolutionView: View {
     @State private var hasPendingUserProfileEdit: Bool = false
     @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
     @State private var isHandoffSheetPresented: Bool = false
+    @State private var isReportSheetPresented: Bool = false
+    @State private var selectedReportCycleID: String?
+    @State private var selectedCycleDetail: MobileCycleDetailPayload?
 
     private struct EvolutionBlockerDraft {
         var selected: Bool
@@ -1654,6 +1657,12 @@ struct MobileEvolutionView: View {
         .sheet(isPresented: $isHandoffSheetPresented) {
             mobileHandoffSheet
         }
+        .sheet(isPresented: $isReportSheetPresented) {
+            mobileReportSheet
+        }
+        .sheet(item: $selectedCycleDetail) { detail in
+            mobileCycleDetailSheet(detail)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("common.refresh".localized) {
@@ -1745,6 +1754,78 @@ struct MobileEvolutionView: View {
                 }
             }
         }
+    }
+
+    private var mobileReportSheet: some View {
+        NavigationStack {
+            Group {
+                if appState.evolutionReportLoading {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("evolution.page.report.loading".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = appState.evolutionReportError {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text(error)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let content = appState.evolutionReportContent {
+                    ScrollView {
+                        Text(LocalizedStringKey(content))
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary)
+                        Text("evolution.page.report.empty".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle("evolution.page.report.title".localized)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        refreshSelectedReport()
+                    } label: {
+                        Label("evolution.page.report.refresh".localized, systemImage: "arrow.clockwise")
+                    }
+                    .disabled(selectedReportCycleID == nil)
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("common.close".localized) {
+                        isReportSheetPresented = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func openReportSheet(cycleID: String) {
+        selectedReportCycleID = cycleID
+        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
+        isReportSheetPresented = true
+    }
+
+    private func refreshSelectedReport() {
+        guard let cycleID = selectedReportCycleID else { return }
+        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
     }
 
     private func loadProfiles() {
@@ -2310,6 +2391,8 @@ struct MobileEvolutionView: View {
         let stage: String
         let agent: String
         let aiTool: String
+        let startedAt: String?
+        let status: String
         let durationMs: UInt64?
     }
 
@@ -2317,6 +2400,29 @@ struct MobileEvolutionView: View {
         let entry: MobileCycleBarEntry
         let ratio: CGFloat
         var id: String { entry.id }
+    }
+
+    private struct MobileCycleDetailTimelineEntry: Identifiable {
+        let id: String
+        let stage: String
+        let agent: String
+        let aiTool: String
+        let startedAt: String?
+        let status: String
+        let durationMs: UInt64?
+    }
+
+    private struct MobileCycleDetailPayload: Identifiable {
+        let id: String
+        let cycleID: String
+        let title: String
+        let round: Int
+        let status: String
+        let startTimeText: String
+        let totalDurationText: String?
+        let terminalReasonCode: String?
+        let terminalErrorMessage: String?
+        let timelineEntries: [MobileCycleDetailTimelineEntry]
     }
 
     private func mobileCycleBarEntries(_ cycle: EvolutionCycleHistoryItemV2) -> [MobileCycleBarEntry] {
@@ -2343,6 +2449,8 @@ struct MobileEvolutionView: View {
                     stage: execution.stage,
                     agent: execution.agent,
                     aiTool: execution.aiTool,
+                    startedAt: trimmedNonEmptyText(execution.startedAt),
+                    status: execution.status,
                     durationMs: execution.durationMs
                 )
             }
@@ -2355,6 +2463,8 @@ struct MobileEvolutionView: View {
                 stage: stage.stage,
                 agent: stage.agent,
                 aiTool: stage.aiTool,
+                startedAt: nil,
+                status: stage.status,
                 durationMs: stage.durationMs
             )
         }
@@ -2383,18 +2493,35 @@ struct MobileEvolutionView: View {
                 ForEach(cycles, id: \.cycleID) { cycle in
                     let entries = mobileCycleBarEntries(cycle)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(mobileCycleDisplayTitle(cycle.title))
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                        HStack {
-                            Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(mobileCycleDisplayTitle(cycle.title))
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                HStack(spacing: 8) {
+                                    Text(String(format: "evolution.page.pipeline.roundLabel".localized, cycle.globalLoopRound))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Label(mobileCycleTimeLabel(cycle.createdAt), systemImage: "clock")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
                             Spacer()
-                            Text(mobileCycleTimeLabel(cycle.createdAt))
-                                .font(.caption2)
+                            if mobileCycleHasReportDocument(cycle) {
+                                Button {
+                                    openReportSheet(cycleID: cycle.cycleID)
+                                } label: {
+                                    Image(systemName: "doc.text")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
                                 .foregroundColor(.secondary)
                         }
+
                         // 紧凑彩色条
                         mobileProportionalStageBar(entries: entries, height: 6)
 
@@ -2412,9 +2539,235 @@ struct MobileEvolutionView: View {
                         }
                     }
                     .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedCycleDetail = mobileCycleDetailPayload(cycle)
+                    }
                 }
             }
         }
+    }
+
+    private func mobileCycleHasReportDocument(_ cycle: EvolutionCycleHistoryItemV2) -> Bool {
+        if cycle.executions.contains(where: {
+            normalizedStageKey($0.stage) == "report" && isExecutionCompletedStatus($0.status)
+        }) {
+            return true
+        }
+        return cycle.stages.contains(where: { normalizedStageKey($0.stage) == "report" })
+    }
+
+    private func mobileCycleDetailPayload(_ cycle: EvolutionCycleHistoryItemV2) -> MobileCycleDetailPayload {
+        let timelineEntries: [MobileCycleDetailTimelineEntry] = {
+            let executionEntries = cycle.executions
+                .sorted { lhs, rhs in
+                    switch (lhs.startedAt.isEmpty, rhs.startedAt.isEmpty) {
+                    case (false, false):
+                        if lhs.startedAt != rhs.startedAt {
+                            return lhs.startedAt < rhs.startedAt
+                        }
+                    case (false, true):
+                        return true
+                    case (true, false):
+                        return false
+                    case (true, true):
+                        break
+                    }
+                    return lhs.sessionID < rhs.sessionID
+                }
+                .map { execution in
+                    MobileCycleDetailTimelineEntry(
+                        id: execution.sessionID + "|" + execution.startedAt,
+                        stage: execution.stage,
+                        agent: execution.agent,
+                        aiTool: execution.aiTool,
+                        startedAt: trimmedNonEmptyText(execution.startedAt),
+                        status: execution.status,
+                        durationMs: execution.durationMs
+                    )
+                }
+            if !executionEntries.isEmpty {
+                return executionEntries
+            }
+            return cycle.stages.enumerated().map { index, stage in
+                MobileCycleDetailTimelineEntry(
+                    id: "\(cycle.cycleID)_\(index)_\(stage.stage)",
+                    stage: stage.stage,
+                    agent: stage.agent,
+                    aiTool: stage.aiTool,
+                    startedAt: nil,
+                    status: stage.status,
+                    durationMs: stage.durationMs
+                )
+            }
+        }()
+
+        let totalDurationMs = timelineEntries.compactMap(\.durationMs).reduce(0, +)
+        let startTimeText: String = {
+            let earliest = timelineEntries
+                .compactMap { mobileParseISODate($0.startedAt) }
+                .min()
+            if let earliest {
+                return mobileCycleDateTimeLabel(earliest)
+            }
+            if let createdAt = mobileParseISODate(cycle.createdAt) {
+                return mobileCycleDateTimeLabel(createdAt)
+            }
+            return cycle.createdAt
+        }()
+
+        return MobileCycleDetailPayload(
+            id: cycle.cycleID,
+            cycleID: cycle.cycleID,
+            title: mobileCycleDisplayTitle(cycle.title),
+            round: max(1, cycle.globalLoopRound),
+            status: cycle.status,
+            startTimeText: startTimeText,
+            totalDurationText: totalDurationMs > 0 ? mobileStageDuration(TimeInterval(totalDurationMs) / 1000.0) : nil,
+            terminalReasonCode: cycle.terminalReasonCode,
+            terminalErrorMessage: cycle.terminalErrorMessage,
+            timelineEntries: timelineEntries
+        )
+    }
+
+    private func mobileCycleDetailSheet(_ detail: MobileCycleDetailPayload) -> some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Text(String(format: "evolution.page.pipeline.roundLabel".localized, detail.round))
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        Text(detail.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(localizedWorkspaceStatusDisplay(detail.status))
+                            .font(.caption)
+                            .foregroundColor(mobileWorkspaceStatusColor(detail.status))
+                    }
+
+                    HStack(spacing: 10) {
+                        Label("\("evolution.page.pipeline.startTimeLabel".localized): \(detail.startTimeText)", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let totalDurationText = detail.totalDurationText {
+                            Label("\("evolution.page.pipeline.durationLabel".localized): \(totalDurationText)", systemImage: "timer")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if let reason = trimmedNonEmptyText(detail.terminalReasonCode) {
+                        Text(mobileLocalizedTerminalReason(reason))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if let terminalError = trimmedNonEmptyText(detail.terminalErrorMessage) {
+                        Text(terminalError)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(4)
+                    }
+
+                    Divider()
+
+                    Text("evolution.page.pipeline.timelineTitle".localized)
+                        .font(.headline)
+
+                    if detail.timelineEntries.isEmpty {
+                        Text("evolution.page.pipeline.noTimeline".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(detail.timelineEntries) { entry in
+                                mobileCycleDetailTimelineRow(entry)
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle(String(format: "evolution.page.pipeline.roundLabel".localized, detail.round))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("common.close".localized) {
+                        selectedCycleDetail = nil
+                    }
+                }
+            }
+        }
+    }
+
+    private func mobileCycleDetailTimelineRow(_ entry: MobileCycleDetailTimelineEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(mobileStageColor(entry.stage))
+                    .frame(width: 8, height: 8)
+                Text(stageDisplayName(entry.stage))
+                    .font(.subheadline.weight(.semibold))
+                if let agent = trimmedNonEmptyText(entry.agent) {
+                    Text(agent)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            HStack(spacing: 10) {
+                Label("\("evolution.page.pipeline.startTimeLabel".localized): \(mobileTimelineStartTimeText(entry.startedAt))", systemImage: "clock")
+                Label("\("evolution.page.pipeline.durationLabel".localized): \(mobileTimelineDurationText(entry))", systemImage: "timer")
+                Label("\("evolution.page.pipeline.aiTool".localized): \(trimmedNonEmptyText(entry.aiTool) ?? "-")", systemImage: "sparkles")
+            }
+            .font(.caption2)
+            .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(mobileStageColor(entry.stage).opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(mobileStageColor(entry.stage).opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func mobileTimelineStartTimeText(_ startedAt: String?) -> String {
+        guard let date = mobileParseISODate(startedAt) else { return "-" }
+        return mobileCycleDateTimeLabel(date)
+    }
+
+    private func mobileTimelineDurationText(_ entry: MobileCycleDetailTimelineEntry) -> String {
+        if let durationMs = entry.durationMs, durationMs > 0 {
+            return mobileStageDuration(TimeInterval(durationMs) / 1000.0)
+        }
+        let normalized = normalizedStageStatus(entry.status)
+        if normalized == "running" || normalized == "进行中",
+           let startDate = mobileParseISODate(entry.startedAt) {
+            return mobileStageDuration(max(0, Date().timeIntervalSince(startDate)))
+        }
+        return "evolution.page.pipeline.durationUnknown".localized
+    }
+
+    private func mobileParseISODate(_ isoString: String?) -> Date? {
+        guard let isoString = trimmedNonEmptyText(isoString) else { return nil }
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackFormatter = ISO8601DateFormatter()
+        return isoFormatter.date(from: isoString) ?? fallbackFormatter.date(from: isoString)
+    }
+
+    private func mobileCycleDateTimeLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter.string(from: date)
     }
 
     private func mobileCycleTimeLabel(_ isoString: String) -> String {

@@ -359,11 +359,16 @@
 "evolution.page.action.stop" = "Stop";
 "evolution.page.action.resume" = "Resume";
 "evolution.page.action.previewHandoff" = "Handoff";
+"evolution.page.action.previewReport" = "Report";
 "evolution.page.handoff.title" = "Handoff Document";
 "evolution.page.handoff.empty" = "No handoff document yet";
 "evolution.page.handoff.loading" = "Loading…";
 "evolution.page.handoff.noCycle" = "No active cycle";
 "evolution.page.handoff.refresh" = "Refresh";
+"evolution.page.report.title" = "Report Document";
+"evolution.page.report.empty" = "No report document yet";
+"evolution.page.report.loading" = "Loading…";
+"evolution.page.report.refresh" = "Refresh";
 "evolution.page.agentList.section" = "Agents";
 "evolution.page.agentList.empty" = "No agent configuration";
 "evolution.page.agentType.section" = "Agent Types";
@@ -404,6 +409,10 @@
 "evolution.page.pipeline.durationLabel" = "Duration";
 "evolution.page.pipeline.durationUnknown" = "Unknown";
 "evolution.page.pipeline.historyCycles" = "History Cycles";
+"evolution.page.pipeline.startTimeLabel" = "Start";
+"evolution.page.pipeline.timelineTitle" = "Agent Timeline";
+"evolution.page.pipeline.aiTool" = "AI Tool";
+"evolution.page.pipeline.noTimeline" = "No agent execution records";
 
 "evolution.stage.direction" = "Direction";
 "evolution.stage.plan" = "Plan";

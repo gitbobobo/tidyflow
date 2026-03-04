@@ -361,11 +361,16 @@
 "evolution.page.action.stop" = "停止";
 "evolution.page.action.resume" = "恢复";
 "evolution.page.action.previewHandoff" = "Handoff";
+"evolution.page.action.previewReport" = "报告";
 "evolution.page.handoff.title" = "Handoff 文档";
 "evolution.page.handoff.empty" = "暂无 Handoff 文档";
 "evolution.page.handoff.loading" = "加载中…";
 "evolution.page.handoff.noCycle" = "当前无活跃循环";
 "evolution.page.handoff.refresh" = "刷新";
+"evolution.page.report.title" = "Report 文档";
+"evolution.page.report.empty" = "暂无 Report 文档";
+"evolution.page.report.loading" = "加载中…";
+"evolution.page.report.refresh" = "刷新";
 "evolution.page.agentList.section" = "代理列表";
 "evolution.page.agentList.empty" = "暂无代理配置";
 "evolution.page.agentType.section" = "代理类型";
@@ -406,6 +411,10 @@
 "evolution.page.pipeline.durationLabel" = "耗时";
 "evolution.page.pipeline.durationUnknown" = "未知";
 "evolution.page.pipeline.historyCycles" = "历史循环";
+"evolution.page.pipeline.startTimeLabel" = "开始时间";
+"evolution.page.pipeline.timelineTitle" = "代理时间线";
+"evolution.page.pipeline.aiTool" = "AI 工具";
+"evolution.page.pipeline.noTimeline" = "暂无代理执行记录";
 
 "evolution.stage.direction" = "方向";
 "evolution.stage.plan" = "计划";
