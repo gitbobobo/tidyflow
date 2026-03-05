@@ -22,6 +22,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 
 `direction.lifecycle_scan.json` 最小要求：
 - 顶层包含：`$schema_version`、`cycle_id`、`project_type`、`ui_capability`、`domains`、`updated_at`
+- `ui_capability` 必须是非空字符串（建议：`none|partial|full`），禁止使用布尔值 `true/false`
 - `domains` 至少 1 项，每项包含：`domain`、`status`、`evidence_paths`、`findings`、`opportunities`
 - `opportunities[*].mapped_direction_type` 只能是以下之一：
   - `feature`（新功能）
@@ -65,6 +66,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 - `decision.result="n/a"`
 - `decision.reason` 说明已完成方向收敛
 - `decision.context.capability_assessment` 必须包含：`ui_capability`、`test_capability`、`build_capability`、`runtime_capability`、`rationale`
+- `decision.context.capability_assessment` 中能力字段（`ui/test/build/runtime`）必须是非空字符串（建议：`none|partial|full`），`rationale` 也必须是非空字符串；禁止对能力字段使用布尔值
 - `next_action={"type":"goto_stage","target":"plan"}`
 - `inputs/outputs/timing/error` 字段齐全，`error=null`
 - `outputs` 至少包含 `stage.direction.json`、`direction.lifecycle_scan.json`、`handoff.md`

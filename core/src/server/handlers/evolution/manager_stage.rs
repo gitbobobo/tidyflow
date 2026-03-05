@@ -2533,12 +2533,26 @@ impl EvolutionManager {
             "runtime_capability",
             "rationale",
         ] {
-            let valid = capability
-                .get(key)
-                .and_then(|v| v.as_str())
-                .map(|v| !v.trim().is_empty())
-                .unwrap_or(false);
-            if !valid {
+            let value = capability.get(key).ok_or_else(|| {
+                format!(
+                    "stage.direction.json.decision.context.capability_assessment.{} 缺少",
+                    key
+                )
+            })?;
+            let text = value.as_str().ok_or_else(|| {
+                if key == "rationale" {
+                    format!(
+                        "stage.direction.json.decision.context.capability_assessment.{} 必须是非空字符串",
+                        key
+                    )
+                } else {
+                    format!(
+                        "stage.direction.json.decision.context.capability_assessment.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
+                        key
+                    )
+                }
+            })?;
+            if text.trim().is_empty() {
                 return Err(format!(
                     "stage.direction.json.decision.context.capability_assessment.{} 不能为空",
                     key
@@ -2573,12 +2587,20 @@ impl EvolutionManager {
             )?;
         }
         for key in ["project_type", "ui_capability", "updated_at"] {
-            if lifecycle_scan
+            let value = lifecycle_scan
                 .get(key)
-                .and_then(|v| v.as_str())
-                .map(|v| v.trim().is_empty())
-                .unwrap_or(true)
-            {
+                .ok_or_else(|| format!("direction.lifecycle_scan.json.{} 缺少", key))?;
+            let text = value.as_str().ok_or_else(|| {
+                if key == "ui_capability" {
+                    format!(
+                        "direction.lifecycle_scan.json.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
+                        key
+                    )
+                } else {
+                    format!("direction.lifecycle_scan.json.{} 必须是非空字符串", key)
+                }
+            })?;
+            if text.trim().is_empty() {
                 return Err(format!("direction.lifecycle_scan.json.{} 不能为空", key));
             }
         }
@@ -3859,6 +3881,25 @@ impl EvolutionManager {
         {
             return "当 verify_iteration>0 时，report.result.json.verification_summary.remediation_tracking 必须是非空数组（[]）；不要写成对象。"
                 .to_string();
+        }
+
+        if normalized_error_message.contains("不能为空")
+            || normalized_error_message.contains("必须是")
+        {
+            if let Some(field) = [
+                "ui_capability",
+                "test_capability",
+                "build_capability",
+                "runtime_capability",
+            ]
+            .iter()
+            .find(|field| normalized_error_message.contains(**field))
+            {
+                return format!(
+                    "{} 必须填写为非空字符串（建议值：none|partial|full），禁止使用 true/false。",
+                    field
+                );
+            }
         }
 
         if normalized_error_message.contains("必须是数字") {
@@ -6322,6 +6363,23 @@ mod tests {
             "artifact_contract_violation",
             "stage.direction.json.cycle_title 不能为空",
             "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。",
+            "stage.direction.json / direction.lifecycle_scan.json / cycle.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_direction_ui_capability_constraint(
+    ) {
+        let raw_error =
+            "evo_stage_output_invalid:artifact_contract_violation: direction.lifecycle_scan.json.ui_capability 不能为空";
+        let msg = EvolutionManager::build_validation_reminder_message("direction", raw_error);
+        let expected = expected_validation_reminder(
+            "direction",
+            "artifact_contract_violation",
+            "direction.lifecycle_scan.json.ui_capability 不能为空",
+            "ui_capability 必须填写为非空字符串（建议值：none|partial|full），禁止使用 true/false。",
             "stage.direction.json / direction.lifecycle_scan.json / cycle.json",
             raw_error,
         );
