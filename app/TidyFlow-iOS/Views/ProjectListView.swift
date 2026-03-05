@@ -317,7 +317,7 @@ struct MobileSettingsView: View {
         case "implement_advanced": return "Implement Advanced"
         case "verify": return "Verify"
         case "judge": return "Judge"
-        case "report": return "Report"
+        case "auto_commit": return "Auto Commit"
         case "implement": return "Implement General"
         default: return stage
         }

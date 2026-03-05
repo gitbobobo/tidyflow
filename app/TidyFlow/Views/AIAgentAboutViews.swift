@@ -238,7 +238,6 @@ struct AIAgentSection: View {
         case "implement_advanced": return "Implement Advanced"
         case "verify":    return "Verify"
         case "judge":     return "Judge"
-        case "report":    return "Report"
         case "auto_commit": return "Auto Commit"
         default:          return stage
         }

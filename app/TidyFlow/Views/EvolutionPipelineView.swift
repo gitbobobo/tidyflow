@@ -15,8 +15,7 @@ struct EvolutionPipelineView: View {
     @State private var lastLoopRoundWorkspaceContext: String = ""
     @State private var isBlockerSheetPresented: Bool = false
     @State private var isHandoffSheetPresented: Bool = false
-    @State private var isReportSheetPresented: Bool = false
-    @State private var selectedReportCycleID: String?
+    @State private var selectedHandoffCycleID: String?
     @State private var selectedCycleDetail: PipelineCycleDetailPayload?
     @State private var blockerDrafts: [String: EvolutionPipelineBlockerDraft] = [:]
 
@@ -90,7 +89,7 @@ struct EvolutionPipelineView: View {
     private let evolutionStageOrder: [String] = [
         "direction", "plan",
         "implement_general", "implement_visual", "implement_advanced",
-        "verify", "judge", "report", "auto_commit",
+        "verify", "judge", "auto_commit",
     ]
 
     /// 可循环的代理阶段
@@ -112,7 +111,6 @@ struct EvolutionPipelineView: View {
         case "implement_advanced": return .purple
         case "verify": return .green
         case "judge": return .yellow
-        case "report": return .mint
         case "auto_commit": return .gray
         default: return .secondary
         }
@@ -184,9 +182,6 @@ struct EvolutionPipelineView: View {
         }
         .sheet(isPresented: $isHandoffSheetPresented) {
             handoffSheet
-        }
-        .sheet(isPresented: $isReportSheetPresented) {
-            reportSheet
         }
     }
 
@@ -420,13 +415,9 @@ struct EvolutionPipelineView: View {
 
     private var standbySection: some View {
         let standbyAgents = computeStandbyAgents()
-        // 进入报告阶段后隐藏待命队列
-        let isInReportPhase = (currentItem?.agents ?? []).contains {
-            normalizedStageKey($0.stage) == "report" && normalizedStageStatus($0.status) == "running"
-        }
 
         return Group {
-            if !standbyAgents.isEmpty && !isInReportPhase {
+            if !standbyAgents.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     sectionLabel("evolution.page.pipeline.standby".localized, icon: "clock", color: .secondary)
 
@@ -618,13 +609,11 @@ struct EvolutionPipelineView: View {
                             durationSeconds: entry.durationSeconds
                         )
                     },
-                    onReportTap: currentCycleHasReportDocument
-                        ? {
-                            if let cycleID = currentItem?.cycleID {
-                                openReportSheet(for: cycleID)
-                            }
+                    onDocumentTap: {
+                        if let cycleID = currentItem?.cycleID {
+                            openHandoffSheet(for: cycleID)
                         }
-                        : nil
+                    }
                 ) {
                     openCurrentCycleDetailSheet()
                 }
@@ -640,7 +629,7 @@ struct EvolutionPipelineView: View {
                     stageEntries: cycle.stageEntries.isEmpty ? cycle.stages.map { stage in
                         PipelineCycleStageEntry(id: UUID().uuidString, stage: stage, agent: "", durationSeconds: 0)
                     } : cycle.stageEntries,
-                    onReportTap: cycleHasReportDocument(cycle) ? { openReportSheet(for: cycle.id) } : nil
+                    onDocumentTap: { openHandoffSheet(for: cycle.id) }
                 ) {
                     openHistoryCycleDetailSheet(cycle)
                 }
@@ -671,18 +660,6 @@ struct EvolutionPipelineView: View {
         (currentItem?.agents ?? []).contains { normalizedStageStatus($0.status) == "running" }
     }
 
-    private var currentCycleHasReportDocument: Bool {
-        guard let item = currentItem else { return false }
-        if item.executions.contains(where: {
-            normalizedStageKey($0.stage) == "report" && isExecutionCompletedStatus($0.status)
-        }) {
-            return true
-        }
-        return item.agents.contains(where: {
-            normalizedStageKey($0.stage) == "report" && isCompletedStatus(normalizedStageStatus($0.status))
-        })
-    }
-
     private var currentCycleStartTimeText: String {
         if let item = currentItem {
             let earliest = item.executions
@@ -693,13 +670,6 @@ struct EvolutionPipelineView: View {
             }
         }
         return cycleStartTimeText(cycleStartDate)
-    }
-
-    private func cycleHasReportDocument(_ cycle: PipelineCycleHistory) -> Bool {
-        if cycle.stageEntries.contains(where: { normalizedStageKey($0.stage) == "report" }) {
-            return true
-        }
-        return cycle.stages.contains(where: { normalizedStageKey($0) == "report" })
     }
 
     private func cycleStartTimeText(_ date: Date) -> String {
@@ -741,7 +711,7 @@ struct EvolutionPipelineView: View {
         badge: String? = nil,
         startTimeText: String,
         stageEntries: [PipelineCycleStageEntry]? = nil,
-        onReportTap: (() -> Void)? = nil,
+        onDocumentTap: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
         // 计算总耗时
@@ -759,13 +729,13 @@ struct EvolutionPipelineView: View {
 
                 Spacer()
 
-                if let onReportTap {
-                    Button(action: onReportTap) {
+                if let onDocumentTap {
+                    Button(action: onDocumentTap) {
                         Image(systemName: "doc.text")
                             .font(.system(size: 10, weight: .semibold))
                     }
                     .buttonStyle(.borderless)
-                    .help("evolution.page.action.previewReport".localized)
+                    .help("evolution.page.action.previewHandoff".localized)
                 }
 
                 Image(systemName: "chevron.right")
@@ -903,16 +873,22 @@ struct EvolutionPipelineView: View {
         selectedCycleDetail = makeHistoryCycleDetailPayload(cycle)
     }
 
-    private func openReportSheet(for cycleID: String) {
+    private func openHandoffSheet(for cycleID: String) {
         guard let workspace else { return }
-        selectedReportCycleID = cycleID
-        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
-        isReportSheetPresented = true
+        selectedHandoffCycleID = cycleID
+        appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
+        isHandoffSheetPresented = true
     }
 
-    private func refreshSelectedReport() {
-        guard let workspace, let cycleID = selectedReportCycleID else { return }
-        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
+    private func refreshSelectedHandoff() {
+        if let cycleID = selectedHandoffCycleID {
+            guard let workspace else { return }
+            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
+            return
+        }
+        if let item = currentItem {
+            appState.requestEvolutionHandoff(project: project, workspace: item.workspace, cycleID: item.cycleID)
+        }
     }
 
     private func makeCurrentCycleDetailPayload(_ item: EvolutionWorkspaceItemV2) -> PipelineCycleDetailPayload {
@@ -1198,67 +1174,6 @@ struct EvolutionPipelineView: View {
         guard let value = trimmedNonEmptyText(value) else { return nil }
         return Self.rfc3339Formatter.date(from: value)
             ?? Self.rfc3339FallbackFormatter.date(from: value)
-    }
-
-    private var reportSheet: some View {
-        NavigationStack {
-            Group {
-                if appState.evolutionReportLoading {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("evolution.page.report.loading".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = appState.evolutionReportError {
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 32))
-                            .foregroundColor(.secondary)
-                        Text(error)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let content = appState.evolutionReportContent {
-                    ScrollView {
-                        MarkdownTextView(text: content, baseFontSize: 13, textColor: .primary)
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 32))
-                            .foregroundColor(.secondary)
-                        Text("evolution.page.report.empty".localized)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .navigationTitle("evolution.page.report.title".localized)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        refreshSelectedReport()
-                    } label: {
-                        Label("evolution.page.report.refresh".localized, systemImage: "arrow.clockwise")
-                    }
-                    .disabled(selectedReportCycleID == nil)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("common.close".localized) {
-                        isReportSheetPresented = false
-                    }
-                }
-            }
-        }
-        .frame(minWidth: 560, minHeight: 420)
     }
 
     // MARK: - 终止/异常原因提示（仅在终止或异常时显示）
@@ -1963,8 +1878,7 @@ struct EvolutionPipelineView: View {
 
     private func loadHandoffAndPresent() {
         guard let item = currentItem else { return }
-        appState.requestEvolutionHandoff(project: project, workspace: item.workspace, cycleID: item.cycleID)
-        isHandoffSheetPresented = true
+        openHandoffSheet(for: item.cycleID)
     }
 
     private var handoffSheet: some View {
@@ -2012,14 +1926,15 @@ struct EvolutionPipelineView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        loadHandoffAndPresent()
+                        refreshSelectedHandoff()
                     } label: {
                         Label("evolution.page.handoff.refresh".localized, systemImage: "arrow.clockwise")
                     }
-                    .disabled(currentItem == nil)
+                    .disabled(selectedHandoffCycleID == nil && currentItem == nil)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("common.close".localized) {
+                        selectedHandoffCycleID = nil
                         isHandoffSheetPresented = false
                     }
                 }
@@ -2351,7 +2266,6 @@ struct EvolutionPipelineView: View {
         case "implement": return "evolution.stage.implementGeneral".localized
         case "verify": return "evolution.stage.verify".localized
         case "judge": return "evolution.stage.judge".localized
-        case "report": return "evolution.stage.report".localized
         case "auto_commit": return "evolution.stage.autoCommit".localized
         default: return trimmed
         }
@@ -2366,7 +2280,6 @@ struct EvolutionPipelineView: View {
         case "implement_advanced": return "wand.and.stars"
         case "verify": return "checkmark.seal"
         case "judge": return "scalemass"
-        case "report": return "doc.text"
         case "auto_commit": return "sparkles"
         default: return "person.crop.square"
         }

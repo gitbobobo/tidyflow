@@ -1290,8 +1290,7 @@ struct MobileEvolutionView: View {
     @State private var hasPendingUserProfileEdit: Bool = false
     @State private var blockerDrafts: [String: EvolutionBlockerDraft] = [:]
     @State private var isHandoffSheetPresented: Bool = false
-    @State private var isReportSheetPresented: Bool = false
-    @State private var selectedReportCycleID: String?
+    @State private var selectedHandoffCycleID: String?
     @State private var selectedCycleDetail: MobileCycleDetailPayload?
 
     private struct EvolutionBlockerDraft {
@@ -1341,7 +1340,6 @@ struct MobileEvolutionView: View {
         "implement_advanced",
         "verify",
         "judge",
-        "report",
         "auto_commit",
     ]
 
@@ -1465,8 +1463,7 @@ struct MobileEvolutionView: View {
 
                 Button {
                     if let item {
-                        appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: item.cycleID)
-                        isHandoffSheetPresented = true
+                        openHandoffSheet(cycleID: item.cycleID)
                     }
                 } label: {
                     Label("evolution.page.action.previewHandoff".localized, systemImage: "doc.text")
@@ -1707,9 +1704,6 @@ struct MobileEvolutionView: View {
         .sheet(isPresented: $isHandoffSheetPresented) {
             mobileHandoffSheet
         }
-        .sheet(isPresented: $isReportSheetPresented) {
-            mobileReportSheet
-        }
         .sheet(item: $selectedCycleDetail) { detail in
             mobileCycleDetailSheet(detail)
         }
@@ -1789,16 +1783,15 @@ struct MobileEvolutionView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        if let item {
-                            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: item.cycleID)
-                        }
+                        refreshSelectedHandoff()
                     } label: {
                         Label("evolution.page.handoff.refresh".localized, systemImage: "arrow.clockwise")
                     }
-                    .disabled(item == nil)
+                    .disabled(selectedHandoffCycleID == nil && item == nil)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("common.close".localized) {
+                        selectedHandoffCycleID = nil
                         isHandoffSheetPresented = false
                     }
                 }
@@ -1806,76 +1799,20 @@ struct MobileEvolutionView: View {
         }
     }
 
-    private var mobileReportSheet: some View {
-        NavigationStack {
-            Group {
-                if appState.evolutionReportLoading {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("evolution.page.report.loading".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = appState.evolutionReportError {
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 32))
-                            .foregroundColor(.secondary)
-                        Text(error)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let content = appState.evolutionReportContent {
-                    ScrollView {
-                        Text(LocalizedStringKey(content))
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 32))
-                            .foregroundColor(.secondary)
-                        Text("evolution.page.report.empty".localized)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .navigationTitle("evolution.page.report.title".localized)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        refreshSelectedReport()
-                    } label: {
-                        Label("evolution.page.report.refresh".localized, systemImage: "arrow.clockwise")
-                    }
-                    .disabled(selectedReportCycleID == nil)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("common.close".localized) {
-                        isReportSheetPresented = false
-                    }
-                }
-            }
+    private func openHandoffSheet(cycleID: String) {
+        selectedHandoffCycleID = cycleID
+        appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
+        isHandoffSheetPresented = true
+    }
+
+    private func refreshSelectedHandoff() {
+        if let cycleID = selectedHandoffCycleID {
+            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: cycleID)
+            return
         }
-    }
-
-    private func openReportSheet(cycleID: String) {
-        selectedReportCycleID = cycleID
-        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
-        isReportSheetPresented = true
-    }
-
-    private func refreshSelectedReport() {
-        guard let cycleID = selectedReportCycleID else { return }
-        appState.requestEvolutionReport(project: project, workspace: workspace, cycleID: cycleID)
+        if let item {
+            appState.requestEvolutionHandoff(project: project, workspace: workspace, cycleID: item.cycleID)
+        }
     }
 
     private func loadProfiles() {
@@ -2425,8 +2362,6 @@ struct MobileEvolutionView: View {
             return "evolution.stage.verify".localized
         case "judge":
             return "evolution.stage.judge".localized
-        case "report":
-            return "evolution.stage.report".localized
         case "auto_commit":
             return "evolution.stage.autoCommit".localized
         default:
@@ -2529,7 +2464,6 @@ struct MobileEvolutionView: View {
         case "implement_advanced": return .purple
         case "verify": return .green
         case "judge": return .yellow
-        case "report": return .mint
         case "auto_commit": return .gray
         default: return .secondary
         }
@@ -2559,15 +2493,13 @@ struct MobileEvolutionView: View {
                                 }
                             }
                             Spacer()
-                            if mobileCycleHasReportDocument(cycle) {
-                                Button {
-                                    openReportSheet(cycleID: cycle.cycleID)
-                                } label: {
-                                    Image(systemName: "doc.text")
-                                        .font(.caption.weight(.semibold))
-                                }
-                                .buttonStyle(.borderless)
+                            Button {
+                                openHandoffSheet(cycleID: cycle.cycleID)
+                            } label: {
+                                Image(systemName: "doc.text")
+                                    .font(.caption.weight(.semibold))
                             }
+                            .buttonStyle(.borderless)
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundColor(.secondary)
@@ -2597,15 +2529,6 @@ struct MobileEvolutionView: View {
                 }
             }
         }
-    }
-
-    private func mobileCycleHasReportDocument(_ cycle: EvolutionCycleHistoryItemV2) -> Bool {
-        if cycle.executions.contains(where: {
-            normalizedStageKey($0.stage) == "report" && isExecutionCompletedStatus($0.status)
-        }) {
-            return true
-        }
-        return cycle.stages.contains(where: { normalizedStageKey($0.stage) == "report" })
     }
 
     private func mobileCycleDetailPayload(_ cycle: EvolutionCycleHistoryItemV2) -> MobileCycleDetailPayload {

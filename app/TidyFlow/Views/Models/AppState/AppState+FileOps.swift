@@ -183,20 +183,6 @@ extension AppState {
             return
         }
 
-        // Report 文档预览分流
-        if let pendingPath = pendingReportReadPath, pendingPath == result.path {
-            pendingReportReadPath = nil
-            evolutionReportLoading = false
-            let content = String(decoding: result.content, as: UTF8.self)
-            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                evolutionReportError = "evolution.page.report.empty".localized
-                evolutionReportContent = nil
-            } else {
-                evolutionReportContent = content
-            }
-            return
-        }
-
         let key = editorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
 
         guard pendingFileReadRequests.contains(key) else {

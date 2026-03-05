@@ -380,7 +380,6 @@ extension AppState {
             "implement_advanced",
             "verify",
             "judge",
-            "report",
             "auto_commit",
         ]
     }

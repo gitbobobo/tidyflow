@@ -443,12 +443,8 @@ class AppState: ObservableObject {
     @Published var evolutionHandoffContent: String?
     @Published var evolutionHandoffLoading: Bool = false
     @Published var evolutionHandoffError: String?
-    @Published var evolutionReportContent: String?
-    @Published var evolutionReportLoading: Bool = false
-    @Published var evolutionReportError: String?
     @Published var evolutionCycleHistories: [String: [EvolutionCycleHistoryItemV2]] = [:]
     var pendingHandoffReadPath: String?
-    var pendingReportReadPath: String?
     @Published var evidenceSnapshotsByWorkspace: [String: EvidenceSnapshotV2] = [:]
     @Published var evidenceLoadingByWorkspace: [String: Bool] = [:]
     @Published var evidenceErrorByWorkspace: [String: String] = [:]
