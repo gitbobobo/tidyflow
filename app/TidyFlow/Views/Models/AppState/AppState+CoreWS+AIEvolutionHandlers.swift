@@ -414,11 +414,55 @@ extension AppState {
         )
     }
 
+    private func fallbackSessionStatusForChatDone(stopReason: String?) -> String {
+        let reason = (stopReason ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if reason.isEmpty {
+            return "success"
+        }
+        if reason.contains("cancel") || reason.contains("abort") || reason.contains("interrupt") {
+            return "cancelled"
+        }
+        if reason.contains("awaiting_input") ||
+            reason.contains("requires_input") ||
+            reason.contains("need_input") {
+            return "awaiting_input"
+        }
+        if reason.contains("error") || reason.contains("fail") {
+            return "failure"
+        }
+        return "success"
+    }
+
     func handleAIChatDone(_ ev: AIChatDoneV2) {
         #if os(iOS)
         consumeEvolutionReplayDoneIfNeeded(ev)
         #endif
         consumeSubAgentViewerDoneIfNeeded(ev)
+
+        // 兜底收敛：部分后端路径可能未及时推送 ai_session_status_update，
+        // 避免会话列表长期停留在 running。
+        let fallbackStatus = fallbackSessionStatusForChatDone(stopReason: ev.stopReason)
+        scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
+        upsertAISessionStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            status: fallbackStatus,
+            errorMessage: nil,
+            contextRemainingPercent: nil
+        )
+        if selectedProjectName == ev.projectName,
+           selectedWorkspaceKey == ev.workspaceName {
+            reconcileAIStreamStateFromSessionStatus(
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: fallbackStatus
+            )
+        }
+
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
@@ -453,6 +497,27 @@ extension AppState {
         consumeEvolutionReplayErrorIfNeeded(ev)
         #endif
         consumeSubAgentViewerErrorIfNeeded(ev)
+
+        // 兜底收敛：确保 error 事件会把会话状态从 running 拉回终态。
+        scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
+        upsertAISessionStatus(
+            projectName: ev.projectName,
+            workspaceName: ev.workspaceName,
+            aiTool: ev.aiTool,
+            sessionId: ev.sessionId,
+            status: "failure",
+            errorMessage: ev.error,
+            contextRemainingPercent: nil
+        )
+        if selectedProjectName == ev.projectName,
+           selectedWorkspaceKey == ev.workspaceName {
+            reconcileAIStreamStateFromSessionStatus(
+                aiTool: ev.aiTool,
+                sessionId: ev.sessionId,
+                status: "failure"
+            )
+        }
+
         guard selectedProjectName == ev.projectName,
               selectedWorkspaceKey == ev.workspaceName else { return }
         let store = aiStore(for: ev.aiTool)
