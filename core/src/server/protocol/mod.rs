@@ -2110,6 +2110,20 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_evo_start_workspace_should_reject_legacy_project_fields() {
+        let json = r#"{"type":"evo_start_workspace","project_name":"demo","workspace_name":"default","priority":0,"loop_round_limit":3}"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_evo_resume_workspace_should_reject_legacy_project_fields() {
+        let json = r#"{"type":"evo_resume_workspace","project_name":"demo","workspace_name":"default"}"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_ai_session_messages_result_roundtrip_with_pagination_fields() {
         let message = ServerMessage::AISessionMessages {
             project_name: "demo".to_string(),
