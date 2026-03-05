@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
@@ -24,78 +23,10 @@ pub(crate) const MAX_AI_SESSION_MESSAGES_PAYLOAD_BYTES: usize = 900_000;
 pub(crate) const MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES: usize = 850_000;
 pub(crate) const AI_STREAM_SNAPSHOT_TERMINAL_TTL_MS: i64 = 2 * 60 * 1000;
 pub(crate) const AI_STREAM_SNAPSHOT_STALE_TTL_MS: i64 = 30 * 60 * 1000;
-const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_LOW: Duration = Duration::from_millis(250);
-const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_MEDIUM: Duration = Duration::from_millis(500);
-const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGH: Duration = Duration::from_millis(1000);
-const AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGHEST: Duration = Duration::from_millis(1500);
 
-fn parse_env_bool(name: &str, default: bool) -> bool {
-    match std::env::var(name) {
-        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" | "on" => true,
-            "0" | "false" | "no" | "off" => false,
-            _ => default,
-        },
-        Err(_) => default,
-    }
-}
-
-fn perf_active_only_delta_broadcast_enabled() -> bool {
-    parse_env_bool("PERF_ACTIVE_ONLY_DELTA_BROADCAST", true)
-}
-
-fn session_summary_broadcast_gate() -> &'static Mutex<HashMap<String, Instant>> {
-    static GATE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
-    GATE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn summary_broadcast_interval_by_depth(depth: usize) -> Duration {
-    if depth < 128 {
-        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_LOW
-    } else if depth < 256 {
-        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_MEDIUM
-    } else if depth < 512 {
-        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGH
-    } else {
-        AI_STREAM_BROADCAST_SUMMARY_INTERVAL_HIGHEST
-    }
-}
-
-fn allow_summary_broadcast(session_id: &str, interval: Duration) -> bool {
-    let now = Instant::now();
-    let mut gate = session_summary_broadcast_gate()
-        .lock()
-        .expect("summary broadcast gate poisoned");
-
-    if let Some(last) = gate.get(session_id) {
-        if now.duration_since(*last) < interval {
-            return false;
-        }
-    }
-    gate.insert(session_id.to_string(), now);
-
-    if gate.len() > 4096 {
-        gate.retain(|_, ts| now.duration_since(*ts) <= Duration::from_secs(600));
-    }
+fn should_broadcast_stream_message(_msg: &ServerMessage, _broadcast_depth: usize) -> bool {
+    // 协议已硬切到 ai_session_messages_update，不再保留旧增量事件节流分支。
     true
-}
-
-fn should_broadcast_stream_message(msg: &ServerMessage, broadcast_depth: usize) -> bool {
-    if !perf_active_only_delta_broadcast_enabled() {
-        return true;
-    }
-
-    match msg {
-        // 高频 token 增量只保留给当前活跃连接，避免广播通道被淹没。
-        ServerMessage::AIChatPartDelta { .. } => false,
-        // 其余连接只接收节流后的阶段性摘要更新。
-        ServerMessage::AIChatPartUpdated { session_id, .. }
-        | ServerMessage::AIChatMessageUpdated { session_id, .. } => {
-            let interval = summary_broadcast_interval_by_depth(broadcast_depth);
-            allow_summary_broadcast(session_id, interval)
-        }
-        _ => true,
-    }
 }
 
 fn should_cleanup_stream_snapshot(snapshot: &AiStreamSnapshot, now: i64) -> bool {
@@ -1530,7 +1461,6 @@ mod tests {
         MAX_AI_SESSION_UPDATE_PAYLOAD_BYTES,
     };
     use crate::server::protocol::ServerMessage;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn infer_selection_hint_prefers_last_user_message_metadata() {
@@ -1603,23 +1533,6 @@ mod tests {
     }
 
     #[test]
-    fn stream_delta_is_not_broadcast_when_perf_mode_enabled() {
-        let msg = ServerMessage::AIChatPartDelta {
-            project_name: "p".to_string(),
-            workspace_name: "w".to_string(),
-            ai_tool: "codex".to_string(),
-            session_id: "session-delta".to_string(),
-            message_id: "m1".to_string(),
-            part_id: "part-1".to_string(),
-            part_type: "text".to_string(),
-            field: "text".to_string(),
-            delta: "hello".to_string(),
-        };
-
-        assert!(!should_broadcast_stream_message(&msg, 0));
-    }
-
-    #[test]
     fn stream_done_is_always_broadcast() {
         let msg = ServerMessage::AIChatDone {
             project_name: "p".to_string(),
@@ -1634,65 +1547,23 @@ mod tests {
     }
 
     #[test]
-    fn stream_message_update_is_throttled_per_session() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let session_id = format!("session-throttle-{}", unique);
-
-        let msg = ServerMessage::AIChatMessageUpdated {
+    fn stream_session_update_is_always_broadcast() {
+        let msg = ServerMessage::AISessionMessagesUpdate {
             project_name: "p".to_string(),
             workspace_name: "w".to_string(),
             ai_tool: "codex".to_string(),
-            session_id: session_id.clone(),
-            message_id: "m1".to_string(),
-            role: "assistant".to_string(),
+            session_id: "s1".to_string(),
+            cache_revision: 1,
+            is_streaming: true,
             selection_hint: None,
-        };
-        let same_session_msg = ServerMessage::AIChatMessageUpdated {
-            project_name: "p".to_string(),
-            workspace_name: "w".to_string(),
-            ai_tool: "codex".to_string(),
-            session_id,
-            message_id: "m1".to_string(),
-            role: "assistant".to_string(),
-            selection_hint: None,
+            messages: None,
+            ops: Some(vec![crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                message_id: "m1".to_string(),
+                role: "assistant".to_string(),
+            }]),
         };
 
         assert!(should_broadcast_stream_message(&msg, 0));
-        assert!(!should_broadcast_stream_message(&same_session_msg, 0));
-    }
-
-    #[test]
-    fn stream_message_update_uses_longer_window_with_high_queue_depth() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let session_id = format!("session-throttle-depth-{}", unique);
-
-        let msg = ServerMessage::AIChatMessageUpdated {
-            project_name: "p".to_string(),
-            workspace_name: "w".to_string(),
-            ai_tool: "codex".to_string(),
-            session_id: session_id.clone(),
-            message_id: "m1".to_string(),
-            role: "assistant".to_string(),
-            selection_hint: None,
-        };
-        let same_session_msg = ServerMessage::AIChatMessageUpdated {
-            project_name: "p".to_string(),
-            workspace_name: "w".to_string(),
-            ai_tool: "codex".to_string(),
-            session_id,
-            message_id: "m1".to_string(),
-            role: "assistant".to_string(),
-            selection_hint: None,
-        };
-
-        assert!(should_broadcast_stream_message(&msg, 600));
-        assert!(!should_broadcast_stream_message(&same_session_msg, 600));
     }
 
     #[test]

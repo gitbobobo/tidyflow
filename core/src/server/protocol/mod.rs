@@ -1210,39 +1210,6 @@ pub enum ServerMessage {
         tasks: Vec<TaskSnapshotEntry>,
     },
 
-    // vNext: AI Chat（结构化事件流，无兼容）
-    #[serde(rename = "ai_chat_message_updated")]
-    AIChatMessageUpdated {
-        project_name: String,
-        workspace_name: String,
-        ai_tool: String,
-        session_id: String,
-        message_id: String,
-        role: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        selection_hint: Option<ai::SessionSelectionHint>,
-    },
-    #[serde(rename = "ai_chat_part_updated")]
-    AIChatPartUpdated {
-        project_name: String,
-        workspace_name: String,
-        ai_tool: String,
-        session_id: String,
-        message_id: String,
-        part: ai::PartInfo,
-    },
-    #[serde(rename = "ai_chat_part_delta")]
-    AIChatPartDelta {
-        project_name: String,
-        workspace_name: String,
-        ai_tool: String,
-        session_id: String,
-        message_id: String,
-        part_id: String,
-        part_type: String,
-        field: String,
-        delta: String,
-    },
     #[serde(rename = "ai_chat_pending")]
     AIChatPending {
         project_name: String,

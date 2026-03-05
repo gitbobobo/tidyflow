@@ -123,6 +123,10 @@
 
 - 本版本不向后兼容 v6。
 - 客户端必须发送 v7 包络；服务端统一返回 v7 包络。
+- AI 聊天流式事件已硬切旧协议：
+  - 已移除：`ai_chat_message_updated`、`ai_chat_part_updated`、`ai_chat_part_delta`
+  - 仅保留：`ai_session_messages_update`（`messages` / `ops` / `cache_revision`）作为流式主链路
+  - `ai_chat_done`、`ai_chat_error` 保留为终态控制事件，不承担 token 增量职责
 
 ## 主要能力范围
 
