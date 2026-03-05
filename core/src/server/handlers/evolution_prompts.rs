@@ -190,7 +190,7 @@ pub const STAGE_PLAN_DELIVERABLE_PROMPT: &str = r####"
 产物列表：
 - `STAGE_FILE_PATH`（即 `stage.plan.json`）
 - `PLAN_EXECUTION_PATH`
-- `handoff.md` 交接文档（追加，要求语言简洁）
+- `handoff.md` 交接文档（追加）
 
 `plan.execution.json` 示例（可直接填充）：
 ```json
