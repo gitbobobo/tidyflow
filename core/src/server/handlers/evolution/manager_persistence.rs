@@ -261,9 +261,6 @@ fn build_prompt_context(
         "ENV_VALUES_LOCAL_PATH": evolution_workspace_dir(workspace_root)
             .map(|p| p.join("env.values.local.json"))
             .unwrap_or_else(|_| Path::new("env.values.local.json").to_path_buf()),
-        "WORKSPACE_BLOCKER_FILE_PATH": evolution_workspace_dir(workspace_root)
-            .map(|p| p.join("workspace.blockers.json"))
-            .unwrap_or_else(|_| Path::new("workspace.blockers.json").to_path_buf()),
         "WORKSPACE_ROOT": "由程序注入，禁止自行推断",
     })
 }
@@ -291,7 +288,6 @@ fn required_context_keys(
         "BACKLOG_CONTRACT_VERSION",
         "CYCLE_FILE_PATH",
         "STAGE_FILE_PATH",
-        "WORKSPACE_BLOCKER_FILE_PATH",
     ];
 
     if matches!(phase, StagePromptPhase::Deliverable) {
