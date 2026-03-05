@@ -1557,10 +1557,12 @@ mod tests {
             is_streaming: true,
             selection_hint: None,
             messages: None,
-            ops: Some(vec![crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
-                message_id: "m1".to_string(),
-                role: "assistant".to_string(),
-            }]),
+            ops: Some(vec![
+                crate::server::protocol::ai::AiSessionCacheOpInfo::MessageUpdated {
+                    message_id: "m1".to_string(),
+                    role: "assistant".to_string(),
+                },
+            ]),
         };
 
         assert!(should_broadcast_stream_message(&msg, 0));

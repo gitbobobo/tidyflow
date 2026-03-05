@@ -2118,7 +2118,8 @@ mod tests {
 
     #[test]
     fn test_parse_evo_resume_workspace_should_reject_legacy_project_fields() {
-        let json = r#"{"type":"evo_resume_workspace","project_name":"demo","workspace_name":"default"}"#;
+        let json =
+            r#"{"type":"evo_resume_workspace","project_name":"demo","workspace_name":"default"}"#;
         let result: Result<ClientMessage, _> = serde_json::from_str(json);
         assert!(result.is_err());
     }
