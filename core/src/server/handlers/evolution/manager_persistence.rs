@@ -1,12 +1,8 @@
-use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::Utc;
 
-use super::stage::{
-    agent_name, next_stage, prompt_id_for_stage_phase, prompt_template_for_stage_phase,
-    StagePromptPhase,
-};
+use super::stage::{agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage};
 use super::utils::{cycle_dir_path, evolution_workspace_dir, write_json};
 use super::{EvolutionManager, StageSession, STAGES};
 
@@ -73,7 +69,7 @@ fn merge_stage_payload(
             "inputs".to_string(),
             serde_json::json!([{
                 "type": "prompt",
-                "path": prompt_id_for_stage_phase(stage, StagePromptPhase::Deliverable).unwrap_or_default()
+                "path": prompt_id_for_stage(stage).unwrap_or_default()
             }]),
         );
     }
@@ -278,7 +274,6 @@ fn push_required_key(keys: &mut Vec<&'static str>, key: &'static str) {
 
 fn required_context_keys(
     stage: &str,
-    phase: StagePromptPhase,
     verify_iteration: u32,
     backlog_contract_version: u32,
 ) -> Vec<&'static str> {
@@ -293,12 +288,9 @@ fn required_context_keys(
         "BACKLOG_CONTRACT_VERSION",
         "CYCLE_FILE_PATH",
         "STAGE_FILE_PATH",
+        "HANDOFF_MARKDOWN_PATH",
         "WORKSPACE_BLOCKER_FILE_PATH",
     ];
-
-    if matches!(phase, StagePromptPhase::Deliverable) {
-        push_required_key(&mut keys, "HANDOFF_MARKDOWN_PATH");
-    }
 
     match stage {
         "direction" => {
@@ -396,28 +388,24 @@ fn escape_inline_code(raw: &str) -> String {
 fn build_markdown_context_block(
     context_map: &serde_json::Map<String, serde_json::Value>,
     required_keys: &[&'static str],
-    already_injected_keys: &HashSet<String>,
-) -> (String, HashSet<String>) {
+) -> String {
     let mut lines = vec!["## 注入上下文（按需）".to_string()];
-    let mut injected = HashSet::new();
+    let mut has_content = false;
 
     for key in required_keys {
-        if already_injected_keys.contains(*key) {
-            continue;
-        }
         let Some(value) = context_map.get(*key) else {
             continue;
         };
         let rendered = escape_inline_code(&format_context_value(value));
         lines.push(format!("- `{}`：`{}`", key, rendered));
-        injected.insert((*key).to_string());
+        has_content = true;
     }
 
-    if injected.is_empty() {
-        lines.push("- 本次无新增上下文，沿用当前会话已注入内容。".to_string());
+    if !has_content {
+        lines.push("- 本次无可注入上下文。".to_string());
     }
 
-    (lines.join("\n"), injected)
+    lines.join("\n")
 }
 
 impl EvolutionManager {
@@ -610,7 +598,7 @@ impl EvolutionManager {
         write_json(&cycle_dir.join("chat.map.json"), &payload)
     }
 
-    pub(super) async fn build_stage_prompt_for_phase(
+    pub(super) async fn build_stage_prompt(
         &self,
         key: &str,
         project: &str,
@@ -618,11 +606,9 @@ impl EvolutionManager {
         cycle_id: &str,
         stage: &str,
         round: u32,
-        phase: StagePromptPhase,
-        already_injected_keys: &HashSet<String>,
-    ) -> Result<(String, HashSet<String>), String> {
-        let prompt_body = prompt_template_for_stage_phase(stage, phase)
-            .ok_or_else(|| format!("unknown stage prompt template: {} ({:?})", stage, phase))?;
+    ) -> Result<String, String> {
+        let prompt_body = prompt_template_for_stage(stage)
+            .ok_or_else(|| format!("unknown stage prompt template: {}", stage))?;
 
         let (verify_iteration, verify_iteration_limit, backlog_contract_version, workspace_root) = {
             let state = self.state.lock().await;
@@ -656,14 +642,10 @@ impl EvolutionManager {
             .as_object()
             .ok_or_else(|| "prompt context should be JSON object".to_string())?;
         let required_keys =
-            required_context_keys(stage, phase, verify_iteration, backlog_contract_version);
-        let (markdown_context, injected_keys) =
-            build_markdown_context_block(context_map, &required_keys, already_injected_keys);
+            required_context_keys(stage, verify_iteration, backlog_contract_version);
+        let markdown_context = build_markdown_context_block(context_map, &required_keys);
 
-        Ok((
-            format!("{}\n\n---\n\n{}\n", prompt_body, markdown_context),
-            injected_keys,
-        ))
+        Ok(format!("{}\n\n---\n\n{}\n", prompt_body, markdown_context))
     }
 }
 
@@ -671,9 +653,8 @@ impl EvolutionManager {
 mod tests {
     use super::{
         build_markdown_context_block, build_prompt_context, collect_session_ids,
-        merge_stage_payload, required_context_keys, StagePromptPhase, StageSession,
+        merge_stage_payload, required_context_keys, StageSession,
     };
-    use std::collections::HashSet;
     use std::path::Path;
 
     #[test]
@@ -774,6 +755,27 @@ mod tests {
             "2026-02-27T00:00:03Z",
         );
         assert_eq!(merged["timing"]["duration_ms"], serde_json::json!(3210));
+    }
+
+    #[test]
+    fn merge_stage_payload_should_set_single_stage_prompt_path_in_inputs() {
+        let merged = merge_stage_payload(
+            None,
+            "cycle-a",
+            "verify",
+            "running",
+            None,
+            None,
+            Some("codex"),
+            None,
+            serde_json::json!([]),
+            serde_json::json!([]),
+            "2026-02-27T00:00:00Z",
+        );
+        assert_eq!(
+            merged["inputs"][0]["path"],
+            serde_json::json!("builtin://evolution/stage.verify.prompt")
+        );
     }
 
     #[test]
@@ -881,13 +883,14 @@ mod tests {
 
     #[test]
     fn required_context_keys_should_include_managed_files_when_reimplementation_enabled() {
-        let keys = required_context_keys("implement_advanced", StagePromptPhase::Deliverable, 1, 2);
+        let keys = required_context_keys("implement_advanced", 1, 2);
         assert!(keys.contains(&"MANAGED_FAILURE_BACKLOG_PATH"));
         assert!(keys.contains(&"MANAGED_BACKLOG_COVERAGE_PATH"));
+        assert!(keys.contains(&"HANDOFF_MARKDOWN_PATH"));
     }
 
     #[test]
-    fn build_markdown_context_block_should_render_list_and_skip_already_injected() {
+    fn build_markdown_context_block_should_render_required_list() {
         let context = serde_json::json!({
             "PROJECT": "demo",
             "WORKSPACE": "default",
@@ -895,29 +898,23 @@ mod tests {
         });
         let context_map = context.as_object().expect("context must be object");
         let required = vec!["PROJECT", "WORKSPACE", "CYCLE_ID"];
-        let already = HashSet::from(["WORKSPACE".to_string()]);
 
-        let (block, injected) = build_markdown_context_block(context_map, &required, &already);
+        let block = build_markdown_context_block(context_map, &required);
         assert!(block.contains("## 注入上下文（按需）"));
         assert!(block.contains("- `PROJECT`：`demo`"));
+        assert!(block.contains("- `WORKSPACE`：`default`"));
         assert!(block.contains("- `CYCLE_ID`：`cycle-1`"));
-        assert!(!block.contains("`WORKSPACE`"));
-        assert!(injected.contains("PROJECT"));
-        assert!(injected.contains("CYCLE_ID"));
-        assert!(!injected.contains("WORKSPACE"));
     }
 
     #[test]
-    fn build_markdown_context_block_should_emit_no_new_context_message() {
+    fn build_markdown_context_block_should_emit_no_context_message() {
         let context = serde_json::json!({
             "PROJECT": "demo"
         });
         let context_map = context.as_object().expect("context must be object");
-        let required = vec!["PROJECT"];
-        let already = HashSet::from(["PROJECT".to_string()]);
+        let required = vec!["WORKSPACE"];
 
-        let (block, injected) = build_markdown_context_block(context_map, &required, &already);
-        assert!(block.contains("本次无新增上下文"));
-        assert!(injected.is_empty());
+        let block = build_markdown_context_block(context_map, &required);
+        assert!(block.contains("本次无可注入上下文"));
     }
 }

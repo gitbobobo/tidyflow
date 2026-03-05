@@ -21,7 +21,6 @@ use crate::server::handlers::ai::{
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::profile::profile_for_stage;
-use super::stage::StagePromptPhase;
 use super::utils::{cycle_dir_path, write_json};
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
@@ -34,10 +33,6 @@ const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.json";
 const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.json";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
-
-fn stage_prompt_phases() -> [StagePromptPhase; 2] {
-    [StagePromptPhase::Mission, StagePromptPhase::Deliverable]
-}
 
 const VALID_DIRECTION_TYPES: &[&str] = &[
     "feature",
@@ -4717,21 +4712,9 @@ impl EvolutionManager {
             .ok();
         self.broadcast_cycle_update(key, ctx, "orchestrator").await;
 
-        let phases = stage_prompt_phases();
-        let mut injected_context_keys: HashSet<String> = HashSet::new();
-        let (mission_prompt, mission_injected_keys) = self
-            .build_stage_prompt_for_phase(
-                key,
-                project,
-                workspace,
-                cycle_id,
-                stage,
-                round,
-                phases[0],
-                &injected_context_keys,
-            )
+        let prompt = self
+            .build_stage_prompt(key, project, workspace, cycle_id, stage, round)
             .await?;
-        injected_context_keys.extend(mission_injected_keys);
 
         let run_ctx = self
             .run_stage_session_once(
@@ -4741,68 +4724,10 @@ impl EvolutionManager {
                 cycle_id,
                 stage,
                 stage_profile,
-                mission_prompt,
+                prompt,
                 ctx,
             )
             .await?;
-
-        let (deliverable_prompt, deliverable_injected_keys) = self
-            .build_stage_prompt_for_phase(
-                key,
-                project,
-                workspace,
-                cycle_id,
-                stage,
-                round,
-                phases[1],
-                &injected_context_keys,
-            )
-            .await?;
-        injected_context_keys.extend(deliverable_injected_keys);
-
-        if let Err(err) = self
-            .send_stage_prompt_in_same_session(
-                key,
-                project,
-                workspace,
-                cycle_id,
-                stage,
-                &run_ctx.ai_tool,
-                &run_ctx.session_id,
-                &run_ctx.directory,
-                &run_ctx.agent,
-                &deliverable_prompt,
-                run_ctx.model.clone(),
-                run_ctx.mode.clone(),
-                run_ctx.config_overrides.clone(),
-                ctx,
-            )
-            .await
-        {
-            let status = if err.starts_with("evo_human_blocking_required") {
-                "blocked"
-            } else {
-                "failed"
-            };
-            let tool_call_count = self.stage_tool_call_count(key, stage).await;
-            self.finalize_session_execution(
-                key,
-                stage,
-                &run_ctx.session_id,
-                status,
-                tool_call_count,
-            )
-            .await;
-            touch_session_index_updated_at_for_evolution(
-                ctx,
-                project,
-                workspace,
-                &run_ctx.ai_tool,
-                &run_ctx.session_id,
-            )
-            .await;
-            return Err(err);
-        }
 
         let mut judge_pass = true;
         let mut reminder_attempts: u32 = 0;
@@ -5928,10 +5853,7 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{
-        stage::{next_stage, StagePromptPhase},
-        STAGES,
-    };
+    use super::super::{stage::next_stage, STAGES};
     use super::{
         parse_judge_result_from_json, should_force_advanced_reimplementation,
         should_start_next_round, EvolutionManager, ImplementLane, StageValidationContext,
@@ -6553,13 +6475,6 @@ mod tests {
         assert!(super::should_attempt_idle_recovery(1));
         assert!(!super::should_attempt_idle_recovery(2));
         assert!(!super::should_attempt_idle_recovery(3));
-    }
-
-    #[test]
-    fn stage_prompt_phases_should_be_mission_then_deliverable() {
-        let phases = super::stage_prompt_phases();
-        assert_eq!(phases[0], StagePromptPhase::Mission);
-        assert_eq!(phases[1], StagePromptPhase::Deliverable);
     }
 
     // ── 九阶段新约束回归测试 ──────────────────────────────────────────────
