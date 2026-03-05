@@ -141,21 +141,25 @@ struct EvolutionPipelineView: View {
             }
         }
         .onAppear {
-            refreshData()
             syncStartOptions()
+            syncCycleHistoriesFromAPI()
+            refreshData()
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
-            refreshData()
-            syncStartOptions()
             resetLocalTimeline()
+            syncStartOptions()
+            syncCycleHistoriesFromAPI()
+            refreshData()
         }
         .onChange(of: appState.selectedProjectName) { _, _ in
-            refreshData()
-            syncStartOptions()
             resetLocalTimeline()
+            syncStartOptions()
+            syncCycleHistoriesFromAPI()
+            refreshData()
         }
         .onChange(of: appState.connectionState) { _, state in
             guard state == .connected else { return }
+            syncCycleHistoriesFromAPI()
             refreshData()
         }
         .onReceive(appState.$evolutionWorkspaceItems) { _ in
@@ -1783,7 +1787,9 @@ struct EvolutionPipelineView: View {
         guard let item = currentItem else { return }
 
         // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
-        if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 && !completedTimeline.isEmpty {
+        // 注意：自动切轮期间，核心快照可能会先清空 executions 再递增轮次，
+        // 不能依赖 completedTimeline 非空，否则会漏拉历史列表。
+        if item.globalLoopRound > lastRecordedRound && lastRecordedRound > 0 {
             completedTimeline.removeAll()
             cycleStartDate = Date()
             // 从工作空间文件夹重新加载历史数据
@@ -1823,11 +1829,15 @@ struct EvolutionPipelineView: View {
         }
     }
 
-    private func resetLocalTimeline() {
+    private func resetCurrentCycleTimeline() {
         completedTimeline.removeAll()
-        cycleHistories.removeAll()
         lastRecordedRound = 0
         cycleStartDate = Date()
+    }
+
+    private func resetLocalTimeline() {
+        resetCurrentCycleTimeline()
+        cycleHistories.removeAll()
     }
 
     /// 将 API 返回的历史循环数据同步到本地视图模型
@@ -2172,7 +2182,7 @@ struct EvolutionPipelineView: View {
             loopRoundLimit: loopRoundLimit,
             profiles: profiles
         )
-        resetLocalTimeline()
+        resetCurrentCycleTimeline()
     }
 
     private func actionHelpText(_ base: String, reason: String?) -> String {
