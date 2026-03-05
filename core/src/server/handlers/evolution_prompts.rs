@@ -319,8 +319,53 @@ pub const STAGE_REPORT_PROMPT: &str = r####"
 - `final_result.judge_result` 必须与 `judge.result.json.overall_result.result` 一致
 - `final_result.recommended_cycle_status` 仅允许：`completed|failed_exhausted`
 - 当 `judge_result="pass"`，`recommended_cycle_status` 必须是 `completed`
-- `acceptance_summary` 必须覆盖全部验收标准
-- 当 `VERIFY_ITERATION > 0`，必须提供 `remediation_tracking`，覆盖全部整改项
+- `acceptance_summary` 必须覆盖全部验收标准，且必须包含 `criteria_details`
+- `verification_summary` 必须是对象；建议始终包含 `remediation_tracking` 数组
+
+`acceptance_summary.criteria_details` 强约束（高频错误）：
+- 必须是数组（`[]`），不要写成对象映射（`{...}`）
+- 每个元素必须至少包含：`criteria_id`（非空字符串）
+- `criteria_details[*].criteria_id` 必须与 `plan.execution.json.verification_plan.acceptance_mapping[*].criteria_id` 完全一致（不能缺失、不能新增）
+- 推荐补充：`result`、`evidence`、`notes`
+
+`verification_summary.remediation_tracking` 强约束：
+- 当 `VERIFY_ITERATION = 0`：可为空数组 `[]`
+- 当 `VERIFY_ITERATION > 0`：必须存在且为数组 `[]`，并覆盖全部整改项
+- 不要写成对象映射（`{...}`）
+
+`report.result.json` 参考骨架（可直接按此填充）：
+```json
+{
+  "$schema_version": "1.0",
+  "cycle_id": "<from CYCLE_FILE_PATH.cycle_id>",
+  "final_result": {
+    "judge_result": "pass",
+    "recommended_cycle_status": "completed"
+  },
+  "direction_summary": {},
+  "acceptance_summary": {
+    "criteria_details": [
+      {
+        "criteria_id": "ac-1",
+        "result": "pass",
+        "evidence": [],
+        "notes": ""
+      }
+    ]
+  },
+  "implementation_summary": {},
+  "verification_summary": {
+    "remediation_tracking": []
+  },
+  "updated_at": "2026-01-01T00:00:00Z"
+}
+```
+
+输出前自检（必须执行）：
+1. `report.result.json.acceptance_summary.criteria_details` 是数组（`[]`），不是对象（`{...}`）。
+2. `criteria_details[*].criteria_id` 与 `plan.execution.json.verification_plan.acceptance_mapping[*].criteria_id` 集合完全一致。
+3. 当 `VERIFY_ITERATION > 0`，`report.result.json.verification_summary.remediation_tracking` 存在且类型为数组（`[]`）。
+4. `final_result.judge_result` 与 `judge.result.json.overall_result.result` 一致。
 
 `report.md` 最少包含：
 1. 本轮结论
