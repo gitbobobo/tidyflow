@@ -10,6 +10,7 @@ cd "$PROJECT_ROOT"
 protocol_file="core/src/server/protocol/mod.rs"
 docs_protocol="docs/PROTOCOL.md"
 app_readme="app/README.md"
+app_config="app/TidyFlow/AppConfig.swift"
 evo_arch="docs/evolution/ARCHITECTURE.md"
 evo_delta="docs/evolution/PROTOCOL_DELTA.md"
 
@@ -37,7 +38,16 @@ if ! rg -q "Protocol v$core_version" "$app_readme"; then
     exit 1
 fi
 
-if rg -q "Protocol v2|MessagePack v2" "$app_readme" "$evo_arch" "$evo_delta"; then
+if ! rg -q "static let protocolVersion: Int = $core_version" "$app_config"; then
+    echo "[check_protocol] ERROR: $app_config 中 AppConfig.protocolVersion 与 Core 不一致（期望 $core_version）"
+    exit 1
+fi
+
+legacy_scan_targets=("$app_readme")
+[ -f "$evo_arch" ] && legacy_scan_targets+=("$evo_arch")
+[ -f "$evo_delta" ] && legacy_scan_targets+=("$evo_delta")
+
+if rg -q "Protocol v2|MessagePack v2" "${legacy_scan_targets[@]}"; then
     echo "[check_protocol] ERROR: 检测到过期协议描述（v2），请改为当前版本 v$core_version"
     exit 1
 fi

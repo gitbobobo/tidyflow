@@ -107,6 +107,8 @@ class CoreProcessManager: ObservableObject {
     private var stdoutBuffer: String = ""
     /// 当前启动进程是否已收到 bootstrap
     private var pendingBootstrap: CoreBootstrapInfo?
+    /// 启动阶段致命错误（例如协议不匹配/缺失 bootstrap），用于终止后直接进入 failed
+    private var startupFatalErrorMessage: String?
 
     /// Callback when Core is ready (WS connection succeeded)
     var onCoreReady: ((Int) -> Void)?
@@ -146,6 +148,7 @@ class CoreProcessManager: ObservableObject {
 
         // 每次启动 Core 生成新的会话 token，避免跨会话复用
         currentWSToken = UUID().uuidString
+        startupFatalErrorMessage = nil
         isStopping = false
         isStarting = true
         currentAttempt = 0
@@ -434,6 +437,16 @@ class CoreProcessManager: ObservableObject {
                 self.lastTerminationCode = code
                 self.lastTerminationReason = reason == .exit ? "exit(\(code))" : "signal(\(code))"
 
+                if let fatalMessage = self.startupFatalErrorMessage {
+                    self.startupFatalErrorMessage = nil
+                    self.cleanup()
+                    self.isStarting = false
+                    self.currentWSToken = nil
+                    self.status = .failed(message: fatalMessage)
+                    self.onCoreFailed?(fatalMessage)
+                    return
+                }
+
                 // If we're intentionally stopping, don't auto-restart
                 if self.isStopping {
                     return
@@ -591,23 +604,41 @@ class CoreProcessManager: ObservableObject {
 
     private func handleStdoutLine(_ line: String) {
         let prefix = "TIDYFLOW_BOOTSTRAP "
-        guard line.hasPrefix(prefix) else { return }
-        let payload = String(line.dropFirst(prefix.count))
-        guard let data = payload.data(using: .utf8) else { return }
-        guard let bootstrap = try? JSONDecoder().decode(CoreBootstrapInfo.self, from: data) else {
-            TFLog.core.warning("Failed to decode bootstrap payload: \(payload, privacy: .public)")
+        if line.hasPrefix(prefix) {
+            let payload = String(line.dropFirst(prefix.count))
+            guard let data = payload.data(using: .utf8) else { return }
+            guard let bootstrap = try? JSONDecoder().decode(CoreBootstrapInfo.self, from: data) else {
+                TFLog.core.warning("Failed to decode bootstrap payload: \(payload, privacy: .public)")
+                return
+            }
+
+            guard bootstrap.protocolVersion == AppConfig.protocolVersion else {
+                triggerFatalStartupFailure(
+                    "Core 协议版本不匹配：App 期望 v\(AppConfig.protocolVersion)，Core 返回 v\(bootstrap.protocolVersion)。请使用同版本重新构建应用。"
+                )
+                return
+            }
+
+            pendingBootstrap = bootstrap
+            launchedBindAddress = bootstrap.bindAddr
+            if case .starting(let attempt, _) = status {
+                status = .starting(attempt: attempt, port: bootstrap.port)
+            }
+
+            TFLog.core.info(
+                "Received bootstrap: port=\(bootstrap.port, privacy: .public), bind=\(bootstrap.bindAddr, privacy: .public), fixed_port=\(bootstrap.fixedPort, privacy: .public), remote_access=\(bootstrap.remoteAccessEnabled, privacy: .public), protocol=\(bootstrap.protocolVersion, privacy: .public), core=\(bootstrap.coreVersion, privacy: .public)"
+            )
             return
         }
 
-        pendingBootstrap = bootstrap
-        launchedBindAddress = bootstrap.bindAddr
-        if case .starting(let attempt, _) = status {
-            status = .starting(attempt: attempt, port: bootstrap.port)
+        // 老 Core（无 bootstrap）也会打印 “protocol vX” 监听日志；若版本不匹配，立刻失败，避免长时间卡在启动页。
+        if pendingBootstrap == nil,
+           let observedVersion = parseProtocolVersionHint(fromLogLine: line),
+           observedVersion != AppConfig.protocolVersion {
+            triggerFatalStartupFailure(
+                "Core 协议版本不匹配：App 期望 v\(AppConfig.protocolVersion)，日志检测到 Core 为 v\(observedVersion)。请使用同版本重新构建应用。"
+            )
         }
-
-        TFLog.core.info(
-            "Received bootstrap: port=\(bootstrap.port, privacy: .public), bind=\(bootstrap.bindAddr, privacy: .public), fixed_port=\(bootstrap.fixedPort, privacy: .public), remote_access=\(bootstrap.remoteAccessEnabled, privacy: .public), protocol=\(bootstrap.protocolVersion, privacy: .public), core=\(bootstrap.coreVersion, privacy: .public)"
-        )
     }
 
     private func waitForBootstrap(proc: Process, pid: Int32, launchedAt: Date) {
@@ -619,16 +650,47 @@ class CoreProcessManager: ObservableObject {
 
         let elapsed = Date().timeIntervalSince(launchedAt)
         if elapsed >= AppConfig.coreReadyTimeout {
-            TFLog.core.error(
-                "Core bootstrap not received within \(AppConfig.coreReadyTimeout, privacy: .public)s"
+            triggerFatalStartupFailure(
+                "Core 启动握手失败：\(AppConfig.coreReadyTimeout)s 内未收到 TIDYFLOW_BOOTSTRAP。请确认 App 与 Core 为同一协议版本并重新构建。"
             )
-            proc.terminate()
             return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.waitForBootstrap(proc: proc, pid: pid, launchedAt: launchedAt)
         }
+    }
+
+    private func parseProtocolVersionHint(fromLogLine line: String) -> Int? {
+        let pattern = #"protocol v([0-9]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.firstMatch(in: line, options: [], range: nsRange),
+              match.numberOfRanges == 2,
+              let captureRange = Range(match.range(at: 1), in: line) else {
+            return nil
+        }
+        return Int(line[captureRange])
+    }
+
+    private func triggerFatalStartupFailure(_ message: String) {
+        guard startupFatalErrorMessage == nil else { return }
+        startupFatalErrorMessage = message
+        TFLog.core.error("\(message, privacy: .public)")
+
+        guard let proc = process, proc.isRunning else {
+            DispatchQueue.main.async {
+                self.cleanup()
+                self.isStarting = false
+                self.currentWSToken = nil
+                self.status = .failed(message: message)
+                self.onCoreFailed?(message)
+                self.startupFatalErrorMessage = nil
+            }
+            return
+        }
+
+        proc.terminate()
     }
 
     /// 等待 Core 端口可连接后再回调 ready，避免“进程已启动但 WS 尚未监听”导致首连失败。

@@ -5,6 +5,8 @@ import Foundation
 enum AppConfig {
     /// Host for Core server (localhost only)
     static let coreHost: String = "127.0.0.1"
+    /// Core/Web 前后端协议版本（必须与 Core `PROTOCOL_VERSION` 一致）
+    static let protocolVersion: Int = 7
 
     // MARK: - Port Configuration
 
@@ -41,8 +43,8 @@ enum AppConfig {
     /// Auto-restart configuration
     static let autoRestartLimit: Int = 3
     static let autoRestartBackoffs: [TimeInterval] = [0.2, 0.5, 1.2]
-    /// Core 启动后等待端口可达的最长时间（秒）
-    static let coreReadyTimeout: TimeInterval = 90
+    /// Core 启动后等待 bootstrap + 端口可达的最长时间（秒）
+    static let coreReadyTimeout: TimeInterval = 30
 
     /// Generate WebSocket URL for a given port
     static func makeWsURL(host: String = coreHost, port: Int, token: String? = nil, secure: Bool = false) -> URL {
