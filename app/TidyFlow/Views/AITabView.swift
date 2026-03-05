@@ -29,8 +29,10 @@ struct AITabView: View {
     @State private var presentedSubAgentSession: SubAgentSessionRoute?
     @State private var mainMessageListScrollSessionToken: Int = 0
     @State private var aiChatHintMessage: String?
+    @State private var sessionStatusRequestLimiter = AISessionStatusRequestLimiter()
 
     private let planImplementationMessage = AIPlanImplementationQuestion.messageText
+    private let sessionStatusMinInterval: TimeInterval = 1.2
 
     private var controlBackgroundColor: Color {
         #if os(macOS)
@@ -78,7 +80,7 @@ struct AITabView: View {
         }
         .onChange(of: aiChatStore.currentSessionId) { _, newSessionId in
             mainMessageListScrollSessionToken += 1
-            requestCurrentSessionStatus()
+            requestCurrentSessionStatus(force: true)
             guard let newSessionId else { return }
 
             // 会话创建完成后，发送待发消息（校验工作空间一致性）
@@ -693,11 +695,12 @@ struct AITabView: View {
 
         if session.aiTool != appState.aiChatTool {
             // 先请求目标会话详情，再切换工具；避免首击空白。
-            appState.wsClient.requestAISessionStatus(
+            requestAISessionStatus(
                 projectName: session.projectName,
                 workspaceName: session.workspaceName,
                 aiTool: session.aiTool,
-                sessionId: session.id
+                sessionId: session.id,
+                force: true
             )
             appState.wsClient.requestAISessionConfigOptions(
                 projectName: session.projectName,
@@ -719,11 +722,12 @@ struct AITabView: View {
             return
         }
 
-        appState.wsClient.requestAISessionStatus(
+        requestAISessionStatus(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
             aiTool: session.aiTool,
-            sessionId: session.id
+            sessionId: session.id,
+            force: true
         )
         appState.wsClient.requestAISessionConfigOptions(
             projectName: session.projectName,
@@ -1392,6 +1396,7 @@ struct AITabView: View {
             sessionId: sessionId
         )
         aiChatStore.stopStreamingLocallyAndPrunePlaceholder()
+        requestCurrentSessionStatus(force: true)
 
         // 兜底：若 done/error 丢失，2s 后解除 pending，避免输入区永久不可用。
         let store = aiChatStore
@@ -1405,13 +1410,37 @@ struct AITabView: View {
         }
     }
 
-    private func requestCurrentSessionStatus() {
+    private func requestCurrentSessionStatus(force: Bool = false) {
         guard let ws = appState.selectedWorkspaceKey, !ws.isEmpty,
               let sessionId = aiChatStore.currentSessionId, !sessionId.isEmpty else { return }
-        appState.wsClient.requestAISessionStatus(
+        requestAISessionStatus(
             projectName: appState.selectedProjectName,
             workspaceName: ws,
             aiTool: appState.aiChatTool,
+            sessionId: sessionId,
+            force: force
+        )
+    }
+
+    private func requestAISessionStatus(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        force: Bool = false
+    ) {
+        let key = "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
+        guard sessionStatusRequestLimiter.shouldRequest(
+            key: key,
+            minInterval: sessionStatusMinInterval,
+            force: force
+        ) else {
+            return
+        }
+        appState.wsClient.requestAISessionStatus(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
             sessionId: sessionId
         )
     }

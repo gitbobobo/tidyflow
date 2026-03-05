@@ -46,6 +46,7 @@
 		AF3CFDB4A7BE4CDD8CCE5640 /* AITabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */; };
 		AIC00002 /* MessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00001 /* MessageListView.swift */; };
 		AIC00004 /* AIChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00003 /* AIChatModels.swift */; };
+		AIC0002A /* AISessionStatusRequestLimiter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00028 /* AISessionStatusRequestLimiter.swift */; };
 		AIC00007 /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00005 /* SessionListView.swift */; };
 		AIC00024 /* SessionsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00023 /* SessionsPanelView.swift */; };
 		AIC00026 /* AIChatSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIC00025 /* AIChatSidebarView.swift */; };
@@ -166,6 +167,7 @@
 			TST10002 /* AIChatProtocolModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10012 /* AIChatProtocolModelsTests.swift */; };
 			TST10003 /* AIPlanCardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10013 /* AIPlanCardViewModelTests.swift */; };
 			TST10004 /* AIChatStoreSessionCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10014 /* AIChatStoreSessionCacheTests.swift */; };
+			TST10005 /* AISessionStatusRequestLimiterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TST10015 /* AISessionStatusRequestLimiterTests.swift */; };
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D3900031 /* Copy Core Binary */ = {
@@ -209,6 +211,7 @@
 			TST10012 /* AIChatProtocolModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatProtocolModelsTests.swift; sourceTree = "<group>"; };
 			TST10013 /* AIPlanCardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPlanCardViewModelTests.swift; sourceTree = "<group>"; };
 			TST10014 /* AIChatStoreSessionCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStoreSessionCacheTests.swift; sourceTree = "<group>"; };
+			TST10015 /* AISessionStatusRequestLimiterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionStatusRequestLimiterTests.swift; sourceTree = "<group>"; };
 		TST10020 /* TidyFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TidyFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2E10101 /* EvidenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceRecorder.swift; sourceTree = "<group>"; };
 		E2E10102 /* TidyFlowE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidyFlowE2ETests.swift; sourceTree = "<group>"; };
@@ -228,6 +231,7 @@
 		3DD0D7F1E9CC4D8EA951DA05 /* AITabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AITabView.swift; sourceTree = "<group>"; };
 		AIC00001 /* MessageListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/MessageListView.swift"; sourceTree = "<group>"; };
 		AIC00003 /* AIChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatModels.swift; sourceTree = "<group>"; };
+		AIC00028 /* AISessionStatusRequestLimiter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionStatusRequestLimiter.swift; sourceTree = "<group>"; };
 		AIC00005 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/SessionListView.swift"; sourceTree = "<group>"; };
 		AIC00023 /* SessionsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/SessionsPanelView.swift"; sourceTree = "<group>"; };
 		AIC00025 /* AIChatSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AI/AIChatSidebarView.swift"; sourceTree = "<group>"; };
@@ -496,6 +500,7 @@
 			TST10030 /* TidyFlowTests */ = {
 				isa = PBXGroup;
 				children = (
+					TST10015 /* AISessionStatusRequestLimiterTests.swift */,
 					TST10014 /* AIChatStoreSessionCacheTests.swift */,
 					TST10013 /* AIPlanCardViewModelTests.swift */,
 					TST10012 /* AIChatProtocolModelsTests.swift */,
@@ -579,6 +584,7 @@
 			children = (
 				MDL000105 /* AIModels.swift */,
 				AIC00003 /* AIChatModels.swift */,
+				AIC00028 /* AISessionStatusRequestLimiter.swift */,
 				MDL000202 /* AppState */,
 				MDL000113 /* BackgroundTaskManager.swift */,
 				MDL000112 /* BackgroundTaskModels.swift */,
@@ -847,6 +853,7 @@
 				AIC00002 /* MessageListView.swift in Sources */,
 				AIC00018 /* MarkdownTextView.swift in Sources */,
 				AIC00004 /* AIChatModels.swift in Sources */,
+				AIC0002A /* AISessionStatusRequestLimiter.swift in Sources */,
 				AIC00007 /* SessionListView.swift in Sources */,
 				AIC00024 /* SessionsPanelView.swift in Sources */,
 				AIC00026 /* AIChatSidebarView.swift in Sources */,
@@ -907,6 +914,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				TST10005 /* AISessionStatusRequestLimiterTests.swift in Sources */,
 				TST10004 /* AIChatStoreSessionCacheTests.swift in Sources */,
 				TST10003 /* AIPlanCardViewModelTests.swift in Sources */,
 				TST10002 /* AIChatProtocolModelsTests.swift in Sources */,

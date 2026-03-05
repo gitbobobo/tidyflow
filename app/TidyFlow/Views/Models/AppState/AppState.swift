@@ -469,6 +469,8 @@ class AppState: ObservableObject {
     private var aiSlashCommandsByTool: [AIChatTool: [AISlashCommandInfo]] = [:]
     private var aiSlashCommandsBySessionByTool: [AIChatTool: [String: [AISlashCommandInfo]]] = [:]
     private var aiSessionConfigOptionsByTool: [AIChatTool: [AIProtocolSessionConfigOptionInfo]] = [:]
+    /// 记录会话 active 状态（key: "tool::project::workspace::session"），用于抑制侧边栏重复刷新。
+    private var lastActiveBySessionKey: [String: Bool] = [:]
     /// 当前工具已选择的配置项值（option_id -> value），用于 send 时透传 config_overrides。
     private var aiSelectedConfigOptionsByTool: [AIChatTool: [String: Any]] = [:]
     private var aiSelectedThoughtLevelByTool: [AIChatTool: String?] = [:]
@@ -788,6 +790,11 @@ class AppState: ObservableObject {
         var dict = aiSessionStatusesByTool[tool] ?? [:]
         dict = dict.filter { !$0.key.hasSuffix(prefix) }
         aiSessionStatusesByTool[tool] = dict
+
+        let activityPrefix = "\(tool.rawValue)::"
+        lastActiveBySessionKey = lastActiveBySessionKey.filter {
+            !($0.key.hasPrefix(activityPrefix) && $0.key.hasSuffix(prefix))
+        }
     }
 
     // MARK: - AI 会话状态
@@ -796,10 +803,20 @@ class AppState: ObservableObject {
         "\(projectName)::\(workspaceName)::\(sessionId)"
     }
 
+    private func aiSessionStatusActivityKey(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> String {
+        "\(aiTool.rawValue)::\(aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId))"
+    }
+
     func aiSessionStatus(for session: AISessionInfo) -> AISessionStatusSnapshot? {
         aiSessionStatusesByTool[session.aiTool]?[aiSessionStatusKey(projectName: session.projectName, workspaceName: session.workspaceName, sessionId: session.id)]
     }
 
+    @discardableResult
     func upsertAISessionStatus(
         projectName: String,
         workspaceName: String,
@@ -808,9 +825,16 @@ class AppState: ObservableObject {
         status: String,
         errorMessage: String?,
         contextRemainingPercent: Double?
-    ) {
+    ) -> Bool {
         let key = aiSessionStatusKey(projectName: projectName, workspaceName: workspaceName, sessionId: sessionId)
+        let activityKey = aiSessionStatusActivityKey(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId
+        )
         var dict = aiSessionStatusesByTool[aiTool] ?? [:]
+        let previousActive = dict[key]?.isActive ?? (lastActiveBySessionKey[activityKey] ?? false)
 
         let normalizedStatus = status
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -826,17 +850,21 @@ class AppState: ObservableObject {
             errorMessage: normalizedErrorMessage,
             contextRemainingPercent: contextRemainingPercent
         )
+        let nextActive = next.isActive
+        lastActiveBySessionKey[activityKey] = nextActive
         if dict[key] == next {
-            return
+            return previousActive != nextActive
         }
         dict[key] = next
         aiSessionStatusesByTool[aiTool] = dict
+        return previousActive != nextActive
     }
 
     func clearAISessionStatuses() {
         for tool in AIChatTool.allCases {
             aiSessionStatusesByTool[tool] = [:]
         }
+        lastActiveBySessionKey.removeAll()
     }
 
     /// 选择一个可用于拉取 AI 选择器资源（agent/model）的上下文。

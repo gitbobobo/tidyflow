@@ -162,7 +162,7 @@ struct MobileAIChatView: View {
         .onAppear {
             appState.openAIChat(project: project, workspace: workspace)
             consumeOneShotHintIfNeeded()
-            requestCurrentSessionStatus()
+            requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
         }
         .onDisappear {
@@ -173,7 +173,7 @@ struct MobileAIChatView: View {
         }
         .onChange(of: appState.aiCurrentSessionId) { _, _ in
             mainMessageListScrollSessionToken += 1
-            requestCurrentSessionStatus()
+            requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
         }
         .onChange(of: appState.aiIsStreaming) { _, _ in
@@ -329,8 +329,8 @@ struct MobileAIChatView: View {
         }
     }
 
-    private func requestCurrentSessionStatus() {
-        appState.requestCurrentAISessionStatus()
+    private func requestCurrentSessionStatus(force: Bool = false) {
+        appState.requestCurrentAISessionStatus(force: force)
     }
 
     private func handleQuestionReply(request: AIQuestionRequestInfo, answers: [[String]]) {

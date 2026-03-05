@@ -355,8 +355,7 @@ extension AppState {
     }
 
     func handleAISessionStatusResult(_ ev: AISessionStatusResultV2) {
-        scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
-        upsertAISessionStatus(
+        let activeChanged = upsertAISessionStatus(
             projectName: ev.projectName,
             workspaceName: ev.workspaceName,
             aiTool: ev.aiTool,
@@ -365,6 +364,9 @@ extension AppState {
             errorMessage: ev.status.errorMessage,
             contextRemainingPercent: ev.status.contextRemainingPercent
         )
+        if activeChanged {
+            scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
+        }
         if selectedProjectName == ev.projectName,
            selectedWorkspaceKey == ev.workspaceName {
             reconcileAIStreamStateFromSessionStatus(
@@ -376,8 +378,7 @@ extension AppState {
     }
 
     func handleAISessionStatusUpdate(_ ev: AISessionStatusUpdateV2) {
-        scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
-        upsertAISessionStatus(
+        let activeChanged = upsertAISessionStatus(
             projectName: ev.projectName,
             workspaceName: ev.workspaceName,
             aiTool: ev.aiTool,
@@ -386,6 +387,9 @@ extension AppState {
             errorMessage: ev.status.errorMessage,
             contextRemainingPercent: ev.status.contextRemainingPercent
         )
+        if activeChanged {
+            scheduleWorkspaceSidebarStatusRefresh(projectName: ev.projectName)
+        }
         if selectedProjectName == ev.projectName,
            selectedWorkspaceKey == ev.workspaceName {
             reconcileAIStreamStateFromSessionStatus(

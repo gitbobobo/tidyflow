@@ -329,6 +329,9 @@ final class MobileAppState: ObservableObject {
     private var aiMessageIndexByMessageId: [String: Int] = [:]
     /// AI Chat：part_id -> (message 下标, part 下标)
     private var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
+    /// AI 会话状态请求限流（key: project/workspace/tool/session）。
+    private var aiSessionStatusRequestLimiter = AISessionStatusRequestLimiter()
+    private let aiSessionStatusMinInterval: TimeInterval = 1.2
     /// AI Chat：按工作空间缓存快照，切换路由时恢复上下文
     private var aiChatSnapshotCache: [String: AIChatSnapshot] = [:]
     /// AI Chat：等待会话创建完成后的待发送请求（含上下文防串台）
@@ -1486,11 +1489,12 @@ final class MobileAppState: ObservableObject {
             aiTool: aiTool.rawValue,
             sessionId: trimmedSessionId
         )
-        wsClient.requestAISessionStatus(
+        requestAISessionStatus(
             projectName: project,
             workspaceName: normalizedWorkspace,
             aiTool: aiTool,
-            sessionId: trimmedSessionId
+            sessionId: trimmedSessionId,
+            force: true
         )
         wsClient.requestAISessionMessages(
             projectName: project,
@@ -2102,11 +2106,12 @@ final class MobileAppState: ObservableObject {
             aiTool: targetTool,
             sessionId: session.id
         )
-        wsClient.requestAISessionStatus(
+        requestAISessionStatus(
             projectName: session.projectName,
             workspaceName: session.workspaceName,
             aiTool: targetTool,
-            sessionId: session.id
+            sessionId: session.id,
+            force: true
         )
     }
 
@@ -2277,16 +2282,17 @@ final class MobileAppState: ObservableObject {
         return true
     }
 
-    func requestCurrentAISessionStatus() {
+    func requestCurrentAISessionStatus(force: Bool = false) {
         guard let sessionId = aiCurrentSessionId,
               !sessionId.isEmpty,
               !aiActiveProject.isEmpty,
               !aiActiveWorkspace.isEmpty else { return }
-        wsClient.requestAISessionStatus(
+        requestAISessionStatus(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
             aiTool: aiChatTool,
-            sessionId: sessionId
+            sessionId: sessionId,
+            force: force
         )
     }
 
@@ -2303,12 +2309,14 @@ final class MobileAppState: ObservableObject {
         )
         aiIsStreaming = false
         aiIsSendingPending = false
+        requestCurrentAISessionStatus(force: true)
 
         // 立即收敛本地 loading，避免等待服务端 done 期间界面残留
         for idx in aiChatMessages.indices.reversed() {
             guard aiChatMessages[idx].role == .assistant,
                   aiChatMessages[idx].isStreaming else { continue }
             aiChatMessages[idx].isStreaming = false
+            aiTouchRenderRevision(at: idx)
             if aiChatMessages[idx].parts.isEmpty {
                 aiChatMessages.remove(at: idx)
             }
@@ -2466,11 +2474,12 @@ final class MobileAppState: ObservableObject {
             aiTool: aiChatTool,
             sessionId: sessionId
         )
-        wsClient.requestAISessionStatus(
+        requestAISessionStatus(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
             aiTool: aiChatTool,
-            sessionId: sessionId
+            sessionId: sessionId,
+            force: true
         )
     }
 
@@ -2512,11 +2521,12 @@ final class MobileAppState: ObservableObject {
                 aiTool: tool,
                 sessionId: sessionId
             )
-            wsClient.requestAISessionStatus(
+            requestAISessionStatus(
                 projectName: aiActiveProject,
                 workspaceName: aiActiveWorkspace,
                 aiTool: tool,
-                sessionId: sessionId
+                sessionId: sessionId,
+                force: true
             )
         }
     }
@@ -3276,6 +3286,43 @@ final class MobileAppState: ObservableObject {
 
     private func aiSessionStatusKey(projectName: String, workspaceName: String, sessionId: String) -> String {
         "\(projectName)::\(workspaceName)::\(sessionId)"
+    }
+
+    private func aiSessionStatusRequestKey(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String
+    ) -> String {
+        "\(projectName)::\(workspaceName)::\(aiTool.rawValue)::\(sessionId)"
+    }
+
+    private func requestAISessionStatus(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        sessionId: String,
+        force: Bool = false
+    ) {
+        let key = aiSessionStatusRequestKey(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId
+        )
+        guard aiSessionStatusRequestLimiter.shouldRequest(
+            key: key,
+            minInterval: aiSessionStatusMinInterval,
+            force: force
+        ) else {
+            return
+        }
+        wsClient.requestAISessionStatus(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            sessionId: sessionId
+        )
     }
 
     func aiSessionStatus(for session: AISessionInfo) -> AISessionStatusSnapshot? {
@@ -4129,11 +4176,12 @@ final class MobileAppState: ObservableObject {
             self.setAISessions(sessions.sorted { $0.updatedAt > $1.updatedAt }, for: aiTool)
 
             self.loadAISession(session)
-            self.wsClient.requestAISessionStatus(
+            self.requestAISessionStatus(
                 projectName: ev.project,
                 workspaceName: normalizedWorkspace,
                 aiTool: aiTool,
-                sessionId: ev.sessionID
+                sessionId: ev.sessionID,
+                force: true
             )
         }
 
@@ -4804,6 +4852,11 @@ final class MobileAppState: ObservableObject {
         }
     }
 
+    private func aiTouchRenderRevision(at msgIdx: Int) {
+        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
+        aiChatMessages[msgIdx].renderRevision &+= 1
+    }
+
     /// 确保 assistant 消息存在；优先复用本地占位消息，避免流式时产生重复气泡
     @discardableResult
     private func aiEnsureAssistantMessage(messageId: String) -> Int {
@@ -4817,8 +4870,14 @@ final class MobileAppState: ObservableObject {
         if let idx = aiChatMessages.lastIndex(where: {
             $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty
         }) {
+            let oldRole = aiChatMessages[idx].role
+            let oldStreaming = aiChatMessages[idx].isStreaming
             aiChatMessages[idx].messageId = messageId
+            aiChatMessages[idx].role = .assistant
             aiMessageIndexByMessageId[messageId] = idx
+            if oldRole != aiChatMessages[idx].role || oldStreaming != aiChatMessages[idx].isStreaming {
+                aiTouchRenderRevision(at: idx)
+            }
             return idx
         }
 
@@ -4860,6 +4919,7 @@ final class MobileAppState: ObservableObject {
             var existingPart = aiChatMessages[msgIdx].parts[existing.partIdx]
             AIChatPartNormalization.apply(protocolPart: part, to: &existingPart)
             aiChatMessages[msgIdx].parts[existing.partIdx] = existingPart
+            aiTouchRenderRevision(at: msgIdx)
             return
         }
 
@@ -4868,6 +4928,7 @@ final class MobileAppState: ObservableObject {
         aiChatMessages[msgIdx].parts.append(newPart)
         let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
         aiPartIndexByPartId[part.id] = (msgIdx, newPartIdx)
+        aiTouchRenderRevision(at: msgIdx)
     }
 
     private func aiAppendDelta(
@@ -4907,6 +4968,7 @@ final class MobileAppState: ObservableObject {
                 part.toolState = toolState
                 part.kind = .tool
                 aiChatMessages[msgIdx].parts[existing.partIdx] = part
+                aiTouchRenderRevision(at: msgIdx)
                 return
             }
 
@@ -4925,6 +4987,7 @@ final class MobileAppState: ObservableObject {
             aiChatMessages[msgIdx].parts.append(newPart)
             let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
             aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
+            aiTouchRenderRevision(at: msgIdx)
             return
         }
 
@@ -4943,6 +5006,7 @@ final class MobileAppState: ObservableObject {
                 part.toolState = toolState
                 part.kind = .tool
                 aiChatMessages[msgIdx].parts[existing.partIdx] = part
+                aiTouchRenderRevision(at: msgIdx)
                 return
             }
 
@@ -4959,6 +5023,7 @@ final class MobileAppState: ObservableObject {
             aiChatMessages[msgIdx].parts.append(newPart)
             let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
             aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
+            aiTouchRenderRevision(at: msgIdx)
             return
         }
 
@@ -4970,6 +5035,7 @@ final class MobileAppState: ObservableObject {
            existing.partIdx < aiChatMessages[msgIdx].parts.count {
             let current = aiChatMessages[msgIdx].parts[existing.partIdx].text ?? ""
             aiChatMessages[msgIdx].parts[existing.partIdx].text = current + delta
+            aiTouchRenderRevision(at: msgIdx)
             return
         }
 
@@ -4978,20 +5044,26 @@ final class MobileAppState: ObservableObject {
         aiChatMessages[msgIdx].parts.append(newPart)
         let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
         aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
+        aiTouchRenderRevision(at: msgIdx)
     }
 
     /// 同一时刻只允许一个 assistant 气泡处于流式态
     private func aiMarkOnlyStreamingAssistant(at msgIdx: Int) {
         for idx in aiChatMessages.indices {
             guard aiChatMessages[idx].role == .assistant else { continue }
-            aiChatMessages[idx].isStreaming = idx == msgIdx
+            let nextStreaming = (idx == msgIdx)
+            guard aiChatMessages[idx].isStreaming != nextStreaming else { continue }
+            aiChatMessages[idx].isStreaming = nextStreaming
+            aiTouchRenderRevision(at: idx)
         }
     }
 
     private func aiClearAssistantStreaming() {
         for idx in aiChatMessages.indices {
             guard aiChatMessages[idx].role == .assistant else { continue }
+            guard aiChatMessages[idx].isStreaming else { continue }
             aiChatMessages[idx].isStreaming = false
+            aiTouchRenderRevision(at: idx)
         }
     }
 
