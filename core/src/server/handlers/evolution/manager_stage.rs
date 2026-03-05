@@ -21,6 +21,7 @@ use crate::server::handlers::ai::{
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
 use super::profile::profile_for_stage;
+use super::stage::StagePromptPhase;
 use super::utils::{cycle_dir_path, write_json};
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
@@ -33,6 +34,10 @@ const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
 const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.json";
 const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.json";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
+
+fn stage_prompt_phases() -> [StagePromptPhase; 2] {
+    [StagePromptPhase::Mission, StagePromptPhase::Deliverable]
+}
 
 const VALID_DIRECTION_TYPES: &[&str] = &[
     "feature",
@@ -2333,9 +2338,10 @@ impl EvolutionManager {
                 .and_then(|v| v.as_str())
                 .map(|v| v.trim().to_ascii_lowercase())
                 .unwrap_or_default();
-            if next_action_type != "goto_stage" || target != "report" {
+            if next_action_type != "goto_stage" || target != "auto_commit" {
                 return Err(
-                    "judge pass 时 next_action 必须是 {type:goto_stage,target:report}".to_string(),
+                    "judge pass 时 next_action 必须是 {type:goto_stage,target:auto_commit}"
+                        .to_string(),
                 );
             }
         } else if verify_iteration < judge_verify_iteration_limit {
@@ -2772,148 +2778,6 @@ impl EvolutionManager {
         Ok(())
     }
 
-    fn validate_report_artifact(
-        cycle_dir: &Path,
-        verify_iteration: u32,
-        validation_ctx: Option<&StageValidationContext>,
-    ) -> Result<(), String> {
-        let stage_report = read_json_file(cycle_dir, "stage.report.json")?;
-        if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("stage.report.json", &stage_report, &ctx.cycle_id)?;
-            ensure_artifact_freshness("stage.report.json", &stage_report, ctx.stage_started_at)?;
-        }
-        let next_type = stage_report
-            .pointer("/next_action/type")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let next_target = stage_report.pointer("/next_action/target");
-        let next_target_str = next_target
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let valid_next = (next_type == "goto_stage" && next_target_str == "auto_commit")
-            || (next_type == "finish_cycle" && next_target.is_some_and(|v| v.is_null()));
-        if !valid_next {
-            return Err("stage.report.json.next_action 非法".to_string());
-        }
-
-        let report_result = read_json_file(cycle_dir, "report.result.json")?;
-        if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("report.result.json", &report_result, &ctx.cycle_id)?;
-            ensure_artifact_freshness("report.result.json", &report_result, ctx.stage_started_at)?;
-        }
-        for key in [
-            "final_result",
-            "direction_summary",
-            "acceptance_summary",
-            "implementation_summary",
-            "verification_summary",
-        ] {
-            if report_result.get(key).is_none() {
-                return Err(format!("report.result.json 缺少 {}", key));
-            }
-        }
-
-        let judge_result_from_report = report_result
-            .pointer("/final_result/judge_result")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "report.result.json 缺少 final_result.judge_result".to_string())?;
-        if !matches!(judge_result_from_report.as_str(), "pass" | "fail") {
-            return Err(format!(
-                "report.result.json.final_result.judge_result 非法: {}",
-                judge_result_from_report
-            ));
-        }
-        let judge_result_from_file = read_json_file(cycle_dir, "judge.result.json")?
-            .pointer("/overall_result/result")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "judge.result.json 缺少 overall_result.result".to_string())?;
-        if judge_result_from_report != judge_result_from_file {
-            return Err(format!(
-                "report.final_result.judge_result 与 judge.result 不一致: {} != {}",
-                judge_result_from_report, judge_result_from_file
-            ));
-        }
-
-        let recommended_status = report_result
-            .pointer("/final_result/recommended_cycle_status")
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| {
-                "report.result.json 缺少 final_result.recommended_cycle_status".to_string()
-            })?;
-        if !matches!(
-            recommended_status.as_str(),
-            "completed" | "failed_exhausted"
-        ) {
-            return Err(format!(
-                "recommended_cycle_status 非法: {}",
-                recommended_status
-            ));
-        }
-        if judge_result_from_report == "pass" && recommended_status != "completed" {
-            return Err(
-                "judge_result=pass 时 recommended_cycle_status 必须是 completed".to_string(),
-            );
-        }
-
-        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.execution.json")?
-            .pointer("/verification_plan/acceptance_mapping")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                "plan.execution.json 缺少 verification_plan.acceptance_mapping".to_string()
-            })?
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                id_from_value(item, &["criteria_id"])
-                    .ok_or_else(|| format!("acceptance_mapping[{}] 缺少 criteria_id", idx))
-            })
-            .collect::<Result<HashSet<String>, String>>()?;
-        let criteria_details = report_result
-            .pointer("/acceptance_summary/criteria_details")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                "report.result.json.acceptance_summary 缺少 criteria_details".to_string()
-            })?;
-        let actual_criteria: HashSet<String> = criteria_details
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                id_from_value(item, &["criteria_id"])
-                    .ok_or_else(|| format!("criteria_details[{}] 缺少 criteria_id", idx))
-            })
-            .collect::<Result<HashSet<String>, String>>()?;
-        if expected_criteria != actual_criteria {
-            return Err(format!(
-                "report.acceptance_summary 覆盖不完整: expected={:?}, actual={:?}",
-                expected_criteria, actual_criteria
-            ));
-        }
-
-        if verify_iteration > 0
-            && report_result
-                .pointer("/verification_summary/remediation_tracking")
-                .and_then(|v| v.as_array())
-                .is_none()
-        {
-            return Err(
-                "verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空"
-                    .to_string(),
-            );
-        }
-
-        let report_md_path = cycle_dir.join("report.md");
-        let report_md = std::fs::read_to_string(&report_md_path)
-            .map_err(|e| format!("读取 report.md 失败: {}", e))?;
-        if report_md.trim().is_empty() {
-            return Err("report.md 不能为空".to_string());
-        }
-        Ok(())
-    }
-
     fn validate_auto_commit_artifact(
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
@@ -2995,7 +2859,6 @@ impl EvolutionManager {
                 backlog_contract_version,
                 validation_ctx,
             ),
-            "report" => Self::validate_report_artifact(cycle_dir, verify_iteration, validation_ctx),
             "auto_commit" => Self::validate_auto_commit_artifact(cycle_dir, validation_ctx),
             _ => Ok(()),
         }
@@ -3348,10 +3211,6 @@ impl EvolutionManager {
             "implement_advanced" => vec![cycle_dir.join("implement_advanced.result.json")],
             "verify" => vec![cycle_dir.join("verify.result.json")],
             "judge" => vec![cycle_dir.join("judge.result.json")],
-            "report" => vec![
-                cycle_dir.join("report.result.json"),
-                cycle_dir.join("report.md"),
-            ],
             _ => Vec::new(),
         }
     }
@@ -3720,7 +3579,6 @@ impl EvolutionManager {
                 | "implement_advanced"
                 | "verify"
                 | "judge"
-                | "report"
                 | "auto_commit"
         )
     }
@@ -3760,7 +3618,6 @@ impl EvolutionManager {
                     .to_string()
             }
             "judge" => "judge.result.json / verify.result.json / plan.execution.json".to_string(),
-            "report" => "stage.report.json / report.result.json / report.md".to_string(),
             "auto_commit" => "stage.auto_commit.json / git 工作区状态".to_string(),
             _ => {
                 let stage_name = if normalized_stage.is_empty() {
@@ -3836,20 +3693,6 @@ impl EvolutionManager {
                     lane
                 );
             }
-        }
-
-        if normalized_stage == "report"
-            && normalized_error_message.contains("acceptance_summary 缺少 criteria_details")
-        {
-            return "report.result.json.acceptance_summary.criteria_details 必须是数组（[]），元素需包含 criteria_id；不要写成对象映射（{...}）。".to_string();
-        }
-
-        if normalized_stage == "report"
-            && normalized_error_message
-                .contains("report.verification_summary.remediation_tracking 不能为空")
-        {
-            return "当 verify_iteration>0 时，report.result.json.verification_summary.remediation_tracking 必须是非空数组（[]）；不要写成对象。"
-                .to_string();
         }
 
         if normalized_error_message.contains("不能为空")
@@ -4712,9 +4555,21 @@ impl EvolutionManager {
             .ok();
         self.broadcast_cycle_update(key, ctx, "orchestrator").await;
 
-        let prompt = self
-            .build_stage_prompt(key, project, workspace, cycle_id, stage, round)
+        let phases = stage_prompt_phases();
+        let mut injected_context_keys: HashSet<String> = HashSet::new();
+        let (mission_prompt, mission_injected_keys) = self
+            .build_stage_prompt_for_phase(
+                key,
+                project,
+                workspace,
+                cycle_id,
+                stage,
+                round,
+                phases[0],
+                &injected_context_keys,
+            )
             .await?;
+        injected_context_keys.extend(mission_injected_keys);
 
         let run_ctx = self
             .run_stage_session_once(
@@ -4724,10 +4579,68 @@ impl EvolutionManager {
                 cycle_id,
                 stage,
                 stage_profile,
-                prompt,
+                mission_prompt,
                 ctx,
             )
             .await?;
+
+        let (deliverable_prompt, deliverable_injected_keys) = self
+            .build_stage_prompt_for_phase(
+                key,
+                project,
+                workspace,
+                cycle_id,
+                stage,
+                round,
+                phases[1],
+                &injected_context_keys,
+            )
+            .await?;
+        injected_context_keys.extend(deliverable_injected_keys);
+
+        if let Err(err) = self
+            .send_stage_prompt_in_same_session(
+                key,
+                project,
+                workspace,
+                cycle_id,
+                stage,
+                &run_ctx.ai_tool,
+                &run_ctx.session_id,
+                &run_ctx.directory,
+                &run_ctx.agent,
+                &deliverable_prompt,
+                run_ctx.model.clone(),
+                run_ctx.mode.clone(),
+                run_ctx.config_overrides.clone(),
+                ctx,
+            )
+            .await
+        {
+            let status = if err.starts_with("evo_human_blocking_required") {
+                "blocked"
+            } else {
+                "failed"
+            };
+            let tool_call_count = self.stage_tool_call_count(key, stage).await;
+            self.finalize_session_execution(
+                key,
+                stage,
+                &run_ctx.session_id,
+                status,
+                tool_call_count,
+            )
+            .await;
+            touch_session_index_updated_at_for_evolution(
+                ctx,
+                project,
+                workspace,
+                &run_ctx.ai_tool,
+                &run_ctx.session_id,
+            )
+            .await;
+            return Err(err);
+        }
 
         let mut judge_pass = true;
         let mut reminder_attempts: u32 = 0;
@@ -5325,9 +5238,9 @@ impl EvolutionManager {
                             entry.workspace.clone(),
                             entry.cycle_id.clone(),
                             "pass".to_string(),
-                            "goto_stage:report".to_string(),
+                            "goto_stage:auto_commit".to_string(),
                         ));
-                        next_stage = "report".to_string();
+                        next_stage = "auto_commit".to_string();
                     } else if entry.verify_iteration + 1 < entry.verify_iteration_limit {
                         entry.terminal_reason_code = None;
                         entry.terminal_error_message = None;
@@ -5458,27 +5371,9 @@ impl EvolutionManager {
                             entry.workspace.clone(),
                             entry.cycle_id.clone(),
                             "fail".to_string(),
-                            "goto_stage:report".to_string(),
+                            "stop_cycle".to_string(),
                         ));
-                        next_stage = "report".to_string();
-                    }
-                }
-                "report" => {
-                    if entry.status != "failed_system" {
-                        entry.status = if entry.last_judge_result.unwrap_or(false) {
-                            entry.terminal_reason_code = None;
-                            entry.terminal_error_message = None;
-                            "completed".to_string()
-                        } else {
-                            if entry.terminal_reason_code.is_none() {
-                                entry.terminal_reason_code = Some("evo_judge_failed".to_string());
-                            }
-                            entry.terminal_error_message = None;
-                            "failed_exhausted".to_string()
-                        };
-                    }
-                    if entry.status == "completed" {
-                        next_stage = "auto_commit".to_string();
+                        next_stage = previous.clone();
                     }
                 }
                 "auto_commit" => {
@@ -5504,11 +5399,7 @@ impl EvolutionManager {
                 _ => {}
             }
 
-            let should_advance = match stage {
-                "report" => next_stage == "auto_commit",
-                "auto_commit" => false,
-                _ => true,
-            } && next_stage != previous;
+            let should_advance = !matches!(stage, "auto_commit") && next_stage != previous;
             if should_advance {
                 entry.current_stage = next_stage.clone();
                 stage_changed = Some((
@@ -5525,7 +5416,7 @@ impl EvolutionManager {
                 .await;
             return false;
         }
-        if !matches!(stage, "auto_commit") && stage_changed.is_none() {
+        if !matches!(stage, "auto_commit" | "judge") && stage_changed.is_none() {
             warn!(
                 "evolution after_stage_success no stage_changed emitted: key={}, stage={}, judge_pass={}",
                 key, stage, judge_pass
@@ -5853,7 +5744,10 @@ impl EvolutionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{stage::next_stage, STAGES};
+    use super::super::{
+        stage::{next_stage, StagePromptPhase},
+        STAGES,
+    };
     use super::{
         parse_judge_result_from_json, should_force_advanced_reimplementation,
         should_start_next_round, EvolutionManager, ImplementLane, StageValidationContext,
@@ -6066,78 +5960,6 @@ mod tests {
         );
     }
 
-    fn write_valid_report_artifacts(dir: &Path, verify_iteration: u32) {
-        write_json(
-            &dir.join("plan.execution.json"),
-            base_plan_json(vec![serde_json::json!({
-                "id": "w-1",
-                "title": "x",
-                "type": "code",
-                "priority": "p0",
-                "depends_on": [],
-                "targets": ["core/src/lib.rs"],
-                "definition_of_done": ["done"],
-                "risk": "low",
-                "rollback": "git restore",
-                "implementation_agent": "implement_general",
-                "linked_check_ids": ["v-1", "v-2"]
-            })]),
-        );
-        write_json(
-            &dir.join("judge.result.json"),
-            serde_json::json!({
-                "$schema_version": "1.0",
-                "cycle_id": "c-1",
-                "verify_iteration": verify_iteration,
-                "verify_iteration_limit": 2,
-                "criteria_judgement": [
-                    {"criteria_id": "ac-1", "result": "pass"},
-                    {"criteria_id": "ac-2", "result": "pass"}
-                ],
-                "overall_result": {"result": "pass"},
-                "next_action": {"type": "goto_stage", "target": "report"},
-                "full_next_iteration_requirements": [],
-                "updated_at": "2026-03-02T00:00:00Z"
-            }),
-        );
-        write_json(
-            &dir.join("stage.report.json"),
-            serde_json::json!({
-                "$schema_version": "1.0",
-                "cycle_id": "c-1",
-                "next_action": {"type": "goto_stage", "target": "auto_commit"},
-                "updated_at": "2026-03-02T00:00:00Z"
-            }),
-        );
-        let verification_summary = if verify_iteration > 0 {
-            serde_json::json!({"remediation_tracking": []})
-        } else {
-            serde_json::json!({})
-        };
-        write_json(
-            &dir.join("report.result.json"),
-            serde_json::json!({
-                "$schema_version": "1.0",
-                "cycle_id": "c-1",
-                "final_result": {
-                    "judge_result": "pass",
-                    "recommended_cycle_status": "completed"
-                },
-                "direction_summary": {},
-                "acceptance_summary": {
-                    "criteria_details": [
-                        {"criteria_id": "ac-1"},
-                        {"criteria_id": "ac-2"}
-                    ]
-                },
-                "implementation_summary": {},
-                "verification_summary": verification_summary,
-                "updated_at": "2026-03-02T00:00:00Z"
-            }),
-        );
-        std::fs::write(dir.join("report.md"), "report").expect("write report.md should succeed");
-    }
-
     #[test]
     fn parse_judge_result_json_schema() {
         let value = serde_json::json!({
@@ -6203,10 +6025,6 @@ mod tests {
             "evo_stage_output_invalid: x"
         ));
         assert!(EvolutionManager::should_retry_validation_with_reminder(
-            "report",
-            "evo_stage_output_invalid: x"
-        ));
-        assert!(EvolutionManager::should_retry_validation_with_reminder(
             "auto_commit",
             "evo_stage_output_invalid: x"
         ));
@@ -6227,10 +6045,10 @@ mod tests {
     #[test]
     fn parse_validation_error_code_and_message_should_parse_standard_stage_error() {
         let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
-            "evo_stage_output_invalid:artifact_contract_violation: report.result.json 缺少 final_result",
+            "evo_stage_output_invalid:artifact_contract_violation: judge.result.json 缺少 overall_result",
         );
         assert_eq!(code, "artifact_contract_violation");
-        assert_eq!(message, "report.result.json 缺少 final_result");
+        assert_eq!(message, "judge.result.json 缺少 overall_result");
     }
 
     #[test]
@@ -6245,10 +6063,10 @@ mod tests {
     #[test]
     fn parse_validation_error_code_and_message_should_fallback_when_prefix_missing() {
         let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
-            "report.result.json 缺少 final_result",
+            "judge.result.json 缺少 overall_result",
         );
         assert_eq!(code, "artifact_contract_violation");
-        assert_eq!(message, "report.result.json 缺少 final_result");
+        assert_eq!(message, "judge.result.json 缺少 overall_result");
     }
 
     #[test]
@@ -6291,10 +6109,6 @@ mod tests {
             "judge.result.json / verify.result.json / plan.execution.json"
         );
         assert_eq!(
-            EvolutionManager::validation_target_files_for_stage("report"),
-            "stage.report.json / report.result.json / report.md"
-        );
-        assert_eq!(
             EvolutionManager::validation_target_files_for_stage("auto_commit"),
             "stage.auto_commit.json / git 工作区状态"
         );
@@ -6302,38 +6116,6 @@ mod tests {
             EvolutionManager::validation_target_files_for_stage("custom_stage"),
             "stage.custom_stage.json / 对应 *.result.json 产物"
         );
-    }
-
-    #[test]
-    fn build_validation_reminder_message_should_match_snapshot_for_report_criteria_details_missing()
-    {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: report.result.json.acceptance_summary 缺少 criteria_details";
-        let msg = EvolutionManager::build_validation_reminder_message("report", raw_error);
-        let expected = expected_validation_reminder(
-            "report",
-            "artifact_contract_violation",
-            "report.result.json.acceptance_summary 缺少 criteria_details",
-            "report.result.json.acceptance_summary.criteria_details 必须是数组（[]），元素需包含 criteria_id；不要写成对象映射（{...}）。",
-            "stage.report.json / report.result.json / report.md",
-            raw_error,
-        );
-        assert_eq!(msg, expected);
-    }
-
-    #[test]
-    fn build_validation_reminder_message_should_match_snapshot_for_report_remediation_tracking_empty(
-    ) {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空";
-        let msg = EvolutionManager::build_validation_reminder_message("report", raw_error);
-        let expected = expected_validation_reminder(
-            "report",
-            "artifact_contract_violation",
-            "verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空",
-            "当 verify_iteration>0 时，report.result.json.verification_summary.remediation_tracking 必须是非空数组（[]）；不要写成对象。",
-            "stage.report.json / report.result.json / report.md",
-            raw_error,
-        );
-        assert_eq!(msg, expected);
     }
 
     #[test]
@@ -6434,22 +6216,6 @@ mod tests {
     }
 
     #[test]
-    fn build_validation_reminder_message_should_match_snapshot_for_coverage_incomplete() {
-        let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: report.acceptance_summary 覆盖不完整: expected={ac-1}, actual={ac-2}";
-        let msg = EvolutionManager::build_validation_reminder_message("report", raw_error);
-        let expected = expected_validation_reminder(
-            "report",
-            "artifact_contract_violation",
-            "report.acceptance_summary 覆盖不完整: expected={ac-1}, actual={ac-2}",
-            "补齐缺失项，确保 expected 集合与 actual 集合完全一致。",
-            "stage.report.json / report.result.json / report.md",
-            raw_error,
-        );
-        assert_eq!(msg, expected);
-    }
-
-    #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_cross_file_inconsistency() {
         let raw_error = "evo_stage_output_invalid:artifact_contract_violation: selected_direction_type 与 cycle.direction.selected_type 不一致: ui != feature";
         let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
@@ -6477,7 +6243,14 @@ mod tests {
         assert!(!super::should_attempt_idle_recovery(3));
     }
 
-    // ── 九阶段新约束回归测试 ──────────────────────────────────────────────
+    #[test]
+    fn stage_prompt_phases_should_be_mission_then_deliverable() {
+        let phases = super::stage_prompt_phases();
+        assert_eq!(phases[0], StagePromptPhase::Mission);
+        assert_eq!(phases[1], StagePromptPhase::Deliverable);
+    }
+
+    // ── 八阶段新约束回归测试 ──────────────────────────────────────────────
 
     #[test]
     fn stages_should_not_contain_bootstrap() {
@@ -6492,8 +6265,8 @@ mod tests {
     }
 
     #[test]
-    fn next_stage_report_should_goto_auto_commit() {
-        assert_eq!(next_stage("report"), Some("auto_commit"));
+    fn next_stage_judge_should_goto_auto_commit() {
+        assert_eq!(next_stage("judge"), Some("auto_commit"));
     }
 
     #[test]
@@ -6574,7 +6347,7 @@ mod tests {
     }
 
     #[test]
-    fn report_completed_exceeded_round_should_not_start_next_round() {
+    fn completed_exceeded_round_should_not_start_next_round() {
         assert!(
             !should_start_next_round("completed", 4, 3),
             "已超过上限时不应继续下一轮"
@@ -6644,24 +6417,6 @@ mod tests {
         let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
             .expect_err("missing cycle_title should fail");
         assert!(err.contains("cycle_title"));
-    }
-
-    #[test]
-    fn validate_stage_artifacts_should_reject_report_missing_direction_summary() {
-        let dir = tempdir().expect("tempdir should succeed");
-        write_valid_report_artifacts(dir.path(), 0);
-
-        let mut report_result = super::read_json_file(dir.path(), "report.result.json")
-            .expect("report.result.json should be readable");
-        report_result
-            .as_object_mut()
-            .expect("report.result.json should be object")
-            .remove("direction_summary");
-        write_json(&dir.path().join("report.result.json"), report_result);
-
-        let err = EvolutionManager::validate_stage_artifacts("report", dir.path(), 0, 1)
-            .expect_err("missing direction_summary should fail");
-        assert!(err.contains("direction_summary"));
     }
 
     #[test]
@@ -6739,7 +6494,7 @@ mod tests {
                     {"criteria_id": "ac-1", "result": "pass"}
                 ],
                 "overall_result": {"result": "pass"},
-                "next_action": {"type": "goto_stage", "target": "report"},
+                "next_action": {"type": "goto_stage", "target": "auto_commit"},
                 "full_next_iteration_requirements": [],
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
