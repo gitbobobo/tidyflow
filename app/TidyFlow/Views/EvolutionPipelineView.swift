@@ -28,6 +28,10 @@ struct EvolutionPipelineView: View {
     @State private var lastRecordedRound: Int = 0
     /// 当前循环的开始时间
     @State private var cycleStartDate: Date = Date()
+    /// 当前时间线快照签名（用于跳过重复重算）
+    @State private var timelineSnapshotSignature: Int = 0
+    /// 历史循环快照签名（用于跳过重复映射）
+    @State private var cycleHistorySnapshotSignature: Int = 0
 
     private let untitledCycleTitle = "Untitled"
 
@@ -336,7 +340,8 @@ struct EvolutionPipelineView: View {
     }
 
     private func runningAgentCard(_ agent: EvolutionAgentInfoV2) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let startedAtDate = executionStartDate(agent.startedAt)
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 // AI 工具图标
                 aiToolIcon(for: agent.stage)
@@ -376,7 +381,7 @@ struct EvolutionPipelineView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text(formatElapsedTimeFrom(agent.startedAt))
+                        Text(formatElapsedTimeFrom(startedAtDate))
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                     }
                 }
@@ -1689,11 +1694,15 @@ struct EvolutionPipelineView: View {
 
     /// 根据核心返回的 started_at（RFC3339）计算实时耗时
     private func formatElapsedTimeFrom(_ startedAtRFC3339: String?) -> String {
-        guard let str = startedAtRFC3339,
-              let date = Self.rfc3339Formatter.date(from: str) ?? Self.rfc3339FallbackFormatter.date(from: str) else {
+        formatElapsedTimeFrom(executionStartDate(startedAtRFC3339))
+    }
+
+    /// 基于已解析时间计算实时耗时，避免在 TimelineView 中重复做日期解析。
+    private func formatElapsedTimeFrom(_ startedAtDate: Date?) -> String {
+        guard let startedAtDate else {
             return "0s"
         }
-        let elapsed = Date().timeIntervalSince(date)
+        let elapsed = Date().timeIntervalSince(startedAtDate)
         return Self.formatDuration(elapsed)
     }
 
@@ -1734,6 +1743,12 @@ struct EvolutionPipelineView: View {
     private static let cycleDetailTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    private static let pipelineTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
         return formatter
     }()
 
@@ -1784,7 +1799,13 @@ struct EvolutionPipelineView: View {
     }
 
     private func updateTimeline() {
-        guard let item = currentItem else { return }
+        guard let item = currentItem else {
+            timelineSnapshotSignature = 0
+            if !completedTimeline.isEmpty {
+                completedTimeline.removeAll()
+            }
+            return
+        }
 
         // 检测轮次变化，如果轮次增加，清空当前时间线并重新请求历史
         // 注意：自动切轮期间，核心快照可能会先清空 executions 再递增轮次，
@@ -1798,6 +1819,10 @@ struct EvolutionPipelineView: View {
             }
         }
         lastRecordedRound = item.globalLoopRound
+
+        let signature = timelineSnapshotSignature(for: item)
+        guard signature != timelineSnapshotSignature else { return }
+        timelineSnapshotSignature = signature
 
         let sortedExecutions = item.executions
             .filter { isExecutionCompletedStatus($0.status) }
@@ -1836,11 +1861,13 @@ struct EvolutionPipelineView: View {
         completedTimeline.removeAll()
         lastRecordedRound = 0
         cycleStartDate = Date()
+        timelineSnapshotSignature = 0
     }
 
     private func resetLocalTimeline() {
         resetCurrentCycleTimeline()
         cycleHistories.removeAll()
+        cycleHistorySnapshotSignature = 0
     }
 
     /// 将 API 返回的历史循环数据同步到本地视图模型
@@ -1848,14 +1875,13 @@ struct EvolutionPipelineView: View {
         guard let ws = workspace else { return }
         let key = appState.globalWorkspaceKey(projectName: project, workspaceName: appState.normalizeEvolutionWorkspaceName(ws))
         guard let apiCycles = appState.evolutionCycleHistories[key] else { return }
-
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
+        let signature = cycleHistorySnapshotSignature(for: apiCycles)
+        guard signature != cycleHistorySnapshotSignature else { return }
+        cycleHistorySnapshotSignature = signature
 
         cycleHistories = apiCycles.map { cycle in
-            let startDate = isoFormatter.date(from: cycle.createdAt)
-                ?? fallbackFormatter.date(from: cycle.createdAt)
+            let startDate = Self.rfc3339Formatter.date(from: cycle.createdAt)
+                ?? Self.rfc3339FallbackFormatter.date(from: cycle.createdAt)
                 ?? Date()
             let entries: [PipelineCycleStageEntry] = {
                 let executionEntries = cycle.executions
@@ -2250,14 +2276,67 @@ struct EvolutionPipelineView: View {
     }
 
     private func pipelineTimeLabel(from isoString: String?) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
         guard let isoString = trimmedNonEmptyText(isoString),
               let date = Self.rfc3339Formatter.date(from: isoString)
                 ?? Self.rfc3339FallbackFormatter.date(from: isoString) else {
-            return formatter.string(from: Date())
+            return Self.pipelineTimeFormatter.string(from: Date())
         }
-        return formatter.string(from: date)
+        return Self.pipelineTimeFormatter.string(from: date)
+    }
+
+    /// 时间线签名：仅包含会影响“已完成时间线”的字段，避免高频快照下重复排序/映射。
+    private func timelineSnapshotSignature(for item: EvolutionWorkspaceItemV2) -> Int {
+        var hasher = Hasher()
+        hasher.combine(item.cycleID)
+        hasher.combine(item.globalLoopRound)
+        hasher.combine(item.executions.count)
+
+        var completedExecutionCount = 0
+        for execution in item.executions where isExecutionCompletedStatus(execution.status) {
+            completedExecutionCount += 1
+            hasher.combine(execution.sessionID)
+            hasher.combine(execution.stage)
+            hasher.combine(execution.status)
+            hasher.combine(execution.startedAt)
+            hasher.combine(execution.completedAt ?? "")
+            hasher.combine(execution.durationMs ?? 0)
+            hasher.combine(execution.toolCallCount)
+        }
+        hasher.combine(completedExecutionCount)
+
+        // 兼容启动初期（尚无 executions）时的展示依赖。
+        if completedExecutionCount == 0 {
+            for agent in item.agents {
+                hasher.combine(agent.stage)
+                hasher.combine(agent.status)
+                hasher.combine(agent.toolCallCount)
+                hasher.combine(agent.startedAt ?? "")
+                hasher.combine(agent.durationMs ?? 0)
+            }
+        }
+        return hasher.finalize()
+    }
+
+    /// 历史循环签名：用于跳过未变化时的日期解析和视图模型重建。
+    private func cycleHistorySnapshotSignature(for cycles: [EvolutionCycleHistoryItemV2]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(cycles.count)
+        for cycle in cycles {
+            hasher.combine(cycle.cycleID)
+            hasher.combine(cycle.globalLoopRound)
+            hasher.combine(cycle.status)
+            hasher.combine(cycle.createdAt)
+            hasher.combine(cycle.updatedAt)
+            hasher.combine(cycle.executions.count)
+            if let lastExecution = cycle.executions.last {
+                hasher.combine(lastExecution.sessionID)
+                hasher.combine(lastExecution.status)
+                hasher.combine(lastExecution.completedAt ?? "")
+                hasher.combine(lastExecution.durationMs ?? 0)
+            }
+            hasher.combine(cycle.stages.count)
+        }
+        return hasher.finalize()
     }
 
     private func stageDisplayName(_ stage: String) -> String {
