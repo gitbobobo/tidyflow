@@ -400,24 +400,6 @@ extension AppState {
         }
     }
 
-    func handleAIChatMessageUpdated(_ ev: AIChatMessageUpdatedV2) {
-        TFLog.app.debug(
-            "AI legacy event ignored: ai_chat_message_updated, session_id=\(ev.sessionId, privacy: .public)"
-        )
-    }
-
-    func handleAIChatPartUpdated(_ ev: AIChatPartUpdatedV2) {
-        TFLog.app.debug(
-            "AI legacy event ignored: ai_chat_part_updated, session_id=\(ev.sessionId, privacy: .public)"
-        )
-    }
-
-    func handleAIChatPartDelta(_ ev: AIChatPartDeltaV2) {
-        TFLog.app.debug(
-            "AI legacy event ignored: ai_chat_part_delta, session_id=\(ev.sessionId, privacy: .public)"
-        )
-    }
-
     private func fallbackSessionStatusForChatDone(stopReason: String?) -> String {
         let reason = (stopReason ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)

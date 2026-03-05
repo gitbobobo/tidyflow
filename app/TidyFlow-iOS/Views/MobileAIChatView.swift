@@ -7,6 +7,7 @@ private struct MobileSubAgentSessionRoute: Identifiable {
 
 struct MobileAIChatView: View {
     @EnvironmentObject var appState: MobileAppState
+    @EnvironmentObject var aiChatStore: AIChatStore
 
     let project: String
     let workspace: String
@@ -176,14 +177,14 @@ struct MobileAIChatView: View {
             requestCurrentSessionStatus(force: true)
             restartSessionStatusPollingIfNeeded()
         }
-        .onChange(of: appState.aiIsStreaming) { _, _ in
+        .onChange(of: aiChatStore.isStreaming) { _, _ in
             requestCurrentSessionStatus()
             restartSessionStatusPollingIfNeeded()
         }
-        .onReceive(appState.$aiChatMessages) { messages in
+        .onReceive(aiChatStore.$messages) { messages in
             observeCodexPlanProposal(messages)
         }
-        .onChange(of: appState.aiIsStreaming) { _, isStreaming in
+        .onChange(of: aiChatStore.isStreaming) { _, isStreaming in
             if isStreaming {
                 sawCodexPlanProposalInCurrentTurn = false
                 codexPlanProposalPartIDInCurrentTurn = nil
@@ -196,12 +197,12 @@ struct MobileAIChatView: View {
     }
 
     private var isLoadingMessages: Bool {
-        appState.aiCurrentSessionId != nil && appState.aiChatMessages.isEmpty
+        appState.aiCurrentSessionId != nil && aiChatStore.messages.isEmpty
     }
 
     private var messageArea: some View {
         ZStack {
-            if appState.aiChatMessages.isEmpty {
+            if aiChatStore.messages.isEmpty {
                 AIChatEmptyStateView(
                     currentTool: appState.aiChatTool,
                     selectedTool: aiToolBinding,
@@ -211,7 +212,7 @@ struct MobileAIChatView: View {
             } else {
                 let currentSessionId = appState.aiCurrentSessionId ?? ""
                 MessageListView(
-                    messages: appState.aiChatMessages,
+                    messages: aiChatStore.messages,
                     sessionToken: appState.aiCurrentSessionId,
                     onQuestionReply: { request, answers in
                         handleQuestionReply(request: request, answers: answers)
@@ -233,7 +234,7 @@ struct MobileAIChatView: View {
                         presentedSubAgentSession = MobileSubAgentSessionRoute(id: sessionId, sourceToolName: "task")
                     }
                 )
-                .environmentObject(appState.aiChatStore)
+                .environmentObject(aiChatStore)
                 .id("main-session-\(appState.aiChatTool.rawValue)-\(currentSessionId)-\(mainMessageListScrollSessionToken)")
             }
         }
@@ -266,10 +267,10 @@ struct MobileAIChatView: View {
             ChatInputView(
                 text: $inputText,
                 imageAttachments: $imageAttachments,
-                isStreaming: appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil,
+                isStreaming: aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil,
                 autoFocusOnAppear: true,
-                canStopStreaming: appState.aiCurrentSessionId != nil && appState.aiAbortPendingSessionId == nil,
-                isSendingPending: appState.aiIsSendingPending,
+                canStopStreaming: appState.aiCurrentSessionId != nil && aiChatStore.abortPendingSessionId == nil,
+                isSendingPending: aiChatStore.hasPendingFirstContent,
                 onSend: { sendMessage() },
                 onStop: { stopStreaming() },
                 providers: appState.aiProviders,
@@ -365,7 +366,7 @@ struct MobileAIChatView: View {
     }
 
     private func observeCodexPlanProposal(_ messages: [AIChatMessage]) {
-        guard appState.aiIsStreaming else { return }
+        guard aiChatStore.isStreaming else { return }
         guard appState.aiChatTool == .codex else { return }
         guard isPlanAgentSelected() else { return }
         guard !sawCodexPlanProposalInCurrentTurn else { return }
@@ -390,7 +391,7 @@ struct MobileAIChatView: View {
         guard isPlanAgentSelected() else { return }
         guard sawCodexPlanProposalInCurrentTurn else { return }
         guard let planPartID = codexPlanProposalPartIDInCurrentTurn, !planPartID.isEmpty else { return }
-        guard appState.aiAbortPendingSessionId == nil else { return }
+        guard aiChatStore.abortPendingSessionId == nil else { return }
         guard let sessionID = appState.aiCurrentSessionId, !sessionID.isEmpty else { return }
 
         let requestID = AIPlanImplementationQuestion.requestId(sessionId: sessionID, planPartId: planPartID)
@@ -416,7 +417,7 @@ struct MobileAIChatView: View {
         sessionStatusPollingTask?.cancel()
         sessionStatusPollingTask = nil
         guard appState.aiCurrentSessionId != nil else { return }
-        let shouldPoll = appState.aiIsStreaming || appState.aiAbortPendingSessionId != nil
+        let shouldPoll = aiChatStore.isStreaming || aiChatStore.abortPendingSessionId != nil
         guard shouldPoll else { return }
 
         sessionStatusPollingTask = Task {

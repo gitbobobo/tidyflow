@@ -691,60 +691,6 @@ extension AppState {
         return true
     }
 
-    func consumeEvolutionReplayMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
-        guard matchesEvolutionReplayContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if evolutionReplayStore.currentSessionId != ev.sessionId {
-            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
-        }
-        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return }
-        evolutionReplayStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
-        evolutionReplayLoading = false
-        evolutionReplayError = nil
-    }
-
-    func consumeEvolutionReplayPartUpdatedIfNeeded(_ ev: AIChatPartUpdatedV2) {
-        guard matchesEvolutionReplayContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if evolutionReplayStore.currentSessionId != ev.sessionId {
-            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
-        }
-        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return }
-        evolutionReplayStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
-        evolutionReplayLoading = false
-        evolutionReplayError = nil
-    }
-
-    func consumeEvolutionReplayPartDeltaIfNeeded(_ ev: AIChatPartDeltaV2) {
-        guard matchesEvolutionReplayContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if evolutionReplayStore.currentSessionId != ev.sessionId {
-            evolutionReplayStore.setCurrentSessionId(ev.sessionId)
-        }
-        if evolutionReplayStore.isAbortPending(for: ev.sessionId) { return }
-        evolutionReplayStore.enqueuePartDelta(
-            messageId: ev.messageId,
-            partId: ev.partId,
-            partType: ev.partType,
-            field: ev.field,
-            delta: ev.delta
-        )
-        evolutionReplayLoading = false
-        evolutionReplayError = nil
-    }
-
     func consumeEvolutionReplayDoneIfNeeded(_ ev: AIChatDoneV2) {
         guard matchesEvolutionReplayContext(
             project: ev.projectName,
@@ -832,60 +778,6 @@ extension AppState {
         subAgentViewerLoading = false
         subAgentViewerError = nil
         return true
-    }
-
-    func consumeSubAgentViewerMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
-        guard matchesSubAgentViewerContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if subAgentViewerStore.currentSessionId != ev.sessionId {
-            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
-        }
-        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
-        subAgentViewerStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
-    }
-
-    func consumeSubAgentViewerPartUpdatedIfNeeded(_ ev: AIChatPartUpdatedV2) {
-        guard matchesSubAgentViewerContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if subAgentViewerStore.currentSessionId != ev.sessionId {
-            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
-        }
-        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
-        subAgentViewerStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
-    }
-
-    func consumeSubAgentViewerPartDeltaIfNeeded(_ ev: AIChatPartDeltaV2) {
-        guard matchesSubAgentViewerContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if subAgentViewerStore.currentSessionId != ev.sessionId {
-            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
-        }
-        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
-        subAgentViewerStore.enqueuePartDelta(
-            messageId: ev.messageId,
-            partId: ev.partId,
-            partType: ev.partType,
-            field: ev.field,
-            delta: ev.delta
-        )
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
     }
 
     func consumeSubAgentViewerDoneIfNeeded(_ ev: AIChatDoneV2) {

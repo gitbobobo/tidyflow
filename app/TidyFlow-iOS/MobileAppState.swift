@@ -181,10 +181,20 @@ final class MobileAppState: ObservableObject {
     @Published var aiActiveWorkspace: String = ""
     @Published var aiChatTool: AIChatTool = .opencode
     @Published var aiCurrentSessionId: String?
-    @Published var aiChatMessages: [AIChatMessage] = []
-    @Published var aiIsStreaming: Bool = false
-    @Published var aiIsSendingPending: Bool = false
-    @Published var aiAbortPendingSessionId: String?
+    /// 主聊天状态统一由 AIChatStore 承载，避免重复数组写入。
+    var aiChatMessages: [AIChatMessage] { aiChatStore.messages }
+    var aiIsStreaming: Bool {
+        get { aiChatStore.isStreaming }
+        set { aiChatStore.isStreaming = newValue }
+    }
+    var aiIsSendingPending: Bool {
+        get { aiChatStore.hasPendingFirstContent }
+        set { aiChatStore.hasPendingFirstContent = newValue }
+    }
+    var aiAbortPendingSessionId: String? {
+        get { aiChatStore.abortPendingSessionId }
+        set { aiChatStore.abortPendingSessionId = newValue }
+    }
     @Published var aiSessions: [AISessionInfo] = [] {
         didSet {
             aiSessionsByTool[aiChatTool] = aiSessions
@@ -326,15 +336,9 @@ final class MobileAppState: ObservableObject {
     private var aiCommitPendingTaskIds: [String] = []
     /// AI 合并按 project 匹配
     private var aiMergePendingTaskIdByProject: [String: String] = [:]
-    /// AI Chat：message_id -> message 下标
-    private var aiMessageIndexByMessageId: [String: Int] = [:]
-    /// AI Chat：part_id -> (message 下标, part 下标)
-    private var aiPartIndexByPartId: [String: (msgIdx: Int, partIdx: Int)] = [:]
     /// AI 会话状态请求限流（key: project/workspace/tool/session）。
     private var aiSessionStatusRequestLimiter = AISessionStatusRequestLimiter()
     private let aiSessionStatusMinInterval: TimeInterval = 1.2
-    /// AI Chat：按工作空间缓存快照，切换路由时恢复上下文
-    private var aiChatSnapshotCache: [String: AIChatSnapshot] = [:]
     /// AI Chat：等待会话创建完成后的待发送请求（含上下文防串台）
     private var aiPendingSendRequest: (
         projectName: String,
@@ -1917,58 +1921,39 @@ final class MobileAppState: ObservableObject {
         return true
     }
 
-    private func consumeSubAgentViewerMessageUpdatedIfNeeded(_ ev: AIChatMessageUpdatedV2) {
+    private func consumeSubAgentViewerMessagesUpdateIfNeeded(_ ev: AISessionMessagesUpdateV2) -> Bool {
         guard matchesSubAgentViewerContext(
             project: ev.projectName,
             workspace: ev.workspaceName,
             aiTool: ev.aiTool,
             sessionId: ev.sessionId
-        ) else { return }
+        ) else { return false }
         if subAgentViewerStore.currentSessionId != ev.sessionId {
             subAgentViewerStore.setCurrentSessionId(ev.sessionId)
         }
-        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
-        subAgentViewerStore.enqueueMessageUpdated(messageId: ev.messageId, role: ev.role)
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
-    }
+        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return true }
+        guard subAgentViewerStore.shouldApplySessionCacheRevision(
+            ev.cacheRevision,
+            sessionId: ev.sessionId
+        ) else {
+            return true
+        }
 
-    private func consumeSubAgentViewerPartUpdatedIfNeeded(_ ev: AIChatPartUpdatedV2) {
-        guard matchesSubAgentViewerContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if subAgentViewerStore.currentSessionId != ev.sessionId {
-            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
+        if let messages = ev.messages {
+            subAgentViewerStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
+            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                sessionId: ev.sessionId,
+                messages: messages
+            )
+            subAgentViewerStore.replaceQuestionRequests(restoredQuestions)
+        } else if let ops = ev.ops {
+            subAgentViewerStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+        } else if !ev.isStreaming {
+            subAgentViewerStore.applySessionCacheOps([], isStreaming: false)
         }
-        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
-        subAgentViewerStore.enqueuePartUpdated(messageId: ev.messageId, part: ev.part)
         subAgentViewerLoading = false
         subAgentViewerError = nil
-    }
-
-    private func consumeSubAgentViewerPartDeltaIfNeeded(_ ev: AIChatPartDeltaV2) {
-        guard matchesSubAgentViewerContext(
-            project: ev.projectName,
-            workspace: ev.workspaceName,
-            aiTool: ev.aiTool,
-            sessionId: ev.sessionId
-        ) else { return }
-        if subAgentViewerStore.currentSessionId != ev.sessionId {
-            subAgentViewerStore.setCurrentSessionId(ev.sessionId)
-        }
-        if subAgentViewerStore.isAbortPending(for: ev.sessionId) { return }
-        subAgentViewerStore.enqueuePartDelta(
-            messageId: ev.messageId,
-            partId: ev.partId,
-            partType: ev.partType,
-            field: ev.field,
-            delta: ev.delta
-        )
-        subAgentViewerLoading = false
-        subAgentViewerError = nil
+        return true
     }
 
     private func consumeSubAgentViewerDoneIfNeeded(_ ev: AIChatDoneV2) {
@@ -2063,11 +2048,7 @@ final class MobileAppState: ObservableObject {
         aiAbortPendingSessionId = nil
         aiCurrentSessionId = nil
         aiChatStore.setCurrentSessionId(nil)
-        aiChatMessages = []
-        aiIsStreaming = false
-        aiIsSendingPending = false
-        aiMessageIndexByMessageId = [:]
-        aiPartIndexByPartId = [:]
+        aiChatStore.clearMessages()
     }
 
     var canSwitchAIChatTool: Bool {
@@ -2195,11 +2176,8 @@ final class MobileAppState: ObservableObject {
         aiCurrentSessionId = session.id
         aiChatStore.setCurrentSessionId(session.id)
         aiChatStore.addSubscription(session.id)
-        aiChatMessages = []
-        aiIsStreaming = false
-        aiIsSendingPending = false
-        aiMessageIndexByMessageId = [:]
-        aiPartIndexByPartId = [:]
+        aiChatStore.setAbortPendingSessionId(nil)
+        aiChatStore.clearMessages()
 
         wsClient.requestAISessionSubscribe(
             project: session.projectName,
@@ -2252,11 +2230,8 @@ final class MobileAppState: ObservableObject {
         if aiCurrentSessionId == session.id && aiChatTool == targetTool {
             aiCurrentSessionId = nil
             aiChatStore.setCurrentSessionId(nil)
-            aiChatMessages = []
-            aiIsStreaming = false
-            aiIsSendingPending = false
-            aiMessageIndexByMessageId = [:]
-            aiPartIndexByPartId = [:]
+            aiChatStore.setAbortPendingSessionId(nil)
+            aiChatStore.clearMessages()
         }
     }
 
@@ -2289,7 +2264,7 @@ final class MobileAppState: ObservableObject {
                 case "new":
                     createNewAISession()
                 default:
-                    aiChatMessages.append(
+                    aiChatStore.appendMessage(
                         AIChatMessage(
                             role: .assistant,
                             parts: [AIChatPart(
@@ -2323,9 +2298,12 @@ final class MobileAppState: ObservableObject {
         let aiTool = aiChatTool
         let configOverrides = aiConfigOverrides(for: aiTool)
 
-        // 发送后设为 pending 态，等待服务端首个内容到达
-        aiIsStreaming = true
-        aiIsSendingPending = true
+        if slashCommand == nil {
+            aiChatStore.beginAwaitingUserEcho()
+        } else {
+            aiChatStore.beginAwaitingAssistantOnly()
+        }
+        aiChatStore.isStreaming = true
 
         if let sessionId = aiCurrentSessionId {
             if let slash = slashCommand {
@@ -2414,25 +2392,21 @@ final class MobileAppState: ObservableObject {
     func stopAIStreaming() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty,
               let sessionId = aiCurrentSessionId else { return }
-        aiAbortPendingSessionId = sessionId
+        aiChatStore.setAbortPendingSessionId(sessionId)
         wsClient.requestAIChatAbort(
             projectName: aiActiveProject,
             workspaceName: aiActiveWorkspace,
             aiTool: aiChatTool,
             sessionId: sessionId
         )
-        aiIsStreaming = false
-        aiIsSendingPending = false
+        aiChatStore.stopStreamingLocallyAndPrunePlaceholder()
         requestCurrentAISessionStatus(force: true)
 
-        // 立即收敛本地 loading，避免等待服务端 done 期间界面残留
-        for idx in aiChatMessages.indices.reversed() {
-            guard aiChatMessages[idx].role == .assistant,
-                  aiChatMessages[idx].isStreaming else { continue }
-            aiChatMessages[idx].isStreaming = false
-            aiTouchRenderRevision(at: idx)
-            if aiChatMessages[idx].parts.isEmpty {
-                aiChatMessages.remove(at: idx)
+        // 兜底：若 done/error 丢失，2s 后解除 pending，避免输入区永久不可用。
+        let store = aiChatStore
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            if store.isAbortPending(for: sessionId) {
+                store.clearAbortPendingIfMatches(sessionId)
             }
         }
     }
@@ -2449,24 +2423,9 @@ final class MobileAppState: ObservableObject {
         )
     }
 
-    /// iOS 侧问题卡片本地收敛：同步更新 AIChatStore 与本地消息数组，避免卡片停留可交互态。
+    /// iOS 侧问题卡片本地收敛：直接由 AIChatStore 执行，避免重复状态写入。
     func completeAIQuestionRequestLocally(requestId: String, answers: [[String]]? = nil) {
-        let request = aiChatStore.questionRequest(
-            forToolCallId: nil,
-            toolPartId: nil,
-            toolMessageId: nil,
-            requestId: requestId
-        )
-
         aiChatStore.completeQuestionRequestLocally(requestId: requestId, answers: answers)
-
-        _ = AIQuestionLocalCompletion.apply(
-            to: &aiChatMessages,
-            requestId: requestId,
-            mappedKey: nil,
-            request: request,
-            answers: answers
-        )
     }
 
     func rejectAIQuestion(requestId: String, sessionId: String) {
@@ -2482,7 +2441,7 @@ final class MobileAppState: ObservableObject {
 
     func hasCodexPlanImplementationQuestionCard(requestId: String) -> Bool {
         AIPlanImplementationQuestion.hasCard(
-            messages: aiChatMessages,
+            messages: aiChatStore.messages,
             pendingQuestions: aiChatStore.pendingToolQuestions,
             requestID: requestId
         )
@@ -2499,8 +2458,7 @@ final class MobileAppState: ObservableObject {
             planPartID: planPartID
         )
         aiChatStore.upsertQuestionRequest(request)
-        aiChatMessages.append(AIPlanImplementationQuestion.buildQuestionMessage(request: request, planPartID: planPartID))
-        rebuildAIIndexes()
+        aiChatStore.appendMessage(AIPlanImplementationQuestion.buildQuestionMessage(request: request, planPartID: planPartID))
     }
 
     func startImplementingCodexPlan() {
@@ -2561,11 +2519,8 @@ final class MobileAppState: ObservableObject {
         guard existsInCurrentTool else {
             aiCurrentSessionId = nil
             aiChatStore.setCurrentSessionId(nil)
-            aiChatMessages = []
-            aiIsStreaming = false
-            aiIsSendingPending = false
-            aiMessageIndexByMessageId = [:]
-            aiPartIndexByPartId = [:]
+            aiChatStore.setAbortPendingSessionId(nil)
+            aiChatStore.clearMessages()
             return
         }
         wsClient.requestAISessionSubscribe(
@@ -2776,45 +2731,20 @@ final class MobileAppState: ObservableObject {
     private func saveCurrentAISnapshotIfNeeded() {
         guard !aiActiveProject.isEmpty, !aiActiveWorkspace.isEmpty else { return }
         let key = aiContextKey(project: aiActiveProject, workspace: aiActiveWorkspace)
-        aiChatSnapshotCache[key] = AIChatSnapshot(
-            currentSessionId: aiCurrentSessionId,
-            subscribedSessionIds: aiChatStore.subscribedSessionIds,
-            messages: aiChatMessages,
-            isStreaming: aiIsStreaming,
-            sessions: aiSessions,
-            messageIndexByMessageId: aiMessageIndexByMessageId,
-            partIndexByPartId: aiPartIndexByPartId,
-            pendingToolQuestions: [:],
-            questionRequestToCallId: [:]
-        )
+        aiChatStore.saveSnapshot(forKey: key, sessions: aiSessions)
     }
 
     private func restoreAISnapshot(project: String, workspace: String) {
         let key = aiContextKey(project: project, workspace: workspace)
-        if let snapshot = aiChatSnapshotCache[key] {
+        if let snapshot = aiChatStore.snapshot(forKey: key) {
             aiCurrentSessionId = snapshot.currentSessionId
-            aiChatStore.setCurrentSessionId(snapshot.currentSessionId)
-            aiChatStore.subscribedSessionIds = snapshot.subscribedSessionIds
-            if let currentSession = snapshot.currentSessionId, !currentSession.isEmpty {
-                aiChatStore.subscribedSessionIds.insert(currentSession)
-            }
-            aiChatMessages = snapshot.messages
-            aiIsStreaming = false
-            aiIsSendingPending = false
+            aiChatStore.applySnapshot(snapshot)
             aiSessions = snapshot.sessions
-            aiMessageIndexByMessageId = snapshot.messageIndexByMessageId
-            aiPartIndexByPartId = snapshot.partIndexByPartId
             return
         }
         aiCurrentSessionId = nil
-        aiChatStore.setCurrentSessionId(nil)
-        aiChatStore.subscribedSessionIds = []
-        aiChatMessages = []
-        aiIsStreaming = false
-        aiIsSendingPending = false
+        aiChatStore.clearAll()
         aiSessions = []
-        aiMessageIndexByMessageId = [:]
-        aiPartIndexByPartId = [:]
     }
 
     private func parseSlashCommand(from text: String) -> (name: String, arguments: String)? {
@@ -2828,6 +2758,95 @@ final class MobileAppState: ObservableObject {
             return (name, arguments)
         }
         return (body, "")
+    }
+
+    private static func rebuildPendingQuestionRequests(
+        sessionId: String,
+        messages: [AIProtocolMessageInfo]
+    ) -> [AIQuestionRequestInfo] {
+        var requests: [AIQuestionRequestInfo] = []
+        var seenRequestIDs: Set<String> = []
+
+        for message in messages {
+            for part in message.parts {
+                guard part.partType == "tool" else { continue }
+                let toolName = (part.toolName ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard toolName == "question" else { continue }
+                guard let stateDict = part.toolState else { continue }
+
+                let status = ((stateDict["status"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                if status == "completed" || status == "error" || status == "failed" || status == "done" {
+                    continue
+                }
+
+                let input = stateDict["input"] as? [String: Any]
+                let questionsValue = input?["questions"] ?? stateDict["questions"]
+                let questions = parseQuestionInfos(from: questionsValue)
+                guard !questions.isEmpty else { continue }
+
+                let metadata = part.toolPartMetadata ?? [:]
+                let requestId =
+                    stringValue(metadata["request_id"]) ??
+                    stringValue(metadata["requestId"]) ??
+                    stringValue(stateDict["request_id"]) ??
+                    stringValue(stateDict["requestId"]) ??
+                    stringValue((stateDict["metadata"] as? [String: Any])?["request_id"]) ??
+                    stringValue((stateDict["metadata"] as? [String: Any])?["requestId"]) ??
+                    part.toolCallId
+                guard let requestId, !requestId.isEmpty else { continue }
+                guard !seenRequestIDs.contains(requestId) else { continue }
+                seenRequestIDs.insert(requestId)
+
+                let toolMessageId =
+                    stringValue(metadata["tool_message_id"]) ??
+                    stringValue(metadata["toolMessageId"]) ??
+                    part.id
+
+                requests.append(
+                    AIQuestionRequestInfo(
+                        id: requestId,
+                        sessionId: sessionId,
+                        questions: questions,
+                        toolMessageId: toolMessageId,
+                        toolCallId: part.toolCallId
+                    )
+                )
+            }
+        }
+
+        return requests
+    }
+
+    private static func parseQuestionInfos(from value: Any?) -> [AIQuestionInfo] {
+        if let array = value as? [[String: Any]] {
+            return array.compactMap { AIQuestionInfo.from(json: $0) }
+        }
+        if let array = value as? [Any] {
+            return array.compactMap { item in
+                guard let dict = item as? [String: Any] else { return nil }
+                return AIQuestionInfo.from(json: dict)
+            }
+        }
+        if let dict = value as? [String: Any], let nested = dict["questions"] {
+            return parseQuestionInfos(from: nested)
+        }
+        return []
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        switch value {
+        case let value as String:
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let value as NSNumber:
+            return value.stringValue
+        default:
+            return nil
+        }
     }
 
     private func sendPendingAIRequest(
@@ -4566,11 +4585,18 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
+            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
 
-            self.aiChatMessages = ev.toChatMessages()
-            self.rebuildAIIndexes()
-            self.aiIsStreaming = false
-            self.aiIsSendingPending = false
+            self.aiChatStore.replaceMessages(ev.toChatMessages())
+            let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                sessionId: ev.sessionId,
+                messages: ev.messages
+            )
+            self.aiChatStore.replaceQuestionRequests(restoredQuestions)
+            self.aiChatStore.updateHistoryPagination(
+                hasMore: ev.hasMore,
+                nextBeforeMessageId: ev.nextBeforeMessageId
+            )
             let inferredHint = self.inferAISessionSelectionHintFromMessages(ev.messages)
             let effectiveHint = self.mergedAISessionSelectionHint(primary: ev.selectionHint, fallback: inferredHint)
             self.applyAISessionSelectionHint(
@@ -4584,6 +4610,72 @@ final class MobileAppState: ObservableObject {
                 aiTool: ev.aiTool,
                 sessionId: ev.sessionId
             )
+        }
+
+        wsClient.onAISessionMessagesUpdate = { [weak self] ev in
+            guard let self else { return }
+            _ = self.consumeSubAgentViewerMessagesUpdateIfNeeded(ev)
+            guard self.aiActiveProject == ev.projectName,
+                  self.aiActiveWorkspace == ev.workspaceName,
+                  self.aiChatTool == ev.aiTool else { return }
+            guard self.aiCurrentSessionId == ev.sessionId else { return }
+            guard self.aiChatStore.subscribedSessionIds.contains(ev.sessionId) else { return }
+            if self.aiChatStore.isAbortPending(for: ev.sessionId) { return }
+
+            if let messages = ev.messages {
+                guard self.aiChatStore.shouldApplySessionCacheRevision(
+                    ev.cacheRevision,
+                    sessionId: ev.sessionId
+                ) else { return }
+                self.aiChatStore.replaceMessagesFromSessionCache(messages, isStreaming: ev.isStreaming)
+                let restoredQuestions = Self.rebuildPendingQuestionRequests(
+                    sessionId: ev.sessionId,
+                    messages: messages
+                )
+                self.aiChatStore.replaceQuestionRequests(restoredQuestions)
+                let inferredHint = self.inferAISessionSelectionHintFromMessages(messages)
+                let effectiveHint = self.mergedAISessionSelectionHint(
+                    primary: ev.selectionHint,
+                    fallback: inferredHint
+                )
+                self.applyAISessionSelectionHint(
+                    effectiveHint,
+                    sessionId: ev.sessionId,
+                    for: ev.aiTool
+                )
+                return
+            }
+
+            if let ops = ev.ops {
+                guard self.aiChatStore.shouldApplySessionCacheRevision(
+                    ev.cacheRevision,
+                    sessionId: ev.sessionId
+                ) else { return }
+                self.aiChatStore.applySessionCacheOps(ops, isStreaming: ev.isStreaming)
+                if let hint = ev.selectionHint {
+                    self.applyAISessionSelectionHint(
+                        hint,
+                        sessionId: ev.sessionId,
+                        for: ev.aiTool
+                    )
+                }
+                return
+            }
+
+            if !ev.isStreaming {
+                guard self.aiChatStore.shouldApplySessionCacheRevision(
+                    ev.cacheRevision,
+                    sessionId: ev.sessionId
+                ) else { return }
+                self.aiChatStore.applySessionCacheOps([], isStreaming: false)
+            }
+            if let hint = ev.selectionHint {
+                self.applyAISessionSelectionHint(
+                    hint,
+                    sessionId: ev.sessionId,
+                    for: ev.aiTool
+                )
+            }
         }
 
         wsClient.onAISessionStatusResult = { [weak self] ev in
@@ -4602,8 +4694,7 @@ final class MobileAppState: ObservableObject {
                self.aiChatTool == ev.aiTool,
                self.aiCurrentSessionId == ev.sessionId,
                !AISessionStatusSnapshot(status: ev.status.status, errorMessage: ev.status.errorMessage, contextRemainingPercent: ev.status.contextRemainingPercent).isActive {
-                self.aiIsStreaming = false
-                self.aiIsSendingPending = false
+                self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
             }
         }
 
@@ -4623,92 +4714,8 @@ final class MobileAppState: ObservableObject {
                self.aiChatTool == ev.aiTool,
                self.aiCurrentSessionId == ev.sessionId,
                !AISessionStatusSnapshot(status: ev.status.status, errorMessage: ev.status.errorMessage, contextRemainingPercent: ev.status.contextRemainingPercent).isActive {
-                self.aiIsStreaming = false
-                self.aiIsSendingPending = false
+                self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
             }
-        }
-
-        wsClient.onAIChatMessageUpdated = { [weak self] ev in
-            guard let self else { return }
-            self.consumeSubAgentViewerMessageUpdatedIfNeeded(ev)
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
-            if self.aiAbortPendingSessionId == ev.sessionId { return }
-
-            // 首个内容到达，清除 pending 态
-            if self.aiIsSendingPending { self.aiIsSendingPending = false }
-
-            if ev.role == "user" {
-                // user echo 到达，绑定占位消息的真实 messageId
-                self.aiBindUserPlaceholder(messageId: ev.messageId)
-            } else {
-                let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
-                self.aiMarkOnlyStreamingAssistant(at: msgIdx)
-                self.recomputeAIIsStreaming()
-            }
-            self.applyAISessionSelectionHint(
-                ev.selectionHint,
-                sessionId: ev.sessionId,
-                for: ev.aiTool
-            )
-        }
-
-        wsClient.onAIChatPartUpdated = { [weak self] ev in
-            guard let self else { return }
-            self.consumeSubAgentViewerPartUpdatedIfNeeded(ev)
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
-            if self.aiAbortPendingSessionId == ev.sessionId { return }
-
-            // 首个内容到达，清除 pending 态
-            if self.aiIsSendingPending { self.aiIsSendingPending = false }
-
-            // 若 messageId 已绑定到 user 占位消息，跳过 assistant 流式处理
-            if let idx = self.aiMessageIndexByMessageId[ev.messageId],
-               idx < self.aiChatMessages.count,
-               self.aiChatMessages[idx].role == .user {
-                return
-            }
-
-            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
-            self.aiUpsertPart(msgIdx: msgIdx, part: ev.part)
-            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
-            self.recomputeAIIsStreaming()
-        }
-
-        wsClient.onAIChatPartDelta = { [weak self] ev in
-            guard let self else { return }
-            self.consumeSubAgentViewerPartDeltaIfNeeded(ev)
-            guard self.aiActiveProject == ev.projectName,
-                  self.aiActiveWorkspace == ev.workspaceName,
-                  self.aiChatTool == ev.aiTool else { return }
-            guard self.aiCurrentSessionId == ev.sessionId else { return }
-            if self.aiAbortPendingSessionId == ev.sessionId { return }
-
-            // 首个内容到达，清除 pending 态
-            if self.aiIsSendingPending { self.aiIsSendingPending = false }
-
-            // 若 messageId 已绑定到 user 占位消息，跳过 assistant 流式处理
-            if let idx = self.aiMessageIndexByMessageId[ev.messageId],
-               idx < self.aiChatMessages.count,
-               self.aiChatMessages[idx].role == .user {
-                return
-            }
-
-            let msgIdx = self.aiEnsureAssistantMessage(messageId: ev.messageId)
-            self.aiAppendDelta(
-                msgIdx: msgIdx,
-                partId: ev.partId,
-                partType: ev.partType,
-                field: ev.field,
-                delta: ev.delta
-            )
-            self.aiMarkOnlyStreamingAssistant(at: msgIdx)
-            self.recomputeAIIsStreaming()
         }
 
         wsClient.onAIChatDone = { [weak self] ev in
@@ -4718,21 +4725,7 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
-            TFLog.app.debug(
-                "AI stream done(iOS): session_id=\(ev.sessionId, privacy: .public), stop_reason=\((ev.stopReason ?? "none"), privacy: .public)"
-            )
-            if self.aiAbortPendingSessionId == ev.sessionId {
-                self.aiAbortPendingSessionId = nil
-            }
-            self.aiIsStreaming = false
-            self.aiIsSendingPending = false
-            self.aiClearAssistantStreaming()
-            if let idx = self.aiChatMessages.lastIndex(where: {
-                $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty
-            }) {
-                self.aiChatMessages.remove(at: idx)
-            }
-            self.recomputeAIIsStreaming()
+            self.aiChatStore.handleChatDone(sessionId: ev.sessionId)
             self.applyAISessionSelectionHint(
                 ev.selectionHint,
                 sessionId: ev.sessionId,
@@ -4747,32 +4740,7 @@ final class MobileAppState: ObservableObject {
                   self.aiActiveWorkspace == ev.workspaceName,
                   self.aiChatTool == ev.aiTool else { return }
             guard self.aiCurrentSessionId == ev.sessionId else { return }
-            if self.aiAbortPendingSessionId == ev.sessionId {
-                self.aiAbortPendingSessionId = nil
-            }
-            self.aiIsStreaming = false
-            self.aiIsSendingPending = false
-            self.aiClearAssistantStreaming()
-            if let idx = self.aiChatMessages.lastIndex(where: {
-                $0.role == .assistant && $0.messageId == nil && $0.parts.isEmpty
-            }) {
-                self.aiChatMessages.remove(at: idx)
-            }
-            self.aiChatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    parts: [AIChatPart(
-                        id: UUID().uuidString,
-                        kind: .text,
-                        text: "错误：\(ev.error)",
-                        toolName: nil,
-                        toolState: nil
-                    )],
-                    isStreaming: false
-                )
-            )
-            self.rebuildAIIndexes()
-            self.recomputeAIIsStreaming()
+            self.aiChatStore.handleChatError(sessionId: ev.sessionId, error: ev.error)
         }
 
         wsClient.onAIProviderList = { [weak self] ev in
@@ -4942,243 +4910,6 @@ final class MobileAppState: ObservableObject {
                   self.aiChatTool == ev.aiTool,
                   self.aiChatStore.currentSessionId == ev.sessionId else { return }
             self.completeAIQuestionRequestLocally(requestId: ev.requestId)
-        }
-    }
-
-    // MARK: - AI Chat 索引与流式状态
-
-    /// 以“是否存在正在流式的 assistant 消息”为准计算 loading 状态
-    private func recomputeAIIsStreaming() {
-        aiIsStreaming = aiChatMessages.contains { msg in
-            msg.role == .assistant && msg.isStreaming
-        }
-    }
-
-    private func rebuildAIIndexes() {
-        aiMessageIndexByMessageId = [:]
-        aiPartIndexByPartId = [:]
-        for (msgIdx, msg) in aiChatMessages.enumerated() {
-            if let mid = msg.messageId {
-                aiMessageIndexByMessageId[mid] = msgIdx
-            }
-            for (partIdx, part) in msg.parts.enumerated() {
-                aiPartIndexByPartId[part.id] = (msgIdx, partIdx)
-            }
-        }
-    }
-
-    private func aiTouchRenderRevision(at msgIdx: Int) {
-        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
-        aiChatMessages[msgIdx].renderRevision &+= 1
-    }
-
-    /// 确保 assistant 消息存在；优先复用本地占位消息，避免流式时产生重复气泡
-    @discardableResult
-    private func aiEnsureAssistantMessage(messageId: String) -> Int {
-        if let idx = aiMessageIndexByMessageId[messageId],
-           idx < aiChatMessages.count,
-           aiChatMessages[idx].messageId == messageId {
-            return idx
-        }
-        aiMessageIndexByMessageId.removeValue(forKey: messageId)
-
-        if let idx = aiChatMessages.lastIndex(where: {
-            $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty
-        }) {
-            let oldRole = aiChatMessages[idx].role
-            let oldStreaming = aiChatMessages[idx].isStreaming
-            aiChatMessages[idx].messageId = messageId
-            aiChatMessages[idx].role = .assistant
-            aiMessageIndexByMessageId[messageId] = idx
-            if oldRole != aiChatMessages[idx].role || oldStreaming != aiChatMessages[idx].isStreaming {
-                aiTouchRenderRevision(at: idx)
-            }
-            return idx
-        }
-
-        let newMessage = AIChatMessage(messageId: messageId, role: .assistant, parts: [], isStreaming: true)
-        aiChatMessages.append(newMessage)
-        let idx = aiChatMessages.count - 1
-        aiMessageIndexByMessageId[messageId] = idx
-        return idx
-    }
-
-    /// user echo 到达时，绑定占位用户消息的真实 messageId
-    private func aiBindUserPlaceholder(messageId: String) {
-        // 已在索引中则跳过
-        if let idx = aiMessageIndexByMessageId[messageId],
-           idx < aiChatMessages.count,
-           aiChatMessages[idx].messageId == messageId {
-            return
-        }
-        // 查找最后一个无 messageId 的 user 占位消息
-        if let idx = aiChatMessages.lastIndex(where: { $0.role == .user && $0.messageId == nil }) {
-            aiChatMessages[idx].messageId = messageId
-            aiMessageIndexByMessageId[messageId] = idx
-        } else {
-            // 无占位时（无占位发送模式）直接创建用户消息
-            let newMsg = AIChatMessage(messageId: messageId, role: .user, parts: [], isStreaming: false)
-            aiChatMessages.append(newMsg)
-            let newIdx = aiChatMessages.count - 1
-            aiMessageIndexByMessageId[messageId] = newIdx
-        }
-    }
-
-    private func aiUpsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
-        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
-
-        if let existing = aiPartIndexByPartId[part.id],
-           existing.msgIdx == msgIdx,
-           existing.partIdx >= 0,
-           existing.partIdx < aiChatMessages[msgIdx].parts.count {
-            var existingPart = aiChatMessages[msgIdx].parts[existing.partIdx]
-            AIChatPartNormalization.apply(protocolPart: part, to: &existingPart)
-            aiChatMessages[msgIdx].parts[existing.partIdx] = existingPart
-            aiTouchRenderRevision(at: msgIdx)
-            return
-        }
-
-        aiPartIndexByPartId.removeValue(forKey: part.id)
-        let newPart = AIChatPartNormalization.makeChatPart(from: part)
-        aiChatMessages[msgIdx].parts.append(newPart)
-        let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
-        aiPartIndexByPartId[part.id] = (msgIdx, newPartIdx)
-        aiTouchRenderRevision(at: msgIdx)
-    }
-
-    private func aiAppendDelta(
-        msgIdx: Int,
-        partId: String,
-        partType: String,
-        field: String,
-        delta: String
-    ) {
-        guard msgIdx >= 0, msgIdx < aiChatMessages.count else { return }
-
-        let normalizedPartType: String = {
-            if partType == AIChatPartKind.tool.rawValue || field == "progress" || field == "output" {
-                return AIChatPartKind.tool.rawValue
-            }
-            return partType
-        }()
-
-        if field == "progress", normalizedPartType == AIChatPartKind.tool.rawValue {
-            if let existing = aiPartIndexByPartId[partId],
-               existing.msgIdx == msgIdx,
-               existing.partIdx >= 0,
-               existing.partIdx < aiChatMessages[msgIdx].parts.count {
-                var part = aiChatMessages[msgIdx].parts[existing.partIdx]
-                var toolState = part.toolState ?? [:]
-                var metadata = toolState["metadata"] as? [String: Any] ?? [:]
-                var lines = (metadata["progress_lines"] as? [String]) ?? []
-                lines.append(delta)
-                if lines.count > 300 {
-                    lines.removeFirst(lines.count - 300)
-                }
-                metadata["progress_lines"] = lines
-                toolState["metadata"] = metadata
-                if toolState["status"] == nil {
-                    toolState["status"] = "running"
-                }
-                part.toolState = toolState
-                part.kind = .tool
-                aiChatMessages[msgIdx].parts[existing.partIdx] = part
-                aiTouchRenderRevision(at: msgIdx)
-                return
-            }
-
-            let newPart = AIChatPart(
-                id: partId,
-                kind: .tool,
-                text: nil,
-                toolName: "unknown",
-                toolState: [
-                    "status": "running",
-                    "metadata": [
-                        "progress_lines": [delta]
-                    ]
-                ]
-            )
-            aiChatMessages[msgIdx].parts.append(newPart)
-            let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
-            aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
-            aiTouchRenderRevision(at: msgIdx)
-            return
-        }
-
-        if field == "output", normalizedPartType == AIChatPartKind.tool.rawValue {
-            if let existing = aiPartIndexByPartId[partId],
-               existing.msgIdx == msgIdx,
-               existing.partIdx >= 0,
-               existing.partIdx < aiChatMessages[msgIdx].parts.count {
-                var part = aiChatMessages[msgIdx].parts[existing.partIdx]
-                var toolState = part.toolState ?? [:]
-                let currentOutput = (toolState["output"] as? String) ?? ""
-                toolState["output"] = currentOutput + delta
-                if toolState["status"] == nil {
-                    toolState["status"] = "running"
-                }
-                part.toolState = toolState
-                part.kind = .tool
-                aiChatMessages[msgIdx].parts[existing.partIdx] = part
-                aiTouchRenderRevision(at: msgIdx)
-                return
-            }
-
-            let newPart = AIChatPart(
-                id: partId,
-                kind: .tool,
-                text: nil,
-                toolName: "unknown",
-                toolState: [
-                    "status": "running",
-                    "output": delta
-                ]
-            )
-            aiChatMessages[msgIdx].parts.append(newPart)
-            let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
-            aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
-            aiTouchRenderRevision(at: msgIdx)
-            return
-        }
-
-        guard field == "text" else { return }
-
-        if let existing = aiPartIndexByPartId[partId],
-           existing.msgIdx == msgIdx,
-           existing.partIdx >= 0,
-           existing.partIdx < aiChatMessages[msgIdx].parts.count {
-            let current = aiChatMessages[msgIdx].parts[existing.partIdx].text ?? ""
-            aiChatMessages[msgIdx].parts[existing.partIdx].text = current + delta
-            aiTouchRenderRevision(at: msgIdx)
-            return
-        }
-
-        let kind = AIChatPartKind(rawValue: normalizedPartType) ?? .text
-        let newPart = AIChatPart(id: partId, kind: kind, text: delta, toolName: nil, toolState: nil)
-        aiChatMessages[msgIdx].parts.append(newPart)
-        let newPartIdx = aiChatMessages[msgIdx].parts.count - 1
-        aiPartIndexByPartId[partId] = (msgIdx, newPartIdx)
-        aiTouchRenderRevision(at: msgIdx)
-    }
-
-    /// 同一时刻只允许一个 assistant 气泡处于流式态
-    private func aiMarkOnlyStreamingAssistant(at msgIdx: Int) {
-        for idx in aiChatMessages.indices {
-            guard aiChatMessages[idx].role == .assistant else { continue }
-            let nextStreaming = (idx == msgIdx)
-            guard aiChatMessages[idx].isStreaming != nextStreaming else { continue }
-            aiChatMessages[idx].isStreaming = nextStreaming
-            aiTouchRenderRevision(at: idx)
-        }
-    }
-
-    private func aiClearAssistantStreaming() {
-        for idx in aiChatMessages.indices {
-            guard aiChatMessages[idx].role == .assistant else { continue }
-            guard aiChatMessages[idx].isStreaming else { continue }
-            aiChatMessages[idx].isStreaming = false
-            aiTouchRenderRevision(at: idx)
         }
     }
 

@@ -135,9 +135,6 @@ class WSClient: NSObject, ObservableObject {
     var onAISessionMessagesUpdate: ((AISessionMessagesUpdateV2) -> Void)?
     var onAISessionStatusResult: ((AISessionStatusResultV2) -> Void)?
     var onAISessionStatusUpdate: ((AISessionStatusUpdateV2) -> Void)?
-    var onAIChatMessageUpdated: ((AIChatMessageUpdatedV2) -> Void)?
-    var onAIChatPartUpdated: ((AIChatPartUpdatedV2) -> Void)?
-    var onAIChatPartDelta: ((AIChatPartDeltaV2) -> Void)?
     var onAIChatDone: ((AIChatDoneV2) -> Void)?
     var onAIChatPending: ((AIChatPendingV2) -> Void)?
     var onAIChatError: ((AIChatErrorV2) -> Void)?

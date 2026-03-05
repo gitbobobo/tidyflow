@@ -68,33 +68,6 @@ extension WSClient {
                 }
             }
             return true
-        case "ai_chat_message_updated":
-            if let ev = AIChatMessageUpdatedV2.from(json: json) {
-                if let handler = aiMessageHandler {
-                    handler.handleAIChatMessageUpdated(ev)
-                } else {
-                    onAIChatMessageUpdated?(ev)
-                }
-            }
-            return true
-        case "ai_chat_part_updated":
-            if let ev = AIChatPartUpdatedV2.from(json: json) {
-                if let handler = aiMessageHandler {
-                    handler.handleAIChatPartUpdated(ev)
-                } else {
-                    onAIChatPartUpdated?(ev)
-                }
-            }
-            return true
-        case "ai_chat_part_delta":
-            if let ev = AIChatPartDeltaV2.from(json: json) {
-                if let handler = aiMessageHandler {
-                    handler.handleAIChatPartDelta(ev)
-                } else {
-                    onAIChatPartDelta?(ev)
-                }
-            }
-            return true
         case "ai_chat_done":
             if let ev = AIChatDoneV2.from(json: json) {
                 if let handler = aiMessageHandler {
