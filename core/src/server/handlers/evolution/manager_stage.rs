@@ -6404,7 +6404,8 @@ mod tests {
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_implement_quick_checks_array() {
         let raw_error = "evo_stage_output_invalid:artifact_contract_violation: implement_advanced.result.json.quick_checks 必须是数组";
-        let msg = EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
+        let msg =
+            EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
         let expected = expected_validation_reminder(
             "implement_advanced",
             "artifact_contract_violation",
@@ -6420,7 +6421,8 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_implement_backlog_mapping_missing(
     ) {
         let raw_error = "evo_stage_output_invalid:managed_backlog_sync_failed: evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0";
-        let msg = EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
+        let msg =
+            EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
         let expected = expected_validation_reminder(
             "implement_advanced",
             "managed_backlog_sync_failed",
