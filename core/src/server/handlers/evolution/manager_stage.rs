@@ -3785,7 +3785,8 @@ impl EvolutionManager {
         }
 
         if normalized_stage == "report"
-            && normalized_error_message.contains("report.verification_summary.remediation_tracking 不能为空")
+            && normalized_error_message
+                .contains("report.verification_summary.remediation_tracking 不能为空")
         {
             return "当 verify_iteration>0 时，report.result.json.verification_summary.remediation_tracking 必须是非空数组（[]）；不要写成对象。"
                 .to_string();
@@ -3797,7 +3798,8 @@ impl EvolutionManager {
         if normalized_error_message.contains("必须是对象") {
             return "将该字段改为对象类型（{}），并补齐对象内必填子字段。".to_string();
         }
-        if normalized_error_message.contains("缺少") && normalized_error_message.contains("数组") {
+        if normalized_error_message.contains("缺少") && normalized_error_message.contains("数组")
+        {
             return "该字段必须是数组（[]），请按契约补齐并填充至少所需条目。".to_string();
         }
         if normalized_error_message.contains("必须是数组")
@@ -3806,8 +3808,7 @@ impl EvolutionManager {
             return "将该字段改为数组类型（[]），元素结构按阶段契约输出。".to_string();
         }
         if normalized_error_message.contains("不能为空") {
-            return "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。"
-                .to_string();
+            return "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。".to_string();
         }
         if normalized_error_message.contains("缺少") {
             return "补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。".to_string();
@@ -3826,8 +3827,7 @@ impl EvolutionManager {
             return "将字段值改为契约允许枚举值；必要时参考该阶段允许值列表。".to_string();
         }
         if normalized_error_message.contains("必须是") {
-            return "将字段值改为契约要求的类型或枚举值，严格按提示中的允许集合填写。"
-                .to_string();
+            return "将字段值改为契约要求的类型或枚举值，严格按提示中的允许集合填写。".to_string();
         }
 
         "请逐项核对字段名、字段类型（数组/对象/数字）、枚举值与必填项，修复后重新输出本阶段产物。"
@@ -3869,15 +3869,24 @@ impl EvolutionManager {
             "立即修复动作：".to_string(),
             format!(
                 "1. {}",
-                spec.immediate_fix_actions.first().cloned().unwrap_or_default()
+                spec.immediate_fix_actions
+                    .first()
+                    .cloned()
+                    .unwrap_or_default()
             ),
             format!(
                 "2. {}",
-                spec.immediate_fix_actions.get(1).cloned().unwrap_or_default()
+                spec.immediate_fix_actions
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_default()
             ),
             format!(
                 "3. {}",
-                spec.immediate_fix_actions.get(2).cloned().unwrap_or_default()
+                spec.immediate_fix_actions
+                    .get(2)
+                    .cloned()
+                    .unwrap_or_default()
             ),
             format!("原始报错：{}", spec.raw_error),
         ];
@@ -6179,12 +6188,10 @@ mod tests {
     }
 
     #[test]
-    fn build_validation_reminder_message_should_match_snapshot_for_report_criteria_details_missing() {
+    fn build_validation_reminder_message_should_match_snapshot_for_report_criteria_details_missing()
+    {
         let raw_error = "evo_stage_output_invalid:artifact_contract_violation: report.result.json.acceptance_summary 缺少 criteria_details";
-        let msg = EvolutionManager::build_validation_reminder_message(
-            "report",
-            raw_error,
-        );
+        let msg = EvolutionManager::build_validation_reminder_message("report", raw_error);
         let expected = expected_validation_reminder(
             "report",
             "artifact_contract_violation",
@@ -6200,10 +6207,7 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_report_remediation_tracking_empty(
     ) {
         let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空";
-        let msg = EvolutionManager::build_validation_reminder_message(
-            "report",
-            raw_error,
-        );
+        let msg = EvolutionManager::build_validation_reminder_message("report", raw_error);
         let expected = expected_validation_reminder(
             "report",
             "artifact_contract_violation",
