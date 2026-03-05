@@ -2858,9 +2858,18 @@ struct MobileEvolutionView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(.easeInOut(duration: 0.3), value: mobileStageBarAnimationToken(segments))
         }
         .frame(height: height)
         .clipShape(Capsule())
+    }
+
+    private func mobileStageBarAnimationToken(_ segments: [MobileCycleBarSegment]) -> String {
+        segments
+            .map { segment in
+                "\(segment.id)=\(String(format: "%.6f", Double(segment.ratio)))"
+            }
+            .joined(separator: "|")
     }
 
     private func mobileStageBarSegments(_ entries: [MobileCycleBarEntry]) -> [MobileCycleBarSegment] {

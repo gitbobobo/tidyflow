@@ -854,9 +854,18 @@ struct EvolutionPipelineView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(.easeInOut(duration: 0.3), value: stageBarAnimationToken(segments))
         }
         .frame(height: height)
         .clipShape(Capsule())
+    }
+
+    private func stageBarAnimationToken(_ segments: [StageBarSegment]) -> String {
+        segments
+            .map { segment in
+                "\(segment.id)=\(String(format: "%.6f", Double(segment.ratio)))"
+            }
+            .joined(separator: "|")
     }
 
     private func stageBarSegments(_ entries: [PipelineCycleStageEntry]) -> [StageBarSegment] {
