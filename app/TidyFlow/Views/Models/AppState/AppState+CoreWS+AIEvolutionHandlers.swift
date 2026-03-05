@@ -860,6 +860,8 @@ extension AppState {
             clearEvolutionPendingAction(project: project, workspace: workspace)
         } else if let workspace = selectedWorkspaceKey {
             clearEvolutionPendingAction(project: selectedProjectName, workspace: workspace)
+        } else {
+            evolutionPendingActionByWorkspace.removeAll()
         }
         for key in evidenceLoadingByWorkspace.keys {
             evidenceLoadingByWorkspace[key] = false
@@ -1011,6 +1013,13 @@ extension AppState {
 
     func handleClientErrorMessage(_ errorMsg: String) {
         aiSessionListLoadingTools.removeAll()
+        if !evolutionPendingActionByWorkspace.isEmpty {
+            let pendingCount = evolutionPendingActionByWorkspace.count
+            evolutionPendingActionByWorkspace.removeAll()
+            TFLog.app.warning(
+                "Evolution pending actions cleared after client error: count=\(pendingCount), error=\(errorMsg, privacy: .public)"
+            )
+        }
 
         // 导入项目期间收到服务端错误，结束导入并透传错误给 UI。
         if projectImportInFlight {

@@ -4120,6 +4120,15 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             self.errorMessage = message
             self.aiSessionListLoadingTools.removeAll()
+            if !self.evolutionPendingActionByWorkspace.isEmpty {
+                let pendingCount = self.evolutionPendingActionByWorkspace.count
+                self.evolutionPendingActionByWorkspace.removeAll()
+                NSLog(
+                    "[MobileAppState] Evolution pending actions cleared after client error: count=%d, error=%@",
+                    pendingCount,
+                    message
+                )
+            }
             if self.pendingExplorerPreviewRequest != nil {
                 self.pendingExplorerPreviewRequest = nil
                 self.explorerPreviewLoading = false
@@ -4285,6 +4294,7 @@ final class MobileAppState: ObservableObject {
             guard let self else { return }
             self.evolutionReplayLoading = false
             self.evolutionReplayError = message
+            self.evolutionPendingActionByWorkspace.removeAll()
             for key in self.evidenceLoadingByWorkspace.keys {
                 self.evidenceLoadingByWorkspace[key] = false
                 self.evidenceErrorByWorkspace[key] = message
