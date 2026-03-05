@@ -17,6 +17,8 @@ pub enum SettingsRequest {
         fixed_port: Option<u16>,
         #[serde(default)]
         remote_access_enabled: Option<bool>,
+        #[serde(default)]
+        workspace_todos: Option<std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>>,
     },
 }
 
@@ -34,6 +36,8 @@ pub enum SettingsResponse {
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles:
             std::collections::HashMap<String, Vec<super::EvolutionStageProfileInfo>>,
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        workspace_todos: std::collections::HashMap<String, Vec<super::WorkspaceTodoInfo>>,
     },
     ClientSettingsSaved {
         ok: bool,

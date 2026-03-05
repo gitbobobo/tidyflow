@@ -327,6 +327,9 @@ pub enum ClientMessage {
         /// 是否开启远程访问（开启后允许局域网连接）
         #[serde(default)]
         remote_access_enabled: Option<bool>,
+        /// 工作空间待办（key: "project:workspace"）；为 None 时保持服务端现值不变。
+        #[serde(default)]
+        workspace_todos: Option<std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>>,
     },
 
     // v1.22: File watcher
@@ -1057,6 +1060,8 @@ pub enum ServerMessage {
         remote_access_enabled: bool,
         #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
         evolution_agent_profiles: std::collections::HashMap<String, Vec<EvolutionStageProfileInfo>>,
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        workspace_todos: std::collections::HashMap<String, Vec<WorkspaceTodoInfo>>,
     },
     ClientSettingsSaved {
         ok: bool,
@@ -1736,6 +1741,20 @@ pub struct CustomCommandInfo {
     pub command: String,
 }
 
+/// 工作空间待办项（用于协议传输）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceTodoInfo {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// pending | in_progress | completed
+    pub status: String,
+    pub order: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
 /// 项目命令信息（用于协议传输）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectCommandInfo {
@@ -2025,6 +2044,60 @@ mod tests {
                 assert_eq!(workspace, "default");
                 assert_eq!(command_id, "build");
                 assert_eq!(task_id.as_deref(), Some("task-1"));
+            }
+            Ok(other) => panic!("Unexpected message type: {:?}", other),
+            Err(e) => panic!("Parse error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_save_client_settings_without_workspace_todos() {
+        let json = r#"{
+            "type":"save_client_settings",
+            "custom_commands":[],
+            "workspace_shortcuts":{},
+            "merge_ai_agent":"codex"
+        }"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        match result {
+            Ok(ClientMessage::SaveClientSettings {
+                workspace_todos, ..
+            }) => {
+                assert!(workspace_todos.is_none());
+            }
+            Ok(other) => panic!("Unexpected message type: {:?}", other),
+            Err(e) => panic!("Parse error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_save_client_settings_with_workspace_todos() {
+        let json = r#"{
+            "type":"save_client_settings",
+            "custom_commands":[],
+            "workspace_shortcuts":{},
+            "workspace_todos":{
+                "demo:default":[
+                    {
+                        "id":"todo-1",
+                        "title":"实现核心逻辑",
+                        "note":"先补协议",
+                        "status":"in_progress",
+                        "order":0,
+                        "created_at_ms":1760000000000,
+                        "updated_at_ms":1760000000001
+                    }
+                ]
+            }
+        }"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        match result {
+            Ok(ClientMessage::SaveClientSettings {
+                workspace_todos: Some(workspace_todos),
+                ..
+            }) => {
+                assert_eq!(workspace_todos.len(), 1);
+                assert_eq!(workspace_todos["demo:default"][0].status, "in_progress");
             }
             Ok(other) => panic!("Unexpected message type: {:?}", other),
             Err(e) => panic!("Parse error: {}", e),

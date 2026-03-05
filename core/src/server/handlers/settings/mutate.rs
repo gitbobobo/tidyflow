@@ -20,6 +20,7 @@ pub async fn handle_mutate_message(
             merge_ai_agent,
             fixed_port,
             remote_access_enabled,
+            workspace_todos,
         } => {
             info!("SaveClientSettings request");
             save_client_settings(
@@ -30,6 +31,7 @@ pub async fn handle_mutate_message(
                     merge_ai_agent: merge_ai_agent.clone(),
                     fixed_port: *fixed_port,
                     remote_access_enabled: *remote_access_enabled,
+                    workspace_todos: workspace_todos.clone(),
                 },
             )
             .await;

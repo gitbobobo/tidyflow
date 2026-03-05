@@ -64,6 +64,20 @@ pub struct EvolutionStageProfile {
     pub config_options: HashMap<String, serde_json::Value>,
 }
 
+/// 工作空间待办项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceTodoItem {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// pending | in_progress | completed
+    pub status: String,
+    pub order: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
 /// 客户端设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientSettings {
@@ -84,6 +98,9 @@ pub struct ClientSettings {
     /// Evolution 代理配置（key: "project/workspace"）
     #[serde(default)]
     pub evolution_agent_profiles: HashMap<String, Vec<EvolutionStageProfile>>,
+    /// 工作空间待办（key: "project:workspace"）
+    #[serde(default)]
+    pub workspace_todos: HashMap<String, Vec<WorkspaceTodoItem>>,
 }
 
 fn default_evolution_ai_tool() -> String {

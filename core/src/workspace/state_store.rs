@@ -16,7 +16,7 @@ use super::sqlite_store;
 use super::state::{
     AppState, ClientSettings, CustomCommand, EvolutionModelSelection, EvolutionStageProfile,
     PersistedTokenEntry, Project, ProjectCommand, SetupResultSummary, StateError, Workspace,
-    WorkspaceStatus,
+    WorkspaceStatus, WorkspaceTodoItem,
 };
 
 const DB_SCHEMA_VERSION: &str = "1";
@@ -150,6 +150,36 @@ impl StateStore {
             }
         })
         .collect();
+
+        let todo_rows = sqlx::query(
+            r#"
+            SELECT workspace_key, id, title, note, status, sort_order, created_at_ms, updated_at_ms
+            FROM workspace_todos
+            ORDER BY workspace_key, status, sort_order, created_at_ms
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StateError::ReadError(e.to_string()))?;
+        let mut workspace_todos: HashMap<String, Vec<WorkspaceTodoItem>> = HashMap::new();
+        for row in todo_rows {
+            let workspace_key: String = row.try_get("workspace_key").unwrap_or_default();
+            workspace_todos
+                .entry(workspace_key)
+                .or_default()
+                .push(WorkspaceTodoItem {
+                    id: row.try_get("id").unwrap_or_default(),
+                    title: row.try_get("title").unwrap_or_default(),
+                    note: row.try_get("note").ok(),
+                    status: row
+                        .try_get::<String, _>("status")
+                        .unwrap_or_else(|_| "pending".to_string()),
+                    order: row.try_get::<i64, _>("sort_order").unwrap_or(0),
+                    created_at_ms: row.try_get::<i64, _>("created_at_ms").unwrap_or(0),
+                    updated_at_ms: row.try_get::<i64, _>("updated_at_ms").unwrap_or(0),
+                });
+        }
+        client_settings.workspace_todos = workspace_todos;
 
         let evolution_rows = sqlx::query(
             r#"
@@ -405,6 +435,7 @@ impl StateStore {
             "workspaces",
             "custom_commands",
             "workspace_shortcuts",
+            "workspace_todos",
             "evolution_stage_profiles",
             "paired_tokens",
         ] {
@@ -465,6 +496,30 @@ impl StateStore {
             .execute(&mut *tx)
             .await
             .map_err(|e| StateError::WriteError(e.to_string()))?;
+        }
+
+        for (workspace_key, todos) in &state.client_settings.workspace_todos {
+            for todo in todos {
+                sqlx::query(
+                    r#"
+                    INSERT INTO workspace_todos (
+                        workspace_key, id, title, note, status, sort_order, created_at_ms, updated_at_ms
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    "#,
+                )
+                .bind(workspace_key)
+                .bind(&todo.id)
+                .bind(&todo.title)
+                .bind(todo.note.clone())
+                .bind(&todo.status)
+                .bind(todo.order)
+                .bind(todo.created_at_ms)
+                .bind(todo.updated_at_ms)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| StateError::WriteError(e.to_string()))?;
+            }
         }
 
         for (workspace_key, profiles) in &state.client_settings.evolution_agent_profiles {
@@ -753,6 +808,19 @@ impl StateStore {
             )
             "#,
             r#"
+            CREATE TABLE IF NOT EXISTS workspace_todos (
+                workspace_key TEXT NOT NULL,
+                id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                note TEXT,
+                status TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (workspace_key, id)
+            )
+            "#,
+            r#"
             CREATE TABLE IF NOT EXISTS evolution_stage_profiles (
                 workspace_key TEXT NOT NULL,
                 stage TEXT NOT NULL,
@@ -839,6 +907,18 @@ mod tests {
         }];
         state.client_settings.workspace_shortcuts =
             HashMap::from([("1".to_string(), "demo/default".to_string())]);
+        state.client_settings.workspace_todos = HashMap::from([(
+            "demo:feature-a".to_string(),
+            vec![WorkspaceTodoItem {
+                id: "todo-1".to_string(),
+                title: "补测试".to_string(),
+                note: Some("补充回归用例".to_string()),
+                status: "in_progress".to_string(),
+                order: 0,
+                created_at_ms: 1760000000000,
+                updated_at_ms: 1760000001000,
+            }],
+        )]);
         state.client_settings.evolution_agent_profiles = HashMap::from([(
             "demo/default".to_string(),
             vec![EvolutionStageProfile {
@@ -913,6 +993,23 @@ mod tests {
                 .get("1")
                 .map(String::as_str),
             Some("demo/default")
+        );
+        assert_eq!(
+            loaded
+                .client_settings
+                .workspace_todos
+                .get("demo:feature-a")
+                .map(|items| items.len()),
+            Some(1)
+        );
+        assert_eq!(
+            loaded
+                .client_settings
+                .workspace_todos
+                .get("demo:feature-a")
+                .and_then(|items| items.first())
+                .map(|item| item.status.as_str()),
+            Some("in_progress")
         );
         assert_eq!(loaded.paired_tokens.len(), 1);
 
