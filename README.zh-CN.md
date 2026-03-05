@@ -54,7 +54,6 @@ TidyFlow 采用现代化的**混合原生架构**：
 ### 全局操作
 - `Cmd + Shift + P`: 打开命令板 (Command Palette)
 - `Cmd + P`: 快速打开文件 (Quick Open)
-- `Cmd + 1/2/3`: 切换右侧面板（Explorer/Search/Git）
 
 ### 工作区操作
 - `Cmd + T`: 新建终端 Tab

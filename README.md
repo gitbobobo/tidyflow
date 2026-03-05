@@ -54,7 +54,6 @@ TidyFlow uses a modern **hybrid native architecture**:
 ### Global
 - `Cmd + Shift + P`: Open Command Palette
 - `Cmd + P`: Quick Open files
-- `Cmd + 1/2/3`: Switch right panel (Explorer/Search/Git)
 
 ### Workspace
 - `Cmd + T`: New terminal tab
