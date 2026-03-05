@@ -236,6 +236,7 @@
 "rightPanel.noTool" = "No Tool Selected";
 "rightPanel.noTool.hint" = "Select a tool from above";
 "rightPanel.sessions" = "Sessions";
+"rightPanel.todos" = "Todos";
 
 /* Connection Status */
 "connection.connected" = "Connected";
@@ -322,6 +323,21 @@
 "toast.status.success" = "Completed";
 "toast.status.failed" = "Failed";
 "toast.status.unknown" = "Unknown";
+
+/* Todos */
+"todo.title" = "Todos";
+"todo.empty" = "No todos";
+"todo.add" = "Add Todo";
+"todo.edit" = "Edit Todo";
+"todo.delete" = "Delete Todo";
+"todo.input.title" = "Title";
+"todo.input.note" = "Note (Optional)";
+"todo.section.pending" = "Pending";
+"todo.section.inProgress" = "In Progress";
+"todo.section.completed" = "Completed";
+"todo.status.pending" = "Pending";
+"todo.status.inProgress" = "In Progress";
+"todo.status.completed" = "Completed";
 
 // 项目配置页面
 "projectConfig.info" = "Project Info";

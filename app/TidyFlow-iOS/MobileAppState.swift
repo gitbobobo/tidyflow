@@ -163,6 +163,7 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceTerminalOpenTime: [String: Date] = [:]
     @Published var workspaceGitSummary: [String: MobileWorkspaceGitSummary] = [:]
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
+    @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
     // 资源管理器（按 project/workspace/path 分桶）
     @Published var explorerFileListCache: [String: FileListCache] = [:]
     @Published var explorerDirectoryExpandState: [String: Bool] = [:]
@@ -659,7 +660,8 @@ final class MobileAppState: ObservableObject {
             mergeAIAgent: mergeAIAgent,
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
-            evolutionAgentProfiles: [:]
+            evolutionAgentProfiles: [:],
+            workspaceTodos: workspaceTodosByKey
         )
         wsClient.requestSaveClientSettings(settings: payload)
     }
@@ -942,6 +944,118 @@ final class MobileAppState: ObservableObject {
 
     func runningTasksForWorkspace(project: String, workspace: String) -> [MobileWorkspaceTask] {
         tasksForWorkspace(project: project, workspace: workspace).filter { $0.status.isActive }
+    }
+
+    func todosForWorkspace(project: String, workspace: String) -> [WorkspaceTodoItem] {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return WorkspaceTodoStore.items(for: key, in: workspaceTodosByKey)
+    }
+
+    func pendingTodoCountForWorkspace(project: String, workspace: String) -> Int {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        return WorkspaceTodoStore.pendingCount(for: key, in: workspaceTodosByKey)
+    }
+
+    @discardableResult
+    func addWorkspaceTodo(
+        project: String,
+        workspace: String,
+        title: String,
+        note: String?,
+        status: WorkspaceTodoStatus = .pending
+    ) -> WorkspaceTodoItem? {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var storage = workspaceTodosByKey
+        let created = WorkspaceTodoStore.add(
+            workspaceKey: key,
+            title: title,
+            note: note,
+            status: status,
+            storage: &storage
+        )
+        guard created != nil else { return nil }
+        workspaceTodosByKey = storage
+        saveClientSettings()
+        return created
+    }
+
+    @discardableResult
+    func updateWorkspaceTodo(
+        project: String,
+        workspace: String,
+        todoID: String,
+        title: String,
+        note: String?
+    ) -> Bool {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var storage = workspaceTodosByKey
+        let updated = WorkspaceTodoStore.update(
+            workspaceKey: key,
+            todoID: todoID,
+            title: title,
+            note: note,
+            storage: &storage
+        )
+        guard updated else { return false }
+        workspaceTodosByKey = storage
+        saveClientSettings()
+        return true
+    }
+
+    @discardableResult
+    func deleteWorkspaceTodo(project: String, workspace: String, todoID: String) -> Bool {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var storage = workspaceTodosByKey
+        let removed = WorkspaceTodoStore.remove(
+            workspaceKey: key,
+            todoID: todoID,
+            storage: &storage
+        )
+        guard removed else { return false }
+        workspaceTodosByKey = storage
+        saveClientSettings()
+        return true
+    }
+
+    @discardableResult
+    func setWorkspaceTodoStatus(
+        project: String,
+        workspace: String,
+        todoID: String,
+        status: WorkspaceTodoStatus
+    ) -> Bool {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var storage = workspaceTodosByKey
+        let changed = WorkspaceTodoStore.setStatus(
+            workspaceKey: key,
+            todoID: todoID,
+            status: status,
+            storage: &storage
+        )
+        guard changed else { return false }
+        workspaceTodosByKey = storage
+        saveClientSettings()
+        return true
+    }
+
+    func moveWorkspaceTodos(
+        project: String,
+        workspace: String,
+        status: WorkspaceTodoStatus,
+        fromOffsets: IndexSet,
+        toOffset: Int
+    ) {
+        let key = globalWorkspaceKey(project: project, workspace: workspace)
+        var storage = workspaceTodosByKey
+        WorkspaceTodoStore.move(
+            workspaceKey: key,
+            status: status,
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            storage: &storage
+        )
+        workspaceTodosByKey = storage
+        saveClientSettings()
     }
 
     func hasWorkspaceStreamingChat(project: String, workspace: String) -> Bool {
@@ -4082,6 +4196,7 @@ final class MobileAppState: ObservableObject {
             self.mergeAIAgent = settings.mergeAIAgent
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
+            self.workspaceTodosByKey = settings.workspaceTodos
             self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles
             self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }

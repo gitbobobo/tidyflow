@@ -7,6 +7,7 @@ enum RightTool: String, CaseIterable {
     case explorer
     case search
     case git
+    case todos
     case sessions
     case evidence
     case evolution

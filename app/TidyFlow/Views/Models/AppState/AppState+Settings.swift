@@ -497,6 +497,111 @@ extension AppState {
         }
     }
 
+    // MARK: - 工作空间待办
+
+    func workspaceTodos(for workspaceKey: String?) -> [WorkspaceTodoItem] {
+        guard let workspaceKey, !workspaceKey.isEmpty else { return [] }
+        return WorkspaceTodoStore.items(for: workspaceKey, in: clientSettings.workspaceTodos)
+    }
+
+    func pendingTodoCount(for workspaceKey: String?) -> Int {
+        guard let workspaceKey, !workspaceKey.isEmpty else { return 0 }
+        return WorkspaceTodoStore.pendingCount(for: workspaceKey, in: clientSettings.workspaceTodos)
+    }
+
+    @discardableResult
+    func addWorkspaceTodo(
+        workspaceKey: String,
+        title: String,
+        note: String?,
+        status: WorkspaceTodoStatus = .pending
+    ) -> WorkspaceTodoItem? {
+        var storage = clientSettings.workspaceTodos
+        let created = WorkspaceTodoStore.add(
+            workspaceKey: workspaceKey,
+            title: title,
+            note: note,
+            status: status,
+            storage: &storage
+        )
+        guard created != nil else { return nil }
+        clientSettings.workspaceTodos = storage
+        saveClientSettings()
+        return created
+    }
+
+    @discardableResult
+    func updateWorkspaceTodo(
+        workspaceKey: String,
+        todoID: String,
+        title: String,
+        note: String?
+    ) -> Bool {
+        var storage = clientSettings.workspaceTodos
+        let updated = WorkspaceTodoStore.update(
+            workspaceKey: workspaceKey,
+            todoID: todoID,
+            title: title,
+            note: note,
+            storage: &storage
+        )
+        guard updated else { return false }
+        clientSettings.workspaceTodos = storage
+        saveClientSettings()
+        return true
+    }
+
+    @discardableResult
+    func deleteWorkspaceTodo(workspaceKey: String, todoID: String) -> Bool {
+        var storage = clientSettings.workspaceTodos
+        let removed = WorkspaceTodoStore.remove(
+            workspaceKey: workspaceKey,
+            todoID: todoID,
+            storage: &storage
+        )
+        guard removed else { return false }
+        clientSettings.workspaceTodos = storage
+        saveClientSettings()
+        return true
+    }
+
+    @discardableResult
+    func setWorkspaceTodoStatus(
+        workspaceKey: String,
+        todoID: String,
+        status: WorkspaceTodoStatus
+    ) -> Bool {
+        var storage = clientSettings.workspaceTodos
+        let changed = WorkspaceTodoStore.setStatus(
+            workspaceKey: workspaceKey,
+            todoID: todoID,
+            status: status,
+            storage: &storage
+        )
+        guard changed else { return false }
+        clientSettings.workspaceTodos = storage
+        saveClientSettings()
+        return true
+    }
+
+    func moveWorkspaceTodos(
+        workspaceKey: String,
+        status: WorkspaceTodoStatus,
+        fromOffsets: IndexSet,
+        toOffset: Int
+    ) {
+        var storage = clientSettings.workspaceTodos
+        WorkspaceTodoStore.move(
+            workspaceKey: workspaceKey,
+            status: status,
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            storage: &storage
+        )
+        clientSettings.workspaceTodos = storage
+        saveClientSettings()
+    }
+
     /// 生成默认的每个 Stage EvolutionEditableProfile
     static func defaultEvolutionEditableProfiles() -> [EvolutionEditableProfile] {
         evolutionStageOrder().map { stage in

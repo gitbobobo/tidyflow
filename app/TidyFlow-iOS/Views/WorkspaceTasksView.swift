@@ -158,3 +158,243 @@ struct WorkspaceTasksView: View {
         }
     }
 }
+
+/// 工作空间待办列表页。
+struct WorkspaceTodosView: View {
+    @EnvironmentObject var appState: MobileAppState
+    let project: String
+    let workspace: String
+
+    @State private var showAddSheet = false
+    @State private var editingItem: WorkspaceTodoItem?
+
+    private var todos: [WorkspaceTodoItem] {
+        appState.todosForWorkspace(project: project, workspace: workspace)
+    }
+
+    private var pendingTodos: [WorkspaceTodoItem] {
+        todos.filter { $0.status == .pending }
+    }
+
+    private var inProgressTodos: [WorkspaceTodoItem] {
+        todos.filter { $0.status == .inProgress }
+    }
+
+    private var completedTodos: [WorkspaceTodoItem] {
+        todos.filter { $0.status == .completed }
+    }
+
+    var body: some View {
+        List {
+            if todos.isEmpty {
+                ContentUnavailableView("todo.empty".localized, systemImage: "checklist")
+            } else {
+                todoSection(
+                    title: "todo.section.pending".localized,
+                    status: .pending,
+                    items: pendingTodos
+                )
+                todoSection(
+                    title: "todo.section.inProgress".localized,
+                    status: .inProgress,
+                    items: inProgressTodos
+                )
+                todoSection(
+                    title: "todo.section.completed".localized,
+                    status: .completed,
+                    items: completedTodos
+                )
+            }
+        }
+        .environment(\.editMode, .constant(.active))
+        .navigationTitle("todo.title".localized)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showAddSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("todo.add".localized)
+            }
+        }
+        .sheet(isPresented: $showAddSheet) {
+            TodoEditorSheet(title: "todo.add".localized) { title, note in
+                let created = appState.addWorkspaceTodo(
+                    project: project,
+                    workspace: workspace,
+                    title: title,
+                    note: note
+                )
+                return created != nil
+            }
+        }
+        .sheet(item: $editingItem) { item in
+            TodoEditorSheet(
+                title: "todo.edit".localized,
+                initialTitle: item.title,
+                initialNote: item.note ?? ""
+            ) { title, note in
+                appState.updateWorkspaceTodo(
+                    project: project,
+                    workspace: workspace,
+                    todoID: item.id,
+                    title: title,
+                    note: note
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func todoSection(
+        title: String,
+        status: WorkspaceTodoStatus,
+        items: [WorkspaceTodoItem]
+    ) -> some View {
+        if !items.isEmpty {
+            Section(title) {
+                ForEach(items) { item in
+                    TodoListRow(
+                        item: item,
+                        onEdit: { editingItem = item },
+                        onDelete: {
+                            _ = appState.deleteWorkspaceTodo(
+                                project: project,
+                                workspace: workspace,
+                                todoID: item.id
+                            )
+                        },
+                        onChangeStatus: { nextStatus in
+                            _ = appState.setWorkspaceTodoStatus(
+                                project: project,
+                                workspace: workspace,
+                                todoID: item.id,
+                                status: nextStatus
+                            )
+                        }
+                    )
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            _ = appState.deleteWorkspaceTodo(
+                                project: project,
+                                workspace: workspace,
+                                todoID: item.id
+                            )
+                        } label: {
+                            Label("todo.delete".localized, systemImage: "trash")
+                        }
+                    }
+                }
+                .onMove { from, to in
+                    appState.moveWorkspaceTodos(
+                        project: project,
+                        workspace: workspace,
+                        status: status,
+                        fromOffsets: from,
+                        toOffset: to
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct TodoListRow: View {
+    let item: WorkspaceTodoItem
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    let onChangeStatus: (WorkspaceTodoStatus) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.body)
+                    .lineLimit(1)
+                if let note = item.note, !note.isEmpty {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer()
+            Menu {
+                ForEach(WorkspaceTodoStatus.allCases, id: \.rawValue) { status in
+                    Button(status.localizedTitle) {
+                        onChangeStatus(status)
+                    }
+                }
+            } label: {
+                Text(item.status.localizedTitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct TodoEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let title: String
+    let onSave: (String, String?) -> Bool
+
+    @State private var todoTitle: String
+    @State private var todoNote: String
+
+    init(
+        title: String,
+        initialTitle: String = "",
+        initialNote: String = "",
+        onSave: @escaping (String, String?) -> Bool
+    ) {
+        self.title = title
+        self.onSave = onSave
+        _todoTitle = State(initialValue: initialTitle)
+        _todoNote = State(initialValue: initialNote)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("todo.input.title".localized, text: $todoTitle)
+                    TextField("todo.input.note".localized, text: $todoNote)
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("common.cancel".localized) {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("common.confirm".localized) {
+                        let saved = onSave(todoTitle, todoNote)
+                        if saved {
+                            dismiss()
+                        }
+                    }
+                    .disabled(todoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}

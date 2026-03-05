@@ -101,12 +101,33 @@ private struct SaveClientSettingsRequest: Encodable {
     let mergeAIAgent: String?
     let fixedPort: Int
     let remoteAccessEnabled: Bool
+    let workspaceTodos: [String: [WorkspaceTodoPayload]]
 
     struct CustomCommandPayload: Encodable {
         let id: String
         let name: String
         let icon: String
         let command: String
+    }
+
+    struct WorkspaceTodoPayload: Encodable {
+        let id: String
+        let title: String
+        let note: String?
+        let status: String
+        let order: Int64
+        let createdAtMs: Int64
+        let updatedAtMs: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case title
+            case note
+            case status
+            case order
+            case createdAtMs = "created_at_ms"
+            case updatedAtMs = "updated_at_ms"
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -116,6 +137,7 @@ private struct SaveClientSettingsRequest: Encodable {
         case mergeAIAgent = "merge_ai_agent"
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
+        case workspaceTodos = "workspace_todos"
     }
 }
 
@@ -815,7 +837,20 @@ extension WSClient {
             workspaceShortcuts: settings.workspaceShortcuts,
             mergeAIAgent: settings.mergeAIAgent,
             fixedPort: settings.fixedPort,
-            remoteAccessEnabled: settings.remoteAccessEnabled
+            remoteAccessEnabled: settings.remoteAccessEnabled,
+            workspaceTodos: settings.workspaceTodos.mapValues { items in
+                items.map { item in
+                    SaveClientSettingsRequest.WorkspaceTodoPayload(
+                        id: item.id,
+                        title: item.title,
+                        note: item.note,
+                        status: item.status.rawValue,
+                        order: item.order,
+                        createdAtMs: item.createdAtMs,
+                        updatedAtMs: item.updatedAtMs
+                    )
+                }
+            }
         )
         sendTyped(payload, requestId: UUID().uuidString)
     }

@@ -7,6 +7,7 @@ enum MobileRoute: Hashable {
     case workspaceDetail(project: String, workspace: String)
     case workspaceExplorer(project: String, workspace: String)
     case workspaceTasks(project: String, workspace: String)
+    case workspaceTodos(project: String, workspace: String)
     case terminal(
         project: String,
         workspace: String,
@@ -42,6 +43,8 @@ struct TidyFlowiOSApp: App {
                                 WorkspaceExplorerView(project: project, workspace: workspace)
                             case .workspaceTasks(let project, let workspace):
                                 WorkspaceTasksView(project: project, workspace: workspace)
+                            case .workspaceTodos(let project, let workspace):
+                                WorkspaceTodosView(project: project, workspace: workspace)
                             case .terminal(let project, let workspace, let command, let commandIcon, let commandName):
                                 MobileTerminalView(
                                     project: project,

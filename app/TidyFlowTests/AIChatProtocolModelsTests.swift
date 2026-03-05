@@ -849,4 +849,111 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(result?.messages?.first?.parts.first?.text, "snapshot")
         XCTAssertNil(result?.ops)
     }
+
+    func testClientSettingsDecodeWorkspaceTodosFromSnakeCase() throws {
+        let json = """
+        {
+          "customCommands": [],
+          "workspaceShortcuts": {},
+          "fixed_port": 0,
+          "remote_access_enabled": false,
+          "workspace_todos": {
+            "demo:default": [
+              {
+                "id": "todo-1",
+                "title": "补测试",
+                "note": "回归关键路径",
+                "status": "in_progress",
+                "order": 0,
+                "created_at_ms": 1760000000000,
+                "updated_at_ms": 1760000001000
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(ClientSettings.self, from: json)
+        XCTAssertEqual(decoded.workspaceTodos["demo:default"]?.count, 1)
+        XCTAssertEqual(decoded.workspaceTodos["demo:default"]?.first?.status, .inProgress)
+        XCTAssertEqual(decoded.workspaceTodos["demo:default"]?.first?.note, "回归关键路径")
+    }
+
+    func testClientSettingsEncodeWorkspaceTodosToSnakeCase() throws {
+        let settings = ClientSettings(
+            customCommands: [],
+            workspaceShortcuts: [:],
+            mergeAIAgent: nil,
+            fixedPort: 0,
+            remoteAccessEnabled: false,
+            evolutionAgentProfiles: [:],
+            workspaceTodos: [
+                "demo:default": [
+                    WorkspaceTodoItem(
+                        id: "todo-1",
+                        title: "实现 UI",
+                        note: nil,
+                        status: .pending,
+                        order: 0,
+                        createdAtMs: 1760000000000,
+                        updatedAtMs: 1760000000000
+                    )
+                ]
+            ]
+        )
+
+        let encoded = try JSONEncoder().encode(settings)
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        let workspaceTodos = object?["workspace_todos"] as? [String: Any]
+        let list = workspaceTodos?["demo:default"] as? [[String: Any]]
+        XCTAssertEqual(list?.count, 1)
+        XCTAssertEqual(list?.first?["status"] as? String, "pending")
+        XCTAssertEqual(list?.first?["created_at_ms"] as? Int64, 1760000000000)
+    }
+
+    func testWorkspaceTodoStoreStatusSwitchAndReorder() {
+        var storage: [String: [WorkspaceTodoItem]] = [:]
+        let workspaceKey = "demo:default"
+        let first = WorkspaceTodoStore.add(
+            workspaceKey: workspaceKey,
+            title: "A",
+            note: nil,
+            storage: &storage
+        )
+        let second = WorkspaceTodoStore.add(
+            workspaceKey: workspaceKey,
+            title: "B",
+            note: nil,
+            storage: &storage
+        )
+        let third = WorkspaceTodoStore.add(
+            workspaceKey: workspaceKey,
+            title: "C",
+            note: nil,
+            storage: &storage
+        )
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(second)
+        XCTAssertNotNil(third)
+
+        _ = WorkspaceTodoStore.setStatus(
+            workspaceKey: workspaceKey,
+            todoID: first?.id ?? "",
+            status: .inProgress,
+            storage: &storage
+        )
+        let inProgress = WorkspaceTodoStore.items(for: workspaceKey, in: storage).filter { $0.status == .inProgress }
+        XCTAssertEqual(inProgress.count, 1)
+        XCTAssertEqual(inProgress.first?.title, "A")
+
+        WorkspaceTodoStore.move(
+            workspaceKey: workspaceKey,
+            status: .pending,
+            fromOffsets: IndexSet(integer: 0),
+            toOffset: 2,
+            storage: &storage
+        )
+        let pending = WorkspaceTodoStore.items(for: workspaceKey, in: storage).filter { $0.status == .pending }
+        XCTAssertEqual(pending.map(\.title), ["C", "B"])
+    }
 }

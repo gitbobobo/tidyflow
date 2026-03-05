@@ -23,6 +23,10 @@ struct WorkspaceDetailView: View {
         allTasks.filter { !$0.status.isActive }.count
     }
 
+    private var pendingTodoCount: Int {
+        appState.pendingTodoCountForWorkspace(project: project, workspace: workspace)
+    }
+
     private var gitSummary: MobileWorkspaceGitSummary {
         appState.gitSummaryForWorkspace(project: project, workspace: workspace)
     }
@@ -159,6 +163,24 @@ struct WorkspaceDetailView: View {
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
                                 .background(Color.secondary)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+
+            Section("待办事项") {
+                NavigationLink(value: MobileRoute.workspaceTodos(project: project, workspace: workspace)) {
+                    HStack {
+                        Text("查看待办")
+                        Spacer()
+                        if pendingTodoCount > 0 {
+                            Text("\(pendingTodoCount)")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.orange)
                                 .clipShape(Capsule())
                         }
                     }

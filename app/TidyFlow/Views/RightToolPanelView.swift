@@ -17,7 +17,7 @@ struct CapsuleSegmentedControl: View {
 
     var body: some View {
         GeometryReader { geo in
-            let tools: [RightTool] = [.explorer, .search, .git, .evidence, .evolution]
+            let tools: [RightTool] = [.explorer, .search, .git, .todos, .evidence, .evolution]
             let segmentW = max(0, geo.size.width) / CGFloat(tools.count)
             let fullH = max(24, geo.size.height - 4)
 
@@ -59,6 +59,7 @@ struct CapsuleSegmentedControl: View {
         case .explorer: return "folder"
         case .search: return "magnifyingglass"
         case .git: return "arrow.triangle.branch"
+        case .todos: return "checklist"
         case .sessions: return "bubble.left.and.bubble.right"
         case .evidence: return "photo.stack"
         case .evolution: return "brain.head.profile"
@@ -70,6 +71,7 @@ struct CapsuleSegmentedControl: View {
         case .explorer: return "rightPanel.files".localized
         case .search: return "rightPanel.search".localized
         case .git: return "Git"
+        case .todos: return "rightPanel.todos".localized
         case .sessions: return "rightPanel.sessions".localized
         case .evidence: return "rightPanel.evidence".localized
         case .evolution: return "evolution.page.title".localized
@@ -100,6 +102,9 @@ struct InspectorContentView: View {
                     SearchPlaceholderView()
                 case .git:
                     NativeGitPanelView()
+                        .environmentObject(appState)
+                case .todos:
+                    TodoInspectorView()
                         .environmentObject(appState)
                 case .sessions:
                     // 会话列表已移至聊天界面左侧侧边栏，右侧面板不再显示
@@ -383,6 +388,253 @@ extension TreeRowView {
         self.isLoading = isLoading
         self.customIconView = customIconView
         self.onTap = onTap
+    }
+}
+
+// MARK: - 待办面板
+
+struct TodoInspectorView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var draftTitle: String = ""
+    @State private var draftNote: String = ""
+    @State private var editingItem: WorkspaceTodoItem?
+
+    private var workspaceKey: String? {
+        appState.currentGlobalWorkspaceKey
+    }
+
+    private var pendingTodos: [WorkspaceTodoItem] {
+        appState.workspaceTodos(for: workspaceKey).filter { $0.status == .pending }
+    }
+
+    private var inProgressTodos: [WorkspaceTodoItem] {
+        appState.workspaceTodos(for: workspaceKey).filter { $0.status == .inProgress }
+    }
+
+    private var completedTodos: [WorkspaceTodoItem] {
+        appState.workspaceTodos(for: workspaceKey).filter { $0.status == .completed }
+    }
+
+    var body: some View {
+        Group {
+            if let workspaceKey {
+                VStack(spacing: 0) {
+                    PanelHeaderView(title: "rightPanel.todos".localized)
+                    composer(workspaceKey: workspaceKey)
+                    Divider()
+                    todoList(workspaceKey: workspaceKey)
+                }
+                .sheet(item: $editingItem) { item in
+                    TodoEditSheet(item: item) { title, note in
+                        _ = appState.updateWorkspaceTodo(
+                            workspaceKey: workspaceKey,
+                            todoID: item.id,
+                            title: title,
+                            note: note
+                        )
+                    }
+                }
+            } else {
+                RightPanelNoWorkspaceView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func composer(workspaceKey: String) -> some View {
+        VStack(spacing: 8) {
+            TextField("todo.input.title".localized, text: $draftTitle)
+                .textFieldStyle(.roundedBorder)
+            TextField("todo.input.note".localized, text: $draftNote)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("todo.add".localized) {
+                    let created = appState.addWorkspaceTodo(
+                        workspaceKey: workspaceKey,
+                        title: draftTitle,
+                        note: draftNote,
+                        status: .pending
+                    )
+                    guard created != nil else { return }
+                    draftTitle = ""
+                    draftNote = ""
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func todoList(workspaceKey: String) -> some View {
+        let isEmpty = pendingTodos.isEmpty && inProgressTodos.isEmpty && completedTodos.isEmpty
+        if isEmpty {
+            VStack(spacing: 10) {
+                Spacer()
+                Image(systemName: "checklist")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.secondary.opacity(0.6))
+                Text("todo.empty".localized)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                todoSection(
+                    title: "todo.section.pending".localized,
+                    workspaceKey: workspaceKey,
+                    status: .pending,
+                    items: pendingTodos
+                )
+                todoSection(
+                    title: "todo.section.inProgress".localized,
+                    workspaceKey: workspaceKey,
+                    status: .inProgress,
+                    items: inProgressTodos
+                )
+                todoSection(
+                    title: "todo.section.completed".localized,
+                    workspaceKey: workspaceKey,
+                    status: .completed,
+                    items: completedTodos
+                )
+            }
+            .listStyle(.inset)
+#if os(iOS)
+            // iOS 侧始终处于编辑态，支持直接拖拽排序
+            .environment(\.editMode, .constant(.active))
+#endif
+        }
+    }
+
+    @ViewBuilder
+    private func todoSection(
+        title: String,
+        workspaceKey: String,
+        status: WorkspaceTodoStatus,
+        items: [WorkspaceTodoItem]
+    ) -> some View {
+        if !items.isEmpty {
+            Section(title) {
+                ForEach(items) { item in
+                    TodoRowView(
+                        item: item,
+                        onEdit: { editingItem = item },
+                        onDelete: {
+                            _ = appState.deleteWorkspaceTodo(workspaceKey: workspaceKey, todoID: item.id)
+                        },
+                        onChangeStatus: { next in
+                            _ = appState.setWorkspaceTodoStatus(
+                                workspaceKey: workspaceKey,
+                                todoID: item.id,
+                                status: next
+                            )
+                        }
+                    )
+                }
+                .onMove { from, to in
+                    appState.moveWorkspaceTodos(
+                        workspaceKey: workspaceKey,
+                        status: status,
+                        fromOffsets: from,
+                        toOffset: to
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct TodoRowView: View {
+    let item: WorkspaceTodoItem
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    let onChangeStatus: (WorkspaceTodoStatus) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                if let note = item.note, !note.isEmpty {
+                    Text(note)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            Menu(item.status.localizedTitle) {
+                ForEach(WorkspaceTodoStatus.allCases, id: \.rawValue) { status in
+                    Button(status.localizedTitle) {
+                        onChangeStatus(status)
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .controlSize(.small)
+
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.plain)
+            .help("todo.edit".localized)
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+            .help("todo.delete".localized)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct TodoEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: WorkspaceTodoItem
+    let onSave: (String, String?) -> Void
+
+    @State private var title: String
+    @State private var note: String
+
+    init(item: WorkspaceTodoItem, onSave: @escaping (String, String?) -> Void) {
+        self.item = item
+        self.onSave = onSave
+        _title = State(initialValue: item.title)
+        _note = State(initialValue: item.note ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("todo.edit".localized)
+                .font(.headline)
+            TextField("todo.input.title".localized, text: $title)
+                .textFieldStyle(.roundedBorder)
+            TextField("todo.input.note".localized, text: $note)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("common.cancel".localized) {
+                    dismiss()
+                }
+                Button("common.confirm".localized) {
+                    onSave(title, note)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
     }
 }
 

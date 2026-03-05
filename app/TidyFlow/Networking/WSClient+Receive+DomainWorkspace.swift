@@ -147,13 +147,15 @@ extension WSClient {
             let fixedPort = json["fixed_port"] as? Int ?? 0
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
             let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
+            let workspaceTodos = parseWorkspaceTodosFromClientSettings(json["workspace_todos"])
             let settings = ClientSettings(
                 customCommands: commands,
                 workspaceShortcuts: workspaceShortcuts,
                 mergeAIAgent: mergeAIAgent,
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
-                evolutionAgentProfiles: evolutionAgentProfiles
+                evolutionAgentProfiles: evolutionAgentProfiles,
+                workspaceTodos: workspaceTodos
             )
             if let handler = settingsMessageHandler {
                 handler.handleClientSettingsResult(settings)
@@ -343,5 +345,48 @@ extension WSClient {
             return nil
         }
         return dicts.compactMap { EvolutionStageProfileInfoV2.from(json: $0) }
+    }
+
+    private func parseWorkspaceTodosFromClientSettings(_ raw: Any?) -> [String: [WorkspaceTodoItem]] {
+        guard let rawMap = raw as? [String: Any] else { return [:] }
+        var result: [String: [WorkspaceTodoItem]] = [:]
+        result.reserveCapacity(rawMap.count)
+
+        for (workspaceKey, value) in rawMap {
+            let items = parseWorkspaceTodoItems(value)
+            if !items.isEmpty {
+                result[workspaceKey] = WorkspaceTodoStore.normalize(items)
+            }
+        }
+        return result
+    }
+
+    private func parseWorkspaceTodoItems(_ raw: Any?) -> [WorkspaceTodoItem] {
+        guard let array = raw as? [Any] else { return [] }
+        return array.compactMap { item -> WorkspaceTodoItem? in
+            guard let dict = item as? [String: Any] else { return nil }
+            guard let id = dict["id"] as? String,
+                  let title = dict["title"] as? String,
+                  let statusRaw = dict["status"] as? String,
+                  let status = WorkspaceTodoStatus(rawValue: statusRaw) else {
+                return nil
+            }
+            let note = dict["note"] as? String
+            let order = (dict["order"] as? NSNumber)?.int64Value
+                ?? Int64(dict["order"] as? Int ?? 0)
+            let createdAtMs = (dict["created_at_ms"] as? NSNumber)?.int64Value
+                ?? Int64(dict["created_at_ms"] as? Int ?? 0)
+            let updatedAtMs = (dict["updated_at_ms"] as? NSNumber)?.int64Value
+                ?? Int64(dict["updated_at_ms"] as? Int ?? 0)
+            return WorkspaceTodoItem(
+                id: id,
+                title: title,
+                note: note,
+                status: status,
+                order: order,
+                createdAtMs: createdAtMs,
+                updatedAtMs: updatedAtMs
+            )
+        }
     }
 }

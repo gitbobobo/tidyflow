@@ -238,6 +238,7 @@
 "rightPanel.noTool" = "未选择工具";
 "rightPanel.noTool.hint" = "请从上方选择一个工具";
 "rightPanel.sessions" = "会话";
+"rightPanel.todos" = "待办";
 
 /* 连接状态 */
 "connection.connected" = "已连接";
@@ -324,6 +325,21 @@
 "toast.status.success" = "已完成";
 "toast.status.failed" = "失败";
 "toast.status.unknown" = "状态未知";
+
+/* 待办事项 */
+"todo.title" = "待办事项";
+"todo.empty" = "暂无待办";
+"todo.add" = "新增待办";
+"todo.edit" = "编辑待办";
+"todo.delete" = "删除待办";
+"todo.input.title" = "标题";
+"todo.input.note" = "备注（可选）";
+"todo.section.pending" = "待办";
+"todo.section.inProgress" = "进行中";
+"todo.section.completed" = "已完成";
+"todo.status.pending" = "待办";
+"todo.status.inProgress" = "进行中";
+"todo.status.completed" = "已完成";
 
 // 项目配置页面
 "projectConfig.info" = "项目信息";

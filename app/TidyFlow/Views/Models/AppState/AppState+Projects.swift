@@ -231,6 +231,9 @@ extension AppState {
             Command(id: "global.toggleGit", title: "Show Git", subtitle: nil, scope: .global, keyHint: nil) { app in
                 app.activeRightTool = .git
             },
+            Command(id: "global.toggleTodos", title: "Show Todos", subtitle: nil, scope: .global, keyHint: nil) { app in
+                app.activeRightTool = .todos
+            },
             Command(id: "global.reconnect", title: "Reconnect", subtitle: "Restart Core and reconnect", scope: .global, keyHint: "Cmd+R") { app in
                 app.restartCore()
             },
