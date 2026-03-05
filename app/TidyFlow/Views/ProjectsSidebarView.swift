@@ -398,13 +398,13 @@ struct WorkspaceRowView: View {
     private var workspaceActivityIndicators: [TreeRowActivityIndicator] {
         var items: [TreeRowActivityIndicator] = []
         if workspace.sidebarStatus.hasStreamingChat {
-            items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .accentColor))
+            items.append(TreeRowActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill"))
         }
         if workspace.sidebarStatus.hasActiveEvolutionLoop {
-            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "brain.head.profile", color: .purple))
+            items.append(TreeRowActivityIndicator(id: "evolution", iconName: "brain.head.profile"))
         }
         if let taskIcon = workspace.sidebarStatus.taskIconName {
-            items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))
+            items.append(TreeRowActivityIndicator(id: "task", iconName: taskIcon))
         }
         return items
     }

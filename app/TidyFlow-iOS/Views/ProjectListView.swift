@@ -89,24 +89,24 @@ struct ProjectListView: View {
         if let status = appState.workspaceAIStatus(project: project, workspace: workspace) {
             switch status.normalizedStatus {
             case "running":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bolt.circle.fill", color: .blue))
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bolt.circle.fill"))
             case "awaiting_input":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "hourglass.circle.fill", color: .yellow))
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "hourglass.circle.fill"))
             case "success":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "checkmark.circle.fill", color: .green))
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "checkmark.circle.fill"))
             case "failure", "error":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "xmark.octagon.fill", color: .red))
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "xmark.octagon.fill"))
             case "cancelled":
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "minus.circle.fill", color: .secondary))
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "minus.circle.fill"))
             default:
-                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill", color: .secondary))
+                items.append(MobileWorkspaceActivityIndicator(id: "chat", iconName: "bubble.left.and.bubble.right.fill"))
             }
         }
         if appState.hasWorkspaceActiveEvolutionLoop(project: project, workspace: workspace) {
-            items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "brain.head.profile", color: .purple))
+            items.append(MobileWorkspaceActivityIndicator(id: "evolution", iconName: "brain.head.profile"))
         }
         if let taskIcon = appState.activeTaskIconForWorkspace(project: project, workspace: workspace) {
-            items.append(MobileWorkspaceActivityIndicator(id: "task", iconName: taskIcon, color: .secondary))
+            items.append(MobileWorkspaceActivityIndicator(id: "task", iconName: taskIcon))
         }
         return items
     }
@@ -115,7 +115,6 @@ struct ProjectListView: View {
 private struct MobileWorkspaceActivityIndicator: Identifiable {
     let id: String
     let iconName: String
-    let color: Color
 }
 
 private struct MobileWorkspaceActivityIconsView: View {
@@ -154,7 +153,7 @@ private struct MobileWorkspaceActivityIconsView: View {
         HStack(spacing: 4) {
             ForEach(indicators) { indicator in
                 MobileCommandIconView(iconName: indicator.iconName, size: 11)
-                    .foregroundColor(maskStyle ? .white : indicator.color)
+                    .foregroundColor(maskStyle ? .white : .secondary)
                     .frame(width: 12, height: 12)
             }
         }

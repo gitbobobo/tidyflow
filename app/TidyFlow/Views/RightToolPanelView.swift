@@ -168,7 +168,6 @@ struct PanelHeaderView: View {
 struct TreeRowActivityIndicator: Identifiable {
     let id: String
     let iconName: String
-    let color: Color
 }
 
 private struct TreeRowActivityIndicatorsView: View {
@@ -207,7 +206,7 @@ private struct TreeRowActivityIndicatorsView: View {
         HStack(spacing: 4) {
             ForEach(indicators) { indicator in
                 CommandIconView(iconName: indicator.iconName, size: 11)
-                    .foregroundColor(maskStyle ? .white : indicator.color)
+                    .foregroundColor(maskStyle ? .white : .secondary)
                     .frame(width: 12, height: 12)
             }
         }
