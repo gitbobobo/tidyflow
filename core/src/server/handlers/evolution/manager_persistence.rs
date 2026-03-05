@@ -1,8 +1,12 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::Utc;
 
-use super::stage::{agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage};
+use super::stage::{
+    agent_name, next_stage, prompt_id_for_stage_phase, prompt_template_for_stage_phase,
+    StagePromptPhase,
+};
 use super::utils::{cycle_dir_path, evolution_workspace_dir, write_json};
 use super::{EvolutionManager, StageSession, STAGES};
 
@@ -69,7 +73,7 @@ fn merge_stage_payload(
             "inputs".to_string(),
             serde_json::json!([{
                 "type": "prompt",
-                "path": prompt_id_for_stage(stage).unwrap_or_default()
+                "path": prompt_id_for_stage_phase(stage, StagePromptPhase::Deliverable).unwrap_or_default()
             }]),
         );
     }
@@ -246,6 +250,9 @@ fn build_prompt_context(
         "IMPLEMENT_ADVANCED_RESULT_PATH": cycle_dir.join("implement_advanced.result.json"),
         "VERIFY_RESULT_PATH": cycle_dir.join("verify.result.json"),
         "JUDGE_RESULT_PATH": cycle_dir.join("judge.result.json"),
+        "REPORT_RESULT_PATH": cycle_dir.join("report.result.json"),
+        "REPORT_MARKDOWN_PATH": cycle_dir.join("report.md"),
+        "HANDOFF_MARKDOWN_PATH": cycle_dir.join("handoff.md"),
         "STAGE_FILE_PATH": stage_file,
         "DIRECTION_STAGE_FILE_PATH": cycle_dir.join("stage.direction.json"),
         "DIRECTION_LIFECYCLE_SCAN_PATH": cycle_dir.join("direction.lifecycle_scan.json"),
@@ -261,6 +268,156 @@ fn build_prompt_context(
             .unwrap_or_else(|_| Path::new("workspace.blockers.json").to_path_buf()),
         "WORKSPACE_ROOT": "由程序注入，禁止自行推断",
     })
+}
+
+fn push_required_key(keys: &mut Vec<&'static str>, key: &'static str) {
+    if !keys.iter().any(|existing| *existing == key) {
+        keys.push(key);
+    }
+}
+
+fn required_context_keys(
+    stage: &str,
+    phase: StagePromptPhase,
+    verify_iteration: u32,
+    backlog_contract_version: u32,
+) -> Vec<&'static str> {
+    let mut keys = vec![
+        "PROJECT",
+        "WORKSPACE",
+        "CYCLE_ID",
+        "CURRENT_STAGE",
+        "GLOBAL_LOOP_ROUND",
+        "VERIFY_ITERATION",
+        "VERIFY_ITERATION_LIMIT",
+        "BACKLOG_CONTRACT_VERSION",
+        "CYCLE_FILE_PATH",
+        "STAGE_FILE_PATH",
+        "WORKSPACE_BLOCKER_FILE_PATH",
+    ];
+
+    if matches!(phase, StagePromptPhase::Deliverable) {
+        push_required_key(&mut keys, "HANDOFF_MARKDOWN_PATH");
+    }
+
+    match stage {
+        "direction" => {
+            push_required_key(&mut keys, "DIRECTION_LIFECYCLE_SCAN_PATH");
+            push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
+        }
+        "plan" => {
+            push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
+            push_required_key(&mut keys, "DIRECTION_LIFECYCLE_SCAN_PATH");
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+        }
+        "implement_general" => {
+            push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_GENERAL_RESULT_PATH");
+        }
+        "implement_visual" => {
+            push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_VISUAL_RESULT_PATH");
+        }
+        "implement_advanced" => {
+            push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_ADVANCED_RESULT_PATH");
+            push_required_key(&mut keys, "VERIFY_RESULT_PATH");
+            push_required_key(&mut keys, "JUDGE_RESULT_PATH");
+        }
+        "verify" => {
+            push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_GENERAL_RESULT_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_VISUAL_RESULT_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_ADVANCED_RESULT_PATH");
+            push_required_key(&mut keys, "VERIFY_RESULT_PATH");
+        }
+        "judge" => {
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_GENERAL_RESULT_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_VISUAL_RESULT_PATH");
+            push_required_key(&mut keys, "IMPLEMENT_ADVANCED_RESULT_PATH");
+            push_required_key(&mut keys, "VERIFY_RESULT_PATH");
+            push_required_key(&mut keys, "JUDGE_RESULT_PATH");
+        }
+        "report" => {
+            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
+            push_required_key(&mut keys, "VERIFY_RESULT_PATH");
+            push_required_key(&mut keys, "JUDGE_RESULT_PATH");
+            push_required_key(&mut keys, "REPORT_RESULT_PATH");
+            push_required_key(&mut keys, "REPORT_MARKDOWN_PATH");
+        }
+        "auto_commit" => {
+            push_required_key(&mut keys, "REPORT_RESULT_PATH");
+            push_required_key(&mut keys, "REPORT_MARKDOWN_PATH");
+        }
+        _ => {}
+    }
+
+    if matches!(
+        stage,
+        "implement_general" | "implement_visual" | "implement_advanced"
+    ) && verify_iteration > 0
+    {
+        push_required_key(&mut keys, "VERIFY_RESULT_PATH");
+        push_required_key(&mut keys, "JUDGE_RESULT_PATH");
+    }
+
+    if matches!(
+        stage,
+        "implement_general" | "implement_visual" | "implement_advanced" | "verify" | "judge"
+    ) && verify_iteration > 0
+        && backlog_contract_version >= 2
+    {
+        push_required_key(&mut keys, "MANAGED_FAILURE_BACKLOG_PATH");
+        push_required_key(&mut keys, "MANAGED_BACKLOG_COVERAGE_PATH");
+    }
+
+    keys
+}
+
+fn format_context_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(raw) => raw.clone(),
+        serde_json::Value::Number(raw) => raw.to_string(),
+        serde_json::Value::Bool(raw) => raw.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        other => serde_json::to_string(other).unwrap_or_else(|_| "<unserializable>".to_string()),
+    }
+}
+
+fn escape_inline_code(raw: &str) -> String {
+    raw.replace('`', "\\`").replace('\n', "\\n")
+}
+
+fn build_markdown_context_block(
+    context_map: &serde_json::Map<String, serde_json::Value>,
+    required_keys: &[&'static str],
+    already_injected_keys: &HashSet<String>,
+) -> (String, HashSet<String>) {
+    let mut lines = vec!["## 注入上下文（按需）".to_string()];
+    let mut injected = HashSet::new();
+
+    for key in required_keys {
+        if already_injected_keys.contains(*key) {
+            continue;
+        }
+        let Some(value) = context_map.get(*key) else {
+            continue;
+        };
+        let rendered = escape_inline_code(&format_context_value(value));
+        lines.push(format!("- `{}`：`{}`", key, rendered));
+        injected.insert((*key).to_string());
+    }
+
+    if injected.is_empty() {
+        lines.push("- 本次无新增上下文，沿用当前会话已注入内容。".to_string());
+    }
+
+    (lines.join("\n"), injected)
 }
 
 impl EvolutionManager {
@@ -453,7 +610,7 @@ impl EvolutionManager {
         write_json(&cycle_dir.join("chat.map.json"), &payload)
     }
 
-    pub(super) async fn build_stage_prompt(
+    pub(super) async fn build_stage_prompt_for_phase(
         &self,
         key: &str,
         project: &str,
@@ -461,9 +618,11 @@ impl EvolutionManager {
         cycle_id: &str,
         stage: &str,
         round: u32,
-    ) -> Result<String, String> {
-        let prompt_body = prompt_template_for_stage(stage)
-            .ok_or_else(|| format!("unknown stage prompt template: {}", stage))?;
+        phase: StagePromptPhase,
+        already_injected_keys: &HashSet<String>,
+    ) -> Result<(String, HashSet<String>), String> {
+        let prompt_body = prompt_template_for_stage_phase(stage, phase)
+            .ok_or_else(|| format!("unknown stage prompt template: {} ({:?})", stage, phase))?;
 
         let (verify_iteration, verify_iteration_limit, backlog_contract_version, workspace_root) = {
             let state = self.state.lock().await;
@@ -493,18 +652,28 @@ impl EvolutionManager {
             &stage_file,
             &workspace_root,
         );
+        let context_map = context
+            .as_object()
+            .ok_or_else(|| "prompt context should be JSON object".to_string())?;
+        let required_keys =
+            required_context_keys(stage, phase, verify_iteration, backlog_contract_version);
+        let (markdown_context, injected_keys) =
+            build_markdown_context_block(context_map, &required_keys, already_injected_keys);
 
-        Ok(format!(
-            "{}\n\n---\n\n## 注入上下文(JSON)\n```json\n{}\n```\n",
-            prompt_body,
-            serde_json::to_string(&context).unwrap_or_else(|_| "{}".to_string())
+        Ok((
+            format!("{}\n\n---\n\n{}\n", prompt_body, markdown_context),
+            injected_keys,
         ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_prompt_context, collect_session_ids, merge_stage_payload, StageSession};
+    use super::{
+        build_markdown_context_block, build_prompt_context, collect_session_ids,
+        merge_stage_payload, required_context_keys, StagePromptPhase, StageSession,
+    };
+    use std::collections::HashSet;
     use std::path::Path;
 
     #[test]
@@ -687,5 +856,68 @@ mod tests {
                 .unwrap_or_default(),
             "/tmp/tidyflow-cycle/judge.result.json"
         );
+        assert_eq!(
+            context
+                .get("REPORT_RESULT_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/report.result.json"
+        );
+        assert_eq!(
+            context
+                .get("REPORT_MARKDOWN_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/report.md"
+        );
+        assert_eq!(
+            context
+                .get("HANDOFF_MARKDOWN_PATH")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "/tmp/tidyflow-cycle/handoff.md"
+        );
+    }
+
+    #[test]
+    fn required_context_keys_should_include_managed_files_when_reimplementation_enabled() {
+        let keys = required_context_keys("implement_advanced", StagePromptPhase::Deliverable, 1, 2);
+        assert!(keys.contains(&"MANAGED_FAILURE_BACKLOG_PATH"));
+        assert!(keys.contains(&"MANAGED_BACKLOG_COVERAGE_PATH"));
+    }
+
+    #[test]
+    fn build_markdown_context_block_should_render_list_and_skip_already_injected() {
+        let context = serde_json::json!({
+            "PROJECT": "demo",
+            "WORKSPACE": "default",
+            "CYCLE_ID": "cycle-1"
+        });
+        let context_map = context.as_object().expect("context must be object");
+        let required = vec!["PROJECT", "WORKSPACE", "CYCLE_ID"];
+        let already = HashSet::from(["WORKSPACE".to_string()]);
+
+        let (block, injected) = build_markdown_context_block(context_map, &required, &already);
+        assert!(block.contains("## 注入上下文（按需）"));
+        assert!(block.contains("- `PROJECT`：`demo`"));
+        assert!(block.contains("- `CYCLE_ID`：`cycle-1`"));
+        assert!(!block.contains("`WORKSPACE`"));
+        assert!(injected.contains("PROJECT"));
+        assert!(injected.contains("CYCLE_ID"));
+        assert!(!injected.contains("WORKSPACE"));
+    }
+
+    #[test]
+    fn build_markdown_context_block_should_emit_no_new_context_message() {
+        let context = serde_json::json!({
+            "PROJECT": "demo"
+        });
+        let context_map = context.as_object().expect("context must be object");
+        let required = vec!["PROJECT"];
+        let already = HashSet::from(["PROJECT".to_string()]);
+
+        let (block, injected) = build_markdown_context_block(context_map, &required, &already);
+        assert!(block.contains("本次无新增上下文"));
+        assert!(injected.is_empty());
     }
 }
