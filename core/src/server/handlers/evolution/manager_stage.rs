@@ -3735,7 +3735,15 @@ impl EvolutionManager {
     }
 
     fn should_retry_validation_with_reminder(stage: &str, err: &str) -> bool {
-        Self::supports_validation_reminder(stage) && err.starts_with("evo_stage_output_invalid:")
+        if !Self::supports_validation_reminder(stage) {
+            return false;
+        }
+
+        let normalized_err = err.trim();
+        normalized_err.starts_with("evo_stage_output_invalid:")
+            || normalized_err.contains("artifact_contract_violation")
+            || normalized_err.contains("evo_backlog_mapping_missing")
+            || normalized_err.contains("evo_backlog_mapping_ambiguous")
     }
 
     fn validation_target_files_for_stage(stage: &str) -> String {
@@ -3777,6 +3785,67 @@ impl EvolutionManager {
     fn build_validation_fix_hint(stage: &str, error_message: &str) -> String {
         let normalized_stage = stage.trim().to_ascii_lowercase();
         let normalized_error_message = error_message.trim();
+        let lane_name = match normalized_stage.as_str() {
+            "implement_general" => Some("implement_general"),
+            "implement_visual" => Some("implement_visual"),
+            "implement_advanced" => Some("implement_advanced"),
+            _ => None,
+        };
+
+        if lane_name.is_some() && normalized_error_message.contains("quick_checks") {
+            return "quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。"
+                .to_string();
+        }
+
+        if lane_name.is_some()
+            && normalized_error_message.contains("backlog_resolution_updates")
+            && normalized_error_message.contains("selector 字段不能为空")
+        {
+            return "backlog_resolution_updates[*].selector 必须完整填写 source_criteria_id/source_check_id/work_item_id/implementation_agent。".to_string();
+        }
+
+        if lane_name.is_some()
+            && normalized_error_message.contains("backlog_resolution_updates")
+            && normalized_error_message.contains("implementation_agent")
+            && normalized_error_message.contains("必须等于")
+        {
+            return format!(
+                "backlog_resolution_updates[*].implementation_agent 必须等于当前 lane（{}）；不要复用其它 lane 的值。",
+                lane_name.unwrap_or_default()
+            );
+        }
+
+        if lane_name.is_some()
+            && normalized_error_message.contains("backlog_resolution_updates")
+            && (normalized_error_message.contains("缺失")
+                || normalized_error_message.contains("缺少")
+                || normalized_error_message.contains("必须是数组"))
+        {
+            return "BACKLOG_CONTRACT_VERSION>=2 时必须输出 backlog_resolution_updates 数组；若本 lane 无需回填，也要写 []。".to_string();
+        }
+
+        if lane_name.is_some()
+            && normalized_error_message.contains("backlog_resolution_updates")
+            && normalized_error_message.contains("status 必须是 done|blocked|not_done")
+        {
+            return "backlog_resolution_updates[*].status 只能是 done、blocked 或 not_done；不要使用其它状态值。".to_string();
+        }
+
+        if let Some(lane) = lane_name {
+            if normalized_error_message.contains("evo_backlog_mapping_missing") {
+                return format!(
+                    "无法将 backlog_resolution_updates 的 selector 映射到 managed.failure_backlog.json。请复制该文件中 implementation_agent={} 的原始 selector 组合后再回填。",
+                    lane
+                );
+            }
+
+            if normalized_error_message.contains("evo_backlog_mapping_ambiguous") {
+                return format!(
+                    "selector 映射出现歧义，请在 backlog_resolution_updates 中使用与 managed.failure_backlog.json 一一对应且唯一的 selector（implementation_agent={}）。",
+                    lane
+                );
+            }
+        }
 
         if normalized_stage == "report"
             && normalized_error_message.contains("acceptance_summary 缺少 criteria_details")
@@ -6101,6 +6170,14 @@ mod tests {
             "auto_commit",
             "evo_stage_output_invalid: x"
         ));
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "implement_advanced",
+            "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0"
+        ));
+        assert!(EvolutionManager::should_retry_validation_with_reminder(
+            "implement_general",
+            "artifact_contract_violation: implement_general.result.json 缺少 quick_checks"
+        ));
         assert!(!EvolutionManager::should_retry_validation_with_reminder(
             "judge",
             "stage stream timeout"
@@ -6261,6 +6338,37 @@ mod tests {
             "verify.result.json.carryover_verification.summary.total 必须是数字",
             "将该字段改为数字类型（JSON number），不要使用字符串或对象。",
             "verify.result.json / plan.execution.json / managed.failure_backlog.json / managed.backlog_coverage.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_implement_quick_checks_array() {
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: implement_advanced.result.json.quick_checks 必须是数组";
+        let msg = EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
+        let expected = expected_validation_reminder(
+            "implement_advanced",
+            "artifact_contract_violation",
+            "implement_advanced.result.json.quick_checks 必须是数组",
+            "quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。",
+            "implement_advanced.result.json / managed.failure_backlog.json / managed.backlog_coverage.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_implement_backlog_mapping_missing(
+    ) {
+        let raw_error = "evo_stage_output_invalid:managed_backlog_sync_failed: evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0";
+        let msg = EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
+        let expected = expected_validation_reminder(
+            "implement_advanced",
+            "managed_backlog_sync_failed",
+            "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0",
+            "无法将 backlog_resolution_updates 的 selector 映射到 managed.failure_backlog.json。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。",
+            "implement_advanced.result.json / managed.failure_backlog.json / managed.backlog_coverage.json",
             raw_error,
         );
         assert_eq!(msg, expected);

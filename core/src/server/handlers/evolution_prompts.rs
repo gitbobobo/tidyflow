@@ -130,8 +130,6 @@ pub const STAGE_IMPLEMENT_PROMPT: &str = r####"
 
 硬性约束：
 - 全程自主执行；禁止向用户提问。
-- 允许改代码与配置，但禁止破坏性操作。
-- 中间产物只能写入 `CYCLE_DIR`，禁止写入业务目录。
 - 只使用程序注入上下文中的路径。
 - `managed.failure_backlog.json` 与 `managed.backlog_coverage.json` 为系统托管文件，只读，严禁写入/覆盖/删除/重命名。
 
