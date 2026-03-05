@@ -217,25 +217,14 @@ extension WSClient {
         ]
     }
 
-    /// 兼容旧键名：把 `project_name/workspace_name` 归一化到 `project/workspace`。
-    private func normalizeLegacyEvolutionFields(_ dict: [String: Any]) -> [String: Any] {
-        guard let action = dict["type"] as? String, action.hasPrefix("evo_") else {
-            return dict
-        }
-        var normalized = dict
-        if normalized["project"] == nil, let legacyProject = normalized["project_name"] {
-            normalized["project"] = legacyProject
-        }
-        if normalized["workspace"] == nil, let legacyWorkspace = normalized["workspace_name"] {
-            normalized["workspace"] = legacyWorkspace
-        }
-        return normalized
-    }
-
     /// 出站消息基础校验，防止把明显非法的 payload 发送到服务端。
     private func validateOutgoingMessage(_ dict: [String: Any]) -> String? {
         guard let action = dict["type"] as? String, !action.isEmpty else {
             return "消息缺少 type"
+        }
+        if action.hasPrefix("evo_"),
+           dict["project_name"] != nil || dict["workspace_name"] != nil {
+            return "消息 \(action) 使用了过期字段 project_name/workspace_name，请改为 project/workspace"
         }
         guard evolutionActionsRequireProjectWorkspace.contains(action) else {
             return nil
@@ -290,14 +279,13 @@ extension WSClient {
 
     /// 发送消息，使用 MessagePack 编码
     func send(_ dict: [String: Any], requestId: String? = nil) {
-        let normalizedDict = normalizeLegacyEvolutionFields(dict)
-        if let validationError = validateOutgoingMessage(normalizedDict) {
+        if let validationError = validateOutgoingMessage(dict) {
             TFLog.ws.error("Drop outbound message: \(validationError, privacy: .public)")
             emitClientError(validationError)
             return
         }
         do {
-            let data = try encodeEnvelope(dict: normalizedDict, requestId: requestId)
+            let data = try encodeEnvelope(dict: dict, requestId: requestId)
             sendBinary(data)
         } catch {
             TFLog.ws.error("MessagePack encode failed: \(error.localizedDescription, privacy: .public)")
