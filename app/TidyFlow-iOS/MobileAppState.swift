@@ -4232,11 +4232,15 @@ final class MobileAppState: ObservableObject {
 
         wsClient.onEvoSnapshot = { [weak self] snapshot in
             guard let self else { return }
-            self.evolutionScheduler = snapshot.scheduler
+            if self.evolutionScheduler != snapshot.scheduler {
+                self.evolutionScheduler = snapshot.scheduler
+            }
             let items = snapshot.workspaceItems.sorted {
                 ($0.project, $0.workspace) < ($1.project, $1.workspace)
             }
-            self.evolutionWorkspaceItems = items
+            if self.evolutionWorkspaceItems != items {
+                self.evolutionWorkspaceItems = items
+            }
             for item in items where item.status != "interrupted" {
                 let key = self.globalWorkspaceKey(project: item.project, workspace: self.normalizeEvolutionWorkspaceName(item.workspace))
                 self.evolutionPendingActionByWorkspace.removeValue(forKey: key)

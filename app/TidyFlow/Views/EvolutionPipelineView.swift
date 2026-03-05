@@ -1816,7 +1816,7 @@ struct EvolutionPipelineView: View {
                 }
                 return lhs.sessionID < rhs.sessionID
             }
-        completedTimeline = sortedExecutions.map { execution in
+        let newTimeline = sortedExecutions.map { execution in
             PipelineTimelineEntry(
                 id: execution.sessionID + "|" + execution.startedAt,
                 stage: normalizedStageKey(execution.stage),
@@ -1826,6 +1826,9 @@ struct EvolutionPipelineView: View {
                 aiToolName: execution.aiTool,
                 durationSeconds: execution.durationMs.map { TimeInterval($0) / 1000.0 } ?? 0
             )
+        }
+        if completedTimeline != newTimeline {
+            completedTimeline = newTimeline
         }
     }
 
@@ -2307,8 +2310,6 @@ struct PipelineTimelineEntry: Identifiable, Equatable {
     let aiToolName: String
     /// 运行时长（秒）
     let durationSeconds: TimeInterval
-    /// 记录完成时的绝对时间，用于计算运行时长
-    let completedDate: Date
 
     init(
         id: String,
@@ -2317,8 +2318,7 @@ struct PipelineTimelineEntry: Identifiable, Equatable {
         toolCallCount: Int,
         completedAt: String,
         aiToolName: String = "",
-        durationSeconds: TimeInterval = 0,
-        completedDate: Date = Date()
+        durationSeconds: TimeInterval = 0
     ) {
         self.id = id
         self.stage = stage
@@ -2327,7 +2327,6 @@ struct PipelineTimelineEntry: Identifiable, Equatable {
         self.completedAt = completedAt
         self.aiToolName = aiToolName
         self.durationSeconds = durationSeconds
-        self.completedDate = completedDate
     }
 }
 

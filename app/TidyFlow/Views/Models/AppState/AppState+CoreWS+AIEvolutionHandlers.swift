@@ -690,12 +690,16 @@ extension AppState {
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.evolutionScheduler = snapshot.scheduler
-                self.evolutionWorkspaceItems = items
-                self.scheduleWorkspaceSidebarStatusRefresh(
-                    projectNames: items.map(\.project),
-                    debounce: 0.2
-                )
+                if self.evolutionScheduler != snapshot.scheduler {
+                    self.evolutionScheduler = snapshot.scheduler
+                }
+                if self.evolutionWorkspaceItems != items {
+                    self.evolutionWorkspaceItems = items
+                    self.scheduleWorkspaceSidebarStatusRefresh(
+                        projectNames: items.map(\.project),
+                        debounce: 0.2
+                    )
+                }
                 for (key, pendingAction) in self.evolutionPendingActionByWorkspace {
                     if EvolutionControlCapability.shouldClearPendingAction(
                         pendingAction,

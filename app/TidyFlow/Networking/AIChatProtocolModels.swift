@@ -1265,7 +1265,7 @@ struct EvolutionStageProfileInfoV2 {
     }
 }
 
-struct EvolutionAgentInfoV2 {
+struct EvolutionAgentInfoV2: Equatable {
     let stage: String
     let agent: String
     let status: String
@@ -1296,7 +1296,7 @@ struct EvolutionAgentInfoV2 {
     }
 }
 
-struct EvolutionSessionExecutionEntryV2 {
+struct EvolutionSessionExecutionEntryV2: Equatable {
     let stage: String
     let agent: String
     let aiTool: String
@@ -1340,7 +1340,7 @@ struct EvolutionSessionExecutionEntryV2 {
     }
 }
 
-struct EvolutionSchedulerInfoV2 {
+struct EvolutionSchedulerInfoV2: Equatable {
     let activationState: String
     let maxParallelWorkspaces: Int
     let runningCount: Int
@@ -1364,7 +1364,7 @@ struct EvolutionSchedulerInfoV2 {
     }
 }
 
-struct EvolutionWorkspaceItemV2 {
+struct EvolutionWorkspaceItemV2: Equatable {
     let project: String
     let workspace: String
     let cycleID: String
@@ -1418,7 +1418,7 @@ struct EvolutionWorkspaceItemV2 {
     }
 }
 
-struct EvolutionSnapshotV2 {
+struct EvolutionSnapshotV2: Equatable {
     let scheduler: EvolutionSchedulerInfoV2
     let workspaceItems: [EvolutionWorkspaceItemV2]
 
