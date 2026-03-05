@@ -241,6 +241,15 @@ impl ArtifactValidationError {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ValidationReminderSpec {
+    error_code: String,
+    root_cause: String,
+    expected_format: String,
+    immediate_fix_actions: Vec<String>,
+    raw_error: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ManagedFailureBacklogFile {
     #[serde(rename = "$schema_version", default = "default_schema_version")]
@@ -3729,10 +3738,150 @@ impl EvolutionManager {
         Self::supports_validation_reminder(stage) && err.starts_with("evo_stage_output_invalid:")
     }
 
+    fn validation_target_files_for_stage(stage: &str) -> String {
+        let normalized_stage = stage.trim().to_ascii_lowercase();
+        match normalized_stage.as_str() {
+            "direction" => "stage.direction.json / direction.lifecycle_scan.json / cycle.json"
+                .to_string(),
+            "plan" => "plan.execution.json / cycle.json".to_string(),
+            "implement_general" => {
+                "implement_general.result.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+                    .to_string()
+            }
+            "implement_visual" => {
+                "implement_visual.result.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+                    .to_string()
+            }
+            "implement_advanced" => {
+                "implement_advanced.result.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+                    .to_string()
+            }
+            "verify" => {
+                "verify.result.json / plan.execution.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+                    .to_string()
+            }
+            "judge" => "judge.result.json / verify.result.json / plan.execution.json".to_string(),
+            "report" => "stage.report.json / report.result.json / report.md".to_string(),
+            "auto_commit" => "stage.auto_commit.json / git 工作区状态".to_string(),
+            _ => {
+                let stage_name = if normalized_stage.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    normalized_stage
+                };
+                format!("stage.{}.json / 对应 *.result.json 产物", stage_name)
+            }
+        }
+    }
+
+    fn build_validation_fix_hint(stage: &str, error_message: &str) -> String {
+        let normalized_stage = stage.trim().to_ascii_lowercase();
+        let normalized_error_message = error_message.trim();
+
+        if normalized_stage == "report"
+            && normalized_error_message.contains("acceptance_summary 缺少 criteria_details")
+        {
+            return "report.result.json.acceptance_summary.criteria_details 必须是数组（[]），元素需包含 criteria_id；不要写成对象映射（{...}）。".to_string();
+        }
+
+        if normalized_stage == "report"
+            && normalized_error_message.contains("report.verification_summary.remediation_tracking 不能为空")
+        {
+            return "当 verify_iteration>0 时，report.result.json.verification_summary.remediation_tracking 必须是非空数组（[]）；不要写成对象。"
+                .to_string();
+        }
+
+        if normalized_error_message.contains("必须是数字") {
+            return "将该字段改为数字类型（JSON number），不要使用字符串或对象。".to_string();
+        }
+        if normalized_error_message.contains("必须是对象") {
+            return "将该字段改为对象类型（{}），并补齐对象内必填子字段。".to_string();
+        }
+        if normalized_error_message.contains("缺少") && normalized_error_message.contains("数组") {
+            return "该字段必须是数组（[]），请按契约补齐并填充至少所需条目。".to_string();
+        }
+        if normalized_error_message.contains("必须是数组")
+            || normalized_error_message.contains("写成数组")
+        {
+            return "将该字段改为数组类型（[]），元素结构按阶段契约输出。".to_string();
+        }
+        if normalized_error_message.contains("不能为空") {
+            return "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。"
+                .to_string();
+        }
+        if normalized_error_message.contains("缺少") {
+            return "补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。".to_string();
+        }
+        if normalized_error_message.contains("不匹配")
+            || normalized_error_message.contains("不一致")
+        {
+            return "修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。".to_string();
+        }
+        if normalized_error_message.contains("覆盖不完整")
+            || normalized_error_message.contains("未完整覆盖")
+        {
+            return "补齐缺失项，确保 expected 集合与 actual 集合完全一致。".to_string();
+        }
+        if normalized_error_message.contains("非法") {
+            return "将字段值改为契约允许枚举值；必要时参考该阶段允许值列表。".to_string();
+        }
+        if normalized_error_message.contains("必须是") {
+            return "将字段值改为契约要求的类型或枚举值，严格按提示中的允许集合填写。"
+                .to_string();
+        }
+
+        "请逐项核对字段名、字段类型（数组/对象/数字）、枚举值与必填项，修复后重新输出本阶段产物。"
+            .to_string()
+    }
+
+    fn build_validation_reminder_spec(stage: &str, validation_err: &str) -> ValidationReminderSpec {
+        let (error_code, parsed_error_message) =
+            Self::parse_validation_error_code_and_message(validation_err);
+        let root_cause = if parsed_error_message.trim().is_empty() {
+            format!("未提供详细错误信息（{}）", error_code)
+        } else {
+            parsed_error_message
+        };
+        let expected_format = Self::build_validation_fix_hint(stage, root_cause.as_str());
+        let target_files = Self::validation_target_files_for_stage(stage);
+        let immediate_fix_actions = vec![
+            format!("打开并修改目标产物：{}", target_files),
+            "按“期望格式”修正根因字段，确保字段名/类型/必填项正确。".to_string(),
+            "重新输出本阶段产物并自检；不要只解释，不要停留在分析。".to_string(),
+        ];
+
+        ValidationReminderSpec {
+            error_code,
+            root_cause,
+            expected_format,
+            immediate_fix_actions,
+            raw_error: validation_err.trim().to_string(),
+        }
+    }
+
     fn build_validation_reminder_message(stage: &str, validation_err: &str) -> String {
-        format!(
-            "<system-reminder>{stage} 阶段产物有问题：{validation_err}。请修复</system-reminder>"
-        )
+        let spec = Self::build_validation_reminder_spec(stage, validation_err);
+        let lines = vec![
+            format!("【VALIDATION_BLOCKER｜阶段:{}】", stage),
+            format!("错误码：{}", spec.error_code),
+            format!("根因：{}", spec.root_cause),
+            format!("期望格式：{}", spec.expected_format),
+            "立即修复动作：".to_string(),
+            format!(
+                "1. {}",
+                spec.immediate_fix_actions.first().cloned().unwrap_or_default()
+            ),
+            format!(
+                "2. {}",
+                spec.immediate_fix_actions.get(1).cloned().unwrap_or_default()
+            ),
+            format!(
+                "3. {}",
+                spec.immediate_fix_actions.get(2).cloned().unwrap_or_default()
+            ),
+            format!("原始报错：{}", spec.raw_error),
+        ];
+        format!("<system-reminder>{}</system-reminder>", lines.join("\n"))
     }
 
     fn parse_validation_error_code_and_message(validation_err: &str) -> (String, String) {
@@ -3741,10 +3890,22 @@ impl EvolutionManager {
             .strip_prefix("evo_stage_output_invalid:")
             .unwrap_or(trimmed)
             .trim();
+        if payload.is_empty() {
+            return (
+                "artifact_contract_violation".to_string(),
+                "未提供详细错误信息（artifact_contract_violation）".to_string(),
+            );
+        }
         if let Some((code, message)) = payload.split_once(':') {
             let normalized_code = code.trim();
             let normalized_message = message.trim();
-            if !normalized_code.is_empty() && !normalized_message.is_empty() {
+            if !normalized_code.is_empty() {
+                if normalized_message.is_empty() {
+                    return (
+                        normalized_code.to_string(),
+                        format!("未提供详细错误信息（{}）", normalized_code),
+                    );
+                }
                 return (normalized_code.to_string(), normalized_message.to_string());
             }
         }
@@ -5879,6 +6040,20 @@ mod tests {
         assert_eq!(parse_judge_result_from_json(&value), Some(true));
     }
 
+    fn expected_validation_reminder(
+        stage: &str,
+        error_code: &str,
+        root_cause: &str,
+        expected_format: &str,
+        target_files: &str,
+        raw_error: &str,
+    ) -> String {
+        format!(
+            "<system-reminder>【VALIDATION_BLOCKER｜阶段:{}】\n错误码：{}\n根因：{}\n期望格式：{}\n立即修复动作：\n1. 打开并修改目标产物：{}\n2. 按“期望格式”修正根因字段，确保字段名/类型/必填项正确。\n3. 重新输出本阶段产物并自检；不要只解释，不要停留在分析。\n原始报错：{}</system-reminder>",
+            stage, error_code, root_cause, expected_format, target_files, raw_error
+        )
+    }
+
     #[test]
     fn should_retry_validation_with_reminder_should_match_supported_stage_and_error() {
         assert!(EvolutionManager::should_retry_validation_with_reminder(
@@ -5921,6 +6096,201 @@ mod tests {
             "judge",
             "stage stream timeout"
         ));
+    }
+
+    #[test]
+    fn parse_validation_error_code_and_message_should_parse_standard_stage_error() {
+        let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
+            "evo_stage_output_invalid:artifact_contract_violation: report.result.json 缺少 final_result",
+        );
+        assert_eq!(code, "artifact_contract_violation");
+        assert_eq!(message, "report.result.json 缺少 final_result");
+    }
+
+    #[test]
+    fn parse_validation_error_code_and_message_should_keep_code_when_message_missing() {
+        let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
+            "evo_stage_output_invalid:artifact_contract_violation:",
+        );
+        assert_eq!(code, "artifact_contract_violation");
+        assert_eq!(message, "未提供详细错误信息（artifact_contract_violation）");
+    }
+
+    #[test]
+    fn parse_validation_error_code_and_message_should_fallback_when_prefix_missing() {
+        let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
+            "report.result.json 缺少 final_result",
+        );
+        assert_eq!(code, "artifact_contract_violation");
+        assert_eq!(message, "report.result.json 缺少 final_result");
+    }
+
+    #[test]
+    fn parse_validation_error_code_and_message_should_preserve_multi_colon_message() {
+        let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
+            "evo_stage_output_invalid:artifact_contract_violation: expected:foo, actual:bar",
+        );
+        assert_eq!(code, "artifact_contract_violation");
+        assert_eq!(message, "expected:foo, actual:bar");
+    }
+
+    #[test]
+    fn validation_target_files_for_stage_should_match_all_supported_and_unknown() {
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("direction"),
+            "stage.direction.json / direction.lifecycle_scan.json / cycle.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("plan"),
+            "plan.execution.json / cycle.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("implement_general"),
+            "implement_general.result.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("implement_visual"),
+            "implement_visual.result.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("implement_advanced"),
+            "implement_advanced.result.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("verify"),
+            "verify.result.json / plan.execution.json / managed.failure_backlog.json / managed.backlog_coverage.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("judge"),
+            "judge.result.json / verify.result.json / plan.execution.json"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("report"),
+            "stage.report.json / report.result.json / report.md"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("auto_commit"),
+            "stage.auto_commit.json / git 工作区状态"
+        );
+        assert_eq!(
+            EvolutionManager::validation_target_files_for_stage("custom_stage"),
+            "stage.custom_stage.json / 对应 *.result.json 产物"
+        );
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_report_criteria_details_missing() {
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: report.result.json.acceptance_summary 缺少 criteria_details";
+        let msg = EvolutionManager::build_validation_reminder_message(
+            "report",
+            raw_error,
+        );
+        let expected = expected_validation_reminder(
+            "report",
+            "artifact_contract_violation",
+            "report.result.json.acceptance_summary 缺少 criteria_details",
+            "report.result.json.acceptance_summary.criteria_details 必须是数组（[]），元素需包含 criteria_id；不要写成对象映射（{...}）。",
+            "stage.report.json / report.result.json / report.md",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_report_remediation_tracking_empty(
+    ) {
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空";
+        let msg = EvolutionManager::build_validation_reminder_message(
+            "report",
+            raw_error,
+        );
+        let expected = expected_validation_reminder(
+            "report",
+            "artifact_contract_violation",
+            "verify_iteration>0 时 report.verification_summary.remediation_tracking 不能为空",
+            "当 verify_iteration>0 时，report.result.json.verification_summary.remediation_tracking 必须是非空数组（[]）；不要写成对象。",
+            "stage.report.json / report.result.json / report.md",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_missing_field() {
+        let raw_error =
+            "evo_stage_output_invalid:artifact_contract_violation: plan.execution.json 缺少 selected_direction_type";
+        let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
+        let expected = expected_validation_reminder(
+            "plan",
+            "artifact_contract_violation",
+            "plan.execution.json 缺少 selected_direction_type",
+            "补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。",
+            "plan.execution.json / cycle.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_non_empty_constraint() {
+        let raw_error =
+            "evo_stage_output_invalid:artifact_contract_violation: stage.direction.json.cycle_title 不能为空";
+        let msg = EvolutionManager::build_validation_reminder_message("direction", raw_error);
+        let expected = expected_validation_reminder(
+            "direction",
+            "artifact_contract_violation",
+            "stage.direction.json.cycle_title 不能为空",
+            "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。",
+            "stage.direction.json / direction.lifecycle_scan.json / cycle.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_number_type_constraint() {
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify.result.json.carryover_verification.summary.total 必须是数字";
+        let msg = EvolutionManager::build_validation_reminder_message("verify", raw_error);
+        let expected = expected_validation_reminder(
+            "verify",
+            "artifact_contract_violation",
+            "verify.result.json.carryover_verification.summary.total 必须是数字",
+            "将该字段改为数字类型（JSON number），不要使用字符串或对象。",
+            "verify.result.json / plan.execution.json / managed.failure_backlog.json / managed.backlog_coverage.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_coverage_incomplete() {
+        let raw_error =
+            "evo_stage_output_invalid:artifact_contract_violation: report.acceptance_summary 覆盖不完整: expected={ac-1}, actual={ac-2}";
+        let msg = EvolutionManager::build_validation_reminder_message("report", raw_error);
+        let expected = expected_validation_reminder(
+            "report",
+            "artifact_contract_violation",
+            "report.acceptance_summary 覆盖不完整: expected={ac-1}, actual={ac-2}",
+            "补齐缺失项，确保 expected 集合与 actual 集合完全一致。",
+            "stage.report.json / report.result.json / report.md",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn build_validation_reminder_message_should_match_snapshot_for_cross_file_inconsistency() {
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: selected_direction_type 与 cycle.direction.selected_type 不一致: ui != feature";
+        let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
+        let expected = expected_validation_reminder(
+            "plan",
+            "artifact_contract_violation",
+            "selected_direction_type 与 cycle.direction.selected_type 不一致: ui != feature",
+            "修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。",
+            "plan.execution.json / cycle.json",
+            raw_error,
+        );
+        assert_eq!(msg, expected);
     }
 
     #[test]
