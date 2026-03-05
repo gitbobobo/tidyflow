@@ -396,6 +396,9 @@ struct MessageListView: View {
     }
 
     private func pendingQuestionToken(for message: AIChatMessage) -> String {
+        guard message.parts.contains(where: { $0.kind == .tool }) else {
+            return ""
+        }
         let items: [String] = message.parts.compactMap { part in
             guard part.kind == .tool else { return nil }
             let requestId = questionRequestIdFromPart(part)
@@ -548,64 +551,12 @@ private struct MessageBubble: View, Equatable {
     private var isUser: Bool { message.role == .user }
 
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
-        lhs.prefersFullRender == rhs.prefersFullRender &&
+        lhs.message.id == rhs.message.id &&
+            lhs.message.renderRevision == rhs.message.renderRevision &&
+            lhs.message.isStreaming == rhs.message.isStreaming &&
+            lhs.prefersFullRender == rhs.prefersFullRender &&
             lhs.pendingQuestionToken == rhs.pendingQuestionToken &&
-            lhs.sessionId == rhs.sessionId &&
-            lhs.renderKey == rhs.renderKey
-    }
-
-    private var renderKey: String {
-        let partToken = message.parts.map { part in
-            let textToken = compactTextToken(part.text)
-            let toolName = part.toolName ?? ""
-            let toolStatus = (part.toolState?["status"] as? String) ?? ""
-            let toolStateToken = compactToolStateToken(part.toolState)
-            let metadataCount = part.toolPartMetadata?.count ?? 0
-            let metadataToken = compactDictionaryToken(part.toolPartMetadata)
-            let fileName = part.filename ?? ""
-            let fileURL = part.url ?? ""
-            let fileMime = part.mime ?? ""
-            return "\(part.id)|\(part.kind.rawValue)|\(textToken)|\(toolName)|\(toolStatus)|\(toolStateToken)|\(metadataCount)|\(metadataToken)|\(fileName)|\(fileMime)|\(fileURL)"
-        }.joined(separator: ",")
-        return [
-            message.id,
-            message.role.rawValue,
-            message.isStreaming ? "1" : "0",
-            "\(message.parts.count)",
-            partToken
-        ].joined(separator: "#")
-    }
-
-    /// 仅取长度 + 前后缀摘要，兼顾变更感知和计算成本。
-    private func compactTextToken(_ text: String?) -> String {
-        guard let text, !text.isEmpty else { return "0:0:0" }
-        let prefixHash = String(text.prefix(48)).hashValue
-        let suffixHash = String(text.suffix(24)).hashValue
-        return "\(text.count):\(prefixHash):\(suffixHash)"
-    }
-
-    private func compactToolStateToken(_ state: [String: Any]?) -> String {
-        guard let state else { return "0" }
-        let output = (state["output"] as? String) ?? ""
-        let error = (state["error"] as? String) ?? ""
-        let metadata = state["metadata"] as? [String: Any]
-        let progressLines = (metadata?["progress_lines"] as? [String]) ?? []
-        let progressJoined = progressLines.joined(separator: "\n")
-
-        let outputToken = compactTextToken(output)
-        let errorToken = compactTextToken(error)
-        let progressToken = compactTextToken(progressJoined)
-        return "\(outputToken)|\(errorToken)|\(progressLines.count)|\(progressToken)"
-    }
-
-    private func compactDictionaryToken(_ value: [String: Any]?) -> String {
-        guard let value else { return "0" }
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-              let text = String(data: data, encoding: .utf8) else {
-            return "\(value.count):invalid"
-        }
-        return compactTextToken(text)
+            lhs.sessionId == rhs.sessionId
     }
 
     /// 仅渲染有实际可见内容的 part，避免空 part 也参与布局导致工具卡之间出现“幽灵间距”。
@@ -680,26 +631,19 @@ private struct MessageBubble: View, Equatable {
         switch part.kind {
         case .text:
             if let text = part.text {
-                if isUser, message.isStreaming,
+                if message.isStreaming,
                    let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                    MarkdownTextView(
-                        text: normalizedText,
-                        baseFontSize: 13,
-                        textColor: .white
-                    )
+                    Text(verbatim: normalizedText)
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .foregroundColor(isUser ? .white : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 } else if isUser,
                           let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                     MarkdownTextView(
                         text: markdownText,
                         baseFontSize: 13,
                         textColor: .white
-                    )
-                } else if message.isStreaming,
-                          let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                    MarkdownTextView(
-                        text: normalizedText,
-                        baseFontSize: 13,
-                        textColor: .primary
                     )
                 } else if let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                     MarkdownTextView(
@@ -712,12 +656,11 @@ private struct MessageBubble: View, Equatable {
         case .reasoning:
             if let text = part.text, message.isStreaming,
                let normalizedText = normalizedStreamingDisplayText(text, keepOriginalForUser: false) {
-                MarkdownTextView(
-                    text: normalizedText,
-                    baseFontSize: 12,
-                    textColor: .secondary
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(verbatim: normalizedText)
+                    .textSelection(.enabled)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else if let text = part.text,
                       let markdownText = normalizedMarkdownDisplayText(text, keepOriginalForUser: false) {
                 MarkdownTextView(

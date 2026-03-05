@@ -603,6 +603,8 @@ struct AIChatMessage: Identifiable {
     var role: AIChatRole
     var parts: [AIChatPart]
     var isStreaming: Bool
+    /// 渲染修订号：每次可见内容变化时递增，用于低成本驱动 SwiftUI 刷新判定。
+    var renderRevision: UInt32
     let timestamp: Date
 
     init(
@@ -611,6 +613,7 @@ struct AIChatMessage: Identifiable {
         role: AIChatRole,
         parts: [AIChatPart] = [],
         isStreaming: Bool = false,
+        renderRevision: UInt32 = 0,
         timestamp: Date = Date()
     ) {
         self.id = id
@@ -618,6 +621,7 @@ struct AIChatMessage: Identifiable {
         self.role = role
         self.parts = parts
         self.isStreaming = isStreaming
+        self.renderRevision = renderRevision
         self.timestamp = timestamp
     }
 }
@@ -718,6 +722,8 @@ final class AIChatStore: ObservableObject {
     private var sessionCacheRevisionBySessionId: [String: UInt64] = [:]
     private var questionRequestToCallId: [String: String] = [:]
     private var streamingAssistantIndex: Int?
+    /// assistant 工具 part 中 status=running/pending 的数量（增量维护，避免反复全量扫描）。
+    private var runningToolPartCount: Int = 0
     /// 用户主动终止后，对应会话的“tool running 推导流式”本地抑制集合。
     /// 仅用于避免历史/陈旧 running 状态导致 UI 长期显示“终止中”。
     private var suppressedActiveToolSessions: Set<String> = []
@@ -730,7 +736,9 @@ final class AIChatStore: ObservableObject {
 
     private var pendingStreamEvents: [AIChatStreamEvent] = []
     private var streamFlushWorkItem: DispatchWorkItem?
-    private let streamFlushInterval: TimeInterval = 1.0 / 30.0
+    private static let streamFlushFastInterval: TimeInterval = 1.0 / 30.0 // 33ms
+    private static let streamFlushMediumInterval: TimeInterval = 0.05 // 50ms
+    private static let streamFlushSlowInterval: TimeInterval = 1.0 / 12.0 // 83ms
 
     // MARK: - Snapshot
 
@@ -808,6 +816,7 @@ final class AIChatStore: ObservableObject {
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
+        runningToolPartCount = 0
         suppressedActiveToolSessions = []
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
@@ -831,6 +840,7 @@ final class AIChatStore: ObservableObject {
         pendingToolQuestions = [:]
         questionRequestToCallId = [:]
         streamingAssistantIndex = nil
+        runningToolPartCount = 0
         suppressedActiveToolSessions = []
         pendingUserEchoAssistantMessageId = nil
         awaitingUserEchoBaselineIndex = nil
@@ -1134,6 +1144,8 @@ final class AIChatStore: ObservableObject {
 
         clearQuestionRequest(requestId: requestId)
         if updated {
+            touchRenderRevisionForAllMessages()
+            rebuildIndexes()
             recomputeIsStreaming()
         }
     }
@@ -1413,13 +1425,24 @@ final class AIChatStore: ObservableObject {
 
     // MARK: - Internal Helpers
 
+    func streamFlushInterval(forBacklog backlog: Int) -> TimeInterval {
+        if backlog <= 20 {
+            return Self.streamFlushFastInterval
+        }
+        if backlog <= 80 {
+            return Self.streamFlushMediumInterval
+        }
+        return Self.streamFlushSlowInterval
+    }
+
     private func scheduleStreamFlushIfNeeded() {
         guard streamFlushWorkItem == nil else { return }
+        let interval = streamFlushInterval(forBacklog: pendingStreamEvents.count)
         let workItem = DispatchWorkItem { [weak self] in
             self?.flushPendingStreamEvents()
         }
         streamFlushWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + streamFlushInterval, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: workItem)
     }
 
     private func rebuildIndexes() {
@@ -1427,6 +1450,7 @@ final class AIChatStore: ObservableObject {
         messageRoleByMessageId = [:]
         partIndexByPartId = [:]
         streamingAssistantIndex = nil
+        runningToolPartCount = 0
 
         for (i, msg) in messages.enumerated() {
             if let mid = msg.messageId {
@@ -1435,6 +1459,9 @@ final class AIChatStore: ObservableObject {
             }
             for (j, p) in msg.parts.enumerated() {
                 partIndexByPartId[p.id] = (i, j)
+                if msg.role == .assistant, isRunningToolPart(p) {
+                    runningToolPartCount += 1
+                }
             }
             if msg.role == .assistant, msg.isStreaming {
                 streamingAssistantIndex = i
@@ -1454,11 +1481,49 @@ final class AIChatStore: ObservableObject {
         }
     }
 
+    private func touchRenderRevision(at msgIdx: Int) {
+        guard msgIdx >= 0, msgIdx < messages.count else { return }
+        messages[msgIdx].renderRevision &+= 1
+    }
+
+    private func touchRenderRevisionForAllMessages() {
+        for idx in messages.indices {
+            messages[idx].renderRevision &+= 1
+        }
+    }
+
+    private func isRunningToolPart(_ part: AIChatPart) -> Bool {
+        guard part.kind == .tool else { return false }
+        guard let rawStatus = part.toolState?["status"] as? String else { return false }
+        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return status == "pending" || status == "running"
+    }
+
+    private func runningToolPartCount(in message: AIChatMessage) -> Int {
+        guard message.role == .assistant else { return 0 }
+        var count = 0
+        for part in message.parts where isRunningToolPart(part) {
+            count += 1
+        }
+        return count
+    }
+
+    private func updateRunningToolPartCount(forMessageAt msgIdx: Int, oldMessage: AIChatMessage) {
+        guard msgIdx >= 0, msgIdx < messages.count else { return }
+        let oldCount = runningToolPartCount(in: oldMessage)
+        let newCount = runningToolPartCount(in: messages[msgIdx])
+        runningToolPartCount += (newCount - oldCount)
+        if runningToolPartCount < 0 {
+            runningToolPartCount = 0
+        }
+    }
+
     @discardableResult
     private func ensureMessage(messageId: String, roleHint: AIChatRole?) -> Int {
         if let idx = messageIndexByMessageId[messageId],
            idx < messages.count,
            messages[idx].messageId == messageId {
+            let oldMessage = messages[idx]
             if let roleHint, messages[idx].role != roleHint {
                 messages[idx].role = roleHint
                 if roleHint == .user {
@@ -1467,6 +1532,10 @@ final class AIChatStore: ObservableObject {
                         streamingAssistantIndex = nil
                     }
                 }
+            }
+            if oldMessage.role != messages[idx].role || oldMessage.isStreaming != messages[idx].isStreaming {
+                updateRunningToolPartCount(forMessageAt: idx, oldMessage: oldMessage)
+                touchRenderRevision(at: idx)
             }
             messageRoleByMessageId[messageId] = messages[idx].role
             return idx
@@ -1480,10 +1549,15 @@ final class AIChatStore: ObservableObject {
         if resolvedRole == .assistant,
            (!awaitingUserEcho || roleHint == .assistant || pendingUserEchoAssistantMessageId == messageId),
            let idx = messages.lastIndex(where: { $0.role == .assistant && $0.messageId == nil && $0.isStreaming && $0.parts.isEmpty }) {
+            let oldMessage = messages[idx]
             messages[idx].messageId = messageId
             messages[idx].role = resolvedRole
             messageIndexByMessageId[messageId] = idx
             messageRoleByMessageId[messageId] = resolvedRole
+            if oldMessage.role != messages[idx].role || oldMessage.isStreaming != messages[idx].isStreaming {
+                updateRunningToolPartCount(forMessageAt: idx, oldMessage: oldMessage)
+                touchRenderRevision(at: idx)
+            }
             return idx
         }
 
@@ -1635,12 +1709,15 @@ final class AIChatStore: ObservableObject {
     private func upsertPart(msgIdx: Int, part: AIProtocolPartInfo) {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: part.id)
+        let oldMessage = messages[msgIdx]
 
         if let existing = partIndexByPartId[part.id], existing.msgIdx == msgIdx,
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
             var existingPart = messages[msgIdx].parts[existing.partIdx]
             AIChatPartNormalization.apply(protocolPart: part, to: &existingPart)
             messages[msgIdx].parts[existing.partIdx] = existingPart
+            updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+            touchRenderRevision(at: msgIdx)
             if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
                 markUserEchoReceived(messageId: messageId)
             }
@@ -1652,6 +1729,8 @@ final class AIChatStore: ObservableObject {
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1
         partIndexByPartId[part.id] = (msgIdx, partIdx)
+        updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+        touchRenderRevision(at: msgIdx)
         if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
             markUserEchoReceived(messageId: messageId)
         }
@@ -1660,6 +1739,7 @@ final class AIChatStore: ObservableObject {
     private func appendDelta(msgIdx: Int, partId: String, partType: String, field: String, delta: String) {
         guard msgIdx >= 0, msgIdx < messages.count else { return }
         replaceUserPlaceholderPartsIfNeeded(msgIdx: msgIdx, incomingPartId: partId)
+        let oldMessage = messages[msgIdx]
 
         let normalizedPartType: String = {
             if partType == AIChatPartKind.tool.rawValue || field == "progress" || field == "output" {
@@ -1687,6 +1767,8 @@ final class AIChatStore: ObservableObject {
                 part.toolState = toolState
                 part.kind = .tool
                 messages[msgIdx].parts[existing.partIdx] = part
+                updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+                touchRenderRevision(at: msgIdx)
                 return
             }
 
@@ -1713,6 +1795,8 @@ final class AIChatStore: ObservableObject {
             messages[msgIdx].parts.append(p)
             let partIdx = messages[msgIdx].parts.count - 1
             partIndexByPartId[partId] = (msgIdx, partIdx)
+            updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+            touchRenderRevision(at: msgIdx)
             return
         }
 
@@ -1729,6 +1813,8 @@ final class AIChatStore: ObservableObject {
                 part.toolState = toolState
                 part.kind = .tool
                 messages[msgIdx].parts[existing.partIdx] = part
+                updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+                touchRenderRevision(at: msgIdx)
                 return
             }
             // output 增量先于 tool 全量 part 到达时，创建占位 tool part，避免丢失实时输出。
@@ -1753,6 +1839,8 @@ final class AIChatStore: ObservableObject {
             messages[msgIdx].parts.append(p)
             let partIdx = messages[msgIdx].parts.count - 1
             partIndexByPartId[partId] = (msgIdx, partIdx)
+            updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+            touchRenderRevision(at: msgIdx)
             return
         }
 
@@ -1762,6 +1850,8 @@ final class AIChatStore: ObservableObject {
            existing.partIdx >= 0, existing.partIdx < messages[msgIdx].parts.count {
             let current = messages[msgIdx].parts[existing.partIdx].text ?? ""
             messages[msgIdx].parts[existing.partIdx].text = current + delta
+            updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+            touchRenderRevision(at: msgIdx)
             if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
                 markUserEchoReceived(messageId: messageId)
             }
@@ -1773,6 +1863,8 @@ final class AIChatStore: ObservableObject {
         messages[msgIdx].parts.append(p)
         let partIdx = messages[msgIdx].parts.count - 1
         partIndexByPartId[partId] = (msgIdx, partIdx)
+        updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+        touchRenderRevision(at: msgIdx)
         if messages[msgIdx].role == .user, let messageId = messages[msgIdx].messageId {
             markUserEchoReceived(messageId: messageId)
         }
@@ -1783,6 +1875,7 @@ final class AIChatStore: ObservableObject {
         guard messages[msgIdx].role == .user,
               let messageId = messages[msgIdx].messageId,
               userPlaceholderMessageIdsPendingServerPart.contains(messageId) else { return }
+        let oldMessage = messages[msgIdx]
         // 若服务端 part_id 已存在，说明不是“首次覆盖”，仅清理标记。
         if partIndexByPartId[incomingPartId]?.msgIdx == msgIdx {
             userPlaceholderMessageIdsPendingServerPart.remove(messageId)
@@ -1802,6 +1895,8 @@ final class AIChatStore: ObservableObject {
             partIndexByPartId[part.id] = (msgIdx, idx)
         }
         userPlaceholderMessageIdsPendingServerPart.remove(messageId)
+        updateRunningToolPartCount(forMessageAt: msgIdx, oldMessage: oldMessage)
+        touchRenderRevision(at: msgIdx)
     }
 
     private func markOnlyStreamingAssistant(at msgIdx: Int) {
@@ -1812,10 +1907,17 @@ final class AIChatStore: ObservableObject {
            previous != msgIdx,
            previous >= 0, previous < messages.count,
            messages[previous].role == .assistant {
-            messages[previous].isStreaming = false
+            if messages[previous].isStreaming {
+                messages[previous].isStreaming = false
+                touchRenderRevision(at: previous)
+            }
         }
 
+        let wasStreaming = messages[msgIdx].isStreaming
         messages[msgIdx].isStreaming = true
+        if !wasStreaming {
+            touchRenderRevision(at: msgIdx)
+        }
         streamingAssistantIndex = msgIdx
     }
 
@@ -1823,11 +1925,15 @@ final class AIChatStore: ObservableObject {
         if let idx = streamingAssistantIndex,
            idx >= 0, idx < messages.count,
            messages[idx].role == .assistant {
-            messages[idx].isStreaming = false
+            if messages[idx].isStreaming {
+                messages[idx].isStreaming = false
+                touchRenderRevision(at: idx)
+            }
         } else {
             for i in messages.indices {
                 guard messages[i].role == .assistant, messages[i].isStreaming else { continue }
                 messages[i].isStreaming = false
+                touchRenderRevision(at: i)
             }
         }
         streamingAssistantIndex = nil
@@ -1838,8 +1944,7 @@ final class AIChatStore: ObservableObject {
         if normalizeStreamingAssistantIfNeeded() != nil {
             newValue = true
         } else {
-            let hasRunningTool = hasActiveAssistantTool()
-            if hasRunningTool,
+            if runningToolPartCount > 0,
                let sessionId = currentSessionId,
                !suppressedActiveToolSessions.contains(sessionId) {
                 newValue = true
@@ -1874,19 +1979,6 @@ final class AIChatStore: ObservableObject {
         }
         streamingAssistantIndex = latestStreamingIdx
         return latestStreamingIdx
-    }
-
-    private func hasActiveAssistantTool() -> Bool {
-        for message in messages where message.role == .assistant {
-            for part in message.parts where part.kind == .tool {
-                guard let rawStatus = part.toolState?["status"] as? String else { continue }
-                let status = rawStatus.lowercased()
-                if status == "pending" || status == "running" {
-                    return true
-                }
-            }
-        }
-        return false
     }
 }
 
