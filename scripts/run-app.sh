@@ -3,7 +3,7 @@
 # Builds and launches the macOS app
 # Note: Core server is managed by the app itself (CoreProcessManager)
 
-set -e
+set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -12,8 +12,10 @@ APP_DIR="$PROJECT_ROOT/app"
 BUILD_DIR="$PROJECT_ROOT/build"
 BUILD_LOG="$BUILD_DIR/build.log"
 CORE_DIR="$PROJECT_ROOT/core"
+APP_PATH="$BUILD_DIR/Build/Products/Debug/TidyFlow-Debug.app"
 
 mkdir -p "$BUILD_DIR"
+rm -rf "$APP_PATH"
 
 # 1. 先编译 Rust Core（确保二进制始终最新）
 echo "[run-app] Building tidyflow-core (release)..."
@@ -28,27 +30,30 @@ touch "$CORE_DIR/src"
 
 # 3. 构建 Swift App（Xcode 会检测到 src 更新，重新执行 copy 脚本）
 echo "[run-app] Building TidyFlow.app..."
-if xcodebuild -project "$APP_DIR/TidyFlow.xcodeproj" \
+set +e
+xcodebuild -project "$APP_DIR/TidyFlow.xcodeproj" \
     -scheme TidyFlow \
     -configuration Debug \
     -derivedDataPath "$BUILD_DIR" \
     SKIP_CORE_BUILD=1 \
-    build 2>&1 | tee "$BUILD_LOG" | grep -E "(Build Succeeded|error:|warning:)" || true; then
-    :
-fi
+    build 2>&1 | tee "$BUILD_LOG" | grep -E "(Build Succeeded|error:|warning:)"
+xcode_status=${PIPESTATUS[0]}
+set -e
 
-APP_PATH="$BUILD_DIR/Build/Products/Debug/TidyFlow-Debug.app"
+if [ "$xcode_status" -ne 0 ]; then
+    echo "[run-app] ERROR: xcodebuild failed (exit=$xcode_status)"
+fi
 
 # 4. 兜底：直接复制 Core 二进制到 app bundle（防止 Xcode 增量判断仍跳过）
 CORE_BINARY="$CORE_DIR/target/release/tidyflow-core"
 DEST_DIR="$APP_PATH/Contents/Resources/Core"
-if [ -f "$CORE_BINARY" ] && [ -d "$APP_PATH" ]; then
+if [ "$xcode_status" -eq 0 ] && [ -f "$CORE_BINARY" ] && [ -d "$APP_PATH" ]; then
     mkdir -p "$DEST_DIR"
     cp "$CORE_BINARY" "$DEST_DIR/"
     echo "[run-app] Copied latest tidyflow-core to app bundle."
 fi
 
-if [ -d "$APP_PATH" ]; then
+if [ "$xcode_status" -eq 0 ] && [ -d "$APP_PATH" ]; then
     echo "[run-app] Launching TidyFlow.app..."
     open "$APP_PATH"
 else

@@ -40,6 +40,9 @@ done
 
 echo "[build_dmg] Starting release build..."
 
+echo "[build_dmg] Checking protocol consistency..."
+./scripts/tools/check_protocol_consistency.sh
+
 # 1. Read version
 VERSION_INFO=$("$PROJECT_ROOT/scripts/tools/read_version.sh")
 SHORT_VERSION=$(echo "$VERSION_INFO" | cut -d' ' -f1)
@@ -54,6 +57,7 @@ mkdir -p dist
 # 3. Build Release app with xcodebuild
 echo "[build_dmg] Building TidyFlow.app (Release)..."
 DERIVED_DATA="$PROJECT_ROOT/dist/DerivedData"
+rm -rf "$DERIVED_DATA"
 
 # Set SKIP_CORE_BUILD env var if requested
 if [ "$SKIP_CORE_BUILD" = "1" ]; then
@@ -61,11 +65,19 @@ if [ "$SKIP_CORE_BUILD" = "1" ]; then
     echo "[build_dmg] Skipping core build (--skip-core)"
 fi
 
+set +e
 xcodebuild -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
     -scheme TidyFlow \
     -configuration Release \
     -derivedDataPath "$DERIVED_DATA" \
-    build 2>&1 | grep -E "(Build Succeeded|error:|warning:.*Core|Copied tidyflow)" || true
+    build 2>&1 | grep -E "(Build Succeeded|error:|warning:.*Core|Copied tidyflow)"
+xcode_status=${PIPESTATUS[0]}
+set -e
+
+if [ "$xcode_status" -ne 0 ]; then
+    echo "[build_dmg] ERROR: xcodebuild failed (exit=$xcode_status)"
+    exit "$xcode_status"
+fi
 
 # Check build result
 APP_PATH="$DERIVED_DATA/Build/Products/Release/TidyFlow.app"
