@@ -608,6 +608,37 @@ private struct MessageBubble: View, Equatable {
         return compactTextToken(text)
     }
 
+    /// 仅渲染有实际可见内容的 part，避免空 part 也参与布局导致工具卡之间出现“幽灵间距”。
+    private var renderableParts: [AIChatPart] {
+        message.parts.filter { part in
+            isRenderablePart(part)
+        }
+    }
+
+    private func isRenderablePart(_ part: AIChatPart) -> Bool {
+        switch part.kind {
+        case .tool, .file, .plan, .compaction:
+            return true
+        case .text, .reasoning:
+            guard let text = part.text else { return false }
+            if message.isStreaming {
+                return normalizedStreamingDisplayText(text, keepOriginalForUser: false) != nil
+            }
+            return normalizedMarkdownDisplayText(text, keepOriginalForUser: false) != nil
+        }
+    }
+
+    /// 只移除“相邻工具卡”之间的额外间距，其他类型 part 保持原有阅读节奏。
+    private func spacingBeforePart(at index: Int, in parts: [AIChatPart]) -> CGFloat {
+        guard index > 0 else { return 0 }
+        let previousPart = parts[index - 1]
+        let currentPart = parts[index]
+        if previousPart.kind == .tool, currentPart.kind == .tool {
+            return 0
+        }
+        return 10
+    }
+
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             bubble
@@ -622,12 +653,14 @@ private struct MessageBubble: View, Equatable {
         if !prefersFullRender {
             lightweightBubble
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                if message.parts.isEmpty {
+            let parts = renderableParts
+            VStack(alignment: .leading, spacing: 0) {
+                if parts.isEmpty {
                     EmptyView()
                 } else {
-                    ForEach(Array(message.parts.enumerated()), id: \.element.id) { _, part in
+                    ForEach(Array(parts.enumerated()), id: \.element.id) { index, part in
                         partContentView(part)
+                            .padding(.top, spacingBeforePart(at: index, in: parts))
                     }
                 }
             }
