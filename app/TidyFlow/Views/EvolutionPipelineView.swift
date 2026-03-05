@@ -186,15 +186,9 @@ struct EvolutionPipelineView: View {
 
     private var pipelineHeader: some View {
         HStack(spacing: 8) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.linearGradient(
-                    colors: [.purple, .blue],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
             Text("evolution.page.title".localized)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
             Spacer()
             if let item = currentItem {
                 // 当前轮次指示
@@ -1766,7 +1760,6 @@ struct EvolutionPipelineView: View {
         var standby: [PipelineStandbyAgent] = []
 
         for stage in evolutionStageOrder {
-            guard stage != "auto_commit" else { continue }
             let isRunning = runningStages.contains(stage)
             let isCompleted = completedStages.contains(stage)
 
