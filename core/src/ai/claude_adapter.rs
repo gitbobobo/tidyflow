@@ -341,6 +341,20 @@ impl ClaudeCodeAgent {
         Some(snapshot.to_string())
     }
 
+    fn next_reasoning_part_id(
+        assistant_message_id: &str,
+        seq: &mut u32,
+        seen_part_ids: &mut HashSet<String>,
+        ordered_part_ids: &mut Vec<String>,
+    ) -> String {
+        *seq += 1;
+        let part_id = format!("{}-reasoning-{}", assistant_message_id, *seq);
+        if seen_part_ids.insert(part_id.clone()) {
+            ordered_part_ids.push(part_id.clone());
+        }
+        part_id
+    }
+
     fn collect_content_blocks<'a>(value: &'a Value) -> Vec<&'a Value> {
         let mut blocks = Vec::new();
         if let Some(arr) = value
@@ -1096,12 +1110,14 @@ impl AiAgent for ClaudeCodeAgent {
 
         tokio::spawn(async move {
             let assistant_message_id = format!("claude-assistant-{}", Uuid::new_v4());
-            let reasoning_part_id = format!("{}-reasoning", assistant_message_id);
             let mut assistant_opened = false;
             let mut text_part_seq: u32 = 0;
             let mut active_text_part_id: Option<String> = None;
             let mut text_part_buffers: HashMap<String, String> = HashMap::new();
-            let mut assistant_reasoning = String::new();
+            let mut reasoning_part_seq: u32 = 0;
+            let mut active_reasoning_part_id: Option<String> = None;
+            let mut reasoning_part_buffers: HashMap<String, String> = HashMap::new();
+            let mut reasoning_source_to_part_id: HashMap<String, String> = HashMap::new();
             let mut parsed_claude_session_id = claude_session_id;
             let mut tool_states: HashMap<String, ClaudeToolState> = HashMap::new();
             let mut seen_part_ids: HashSet<String> = HashSet::new();
@@ -1218,6 +1234,7 @@ impl AiAgent for ClaudeCodeAgent {
                                         }
                                         // tool 卡片与文本片段按时间轴交错，工具开始后切分下一段文本。
                                         active_text_part_id = None;
+                                        active_reasoning_part_id = None;
                                         if !assistant_opened {
                                             assistant_opened = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
@@ -1305,6 +1322,7 @@ impl AiAgent for ClaudeCodeAgent {
                                             &entry.input,
                                         );
                                         active_text_part_id = None;
+                                        active_reasoning_part_id = None;
                                         if !assistant_opened {
                                             assistant_opened = true;
                                             let _ = tx.send(Ok(AiEvent::MessageUpdated {
@@ -1328,6 +1346,9 @@ impl AiAgent for ClaudeCodeAgent {
                                                 || block.get("thinking").and_then(|v| v.as_str()),
                                             )
                                         {
+                                            if text.is_empty() {
+                                                continue;
+                                            }
                                             if !assistant_opened {
                                                 assistant_opened = true;
                                                 let _ = tx.send(Ok(AiEvent::MessageUpdated {
@@ -1336,17 +1357,95 @@ impl AiAgent for ClaudeCodeAgent {
                                                     selection_hint: None,
                                                 }));
                                             }
-                                            if seen_part_ids.insert(reasoning_part_id.clone()) {
-                                                ordered_part_ids.push(reasoning_part_id.clone());
+                                            // reasoning 与正文按时间轴交错，切分文本片段避免后续正文回填到旧段落。
+                                            active_text_part_id = None;
+
+                                            let source_key = ClaudeCodeAgent::first_string(
+                                                block,
+                                                &[
+                                                    "id",
+                                                    "content_block_id",
+                                                    "contentBlockId",
+                                                    "thinking_id",
+                                                    "thinkingId",
+                                                    "reasoning_id",
+                                                    "reasoningId",
+                                                ],
+                                            )
+                                            .or_else(|| {
+                                                block
+                                                    .get("index")
+                                                    .and_then(|v| v.as_i64())
+                                                    .map(|v| format!("idx:{}", v))
+                                            });
+                                            let is_delta_block = block_type.ends_with("delta");
+                                            let part_id = if let Some(source_key) =
+                                                source_key.filter(|v| !v.trim().is_empty())
+                                            {
+                                                if let Some(existing) =
+                                                    reasoning_source_to_part_id.get(&source_key)
+                                                {
+                                                    existing.clone()
+                                                } else {
+                                                    let new_id =
+                                                        ClaudeCodeAgent::next_reasoning_part_id(
+                                                            &assistant_message_id,
+                                                            &mut reasoning_part_seq,
+                                                            &mut seen_part_ids,
+                                                            &mut ordered_part_ids,
+                                                        );
+                                                    reasoning_source_to_part_id
+                                                        .insert(source_key, new_id.clone());
+                                                    new_id
+                                                }
+                                            } else if is_delta_block {
+                                                if let Some(existing) =
+                                                    active_reasoning_part_id.as_ref()
+                                                {
+                                                    existing.clone()
+                                                } else {
+                                                    ClaudeCodeAgent::next_reasoning_part_id(
+                                                        &assistant_message_id,
+                                                        &mut reasoning_part_seq,
+                                                        &mut seen_part_ids,
+                                                        &mut ordered_part_ids,
+                                                    )
+                                                }
+                                            } else {
+                                                // 无稳定 block id 的快照视为新时间片，避免所有思考被并到同一段。
+                                                ClaudeCodeAgent::next_reasoning_part_id(
+                                                    &assistant_message_id,
+                                                    &mut reasoning_part_seq,
+                                                    &mut seen_part_ids,
+                                                    &mut ordered_part_ids,
+                                                )
+                                            };
+                                            active_reasoning_part_id = Some(part_id.clone());
+
+                                            let buffer = reasoning_part_buffers
+                                                .entry(part_id.clone())
+                                                .or_default();
+                                            if is_delta_block {
+                                                buffer.push_str(text);
+                                                let _ = tx.send(Ok(AiEvent::PartDelta {
+                                                    message_id: assistant_message_id.clone(),
+                                                    part_id,
+                                                    part_type: "reasoning".to_string(),
+                                                    field: "text".to_string(),
+                                                    delta: text.to_string(),
+                                                }));
+                                            } else {
+                                                *buffer = text.to_string();
+                                                let _ = tx.send(Ok(AiEvent::PartUpdated {
+                                                    message_id: assistant_message_id.clone(),
+                                                    part: AiPart {
+                                                        id: part_id,
+                                                        part_type: "reasoning".to_string(),
+                                                        text: Some(buffer.clone()),
+                                                        ..Default::default()
+                                                    },
+                                                }));
                                             }
-                                            assistant_reasoning.push_str(text);
-                                            let _ = tx.send(Ok(AiEvent::PartDelta {
-                                                message_id: assistant_message_id.clone(),
-                                                part_id: reasoning_part_id.clone(),
-                                                part_type: "reasoning".to_string(),
-                                                field: "text".to_string(),
-                                                delta: text.to_string(),
-                                            }));
                                         }
                                         continue;
                                     }
@@ -1365,6 +1464,7 @@ impl AiAgent for ClaudeCodeAgent {
                                                     selection_hint: None,
                                                 }));
                                             }
+                                            active_reasoning_part_id = None;
                                             let part_id = if let Some(existing) =
                                                 active_text_part_id.as_ref()
                                             {
@@ -1404,6 +1504,7 @@ impl AiAgent for ClaudeCodeAgent {
                                         if let Some(snapshot) =
                                             block.get("text").and_then(|v| v.as_str())
                                         {
+                                            active_reasoning_part_id = None;
                                             let part_id = if let Some(existing) =
                                                 active_text_part_id.as_ref()
                                             {
@@ -1563,12 +1664,12 @@ impl AiAgent for ClaudeCodeAgent {
                 .collect();
 
             for part_id in &ordered_part_ids {
-                if part_id == &reasoning_part_id {
-                    if !assistant_reasoning.is_empty() {
+                if let Some(reasoning) = reasoning_part_buffers.get(part_id) {
+                    if !reasoning.trim().is_empty() {
                         assistant_parts.push(AiPart {
-                            id: reasoning_part_id.clone(),
+                            id: part_id.clone(),
                             part_type: "reasoning".to_string(),
-                            text: Some(assistant_reasoning.clone()),
+                            text: Some(reasoning.clone()),
                             ..Default::default()
                         });
                     }
