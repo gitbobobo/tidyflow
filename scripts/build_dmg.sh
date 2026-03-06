@@ -48,22 +48,31 @@ VERSION_INFO=$("$PROJECT_ROOT/scripts/tools/read_version.sh")
 SHORT_VERSION=$(echo "$VERSION_INFO" | cut -d' ' -f1)
 BUILD_NUMBER=$(echo "$VERSION_INFO" | cut -d' ' -f2)
 DMG_NAME="TidyFlow-${SHORT_VERSION}-${BUILD_NUMBER}.dmg"
+DIST_DIR="$PROJECT_ROOT/dist"
+DERIVED_DATA="$PROJECT_ROOT/build/dmg"
+DMG_ROOT="$DIST_DIR/dmgroot"
+DMG_PATH="$DIST_DIR/$DMG_NAME"
+SHA_FILE="${DMG_PATH}.sha256"
+SOURCE_CORE_PATH="$PROJECT_ROOT/core/target/release/tidyflow-core"
 echo "[build_dmg] Version: $SHORT_VERSION ($BUILD_NUMBER)"
 
-# 2. Clean dist directory
-rm -rf dist
-mkdir -p dist
+# 2. 准备输出目录（保留 DerivedData 缓存，只清理本次产物）
+mkdir -p "$DIST_DIR"
+mkdir -p "$DERIVED_DATA"
+rm -f "$DMG_PATH" "$SHA_FILE"
+rm -rf "$DMG_ROOT"
 
-# 3. Build Release app with xcodebuild
-echo "[build_dmg] Building TidyFlow.app (Release)..."
-DERIVED_DATA="$PROJECT_ROOT/dist/DerivedData"
-rm -rf "$DERIVED_DATA"
-
-# Set SKIP_CORE_BUILD env var if requested
+# 3. 构建/复用 Release Core，然后构建 Swift App
 if [ "$SKIP_CORE_BUILD" = "1" ]; then
-    export SKIP_CORE_BUILD=1
-    echo "[build_dmg] Skipping core build (--skip-core)"
+    echo "[build_dmg] 跳过 Core 构建 (--skip-core)"
+else
+    echo "[build_dmg] Building tidyflow-core (release)..."
+    export PATH="$HOME/.cargo/bin:$PATH"
+    cargo build --release --manifest-path "$PROJECT_ROOT/core/Cargo.toml"
 fi
+
+echo "[build_dmg] Building TidyFlow.app (Release)..."
+export SKIP_CORE_BUILD=1
 
 set +e
 xcodebuild -project "$PROJECT_ROOT/app/TidyFlow.xcodeproj" \
@@ -86,13 +95,16 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
-# 4. Verify embedded core exists
+# 4. 注入/校验 embedded core
 CORE_PATH="$APP_PATH/Contents/Resources/Core/tidyflow-core"
-if [ ! -f "$CORE_PATH" ]; then
-    echo "[build_dmg] ERROR: Core binary not found at $CORE_PATH"
-    echo "[build_dmg] Hint: Run without --skip-core to build core"
+if [ ! -f "$SOURCE_CORE_PATH" ]; then
+    echo "[build_dmg] ERROR: Core binary not found at $SOURCE_CORE_PATH"
+    echo "[build_dmg] Hint: 先执行一次不带 --skip-core 的打包，或手动构建 core"
     exit 1
 fi
+mkdir -p "$(dirname "$CORE_PATH")"
+cp "$SOURCE_CORE_PATH" "$CORE_PATH"
+chmod +x "$CORE_PATH" 2>/dev/null || true
 echo "[build_dmg] Core binary verified: $(ls -lh "$CORE_PATH" | awk '{print $5}')"
 
 # 5. Code signing (optional)
@@ -135,7 +147,6 @@ fi
 
 # 6. Create DMG staging directory
 echo "[build_dmg] Creating DMG..."
-DMG_ROOT="$PROJECT_ROOT/dist/dmgroot"
 mkdir -p "$DMG_ROOT"
 
 # Copy app to staging
@@ -145,7 +156,6 @@ cp -R "$APP_PATH" "$DMG_ROOT/"
 ln -s /Applications "$DMG_ROOT/Applications"
 
 # 7. Create DMG
-DMG_PATH="$PROJECT_ROOT/dist/$DMG_NAME"
 hdiutil create \
     -volname "TidyFlow" \
     -srcfolder "$DMG_ROOT" \
@@ -155,7 +165,6 @@ hdiutil create \
 
 # 8. Cleanup staging
 rm -rf "$DMG_ROOT"
-rm -rf "$DERIVED_DATA"
 
 # 9. Verify output
 if [ ! -f "$DMG_PATH" ]; then
@@ -168,7 +177,6 @@ SIGN_STATUS="unsigned"
 [ "$DO_SIGN" = "1" ] && SIGN_STATUS="signed"
 
 # 10. Generate checksum
-SHA_FILE="${DMG_PATH}.sha256"
 "$PROJECT_ROOT/scripts/tools/gen_sha256.sh" "$DMG_PATH"
 
 echo "[build_dmg] SUCCESS: $DMG_PATH ($DMG_SIZE, $SIGN_STATUS)"
