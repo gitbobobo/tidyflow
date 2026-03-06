@@ -80,6 +80,9 @@ pub(crate) async fn handle_session_routes(
         session::handle_ai_read_via_http_required(client_msg, socket),
         session::handle_ai_session_delete(client_msg, app_state, ai_state),
         session::handle_ai_session_set_config_option(client_msg, socket, app_state, ai_state),
+        session::handle_ai_session_rename(client_msg, socket, app_state, ai_state),
+        session::query_ai_session_search(client_msg, socket, app_state, ai_state),
+        session::handle_ai_code_review(client_msg, socket, app_state, ai_state),
     );
 
     Ok(false)

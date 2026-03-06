@@ -854,6 +854,211 @@ pub(super) async fn handle_ai_session_unsubscribe(
     Ok(true)
 }
 
+pub(super) async fn handle_ai_session_rename(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionRename {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id,
+        new_title,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    let now = now_ms();
+    let store = {
+        let guard = ai_state.lock().await;
+        guard.session_index_store.clone()
+    };
+    let updated = store
+        .update_title(project_name, workspace_name, &ai_tool, session_id, new_title, now)
+        .await
+        .unwrap_or(false);
+
+    if updated {
+        send_message(
+            socket,
+            &ServerMessage::AISessionRenameResult {
+                project_name: project_name.clone(),
+                workspace_name: workspace_name.clone(),
+                ai_tool: ai_tool.clone(),
+                session_id: session_id.clone(),
+                title: new_title.clone(),
+                updated_at: now,
+            },
+        )
+        .await?;
+    }
+    Ok(true)
+}
+
+pub(super) async fn query_ai_session_search(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AISessionSearch {
+        project_name,
+        workspace_name,
+        ai_tool,
+        query,
+        limit,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+
+    let _directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    ensure_agent(ai_state, &ai_tool).await?;
+
+    let store = {
+        let guard = ai_state.lock().await;
+        guard.session_index_store.clone()
+    };
+    let entries = store
+        .search(project_name, workspace_name, &ai_tool, query, *limit)
+        .await
+        .unwrap_or_default();
+
+    let sessions: Vec<crate::server::protocol::ai::SessionInfo> = entries
+        .into_iter()
+        .map(|e| crate::server::protocol::ai::SessionInfo {
+            project_name: e.project_name,
+            workspace_name: e.workspace_name,
+            id: e.session_id,
+            title: e.title,
+            updated_at: e.updated_at_ms,
+        })
+        .collect();
+
+    send_message(
+        socket,
+        &ServerMessage::AISessionSearchResult {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            ai_tool: ai_tool.clone(),
+            query: query.clone(),
+            sessions,
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
+pub(super) async fn handle_ai_code_review(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AICodeReview {
+        project_name,
+        workspace_name,
+        ai_tool,
+        session_id: _provided_session_id,
+        diff_text,
+        file_paths,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    let session_title = "AI 代码审查";
+    let session = match agent.create_session(&directory, session_title).await {
+        Ok(s) => s,
+        Err(e) => {
+            send_message(
+                socket,
+                &ServerMessage::AICodeReviewResult {
+                    project_name: project_name.clone(),
+                    workspace_name: workspace_name.clone(),
+                    ai_tool: ai_tool.clone(),
+                    session_id: String::new(),
+                    review_text: None,
+                    error: Some(format!("创建审查会话失败: {}", e)),
+                },
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+
+    let now = now_ms();
+    if let Err(e) = super::record_session_index_created(
+        ai_state,
+        project_name,
+        workspace_name,
+        &ai_tool,
+        &directory,
+        &session.id,
+        session_title,
+        now,
+    )
+    .await
+    {
+        warn!(
+            "AICodeReview: persist session index failed, project={}, workspace={}, ai_tool={}, session_id={}, error={}",
+            project_name, workspace_name, ai_tool, session.id, e
+        );
+    }
+
+    // 构建文件路径提示
+    let paths_hint = if file_paths.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n变更文件：\n{}",
+            file_paths
+                .iter()
+                .map(|p| format!("- {}", p))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+    let _review_prompt = format!(
+        "请对以下 Git diff 进行代码审查，指出潜在问题、改进建议和优点：{}\n\n```diff\n{}\n```",
+        paths_hint, diff_text
+    );
+
+    // 返回会话 ID，前端订阅后发起第一条消息
+    send_message(
+        socket,
+        &ServerMessage::AICodeReviewResult {
+            project_name: project_name.clone(),
+            workspace_name: workspace_name.clone(),
+            ai_tool: ai_tool.clone(),
+            session_id: session.id.clone(),
+            review_text: None,
+            error: None,
+        },
+    )
+    .await?;
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

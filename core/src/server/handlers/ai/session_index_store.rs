@@ -232,6 +232,99 @@ impl AiSessionIndexStore {
         Ok(result.rows_affected() > 0)
     }
 
+    /// 更新会话标题
+    pub async fn update_title(
+        &self,
+        project_name: &str,
+        workspace_name: &str,
+        ai_tool: &str,
+        session_id: &str,
+        new_title: &str,
+        updated_at_ms: i64,
+    ) -> Result<bool, String> {
+        self.ensure_schema().await?;
+        let pool = self.pool().await?;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE ai_session_index
+            SET title = ?1, updated_at_ms = ?2
+            WHERE project_name = ?3
+              AND workspace_name = ?4
+              AND ai_tool = ?5
+              AND session_id = ?6
+            "#,
+        )
+        .bind(new_title)
+        .bind(updated_at_ms)
+        .bind(project_name)
+        .bind(workspace_name)
+        .bind(ai_tool)
+        .bind(session_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("failed to update ai session title: {}", e))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// 按标题关键词搜索会话
+    pub async fn search(
+        &self,
+        project_name: &str,
+        workspace_name: &str,
+        ai_tool: &str,
+        query: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<AiSessionIndexEntry>, String> {
+        self.ensure_schema().await?;
+        let pool = self.pool().await?;
+
+        let pattern = format!("%{}%", query);
+        let limit_val = limit.unwrap_or(50).max(1) as i64;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                project_name,
+                workspace_name,
+                ai_tool,
+                directory,
+                session_id,
+                title,
+                created_at_ms,
+                updated_at_ms
+            FROM ai_session_index
+            WHERE project_name = ?1 AND workspace_name = ?2 AND ai_tool = ?3
+              AND title LIKE ?4
+            ORDER BY updated_at_ms DESC, created_at_ms DESC
+            LIMIT ?5
+            "#,
+        )
+        .bind(project_name)
+        .bind(workspace_name)
+        .bind(ai_tool)
+        .bind(&pattern)
+        .bind(limit_val)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("failed to search ai session index: {}", e))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| AiSessionIndexEntry {
+                project_name: row.try_get("project_name").unwrap_or_default(),
+                workspace_name: row.try_get("workspace_name").unwrap_or_default(),
+                ai_tool: row.try_get("ai_tool").unwrap_or_default(),
+                directory: row.try_get("directory").unwrap_or_default(),
+                session_id: row.try_get("session_id").unwrap_or_default(),
+                title: row.try_get("title").unwrap_or_default(),
+                created_at_ms: row.try_get("created_at_ms").unwrap_or_default(),
+                updated_at_ms: row.try_get("updated_at_ms").unwrap_or_default(),
+            })
+            .collect())
+    }
+
     async fn ensure_schema(&self) -> Result<(), String> {
         if self.schema_initialized.load(Ordering::Acquire) {
             return Ok(());

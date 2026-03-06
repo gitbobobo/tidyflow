@@ -598,6 +598,34 @@ pub enum ClientMessage {
         option_id: String,
         value: serde_json::Value,
     },
+    #[serde(rename = "ai_session_rename")]
+    AISessionRename {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        new_title: String,
+    },
+    #[serde(rename = "ai_session_search")]
+    AISessionSearch {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        query: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    #[serde(rename = "ai_code_review")]
+    AICodeReview {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        diff_text: String,
+        #[serde(default)]
+        file_paths: Vec<String>,
+    },
 
     // vNext: Evolution 自主进化
     #[serde(rename = "evo_start_workspace")]
@@ -1362,6 +1390,34 @@ pub enum ServerMessage {
     AISessionSubscribeAck {
         session_id: String,
         session_key: String,
+    },
+    #[serde(rename = "ai_session_rename_result")]
+    AISessionRenameResult {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        title: String,
+        updated_at: i64,
+    },
+    #[serde(rename = "ai_session_search_result")]
+    AISessionSearchResult {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        query: String,
+        sessions: Vec<ai::SessionInfo>,
+    },
+    #[serde(rename = "ai_code_review_result")]
+    AICodeReviewResult {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        review_text: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
 
     // vNext: Evolution 自主进化
