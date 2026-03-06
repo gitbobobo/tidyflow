@@ -23,8 +23,8 @@ use crate::server::protocol::{AIGitCommit, ServerMessage};
 use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE, STAGE_ARTIFACT_REQUIRED_SCHEMA_VERSION};
 use super::profile::profile_for_stage;
 use super::utils::{
-    cycle_dir_path, read_json, sanitize_validation_attempt, sanitize_validation_attempts,
-    write_json, write_jsonc_text,
+    cycle_dir_path, inject_stage_artifact_updated_at, read_json, sanitize_validation_attempt,
+    sanitize_validation_attempts, write_json, write_jsonc_text,
 };
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
 
@@ -769,12 +769,10 @@ fn ensure_artifact_freshness(
     let Some(started_at) = started_at else {
         return Ok(());
     };
-    let updated_at = extract_artifact_updated_at(value).ok_or_else(|| {
-        format!(
-            "{} 缺少可解析时间戳(updated_at/system_metadata.updated_at/timing.completed_at)",
-            label
-        )
-    })?;
+    // updated_at 由系统在接收产物时自动注入；若代理未提供则跳过时效校验。
+    let Some(updated_at) = extract_artifact_updated_at(value) else {
+        return Ok(());
+    };
     if updated_at < started_at {
         return Err(format!(
             "{} 时间戳早于本次阶段开始时间: updated_at={}, stage_started_at={}",
@@ -5249,6 +5247,18 @@ impl EvolutionManager {
                 ctx.backlog_contract_version
             };
             ctx.backlog_contract_version = contract_version;
+            // 系统在校验前自动注入 updated_at，代理无需维护该字段
+            if let Some(artifact_file) = stage_artifact_file(stage) {
+                let artifact_path = cycle_dir.join(artifact_file);
+                if let Err(e) = inject_stage_artifact_updated_at(&artifact_path) {
+                    warn!(
+                        "inject updated_at failed: stage={}, path={}, error={}",
+                        stage,
+                        artifact_path.display(),
+                        e
+                    );
+                }
+            }
             if ctx.verify_iteration > 0
                 && contract_version >= 2
                 && Self::lane_for_stage(stage).is_some()
@@ -9944,5 +9954,56 @@ mod tests {
             "有效工作区应通过边界检查: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn ensure_artifact_freshness_should_pass_when_updated_at_is_absent() {
+        // 系统会自动注入 updated_at，代理未提供时不应报错
+        let value = serde_json::json!({
+            "cycle_id": "c-1",
+            "stage": "implement_general",
+            "status": "done"
+        });
+        let started_at = Some(Utc::now() - chrono::Duration::seconds(10));
+        let result = super::ensure_artifact_freshness("test.jsonc", &value, started_at);
+        assert!(result.is_ok(), "缺少 updated_at 时不应报错: {:?}", result);
+    }
+
+    #[test]
+    fn ensure_artifact_freshness_should_pass_when_started_at_is_none() {
+        // 无阶段开始时间时跳过校验
+        let value = serde_json::json!({"updated_at": "2020-01-01T00:00:00Z"});
+        let result = super::ensure_artifact_freshness("test.jsonc", &value, None);
+        assert!(result.is_ok(), "started_at 为 None 时应跳过校验: {:?}", result);
+    }
+
+    #[test]
+    fn ensure_artifact_freshness_should_fail_when_updated_at_is_before_stage_start() {
+        // updated_at 早于阶段开始时间应报错
+        let old_ts = "2020-01-01T00:00:00Z";
+        let value = serde_json::json!({"updated_at": old_ts});
+        let started_at = Some(Utc::now());
+        let result = super::ensure_artifact_freshness("test.jsonc", &value, started_at);
+        assert!(
+            result.is_err(),
+            "updated_at 早于阶段开始时间应返回 Err: {:?}",
+            result
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("时间戳早于本次阶段开始时间"),
+            "错误信息应包含时间戳说明: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn ensure_artifact_freshness_should_pass_with_fresh_updated_at() {
+        // updated_at 在阶段开始之后应通过
+        let future_ts = (Utc::now() + chrono::Duration::seconds(1)).to_rfc3339();
+        let value = serde_json::json!({"updated_at": future_ts});
+        let started_at = Some(Utc::now() - chrono::Duration::seconds(5));
+        let result = super::ensure_artifact_freshness("test.jsonc", &value, started_at);
+        assert!(result.is_ok(), "新鲜的 updated_at 应通过校验: {:?}", result);
     }
 }

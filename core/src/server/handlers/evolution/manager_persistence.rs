@@ -617,8 +617,10 @@ mod tests {
         build_markdown_context_block, build_prompt_context, collect_session_ids,
         merge_stage_payload, required_context_keys, StageSession,
     };
+    use super::super::utils::inject_stage_artifact_updated_at;
     use std::collections::HashSet;
     use std::path::Path;
+    use tempfile::tempdir;
 
     #[test]
     fn collect_session_ids_should_keep_order_and_dedup() {
@@ -840,5 +842,62 @@ mod tests {
         let (block, injected) = build_markdown_context_block(context_map, &required, &already);
         assert!(block.contains("本次无新增上下文"));
         assert!(injected.is_empty());
+    }
+
+    #[test]
+    fn inject_stage_artifact_updated_at_should_write_valid_utc_rfc3339() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("implement_general.jsonc");
+        std::fs::write(
+            &path,
+            r#"{"cycle_id":"cycle-1","stage":"implement_general","updated_at":""}"#,
+        )
+        .expect("write artifact");
+
+        inject_stage_artifact_updated_at(&path).expect("inject should succeed");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let updated_at = value["updated_at"].as_str().unwrap_or("");
+        assert!(
+            !updated_at.is_empty(),
+            "updated_at should be non-empty after injection"
+        );
+        // 必须可解析为 RFC3339
+        chrono::DateTime::parse_from_rfc3339(updated_at)
+            .expect("injected updated_at must be valid RFC3339");
+        // 其他字段不受影响
+        assert_eq!(value["cycle_id"], "cycle-1");
+        assert_eq!(value["stage"], "implement_general");
+    }
+
+    #[test]
+    fn inject_stage_artifact_updated_at_should_overwrite_existing_timestamp() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("plan.jsonc");
+        std::fs::write(
+            &path,
+            r#"{"cycle_id":"cycle-2","updated_at":"2020-01-01T00:00:00Z"}"#,
+        )
+        .expect("write artifact");
+
+        inject_stage_artifact_updated_at(&path).expect("inject should succeed");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let updated_at = value["updated_at"].as_str().unwrap_or("");
+        let parsed = chrono::DateTime::parse_from_rfc3339(updated_at)
+            .expect("injected updated_at must be valid RFC3339");
+        // 注入时间必须晚于旧时间戳 2020-01-01
+        let old_ts = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap();
+        assert!(parsed > old_ts, "injected timestamp should be newer");
+    }
+
+    #[test]
+    fn inject_stage_artifact_updated_at_should_fail_for_missing_file() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("nonexistent.jsonc");
+        let result = inject_stage_artifact_updated_at(&path);
+        assert!(result.is_err(), "should fail when file does not exist");
     }
 }

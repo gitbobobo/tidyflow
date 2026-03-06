@@ -1,3 +1,4 @@
+use chrono::Utc;
 use std::path::{Path, PathBuf};
 
 const MAX_VALIDATION_ATTEMPTS_PER_STAGE: usize = 8;
@@ -218,6 +219,19 @@ pub(super) fn evolution_workspace_dir(workspace_root: &str) -> Result<PathBuf, S
         return Err("workspace root is empty".to_string());
     }
     Ok(Path::new(root).join(".tidyflow").join("evolution"))
+}
+
+/// 由系统在阶段产物写盘时自动注入或覆盖 updated_at（UTC RFC3339），
+/// 代理无需提供该字段。文件不存在或格式不合法时返回 Err，不终止整体流程。
+pub(super) fn inject_stage_artifact_updated_at(artifact_path: &Path) -> Result<(), String> {
+    let mut value = read_json(artifact_path)?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "updated_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+    }
+    write_json(artifact_path, &value)
 }
 
 pub(super) fn workspace_key(project: &str, workspace: &str) -> String {
