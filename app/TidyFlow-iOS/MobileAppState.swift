@@ -194,6 +194,7 @@ final class MobileAppState: ObservableObject {
     @Published var workspaceGitDetailState: [String: MobileWorkspaceGitDetailState] = [:]
     @Published var workspaceTasksByKey: [String: [MobileWorkspaceTask]] = [:]
     @Published var workspaceTodosByKey: [String: [WorkspaceTodoItem]] = [:]
+    @Published var keybindings: [KeybindingConfig] = KeybindingConfig.defaultKeybindings()
     // 资源管理器（按 project/workspace/path 分桶）
     @Published var explorerFileListCache: [String: FileListCache] = [:]
     @Published var explorerDirectoryExpandState: [String: Bool] = [:]
@@ -691,7 +692,8 @@ final class MobileAppState: ObservableObject {
             fixedPort: clientFixedPort,
             remoteAccessEnabled: clientRemoteAccessEnabled,
             evolutionAgentProfiles: [:],
-            workspaceTodos: workspaceTodosByKey
+            workspaceTodos: workspaceTodosByKey,
+            keybindings: keybindings
         )
         wsClient.requestSaveClientSettings(settings: payload)
     }
@@ -4305,6 +4307,7 @@ final class MobileAppState: ObservableObject {
             self.clientFixedPort = settings.fixedPort
             self.clientRemoteAccessEnabled = settings.remoteAccessEnabled
             self.workspaceTodosByKey = settings.workspaceTodos
+            self.keybindings = settings.keybindings.isEmpty ? KeybindingConfig.defaultKeybindings() : settings.keybindings
             self.evolutionProfilesFromClientSettings = settings.evolutionAgentProfiles
             self.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
         }

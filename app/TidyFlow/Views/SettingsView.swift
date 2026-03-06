@@ -29,8 +29,14 @@ struct SettingsContentView: View {
                 .tabItem {
                     Label("settings.about".localized, systemImage: "info.circle")
                 }
+
+            KeybindingsSection()
+                .tabItem {
+                    Label("快捷键", systemImage: "keyboard")
+                }
+                .environmentObject(appState)
         }
-        .frame(width: 580, height: 520)
+        .frame(width: 580, height: 580)
     }
 }
 
@@ -290,3 +296,185 @@ struct CustomCommandRow: View {
 }
 
 // BrandIcon 枚举定义在 Models.swift 中
+
+// MARK: - 快捷键配置部分
+
+struct KeybindingsSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var editingBinding: KeybindingConfig? = nil
+    @State private var editedKeyCombination: String = ""
+    @State private var conflictMessage: String? = nil
+    @State private var showingImporter = false
+    @State private var importResult: (mapped: Int, unmapped: Int)? = nil
+
+    private var groupedBindings: [(String, [KeybindingConfig])] {
+        let contexts = ["global", "workspace"]
+        return contexts.compactMap { ctx -> (String, [KeybindingConfig])? in
+            let bindings = appState.clientSettings.keybindings.filter { $0.context == ctx }
+            return bindings.isEmpty ? nil : (ctx, bindings)
+        }
+    }
+
+    private func contextHeader(_ ctx: String) -> String {
+        switch ctx {
+        case "global": return "全局 (Global)"
+        case "workspace": return "工作区 (Workspace)"
+        case "terminal": return "终端 (Terminal)"
+        case "editor": return "编辑器 (Editor)"
+        default: return ctx
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                ForEach(groupedBindings, id: \.0) { ctx, bindings in
+                    Section(header: Text(contextHeader(ctx))) {
+                        ForEach(bindings) { binding in
+                            keybindingRow(binding)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Button(action: { showingImporter = true }) {
+                    Label("导入 VS Code", systemImage: "square.and.arrow.down")
+                }
+
+                if let result = importResult {
+                    Text("已导入 \(result.mapped) 个，\(result.unmapped) 个未映射")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Button(action: resetToDefaults) {
+                    Label("恢复默认", systemImage: "arrow.counterclockwise")
+                }
+                .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .settingsPageTopInset()
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImport(result)
+        }
+    }
+
+    @ViewBuilder
+    private func keybindingRow(_ binding: KeybindingConfig) -> some View {
+        if editingBinding?.commandId == binding.commandId {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(KeybindingConfig.displayName(for: binding.commandId))
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    TextField("快捷键", text: $editedKeyCombination)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 160)
+                        .font(.system(.body, design: .monospaced))
+                        .onChange(of: editedKeyCombination) { _, _ in
+                            updateConflict(for: binding)
+                        }
+                }
+
+                if let conflict = conflictMessage {
+                    Text(conflict)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+
+                HStack(spacing: 8) {
+                    Button("取消") {
+                        editingBinding = nil
+                        conflictMessage = nil
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+
+                    if conflictMessage != nil {
+                        Button("自动解决") {
+                            if let resolved = appState.autoResolveKeybindingConflict(for: binding) {
+                                editedKeyCombination = resolved
+                                updateConflict(for: binding)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.orange)
+                    }
+
+                    Spacer()
+
+                    Button("保存") {
+                        var updated = binding
+                        updated.keyCombination = editedKeyCombination
+                        appState.saveKeybinding(updated)
+                        editingBinding = nil
+                        conflictMessage = nil
+                    }
+                    .disabled(conflictMessage != nil || editedKeyCombination.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(.vertical, 4)
+        } else {
+            HStack {
+                Text(KeybindingConfig.displayName(for: binding.commandId))
+                    .font(.system(size: 13))
+                Spacer()
+                Text(binding.keyCombination)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                editingBinding = binding
+                editedKeyCombination = binding.keyCombination
+                conflictMessage = nil
+            }
+        }
+    }
+
+    private func updateConflict(for binding: KeybindingConfig) {
+        var temp = binding
+        temp.keyCombination = editedKeyCombination
+        let conflicts = appState.keybindingConflicts(for: temp, in: appState.clientSettings.keybindings)
+        if conflicts.isEmpty {
+            conflictMessage = nil
+        } else {
+            let names = conflicts.map { KeybindingConfig.displayName(for: $0.commandId) }.joined(separator: ", ")
+            conflictMessage = "与 \(names) 冲突"
+        }
+    }
+
+    private func resetToDefaults() {
+        appState.clientSettings.keybindings = KeybindingConfig.defaultKeybindings()
+        appState.saveClientSettings()
+        editingBinding = nil
+        conflictMessage = nil
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        guard url.startAccessingSecurityScopedResource() else { return }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        guard let data = try? Data(contentsOf: url) else { return }
+        let (mapped, unmapped) = VSCodeKeybindingsImporter.importFrom(jsonData: data)
+
+        for binding in mapped {
+            appState.saveKeybinding(binding)
+        }
+        importResult = (mapped: mapped.count, unmapped: unmapped.count)
+    }
+}

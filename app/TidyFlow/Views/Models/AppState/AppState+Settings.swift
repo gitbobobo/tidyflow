@@ -606,4 +606,39 @@ extension AppState {
             EvolutionEditableProfile(id: stage, stage: stage, aiTool: .codex, mode: "", providerID: "", modelID: "")
         }
     }
+
+    // MARK: - 快捷键管理
+
+    /// 检测快捷键冲突
+    func keybindingConflicts(for binding: KeybindingConfig, in bindings: [KeybindingConfig]) -> [KeybindingConfig] {
+        return bindings.filter {
+            $0.commandId != binding.commandId &&
+            $0.keyCombination.lowercased() == binding.keyCombination.lowercased() &&
+            $0.context == binding.context
+        }
+    }
+
+    /// 保存单个快捷键配置（无冲突时才保存）
+    func saveKeybinding(_ binding: KeybindingConfig) {
+        let conflicts = keybindingConflicts(for: binding, in: clientSettings.keybindings)
+        guard conflicts.isEmpty else { return }
+
+        if let idx = clientSettings.keybindings.firstIndex(where: { $0.commandId == binding.commandId }) {
+            clientSettings.keybindings[idx] = binding
+        } else {
+            clientSettings.keybindings.append(binding)
+        }
+        saveClientSettings()
+    }
+
+    /// 自动解决冲突，返回建议的无冲突快捷键
+    func autoResolveKeybindingConflict(for binding: KeybindingConfig) -> String? {
+        let usedCombinations = Set(
+            clientSettings.keybindings
+                .filter { $0.context == binding.context }
+                .map { $0.keyCombination.lowercased() }
+        )
+        let candidates = (1...9).map { "cmd+option+\($0)" }
+        return candidates.first { !usedCombinations.contains($0) }
+    }
 }

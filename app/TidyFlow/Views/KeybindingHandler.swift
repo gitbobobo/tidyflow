@@ -2,41 +2,43 @@ import SwiftUI
 
 struct GlobalKeybindingHandler: ViewModifier {
     @EnvironmentObject var appState: AppState
-    
+
     func body(content: Content) -> some View {
         content
             .background(
                 Group {
-                    // Global Scoped
+                    // 用户可配置的快捷键
                     Button("Palette") { runCommand("global.palette") }
-                        .keyboardShortcut("p", modifiers: [.command, .shift])
-                    
+                        .keyboardShortcutIfPresent(shortcut(for: "global.palette"))
+
                     Button("Quick Open") { runCommand("global.quickOpen") }
-                        .keyboardShortcut("p", modifiers: .command)
-                        
+                        .keyboardShortcutIfPresent(shortcut(for: "global.quickOpen"))
+
                     Button("Reconnect") { runCommand("global.reconnect") }
-                        .keyboardShortcut("r", modifiers: .command)
-                        
-                    // Workspace Scoped
+                        .keyboardShortcutIfPresent(shortcut(for: "global.reconnect"))
+
                     Button("New Terminal") { runCommand("workspace.newTerminal") }
-                        .keyboardShortcut("t", modifiers: .command)
-                        
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.newTerminal"))
+
                     Button("Close Tab") { runCommand("workspace.closeTab") }
-                        .keyboardShortcut("w", modifiers: .command)
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.closeTab"))
 
                     Button("Close Other Tabs") { runCommand("workspace.closeOtherTabs") }
-                        .keyboardShortcut("t", modifiers: [.option, .command])
-                        
-                    Button("Next Tab") { runCommand("workspace.nextTab") }
-                        .keyboardShortcut(.tab, modifiers: .control)
-                        
-                    Button("Prev Tab") { runCommand("workspace.prevTab") }
-                        .keyboardShortcut(.tab, modifiers: [.control, .shift])
-                        
-                    Button("Save") { runCommand("workspace.save") }
-                        .keyboardShortcut("s", modifiers: .command)
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.closeOtherTabs"))
 
-                    // 编辑器撤销/重做、新建文件、另存为
+                    Button("Next Tab") { runCommand("workspace.nextTab") }
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.nextTab"))
+
+                    Button("Prev Tab") { runCommand("workspace.prevTab") }
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.prevTab"))
+
+                    Button("Save") { runCommand("workspace.save") }
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.save"))
+
+                    Button("Find") { runCommand("workspace.find") }
+                        .keyboardShortcutIfPresent(shortcut(for: "workspace.find"))
+
+                    // 不可配置的固定快捷键
                     Button("Undo") { runCommand("workspace.undo") }
                         .keyboardShortcut("z", modifiers: .command)
 
@@ -49,13 +51,10 @@ struct GlobalKeybindingHandler: ViewModifier {
                     Button("Save As") { runCommand("workspace.saveAs") }
                         .keyboardShortcut("s", modifiers: [.command, .shift])
 
-                    Button("Find") { runCommand("workspace.find") }
-                        .keyboardShortcut("f", modifiers: .command)
-
                     // Debug Panel (hidden, developer only)
                     Button("Debug Panel") { appState.debugPanelPresented.toggle() }
                         .keyboardShortcut("d", modifiers: [.command, .shift])
-                    
+
                     // Tab 索引切换 Ctrl+1-9
                     Button("Switch Tab 1") { appState.switchToTabByIndex(1) }
                         .keyboardShortcut("1", modifiers: .control)
@@ -99,7 +98,7 @@ struct GlobalKeybindingHandler: ViewModifier {
                 .hidden()
             )
     }
-    
+
     func runCommand(_ id: String) {
         if let cmd = appState.commands.first(where: { $0.id == id }) {
             // Check scope
@@ -109,10 +108,57 @@ struct GlobalKeybindingHandler: ViewModifier {
             cmd.action(appState)
         }
     }
+
+    /// 将快捷键字符串（如 "cmd+shift+p"）解析为 SwiftUI KeyEquivalent 和 EventModifiers
+    private func parseKeyCombination(_ combo: String) -> (KeyEquivalent, EventModifiers)? {
+        let parts = combo.lowercased().split(separator: "+").map(String.init)
+        var modifiers: EventModifiers = []
+        var key: String? = nil
+
+        for part in parts {
+            switch part {
+            case "cmd", "command": modifiers.insert(.command)
+            case "shift": modifiers.insert(.shift)
+            case "ctrl", "control": modifiers.insert(.control)
+            case "option", "alt": modifiers.insert(.option)
+            case "tab": key = "\t"
+            default: key = part
+            }
+        }
+
+        guard let keyStr = key else { return nil }
+        if keyStr == "\t" {
+            return (.tab, modifiers)
+        }
+        guard let firstChar = keyStr.first else { return nil }
+        return (KeyEquivalent(firstChar), modifiers)
+    }
+
+    /// 从用户配置中获取快捷键，找不到则使用默认配置
+    private func shortcut(for commandId: String) -> (KeyEquivalent, EventModifiers)? {
+        let bindings = appState.clientSettings.keybindings
+        if let userBinding = bindings.first(where: { $0.commandId == commandId }) {
+            return parseKeyCombination(userBinding.keyCombination)
+        }
+        if let defaultBinding = KeybindingConfig.defaultKeybindings().first(where: { $0.commandId == commandId }) {
+            return parseKeyCombination(defaultBinding.keyCombination)
+        }
+        return nil
+    }
 }
 
 extension View {
     func handleGlobalKeybindings() -> some View {
         self.modifier(GlobalKeybindingHandler())
+    }
+
+    /// 仅在快捷键存在时应用 keyboardShortcut
+    @ViewBuilder
+    func keyboardShortcutIfPresent(_ combo: (KeyEquivalent, EventModifiers)?) -> some View {
+        if let (key, modifiers) = combo {
+            self.keyboardShortcut(key, modifiers: modifiers)
+        } else {
+            self
+        }
     }
 }

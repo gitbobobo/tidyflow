@@ -148,6 +148,17 @@ extension WSClient {
             let remoteAccessEnabled = json["remote_access_enabled"] as? Bool ?? false
             let evolutionAgentProfiles = parseEvolutionProfilesFromClientSettings(json["evolution_agent_profiles"])
             let workspaceTodos = parseWorkspaceTodosFromClientSettings(json["workspace_todos"])
+            var keybindings: [KeybindingConfig] = []
+            if let kbJson = json["keybindings"] as? [[String: Any]] {
+                keybindings = kbJson.compactMap { kbDict -> KeybindingConfig? in
+                    guard let commandId = kbDict["commandId"] as? String,
+                          let keyCombination = kbDict["keyCombination"] as? String,
+                          let context = kbDict["context"] as? String else {
+                        return nil
+                    }
+                    return KeybindingConfig(commandId: commandId, keyCombination: keyCombination, context: context)
+                }
+            }
             let settings = ClientSettings(
                 customCommands: commands,
                 workspaceShortcuts: workspaceShortcuts,
@@ -155,7 +166,8 @@ extension WSClient {
                 fixedPort: fixedPort,
                 remoteAccessEnabled: remoteAccessEnabled,
                 evolutionAgentProfiles: evolutionAgentProfiles,
-                workspaceTodos: workspaceTodos
+                workspaceTodos: workspaceTodos,
+                keybindings: keybindings
             )
             if let handler = settingsMessageHandler {
                 handler.handleClientSettingsResult(settings)

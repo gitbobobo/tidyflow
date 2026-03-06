@@ -106,6 +106,9 @@ final class AppStateSettingsMessageHandlerAdapter: SettingsMessageHandler {
     func handleClientSettingsResult(_ settings: ClientSettings) {
         guard let appState else { return }
         appState.clientSettings = settings
+        if appState.clientSettings.keybindings.isEmpty {
+            appState.clientSettings.keybindings = KeybindingConfig.defaultKeybindings()
+        }
         appState.clientSettingsLoaded = true
         appState.applyEvolutionProfilesFromClientSettings(settings.evolutionAgentProfiles)
     }

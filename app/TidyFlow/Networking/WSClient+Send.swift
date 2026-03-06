@@ -102,6 +102,7 @@ private struct SaveClientSettingsRequest: Encodable {
     let fixedPort: Int
     let remoteAccessEnabled: Bool
     let workspaceTodos: [String: [WorkspaceTodoPayload]]
+    let keybindings: [KeybindingPayload]
 
     struct CustomCommandPayload: Encodable {
         let id: String
@@ -130,6 +131,16 @@ private struct SaveClientSettingsRequest: Encodable {
         }
     }
 
+    struct KeybindingPayload: Encodable {
+        let commandId: String
+        let keyCombination: String
+        let context: String
+
+        enum CodingKeys: String, CodingKey {
+            case commandId, keyCombination, context
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case type
         case customCommands = "custom_commands"
@@ -138,6 +149,7 @@ private struct SaveClientSettingsRequest: Encodable {
         case fixedPort = "fixed_port"
         case remoteAccessEnabled = "remote_access_enabled"
         case workspaceTodos = "workspace_todos"
+        case keybindings
     }
 }
 
@@ -838,6 +850,13 @@ extension WSClient {
                         updatedAtMs: item.updatedAtMs
                     )
                 }
+            },
+            keybindings: settings.keybindings.map { kb in
+                SaveClientSettingsRequest.KeybindingPayload(
+                    commandId: kb.commandId,
+                    keyCombination: kb.keyCombination,
+                    context: kb.context
+                )
             }
         )
         sendTyped(payload, requestId: UUID().uuidString)

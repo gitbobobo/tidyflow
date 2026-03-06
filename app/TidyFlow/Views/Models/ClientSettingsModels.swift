@@ -18,6 +18,55 @@ struct CustomCommand: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - 快捷键配置
+
+/// 用户自定义快捷键配置
+struct KeybindingConfig: Identifiable, Codable, Equatable {
+    var commandId: String
+    var keyCombination: String
+    var context: String
+
+    var id: String { commandId }
+
+    enum CodingKeys: String, CodingKey {
+        case commandId, keyCombination, context
+    }
+}
+
+extension KeybindingConfig {
+    static func defaultKeybindings() -> [KeybindingConfig] {
+        return [
+            KeybindingConfig(commandId: "global.palette", keyCombination: "cmd+shift+p", context: "global"),
+            KeybindingConfig(commandId: "global.quickOpen", keyCombination: "cmd+p", context: "global"),
+            KeybindingConfig(commandId: "global.reconnect", keyCombination: "cmd+r", context: "global"),
+            KeybindingConfig(commandId: "workspace.newTerminal", keyCombination: "cmd+t", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.closeTab", keyCombination: "cmd+w", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.closeOtherTabs", keyCombination: "cmd+option+t", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.nextTab", keyCombination: "ctrl+tab", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.prevTab", keyCombination: "ctrl+shift+tab", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.save", keyCombination: "cmd+s", context: "workspace"),
+            KeybindingConfig(commandId: "workspace.find", keyCombination: "cmd+f", context: "workspace"),
+        ]
+    }
+
+    /// 命令 ID 的人类可读名称
+    static func displayName(for commandId: String) -> String {
+        let names: [String: String] = [
+            "global.palette": "命令面板",
+            "global.quickOpen": "快速打开",
+            "global.reconnect": "重新连接",
+            "workspace.newTerminal": "新建终端",
+            "workspace.closeTab": "关闭标签",
+            "workspace.closeOtherTabs": "关闭其他标签",
+            "workspace.nextTab": "下一个标签",
+            "workspace.prevTab": "上一个标签",
+            "workspace.save": "保存",
+            "workspace.find": "查找",
+        ]
+        return names[commandId] ?? commandId
+    }
+}
+
 // MARK: - 工作空间待办
 
 enum WorkspaceTodoStatus: String, Codable, CaseIterable {
@@ -277,6 +326,8 @@ struct ClientSettings: Codable {
     var evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]]
     /// 工作空间待办（key: "project:workspace"）
     var workspaceTodos: [String: [WorkspaceTodoItem]]
+    /// 用户自定义快捷键配置
+    var keybindings: [KeybindingConfig]
 
     enum CodingKeys: String, CodingKey {
         case customCommands
@@ -286,6 +337,7 @@ struct ClientSettings: Codable {
         case remoteAccessEnabled = "remote_access_enabled"
         case evolutionAgentProfiles = "evolution_agent_profiles"
         case workspaceTodos = "workspace_todos"
+        case keybindings
     }
 
     init(
@@ -295,7 +347,8 @@ struct ClientSettings: Codable {
         fixedPort: Int = 0,
         remoteAccessEnabled: Bool = false,
         evolutionAgentProfiles: [String: [EvolutionStageProfileInfoV2]] = [:],
-        workspaceTodos: [String: [WorkspaceTodoItem]] = [:]
+        workspaceTodos: [String: [WorkspaceTodoItem]] = [:],
+        keybindings: [KeybindingConfig] = []
     ) {
         self.customCommands = customCommands
         self.workspaceShortcuts = workspaceShortcuts
@@ -304,6 +357,7 @@ struct ClientSettings: Codable {
         self.remoteAccessEnabled = remoteAccessEnabled
         self.evolutionAgentProfiles = evolutionAgentProfiles
         self.workspaceTodos = workspaceTodos
+        self.keybindings = keybindings
     }
 
     init(from decoder: Decoder) throws {
@@ -315,6 +369,7 @@ struct ClientSettings: Codable {
         remoteAccessEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteAccessEnabled) ?? false
         evolutionAgentProfiles = [:]
         workspaceTodos = try container.decodeIfPresent([String: [WorkspaceTodoItem]].self, forKey: .workspaceTodos) ?? [:]
+        keybindings = try container.decodeIfPresent([KeybindingConfig].self, forKey: .keybindings) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -325,6 +380,63 @@ struct ClientSettings: Codable {
         try container.encode(fixedPort, forKey: .fixedPort)
         try container.encode(remoteAccessEnabled, forKey: .remoteAccessEnabled)
         try container.encode(workspaceTodos, forKey: .workspaceTodos)
+        try container.encode(keybindings, forKey: .keybindings)
+    }
+}
+
+// MARK: - VS Code 快捷键导入
+
+struct VSCodeKeybindingEntry: Codable {
+    var key: String
+    var command: String
+    var when: String?
+}
+
+struct VSCodeKeybindingsImporter {
+    static let commandMapping: [String: String] = [
+        "workbench.action.showCommands": "global.palette",
+        "workbench.action.quickOpen": "global.quickOpen",
+        "workbench.action.terminal.new": "workspace.newTerminal",
+        "workbench.action.closeActiveEditor": "workspace.closeTab",
+        "workbench.action.nextEditor": "workspace.nextTab",
+        "workbench.action.previousEditor": "workspace.prevTab",
+        "workbench.action.files.save": "workspace.save",
+        "actions.find": "workspace.find",
+        "workbench.action.closeOtherEditors": "workspace.closeOtherTabs",
+    ]
+
+    static func importFrom(jsonData: Data) -> (mapped: [KeybindingConfig], unmapped: [String]) {
+        guard let entries = try? JSONDecoder().decode([VSCodeKeybindingEntry].self, from: jsonData) else {
+            return ([], [])
+        }
+        var mapped: [KeybindingConfig] = []
+        var unmapped: [String] = []
+        for entry in entries {
+            if let tidyCommand = commandMapping[entry.command] {
+                let keyCombination = convertVSCodeKey(entry.key)
+                mapped.append(KeybindingConfig(
+                    commandId: tidyCommand,
+                    keyCombination: keyCombination,
+                    context: contextFor(entry.when)
+                ))
+            } else {
+                unmapped.append(entry.command)
+            }
+        }
+        return (mapped, unmapped)
+    }
+
+    private static func convertVSCodeKey(_ key: String) -> String {
+        return key
+            .replacingOccurrences(of: "meta+", with: "cmd+")
+            .replacingOccurrences(of: "ctrl+", with: "cmd+")
+    }
+
+    private static func contextFor(_ when: String?) -> String {
+        guard let when = when else { return "global" }
+        if when.contains("terminal") { return "terminal" }
+        if when.contains("editorFocus") { return "editor" }
+        return "workspace"
     }
 }
 
