@@ -1880,6 +1880,41 @@ struct EvolutionPipelineView: View {
         openHandoffSheet(for: item.cycleID)
     }
 
+    @ViewBuilder
+    private func handoffSection(
+        titleKey: String,
+        icon: String,
+        color: Color,
+        items: [String]
+    ) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(titleKey.localized, systemImage: icon)
+                    .font(.headline)
+                    .foregroundColor(color)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle()
+                                .fill(color.opacity(0.8))
+                                .frame(width: 6, height: 6)
+                                .padding(.top, 6)
+                            Text(item)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(color.opacity(0.08))
+            )
+        }
+    }
+
     private var handoffSheet: some View {
         NavigationStack {
             Group {
@@ -1902,12 +1937,30 @@ struct EvolutionPipelineView: View {
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let content = appState.evolutionHandoffContent {
+                } else if let handoff = appState.evolutionHandoff {
                     ScrollView {
-                        MarkdownTextView(text: content, baseFontSize: 13, textColor: .primary)
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                        VStack(alignment: .leading, spacing: 14) {
+                            handoffSection(
+                                titleKey: "evolution.page.handoff.completed",
+                                icon: "checkmark.circle.fill",
+                                color: .green,
+                                items: handoff.completed
+                            )
+                            handoffSection(
+                                titleKey: "evolution.page.handoff.risks",
+                                icon: "exclamationmark.triangle.fill",
+                                color: .orange,
+                                items: handoff.risks
+                            )
+                            handoffSection(
+                                titleKey: "evolution.page.handoff.next",
+                                icon: "arrow.right.circle.fill",
+                                color: .blue,
+                                items: handoff.next
+                            )
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
                     VStack(spacing: 12) {

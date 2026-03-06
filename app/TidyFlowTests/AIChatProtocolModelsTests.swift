@@ -423,6 +423,11 @@ final class AIChatProtocolModelsTests: XCTestCase {
                     "tool_call_count": 2
                 ]
             ],
+            "handoff": [
+                "completed": ["完成结构改造"],
+                "risks": ["需要补 UI 构建验证"],
+                "next": ["继续跑 xcodebuild"]
+            ],
             "active_agents": []
         ]
 
@@ -434,6 +439,8 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(item?.executions.first?.toolCallCount, 2)
         XCTAssertEqual(item?.title, "当前循环标题")
         XCTAssertEqual(item?.terminalErrorMessage, "verify.result.json 校验失败: 缺少 summary 字段")
+        XCTAssertEqual(item?.handoff?.completed, ["完成结构改造"])
+        XCTAssertEqual(item?.handoff?.next, ["继续跑 xcodebuild"])
     }
 
     func testEvolutionCycleHistoryParsesExecutionsAndFallbackStages() {
@@ -456,6 +463,11 @@ final class AIChatProtocolModelsTests: XCTestCase {
                     "duration_ms": 1000
                 ]
             ],
+            "handoff": [
+                "completed": ["已完成方向和计划"],
+                "risks": ["verify 尚未稳定"],
+                "next": ["补齐测试"]
+            ],
             "stages": [
                 [
                     "stage": "verify",
@@ -471,6 +483,7 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(parsedWithExecutions?.stages.count, 1)
         XCTAssertEqual(parsedWithExecutions?.title, "历史循环标题")
         XCTAssertEqual(parsedWithExecutions?.terminalErrorMessage, "judge.result.json 缺少 pass 字段")
+        XCTAssertEqual(parsedWithExecutions?.handoff?.risks, ["verify 尚未稳定"])
 
         let fallbackStagesOnly: [String: Any] = [
             "cycle_id": "cycle-2",
@@ -494,6 +507,25 @@ final class AIChatProtocolModelsTests: XCTestCase {
         XCTAssertEqual(parsedFallback?.stages.count, 1)
         XCTAssertEqual(parsedFallback?.title, "兼容字段标题")
         XCTAssertEqual(parsedFallback?.stages.first?.stage, "plan")
+        XCTAssertNil(parsedFallback?.handoff)
+    }
+
+    func testEvolutionHandoffParsesAndFiltersEmptySections() {
+        let json: [String: Any] = [
+            "completed": ["完成 A", "  "],
+            "risks": [],
+            "next": ["下一步 B"]
+        ]
+        let handoff = EvolutionHandoffInfoV2.from(json: json)
+        XCTAssertEqual(handoff?.completed, ["完成 A"])
+        XCTAssertEqual(handoff?.next, ["下一步 B"])
+
+        let empty = EvolutionHandoffInfoV2.from(json: [
+            "completed": [],
+            "risks": [],
+            "next": []
+        ])
+        XCTAssertNil(empty)
     }
 
     func testAIProtocolPartInfoParsesToolCallExtendedFields() {

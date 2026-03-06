@@ -169,20 +169,6 @@ extension AppState {
     }
 
     func handleFileReadResult(_ result: FileReadResult) {
-        // Handoff 文档预览分流
-        if let pendingPath = pendingHandoffReadPath, pendingPath == result.path {
-            pendingHandoffReadPath = nil
-            evolutionHandoffLoading = false
-            let content = String(decoding: result.content, as: UTF8.self)
-            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                evolutionHandoffError = "evolution.page.handoff.empty".localized
-                evolutionHandoffContent = nil
-            } else {
-                evolutionHandoffContent = content
-            }
-            return
-        }
-
         let key = editorRequestKey(project: result.project, workspace: result.workspace, path: result.path)
 
         guard pendingFileReadRequests.contains(key) else {

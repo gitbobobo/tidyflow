@@ -1036,13 +1036,6 @@ extension AppState {
             }
         }
 
-        // Handoff 请求失败时清除加载状态
-        if pendingHandoffReadPath != nil {
-            pendingHandoffReadPath = nil
-            evolutionHandoffLoading = false
-            evolutionHandoffError = errorMsg
-        }
-
         // 历史分页请求失败时，避免“加载更早消息”按钮长期停留在 loading。
         for tool in AIChatTool.allCases {
             aiStore(for: tool).setHistoryLoading(false)

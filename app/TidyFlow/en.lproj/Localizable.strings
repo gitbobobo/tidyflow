@@ -397,6 +397,9 @@
 "evolution.page.handoff.loading" = "Loading…";
 "evolution.page.handoff.noCycle" = "No active cycle";
 "evolution.page.handoff.refresh" = "Refresh";
+"evolution.page.handoff.completed" = "Completed";
+"evolution.page.handoff.risks" = "Risks";
+"evolution.page.handoff.next" = "Next";
 "evolution.page.report.title" = "Report Document";
 "evolution.page.report.empty" = "No report document yet";
 "evolution.page.report.loading" = "Loading…";
