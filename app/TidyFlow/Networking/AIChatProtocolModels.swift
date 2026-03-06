@@ -1833,7 +1833,7 @@ struct AISessionSearchResult {
 }
 
 // MARK: - AI 代码审查响应
-struct AICodeReviewResult {
+struct AICodeReviewResult: Equatable {
     let projectName: String
     let workspaceName: String
     let aiTool: String

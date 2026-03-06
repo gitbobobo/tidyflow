@@ -308,6 +308,9 @@ struct MobileAIChatView: View {
 
     private func loadSession(_ session: AISessionInfo) {
         appState.loadAISession(session)
+        // 显示历史会话已恢复提示
+        let title = session.title.isEmpty ? "历史会话已恢复" : "已切换到：\(session.title)"
+        aiChatHintMessage = title
     }
 
     private func createNewSession() {

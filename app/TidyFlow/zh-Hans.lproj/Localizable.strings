@@ -192,6 +192,10 @@
 "git.commitStaged" = "提交暂存的更改";
 "git.stagedChanges" = "暂存的更改";
 "git.unstageAll" = "取消暂存所有";
+"git.aiReview" = "AI 审查";
+"git.aiReview.requesting" = "正在请求 AI 审查…";
+"git.aiReview.ready" = "AI 审查已就绪";
+"git.aiReview.view" = "查看审查结果";
 "git.changes" = "更改";
 "git.stageAll" = "暂存所有更改";
 "git.discardAll" = "放弃所有更改";

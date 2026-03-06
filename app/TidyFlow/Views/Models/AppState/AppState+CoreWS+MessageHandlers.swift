@@ -178,6 +178,8 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     func handleAISlashCommandsUpdate(_ ev: AISlashCommandsUpdateResult) { appState?.handleAISlashCommandsUpdate(ev) }
     func handleAISessionConfigOptions(_ ev: AISessionConfigOptionsResult) { appState?.handleAISessionConfigOptions(ev) }
     func handleAISessionSubscribeAck() { appState?.handleAISessionSubscribeAck() }
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) { appState?.handleAISessionRenameResult(ev) }
+    func handleAICodeReviewResult(_ ev: AICodeReviewResult) { appState?.handleAICodeReviewResult(ev) }
 }
 
 final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {

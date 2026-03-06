@@ -455,6 +455,8 @@ class AppState: ObservableObject {
     @Published var subAgentViewerLoading: Bool = false
     @Published var subAgentViewerError: String?
     @Published var subAgentViewerStore: AIChatStore = AIChatStore()
+    /// 最近一次 AI 代码审查结果（用于 Git 面板触发后跳转）
+    @Published var latestAICodeReviewResult: AICodeReviewResult?
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]

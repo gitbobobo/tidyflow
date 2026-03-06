@@ -17,6 +17,8 @@ struct NativeGitPanelView: View {
     @State private var isStagedExpanded: Bool = true
     @State private var isChangesExpanded: Bool = true
     @State private var isGraphExpanded: Bool = true
+    @State private var isRequestingAIReview: Bool = false
+    @State private var aiReviewSessionId: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,14 +31,55 @@ struct NativeGitPanelView: View {
             GitCommitInputSection()
                 .environmentObject(appState)
 
+            // AI 代码审查结果横幅
+            if isRequestingAIReview || aiReviewSessionId != nil {
+                Divider()
+                HStack(spacing: 8) {
+                    if isRequestingAIReview {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 14, height: 14)
+                        Text("git.aiReview.requesting".localized)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else if let sessionId = aiReviewSessionId {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11))
+                            .foregroundColor(.accentColor)
+                        Text("git.aiReview.ready".localized)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("git.aiReview.view".localized) {
+                            openAIReviewSession(sessionId: sessionId)
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.link)
+                        Button {
+                            aiReviewSessionId = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+
             // ── 下方区域：各 Section 均分剩余空间 ──
 
             // 3. 暂存的更改
             if hasStagedChangesInWorkspace {
                 Divider()
-                GitStagedChangesSection(isExpanded: $isStagedExpanded)
-                    .environmentObject(appState)
-                    .modifier(EqualExpandModifier(isExpanded: isStagedExpanded))
+                GitStagedChangesSection(
+                    isExpanded: $isStagedExpanded,
+                    onRequestAIReview: requestAIReview
+                )
+                .environmentObject(appState)
+                .modifier(EqualExpandModifier(isExpanded: isStagedExpanded))
             }
 
             // 4. 更改（未暂存）
@@ -59,6 +102,16 @@ struct NativeGitPanelView: View {
         }
         .onChange(of: appState.selectedWorkspaceKey) { _, _ in
             loadDataIfNeeded()
+        }
+        .onChange(of: appState.latestAICodeReviewResult) { _, result in
+            guard let result else { return }
+            isRequestingAIReview = false
+            if let error = result.error, !error.isEmpty {
+                // 审查失败：清除加载状态
+                aiReviewSessionId = nil
+            } else {
+                aiReviewSessionId = result.sessionId
+            }
         }
         .confirmationDialog("git.discardAll.title".localized, isPresented: $showDiscardAllConfirm, titleVisibility: .visible) {
             if hasTrackedChangesInWorkspace {
@@ -99,6 +152,30 @@ struct NativeGitPanelView: View {
     private func discardAll(includeUntracked: Bool) {
         guard let ws = appState.selectedWorkspaceKey else { return }
         gitCache.gitDiscard(workspaceKey: ws, path: nil, scope: "all", includeUntracked: includeUntracked)
+    }
+
+    private func requestAIReview() {
+        guard let ws = appState.selectedWorkspaceKey else { return }
+        let stagedPaths = gitCache.getGitStatusCache(workspaceKey: ws)?.stagedItems.map { $0.path } ?? []
+        guard !stagedPaths.isEmpty else { return }
+        isRequestingAIReview = true
+        aiReviewSessionId = nil
+        appState.latestAICodeReviewResult = nil
+        appState.wsClient.requestAICodeReview(
+            project: appState.selectedProjectName,
+            workspace: ws,
+            aiTool: appState.aiChatTool.rawValue,
+            diffText: "（已暂存变更）",
+            filePaths: stagedPaths
+        )
+    }
+
+    private func openAIReviewSession(sessionId: String) {
+        // 通过 sessionPanelAction 触发 AI 标签页加载对应会话
+        let tool = appState.aiChatTool
+        if let session = appState.aiSessionsForTool(tool).first(where: { $0.id == sessionId }) {
+            appState.sessionPanelAction = .loadSession(session)
+        }
     }
 
     /// 当前工作区是否存在已跟踪文件的更改

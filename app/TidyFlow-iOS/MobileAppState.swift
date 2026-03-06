@@ -5005,6 +5005,24 @@ final class MobileAppState: ObservableObject {
                   self.aiChatStore.currentSessionId == ev.sessionId else { return }
             self.completeAIQuestionRequestLocally(requestId: ev.requestId)
         }
+
+        wsClient.onAISessionRenameResult = { [weak self] ev in
+            guard let self,
+                  let tool = AIChatTool(rawValue: ev.aiTool) else { return }
+            var sessions = self.aiSessionsByTool[tool] ?? []
+            if let idx = sessions.firstIndex(where: { $0.id == ev.sessionId }) {
+                let old = sessions[idx]
+                sessions[idx] = AISessionInfo(
+                    projectName: old.projectName,
+                    workspaceName: old.workspaceName,
+                    aiTool: old.aiTool,
+                    id: old.id,
+                    title: ev.title,
+                    updatedAt: ev.updatedAt > 0 ? ev.updatedAt : old.updatedAt
+                )
+                self.setAISessions(sessions, for: tool)
+            }
+        }
     }
 
     private func resolveDefaultAgentName() -> String {

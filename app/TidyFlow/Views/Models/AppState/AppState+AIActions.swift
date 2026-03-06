@@ -166,4 +166,28 @@ extension AppState {
             )
         }
     }
+
+    // MARK: - AI 会话重命名结果处理
+
+    func handleAISessionRenameResult(_ ev: AISessionRenameResult) {
+        guard let tool = AIChatTool(rawValue: ev.aiTool) else { return }
+        var sessions = aiSessionsForTool(tool)
+        guard let idx = sessions.firstIndex(where: { $0.id == ev.sessionId }) else { return }
+        let old = sessions[idx]
+        sessions[idx] = AISessionInfo(
+            projectName: old.projectName,
+            workspaceName: old.workspaceName,
+            aiTool: old.aiTool,
+            id: old.id,
+            title: ev.title,
+            updatedAt: ev.updatedAt > 0 ? ev.updatedAt : old.updatedAt
+        )
+        setAISessions(sessions, for: tool)
+    }
+
+    // MARK: - AI 代码审查结果处理
+
+    func handleAICodeReviewResult(_ ev: AICodeReviewResult) {
+        latestAICodeReviewResult = ev
+    }
 }

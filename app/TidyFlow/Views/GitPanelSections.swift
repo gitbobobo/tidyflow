@@ -6,6 +6,7 @@ struct GitStagedChangesSection: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var gitCache: GitCacheState
     @Binding var isExpanded: Bool
+    var onRequestAIReview: (() -> Void)? = nil
 
     /// 直接使用缓存中预计算的 stagedItems，避免每次 body 重绘都 filter
     private var cachedStagedItems: [GitStatusItem] {
@@ -23,13 +24,27 @@ struct GitStagedChangesSection: View {
                 count: staged.count,
                 isExpanded: $isExpanded
             ) {
-                Button(action: unstageAll) {
-                    Image(systemName: "minus")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    // AI 审查按钮
+                    if let onRequestAIReview {
+                        Button(action: onRequestAIReview) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                                .foregroundColor(.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .help("git.aiReview".localized)
+                        .disabled(staged.isEmpty)
+                    }
+
+                    Button(action: unstageAll) {
+                        Image(systemName: "minus")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("git.unstageAll".localized)
                 }
-                .buttonStyle(.plain)
-                .help("git.unstageAll".localized)
             }
 
             // 展开时显示文件列表（可滚动）

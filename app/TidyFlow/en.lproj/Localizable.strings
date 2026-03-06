@@ -190,6 +190,10 @@
 "git.commitStaged" = "Commit staged changes";
 "git.stagedChanges" = "Staged Changes";
 "git.unstageAll" = "Unstage All";
+"git.aiReview" = "AI Review";
+"git.aiReview.requesting" = "Requesting AI review…";
+"git.aiReview.ready" = "AI review is ready";
+"git.aiReview.view" = "View Review";
 "git.changes" = "Changes";
 "git.stageAll" = "Stage All Changes";
 "git.discardAll" = "Discard All Changes";
