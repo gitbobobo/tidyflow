@@ -379,7 +379,6 @@ extension AppState {
             "implement_visual",
             "implement_advanced",
             "verify",
-            "judge",
             "auto_commit",
         ]
     }

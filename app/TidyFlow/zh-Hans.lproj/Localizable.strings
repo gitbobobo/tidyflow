@@ -455,7 +455,6 @@
 "evolution.stage.implementVisual" = "视觉实现";
 "evolution.stage.implementAdvanced" = "高级实现";
 "evolution.stage.verify" = "验证";
-"evolution.stage.judge" = "裁决";
 "evolution.stage.report" = "报告";
 "evolution.stage.autoCommit" = "智能提交";
 "evolution.stage.unnamed" = "未命名阶段";
@@ -479,4 +478,3 @@
 "evolution.page.pipeline.rateLimitError" = "限流信息";
 "evolution.terminalReason.evo_stop_requested" = "用户手动停止";
 "evolution.terminalReason.evo_verify_iteration_exhausted" = "验证迭代次数耗尽";
-"evolution.terminalReason.evo_judge_failed" = "裁决未通过";

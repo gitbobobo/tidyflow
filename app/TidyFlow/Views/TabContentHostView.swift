@@ -1831,7 +1831,6 @@ struct EvolutionTabView: View {
         "implement_visual",
         "implement_advanced",
         "verify",
-        "judge",
         "auto_commit",
     ]
 
@@ -2665,8 +2664,6 @@ struct EvolutionTabView: View {
             return "evolution.stage.implementGeneral".localized
         case "verify":
             return "evolution.stage.verify".localized
-        case "judge":
-            return "evolution.stage.judge".localized
         case "auto_commit":
             return "evolution.stage.autoCommit".localized
         default:
@@ -2750,8 +2747,6 @@ struct EvolutionTabView: View {
             return "chevron.left.forwardslash.chevron.right"
         case "verify":
             return "checkmark.seal"
-        case "judge":
-            return "scalemass"
         case "auto_commit":
             return "sparkles"
         default:

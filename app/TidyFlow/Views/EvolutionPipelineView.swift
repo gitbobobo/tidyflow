@@ -89,13 +89,13 @@ struct EvolutionPipelineView: View {
     private let evolutionStageOrder: [String] = [
         "direction", "plan",
         "implement_general", "implement_visual", "implement_advanced",
-        "verify", "judge", "auto_commit",
+        "verify", "auto_commit",
     ]
 
     /// 可循环的代理阶段
     private let loopableStages: Set<String> = [
         "implement_general", "implement_visual", "implement_advanced",
-        "verify", "judge",
+        "verify",
     ]
 
     private let loopRoundOptions = [1, 2, 3, 5, 10, 16, 20]
@@ -110,7 +110,6 @@ struct EvolutionPipelineView: View {
         case "implement_visual": return .pink
         case "implement_advanced": return .purple
         case "verify": return .green
-        case "judge": return .yellow
         case "auto_commit": return .gray
         default: return .secondary
         }
@@ -2265,7 +2264,6 @@ struct EvolutionPipelineView: View {
         case "implement_advanced": return "evolution.stage.implementAdvanced".localized
         case "implement": return "evolution.stage.implementGeneral".localized
         case "verify": return "evolution.stage.verify".localized
-        case "judge": return "evolution.stage.judge".localized
         case "auto_commit": return "evolution.stage.autoCommit".localized
         default: return trimmed
         }
@@ -2279,7 +2277,6 @@ struct EvolutionPipelineView: View {
         case "implement_visual": return "paintbrush"
         case "implement_advanced": return "wand.and.stars"
         case "verify": return "checkmark.seal"
-        case "judge": return "scalemass"
         case "auto_commit": return "sparkles"
         default: return "person.crop.square"
         }

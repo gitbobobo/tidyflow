@@ -453,7 +453,6 @@
 "evolution.stage.implementVisual" = "Implement Visual";
 "evolution.stage.implementAdvanced" = "Implement Advanced";
 "evolution.stage.verify" = "Verify";
-"evolution.stage.judge" = "Judge";
 "evolution.stage.report" = "Report";
 "evolution.stage.autoCommit" = "Auto Commit";
 "evolution.stage.unnamed" = "Unnamed Stage";
@@ -477,4 +476,3 @@
 "evolution.page.pipeline.rateLimitError" = "Rate Limit Info";
 "evolution.terminalReason.evo_stop_requested" = "Manually stopped";
 "evolution.terminalReason.evo_verify_iteration_exhausted" = "Verify iterations exhausted";
-"evolution.terminalReason.evo_judge_failed" = "Judge failed";

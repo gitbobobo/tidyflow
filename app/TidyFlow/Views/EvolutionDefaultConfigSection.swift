@@ -170,7 +170,6 @@ struct EvolutionDefaultConfigSection: View {
         case "implement_visual": return "Implement Visual"
         case "implement_advanced": return "Implement Advanced"
         case "verify":    return "Verify"
-        case "judge":     return "Judge"
         case "auto_commit": return "Auto Commit"
         default:          return stage
         }

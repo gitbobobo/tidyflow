@@ -181,7 +181,7 @@ extension WSClient {
         switch action {
         case "evo_scheduler_updated", "evo_scheduler_status",
              "evo_workspace_started", "evo_workspace_stopped", "evo_workspace_resumed",
-             "evo_stage_changed", "evo_cycle_updated", "evo_judge_result":
+            "evo_stage_changed", "evo_cycle_updated":
             if let handler = evolutionMessageHandler {
                 handler.handleEvolutionPulse()
             } else {
