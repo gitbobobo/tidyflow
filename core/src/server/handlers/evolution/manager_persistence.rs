@@ -4,10 +4,9 @@ use std::path::Path;
 use chrono::Utc;
 
 use super::stage::{
-    agent_name, next_stage, prompt_id_for_stage_phase, prompt_template_for_stage_phase,
-    StagePromptPhase,
+    agent_name, next_stage, prompt_id_for_stage, prompt_template_for_stage,
 };
-use super::utils::{cycle_dir_path, evolution_workspace_dir, write_json};
+use super::utils::{cycle_dir_path, evolution_workspace_dir, read_json, write_json};
 use super::{EvolutionManager, StageSession, STAGES};
 
 fn collect_session_ids(sessions: &[StageSession]) -> Vec<String> {
@@ -26,7 +25,7 @@ fn merge_stage_payload(
     stage: &str,
     status: &str,
     error_message: Option<&str>,
-    judge_result: Option<bool>,
+    verify_result: Option<bool>,
     ai_tool: Option<&str>,
     stage_duration_ms: Option<u64>,
     chat_sessions: serde_json::Value,
@@ -73,7 +72,7 @@ fn merge_stage_payload(
             "inputs".to_string(),
             serde_json::json!([{
                 "type": "prompt",
-                "path": prompt_id_for_stage_phase(stage, StagePromptPhase::Deliverable).unwrap_or_default()
+                "path": prompt_id_for_stage(stage).unwrap_or_default()
             }]),
         );
     }
@@ -86,8 +85,8 @@ fn merge_stage_payload(
         obj.insert(
             "decision".to_string(),
             serde_json::json!({
-                "result": if stage == "judge" && status == "done" {
-                    if judge_result.unwrap_or(true) { "pass" } else { "fail" }
+                "result": if stage == "verify" && status == "done" {
+                    if verify_result.unwrap_or(true) { "pass" } else { "fail" }
                 } else {
                     "n/a"
                 },
@@ -96,7 +95,7 @@ fn merge_stage_payload(
         );
     }
 
-    if stage == "judge" && status == "done" {
+    if stage == "verify" && status == "done" {
         if let Some(decision_obj) = obj.get_mut("decision").and_then(|v| v.as_object_mut()) {
             if !decision_obj
                 .get("result")
@@ -106,7 +105,7 @@ fn merge_stage_payload(
             {
                 decision_obj.insert(
                     "result".to_string(),
-                    serde_json::Value::String(if judge_result.unwrap_or(true) {
+                    serde_json::Value::String(if verify_result.unwrap_or(true) {
                         "pass".to_string()
                     } else {
                         "fail".to_string()
@@ -241,26 +240,25 @@ fn build_prompt_context(
         "VERIFY_ITERATION_LIMIT": verify_iteration_limit,
         "BACKLOG_CONTRACT_VERSION": backlog_contract_version,
         "CYCLE_DIR": cycle_dir,
-        "CYCLE_FILE_PATH": cycle_dir.join("cycle.json"),
-        "MANAGED_FAILURE_BACKLOG_PATH": cycle_dir.join("managed.failure_backlog.json"),
-        "MANAGED_BACKLOG_COVERAGE_PATH": cycle_dir.join("managed.backlog_coverage.json"),
-        "PLAN_EXECUTION_PATH": cycle_dir.join("plan.execution.json"),
-        "IMPLEMENT_GENERAL_RESULT_PATH": cycle_dir.join("implement_general.result.json"),
-        "IMPLEMENT_VISUAL_RESULT_PATH": cycle_dir.join("implement_visual.result.json"),
-        "IMPLEMENT_ADVANCED_RESULT_PATH": cycle_dir.join("implement_advanced.result.json"),
-        "VERIFY_RESULT_PATH": cycle_dir.join("verify.result.json"),
-        "JUDGE_RESULT_PATH": cycle_dir.join("judge.result.json"),
+        "CYCLE_FILE_PATH": cycle_dir.join("cycle.jsonc"),
+        "MANAGED_FAILURE_BACKLOG_PATH": cycle_dir.join("managed.failure_backlog.jsonc"),
+        "MANAGED_BACKLOG_COVERAGE_PATH": cycle_dir.join("managed.backlog_coverage.jsonc"),
+        "PLAN_EXECUTION_PATH": cycle_dir.join("plan.execution.jsonc"),
+        "IMPLEMENT_GENERAL_RESULT_PATH": cycle_dir.join("implement_general.result.jsonc"),
+        "IMPLEMENT_VISUAL_RESULT_PATH": cycle_dir.join("implement_visual.result.jsonc"),
+        "IMPLEMENT_ADVANCED_RESULT_PATH": cycle_dir.join("implement_advanced.result.jsonc"),
+        "VERIFY_RESULT_PATH": cycle_dir.join("verify.result.jsonc"),
         "HANDOFF_MARKDOWN_PATH": cycle_dir.join("handoff.md"),
         "STAGE_FILE_PATH": stage_file,
-        "DIRECTION_STAGE_FILE_PATH": cycle_dir.join("stage.direction.json"),
-        "DIRECTION_LIFECYCLE_SCAN_PATH": cycle_dir.join("direction.lifecycle_scan.json"),
-        "CHAT_MAP_PATH": cycle_dir.join("chat.map.json"),
+        "DIRECTION_STAGE_FILE_PATH": cycle_dir.join("stage.direction.jsonc"),
+        "DIRECTION_LIFECYCLE_SCAN_PATH": cycle_dir.join("direction.lifecycle_scan.jsonc"),
+        "CHAT_MAP_PATH": cycle_dir.join("chat.map.jsonc"),
         "ENV_CONTRACT_PATH": evolution_workspace_dir(workspace_root)
-            .map(|p| p.join("env.contract.json"))
-            .unwrap_or_else(|_| Path::new("env.contract.json").to_path_buf()),
+            .map(|p| p.join("env.contract.jsonc"))
+            .unwrap_or_else(|_| Path::new("env.contract.jsonc").to_path_buf()),
         "ENV_VALUES_LOCAL_PATH": evolution_workspace_dir(workspace_root)
-            .map(|p| p.join("env.values.local.json"))
-            .unwrap_or_else(|_| Path::new("env.values.local.json").to_path_buf()),
+            .map(|p| p.join("env.values.local.jsonc"))
+            .unwrap_or_else(|_| Path::new("env.values.local.jsonc").to_path_buf()),
         "WORKSPACE_ROOT": "由程序注入，禁止自行推断",
     })
 }
@@ -273,7 +271,6 @@ fn push_required_key(keys: &mut Vec<&'static str>, key: &'static str) {
 
 fn required_context_keys(
     stage: &str,
-    phase: StagePromptPhase,
     verify_iteration: u32,
     backlog_contract_version: u32,
 ) -> Vec<&'static str> {
@@ -290,9 +287,7 @@ fn required_context_keys(
         "STAGE_FILE_PATH",
     ];
 
-    if matches!(phase, StagePromptPhase::Deliverable) {
-        push_required_key(&mut keys, "HANDOFF_MARKDOWN_PATH");
-    }
+    push_required_key(&mut keys, "HANDOFF_MARKDOWN_PATH");
 
     match stage {
         "direction" => {
@@ -319,7 +314,6 @@ fn required_context_keys(
             push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
             push_required_key(&mut keys, "IMPLEMENT_ADVANCED_RESULT_PATH");
             push_required_key(&mut keys, "VERIFY_RESULT_PATH");
-            push_required_key(&mut keys, "JUDGE_RESULT_PATH");
         }
         "verify" => {
             push_required_key(&mut keys, "DIRECTION_STAGE_FILE_PATH");
@@ -329,16 +323,8 @@ fn required_context_keys(
             push_required_key(&mut keys, "IMPLEMENT_ADVANCED_RESULT_PATH");
             push_required_key(&mut keys, "VERIFY_RESULT_PATH");
         }
-        "judge" => {
-            push_required_key(&mut keys, "PLAN_EXECUTION_PATH");
-            push_required_key(&mut keys, "IMPLEMENT_GENERAL_RESULT_PATH");
-            push_required_key(&mut keys, "IMPLEMENT_VISUAL_RESULT_PATH");
-            push_required_key(&mut keys, "IMPLEMENT_ADVANCED_RESULT_PATH");
-            push_required_key(&mut keys, "VERIFY_RESULT_PATH");
-            push_required_key(&mut keys, "JUDGE_RESULT_PATH");
-        }
         "auto_commit" => {
-            push_required_key(&mut keys, "JUDGE_RESULT_PATH");
+            push_required_key(&mut keys, "VERIFY_RESULT_PATH");
         }
         _ => {}
     }
@@ -349,12 +335,11 @@ fn required_context_keys(
     ) && verify_iteration > 0
     {
         push_required_key(&mut keys, "VERIFY_RESULT_PATH");
-        push_required_key(&mut keys, "JUDGE_RESULT_PATH");
     }
 
     if matches!(
         stage,
-        "implement_general" | "implement_visual" | "implement_advanced" | "verify" | "judge"
+        "implement_general" | "implement_visual" | "implement_advanced" | "verify"
     ) && verify_iteration > 0
         && backlog_contract_version >= 2
     {
@@ -419,7 +404,7 @@ impl EvolutionManager {
         for stage in STAGES {
             stage_files.insert(
                 stage.to_string(),
-                serde_json::Value::String(format!("stage.{}.json", stage)),
+                serde_json::Value::String(format!("stage.{}.jsonc", stage)),
             );
         }
 
@@ -451,7 +436,7 @@ impl EvolutionManager {
                 "criteria": entry.llm_defined_acceptance_criteria.clone()
             },
             "stage_files": stage_files,
-            "chat_map_file": "chat.map.json",
+            "chat_map_file": "chat.map.jsonc",
             "handoff_file": "handoff.md",
             "terminal_reason_code": entry.terminal_reason_code.clone(),
             "terminal_error_message": entry.terminal_error_message.clone(),
@@ -463,7 +448,7 @@ impl EvolutionManager {
             "updated_at": Utc::now().to_rfc3339(),
         });
 
-        write_json(&cycle_dir.join("cycle.json"), &payload)
+        write_json(&cycle_dir.join("cycle.jsonc"), &payload)
     }
 
     pub(super) async fn persist_stage_file(
@@ -472,7 +457,7 @@ impl EvolutionManager {
         stage: &str,
         status: &str,
         error_message: Option<&str>,
-        judge_result: Option<bool>,
+        verify_result: Option<bool>,
     ) -> Result<(), String> {
         let state = self.state.lock().await;
         let Some(entry) = state.workspaces.get(key) else {
@@ -534,10 +519,8 @@ impl EvolutionManager {
             }
         });
 
-        let stage_file_path = cycle_dir.join(format!("stage.{}.json", stage));
-        let existing = std::fs::read_to_string(&stage_file_path)
-            .ok()
-            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+        let stage_file_path = cycle_dir.join(format!("stage.{}.jsonc", stage));
+        let existing = read_json(&stage_file_path).ok();
         let now = Utc::now().to_rfc3339();
         let payload = merge_stage_payload(
             existing,
@@ -545,7 +528,7 @@ impl EvolutionManager {
             stage,
             status,
             error_message,
-            judge_result,
+            verify_result,
             latest_ai_tool,
             stage_duration_ms,
             outputs,
@@ -593,10 +576,10 @@ impl EvolutionManager {
             "updated_at": Utc::now().to_rfc3339(),
         });
 
-        write_json(&cycle_dir.join("chat.map.json"), &payload)
+        write_json(&cycle_dir.join("chat.map.jsonc"), &payload)
     }
 
-    pub(super) async fn build_stage_prompt_for_phase(
+    pub(super) async fn build_stage_prompt(
         &self,
         key: &str,
         project: &str,
@@ -604,11 +587,10 @@ impl EvolutionManager {
         cycle_id: &str,
         stage: &str,
         round: u32,
-        phase: StagePromptPhase,
         already_injected_keys: &HashSet<String>,
     ) -> Result<(String, HashSet<String>), String> {
-        let prompt_body = prompt_template_for_stage_phase(stage, phase)
-            .ok_or_else(|| format!("unknown stage prompt template: {} ({:?})", stage, phase))?;
+        let prompt_body = prompt_template_for_stage(stage)
+            .ok_or_else(|| format!("unknown stage prompt template: {}", stage))?;
 
         let (verify_iteration, verify_iteration_limit, backlog_contract_version, workspace_root) = {
             let state = self.state.lock().await;
@@ -624,7 +606,7 @@ impl EvolutionManager {
         };
 
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-        let stage_file = cycle_dir.join(format!("stage.{}.json", stage));
+        let stage_file = cycle_dir.join(format!("stage.{}.jsonc", stage));
         let context = build_prompt_context(
             project,
             workspace,
@@ -641,8 +623,7 @@ impl EvolutionManager {
         let context_map = context
             .as_object()
             .ok_or_else(|| "prompt context should be JSON object".to_string())?;
-        let required_keys =
-            required_context_keys(stage, phase, verify_iteration, backlog_contract_version);
+        let required_keys = required_context_keys(stage, verify_iteration, backlog_contract_version);
         let (markdown_context, injected_keys) =
             build_markdown_context_block(context_map, &required_keys, already_injected_keys);
 
@@ -657,7 +638,7 @@ impl EvolutionManager {
 mod tests {
     use super::{
         build_markdown_context_block, build_prompt_context, collect_session_ids,
-        merge_stage_payload, required_context_keys, StagePromptPhase, StageSession,
+        merge_stage_payload, required_context_keys, StageSession,
     };
     use std::collections::HashSet;
     use std::path::Path;
@@ -690,8 +671,8 @@ mod tests {
         let existing = serde_json::json!({
             "$schema_version": "1.0",
             "cycle_id": "cycle-a",
-            "stage": "judge",
-            "agent": "JudgeAgent",
+            "stage": "verify",
+            "agent": "VerifyAgent",
             "status": "done",
             "decision": {
                 "result": "fail",
@@ -701,12 +682,12 @@ mod tests {
                 "type": "stop_cycle",
                 "target": null
             },
-            "outputs": [{"type": "file", "path": "judge.result.json"}]
+            "outputs": [{"type": "file", "path": "verify.result.jsonc"}]
         });
         let merged = merge_stage_payload(
             Some(existing),
             "cycle-a",
-            "judge",
+            "verify",
             "done",
             None,
             Some(false),
@@ -765,7 +746,7 @@ mod tests {
     #[test]
     fn build_prompt_context_should_include_explicit_result_paths() {
         let cycle_dir = Path::new("/tmp/tidyflow-cycle");
-        let stage_file = cycle_dir.join("stage.implement_general.json");
+        let stage_file = cycle_dir.join("stage.implement_general.jsonc");
         let context = build_prompt_context(
             "demo",
             "default",
@@ -791,56 +772,49 @@ mod tests {
                 .get("MANAGED_FAILURE_BACKLOG_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/managed.failure_backlog.json"
+            "/tmp/tidyflow-cycle/managed.failure_backlog.jsonc"
         );
         assert_eq!(
             context
                 .get("MANAGED_BACKLOG_COVERAGE_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/managed.backlog_coverage.json"
+            "/tmp/tidyflow-cycle/managed.backlog_coverage.jsonc"
         );
         assert_eq!(
             context
                 .get("PLAN_EXECUTION_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/plan.execution.json"
+            "/tmp/tidyflow-cycle/plan.execution.jsonc"
         );
         assert_eq!(
             context
                 .get("IMPLEMENT_GENERAL_RESULT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_general.result.json"
+            "/tmp/tidyflow-cycle/implement_general.result.jsonc"
         );
         assert_eq!(
             context
                 .get("IMPLEMENT_VISUAL_RESULT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_visual.result.json"
+            "/tmp/tidyflow-cycle/implement_visual.result.jsonc"
         );
         assert_eq!(
             context
                 .get("IMPLEMENT_ADVANCED_RESULT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/implement_advanced.result.json"
+            "/tmp/tidyflow-cycle/implement_advanced.result.jsonc"
         );
         assert_eq!(
             context
                 .get("VERIFY_RESULT_PATH")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/verify.result.json"
-        );
-        assert_eq!(
-            context
-                .get("JUDGE_RESULT_PATH")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default(),
-            "/tmp/tidyflow-cycle/judge.result.json"
+            "/tmp/tidyflow-cycle/verify.result.jsonc"
         );
         assert_eq!(
             context
@@ -853,7 +827,7 @@ mod tests {
 
     #[test]
     fn required_context_keys_should_include_managed_files_when_reimplementation_enabled() {
-        let keys = required_context_keys("implement_advanced", StagePromptPhase::Deliverable, 1, 2);
+        let keys = required_context_keys("implement_advanced", 1, 2);
         assert!(keys.contains(&"MANAGED_FAILURE_BACKLOG_PATH"));
         assert!(keys.contains(&"MANAGED_BACKLOG_COVERAGE_PATH"));
     }

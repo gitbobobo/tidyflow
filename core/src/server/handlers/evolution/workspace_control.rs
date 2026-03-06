@@ -12,7 +12,7 @@ use crate::server::protocol::{
 };
 
 use super::stage::{active_agents, build_agents};
-use super::utils::{evolution_workspace_dir, workspace_key};
+use super::utils::{evolution_workspace_dir, read_json, workspace_key};
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
     BACKLOG_CONTRACT_VERSION_V2, DEFAULT_VERIFY_LIMIT, STAGES,
@@ -249,7 +249,6 @@ impl EvolutionManager {
                     created_at: now_rfc3339,
                     stop_requested: false,
                     llm_defined_acceptance_criteria: Vec::new(),
-                    last_judge_result: None,
                     terminal_reason_code: None,
                     terminal_error_message: None,
                     rate_limit_resume_at: None,
@@ -561,16 +560,11 @@ impl EvolutionManager {
                 continue;
             }
 
-            let cycle_file = path.join("cycle.json");
+            let cycle_file = path.join("cycle.jsonc");
             if !cycle_file.exists() {
                 continue;
             }
-
-            let content = match std::fs::read_to_string(&cycle_file) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let json: serde_json::Value = match serde_json::from_str(&content) {
+            let json = match read_json(&cycle_file) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -595,15 +589,11 @@ impl EvolutionManager {
             let mut stages: Vec<EvolutionCycleStageHistoryEntry> = Vec::new();
             let mut executions: Vec<EvolutionSessionExecutionEntry> = Vec::new();
             for stage_name in STAGES.iter() {
-                let stage_file = path.join(format!("stage.{}.json", stage_name));
+                let stage_file = path.join(format!("stage.{}.jsonc", stage_name));
                 if !stage_file.exists() {
                     continue;
                 }
-                let stage_content = match std::fs::read_to_string(&stage_file) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                let stage_json: serde_json::Value = match serde_json::from_str(&stage_content) {
+                let stage_json = match read_json(&stage_file) {
                     Ok(v) => v,
                     Err(_) => continue,
                 };

@@ -1455,19 +1455,6 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         rate_limit_error_message: Option<String>,
     },
-    #[serde(rename = "evo_judge_result")]
-    EvoJudgeResult {
-        event_id: String,
-        event_seq: u64,
-        project: String,
-        workspace: String,
-        cycle_id: String,
-        ts: String,
-        source: String,
-        result: String,
-        reason: String,
-        next_action: String,
-    },
     #[serde(rename = "evo_snapshot")]
     EvoSnapshot {
         scheduler: EvolutionSchedulerInfo,

@@ -583,17 +583,17 @@ impl EvolutionManager {
             drop(permit);
 
             match stage_result {
-                Ok(judge_pass) => {
+                Ok(verify_pass) => {
                     info!(
-                        "evolution worker run_stage done: key={}, cycle_id={}, stage={}, judge_pass={}",
-                        key, cycle_id, stage, judge_pass
+                        "evolution worker run_stage done: key={}, cycle_id={}, stage={}, verify_pass={}",
+                        key, cycle_id, stage, verify_pass
                     );
                     info!(
-                        "evolution worker after_stage_success begin: key={}, cycle_id={}, stage={}, judge_pass={}",
-                        key, cycle_id, stage, judge_pass
+                        "evolution worker after_stage_success begin: key={}, cycle_id={}, stage={}, verify_pass={}",
+                        key, cycle_id, stage, verify_pass
                     );
                     let auto_next_cycle = self
-                        .after_stage_success(&key, &stage, judge_pass, &ctx)
+                        .after_stage_success(&key, &stage, verify_pass, &ctx)
                         .await;
                     let post_transition_snapshot = {
                         let state = self.state.lock().await;

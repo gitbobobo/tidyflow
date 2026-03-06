@@ -15,7 +15,7 @@ impl EvolutionManager {
         _stage: Option<&str>,
         _ctx: &HandlerContext,
     ) -> Result<bool, String> {
-        // 已移除 workspace.blockers.json 能力：不再生成阻塞文件，也不阻塞进化流程。
+        // 已移除 workspace.blockers.jsonc 能力：不再生成阻塞文件，也不阻塞进化流程。
         Ok(false)
     }
 
@@ -49,7 +49,7 @@ impl EvolutionManager {
         _stage: &str,
         _request: &AiQuestionRequest,
     ) -> Result<(), String> {
-        // 已移除 workspace.blockers.json 能力：忽略 AI 问题触发的人类 blocker 落盘。
+        // 已移除 workspace.blockers.jsonc 能力：忽略 AI 问题触发的人类 blocker 落盘。
         Ok(())
     }
 

@@ -126,9 +126,6 @@ impl EvolutionManager {
             | ServerMessage::EvoCycleUpdated {
                 project, workspace, ..
             }
-            | ServerMessage::EvoJudgeResult {
-                project, workspace, ..
-            }
             | ServerMessage::EvoBlockingRequired {
                 project, workspace, ..
             }

@@ -30,7 +30,6 @@ pub(super) struct WorkspaceRunState {
     pub(super) created_at: String,
     pub(super) stop_requested: bool,
     pub(super) llm_defined_acceptance_criteria: Vec<serde_json::Value>,
-    pub(super) last_judge_result: Option<bool>,
     pub(super) terminal_reason_code: Option<String>,
     pub(super) terminal_error_message: Option<String>,
     pub(super) rate_limit_resume_at: Option<String>,
