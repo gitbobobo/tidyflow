@@ -67,6 +67,7 @@ struct ChatInputView: View {
     @State private var iOSInputPanelSheet: IOSInputPanelSheet?
     @State private var commandSearchText: String = ""
     @State private var referenceSearchText: String = ""
+    @State private var showCameraPicker: Bool = false
     #endif
     #if os(iOS) && canImport(PhotosUI)
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -122,6 +123,12 @@ struct ChatInputView: View {
         .onChange(of: cursorRect) { _, newRect in
             cursorRectInInput = newRect
         }
+        #if os(macOS)
+        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+            handleDroppedImageProviders(providers)
+            return true
+        }
+        #endif
     }
 
     #if os(iOS)
@@ -171,6 +178,18 @@ struct ChatInputView: View {
                 iOSReferencePickerSheet
             }
         }
+        .sheet(isPresented: $showCameraPicker) {
+            CameraPickerView { image in
+                guard let data = image.jpegData(compressionQuality: 0.85) else { return }
+                let suffix = UUID().uuidString.prefix(8)
+                let filename = "camera_\(suffix).jpg"
+                imageAttachments.append(ImageAttachment(
+                    filename: filename,
+                    data: data,
+                    mime: "image/jpeg"
+                ))
+            }
+        }
     }
 
     @ViewBuilder
@@ -206,6 +225,8 @@ struct ChatInputView: View {
         ]
         return LazyVGrid(columns: columns, spacing: 8) {
             iOSImagePanelButton
+
+            iOSCameraPanelButton
 
             Button(action: {
                 commandSearchText = ""
@@ -262,6 +283,22 @@ struct ChatInputView: View {
         .buttonStyle(.plain)
         #endif
     }
+
+    @ViewBuilder
+    private var iOSCameraPanelButton: some View {
+        #if os(iOS)
+        Button(action: { showCameraPicker = true }) {
+            iOSInputPanelTile(
+                title: "拍照",
+                systemImage: "camera",
+                tint: .purple
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+        #endif
+    }
+
 
     private func iOSInputPanelTile(
         title: String,
@@ -1043,6 +1080,51 @@ struct ChatInputView: View {
         return supported.contains(ext)
     }
 
+    /// 处理从外部拖入的图像文件或图像数据提供者
+    private func handleDroppedImageProviders(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier("public.file-url") {
+                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
+                    let url: URL?
+                    if let data = item as? Data {
+                        url = URL(dataRepresentation: data, relativeTo: nil)
+                    } else if let u = item as? URL {
+                        url = u
+                    } else {
+                        return
+                    }
+                    guard let url, let data = try? Data(contentsOf: url) else { return }
+                    let fileInfo = detectImageFileInfo(data: data)
+                    guard fileInfo.mime.hasPrefix("image/") else { return }
+                    let attachment = ImageAttachment(
+                        filename: url.lastPathComponent,
+                        data: data,
+                        mime: fileInfo.mime
+                    )
+                    DispatchQueue.main.async {
+                        guard imageAttachments.count < maxImageAttachmentCount else { return }
+                        imageAttachments.append(attachment)
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier("public.image") {
+                provider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
+                    guard let data, let jpegData = encodeClipboardImageAsJPEG(data) else { return }
+                    let suffix = UUID().uuidString.prefix(8)
+                    let filename = "dropped_\(suffix).jpg"
+                    DispatchQueue.main.async {
+                        guard imageAttachments.count < maxImageAttachmentCount else { return }
+                        imageAttachments.append(ImageAttachment(
+                            filename: filename,
+                            data: jpegData,
+                            mime: "image/jpeg"
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+
     private func encodeClipboardImageAsJPEG(_ sourceData: Data) -> Data? {
         if let bitmap = NSBitmapImageRep(data: sourceData),
            let encoded = bitmap.representation(
@@ -1247,3 +1329,44 @@ struct ChatInputView: View {
     .padding()
     .frame(width: 500)
 }
+
+// MARK: - iOS 相机选择器
+
+#if os(iOS)
+struct CameraPickerView: UIViewControllerRepresentable {
+    var onImageCaptured: (UIImage) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onImageCaptured: onImageCaptured) }
+
+    class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onImageCaptured: (UIImage) -> Void
+
+        init(onImageCaptured: @escaping (UIImage) -> Void) {
+            self.onImageCaptured = onImageCaptured
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            let image = (info[.editedImage] ?? info[.originalImage]) as? UIImage
+            picker.dismiss(animated: true)
+            if let image { onImageCaptured(image) }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true)
+        }
+    }
+}
+#endif

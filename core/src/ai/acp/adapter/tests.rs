@@ -1537,3 +1537,186 @@ fn kimi_normalize_mode_name_should_not_produce_empty_for_standard_modes() {
     // 空字符串作为退化输入，结果应为空
     assert!(AcpAgent::normalize_mode_name("").is_empty());
 }
+
+// 多模态格式归一化：JPEG 输入应在 64KB 限制内正常编码
+#[test]
+fn compose_prompt_parts_should_handle_jpeg_source_image() {
+    let mut jpeg = Vec::new();
+    let img = image::RgbImage::from_fn(4, 4, |x, y| {
+        image::Rgb([(x * 60) as u8, (y * 60) as u8, 128_u8])
+    });
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+        .expect("encode jpeg");
+
+    let parts = AcpAgent::compose_prompt_parts(
+        "/tmp/workspace",
+        "JPEG 格式图像测试",
+        None,
+        Some(vec![AiImagePart {
+            filename: "photo.jpg".to_string(),
+            mime: "image/jpeg".to_string(),
+            data: jpeg,
+        }]),
+        None,
+        AcpContentEncodingMode::New,
+        true,
+        false,
+        false,
+        false,
+    );
+
+    let image = parts
+        .iter()
+        .find(|p| p.get("type").and_then(|v| v.as_str()) == Some("image"))
+        .expect("JPEG 输入应产生 image 部分");
+    let data_str = image
+        .get("data")
+        .and_then(|v| v.as_str())
+        .expect("New 模式应有 data 字段");
+    assert!(!data_str.is_empty(), "base64 data 不能为空");
+    assert!(
+        data_str.len() <= 64 * 1024,
+        "base64 编码长度不应超过 64KB 限制"
+    );
+}
+
+// 多模态格式归一化：WebP 来源声明应产生 image 部分或降级文本
+#[test]
+fn compose_prompt_parts_should_handle_webp_declared_mime() {
+    // 使用实际 PNG 数据但声明 mime 为 webp，测试适配层对 mime 字段的传递与处理
+    let mut png = Vec::new();
+    let img = image::RgbaImage::from_fn(4, 4, |x, y| {
+        image::Rgba([(x * 60) as u8, (y * 60) as u8, 128_u8, 255_u8])
+    });
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("encode png");
+
+    let parts = AcpAgent::compose_prompt_parts(
+        "/tmp/workspace",
+        "WebP MIME 声明测试",
+        None,
+        Some(vec![AiImagePart {
+            filename: "image.webp".to_string(),
+            mime: "image/webp".to_string(),
+            data: png,
+        }]),
+        None,
+        AcpContentEncodingMode::New,
+        true,
+        false,
+        false,
+        false,
+    );
+
+    // 适配层应产生 image 部分（压缩后可正常编码）或降级为 text 通知
+    let has_image = parts
+        .iter()
+        .any(|p| p.get("type").and_then(|v| v.as_str()) == Some("image"));
+    let has_fallback = parts.iter().any(|p| {
+        p.get("type").and_then(|v| v.as_str()) == Some("text")
+            && p.get("text")
+                .and_then(|v| v.as_str())
+                .map(|t| t.contains("图片附件"))
+                .unwrap_or(false)
+    });
+    assert!(
+        has_image || has_fallback,
+        "WebP 声明应产生 image 部分或降级文本，实际 parts: {:?}",
+        parts
+    );
+}
+
+// 多模态格式归一化：批量 JPEG + PNG 混合输入均应成功编码
+#[test]
+fn compose_prompt_parts_should_normalize_mixed_jpeg_png_batch() {
+    let mut jpeg = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(2, 2, |_, _| {
+        image::Rgb([100_u8, 150_u8, 200_u8])
+    }))
+    .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+    .expect("encode jpeg");
+
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(2, 2, |_, _| {
+        image::Rgba([50_u8, 100_u8, 150_u8, 255_u8])
+    }))
+    .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+    .expect("encode png");
+
+    let parts = AcpAgent::compose_prompt_parts(
+        "/tmp/workspace",
+        "批量 JPEG+PNG 格式归一化测试",
+        None,
+        Some(vec![
+            AiImagePart {
+                filename: "a.jpg".to_string(),
+                mime: "image/jpeg".to_string(),
+                data: jpeg,
+            },
+            AiImagePart {
+                filename: "b.png".to_string(),
+                mime: "image/png".to_string(),
+                data: png,
+            },
+        ]),
+        None,
+        AcpContentEncodingMode::New,
+        true,
+        false,
+        false,
+        false,
+    );
+
+    let image_count = parts
+        .iter()
+        .filter(|p| p.get("type").and_then(|v| v.as_str()) == Some("image"))
+        .count();
+    assert_eq!(image_count, 2, "JPEG 和 PNG 均应编码为独立 image 部分");
+}
+
+// 多模态格式归一化：服务商不支持图像时应回退且不丢失文本
+#[test]
+fn compose_prompt_parts_should_fallback_gracefully_when_vendor_disallows_image() {
+    let mut jpeg = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(2, 2, |_, _| {
+        image::Rgb([80_u8, 80_u8, 80_u8])
+    }))
+    .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+    .expect("encode jpeg");
+
+    let parts = AcpAgent::compose_prompt_parts(
+        "/tmp/workspace",
+        "服务商不支持图像",
+        None,
+        Some(vec![AiImagePart {
+            filename: "screenshot.jpg".to_string(),
+            mime: "image/jpeg".to_string(),
+            data: jpeg,
+        }]),
+        None,
+        AcpContentEncodingMode::New,
+        false, // supports_image = false
+        false,
+        false,
+        false,
+    );
+
+    // 不应有 image 部分
+    assert!(
+        !parts
+            .iter()
+            .any(|p| p.get("type").and_then(|v| v.as_str()) == Some("image")),
+        "服务商不支持图像时不应产生 image 部分"
+    );
+    // 文本部分应包含原始问题
+    let text = parts
+        .iter()
+        .find(|p| p.get("type").and_then(|v| v.as_str()) == Some("text"))
+        .and_then(|p| p.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(text.contains("服务商不支持图像"), "原始文本不应丢失");
+    assert!(text.contains("图片附件："), "应在降级文本中说明图片附件");
+}

@@ -548,6 +548,8 @@ private struct MessageBubble: View, Equatable {
     let onQuestionReplyAsMessage: (String) -> Void
     let onOpenLinkedSession: ((String) -> Void)?
 
+    @State private var fullscreenImageData: Data?
+
     private var isUser: Bool { message.role == .user }
 
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
@@ -597,6 +599,12 @@ private struct MessageBubble: View, Equatable {
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .padding(.horizontal, 8)
         .padding(.trailing, isUser ? 0 : 12)
+        .sheet(item: Binding(
+            get: { fullscreenImageData.map { FullscreenImageItem(data: $0) } },
+            set: { if $0 == nil { fullscreenImageData = nil } }
+        )) { item in
+            FullscreenImageSheet(data: item.data)
+        }
     }
 
     @ViewBuilder
@@ -934,6 +942,10 @@ private struct MessageBubble: View, Equatable {
                 imagePreview(data: imageData)
                     .frame(maxWidth: 320, maxHeight: 240)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .onTapGesture {
+                        fullscreenImageData = imageData
+                    }
+                    .help("点击查看大图")
             }
 
             HStack(spacing: 6) {
@@ -997,6 +1009,56 @@ private struct MessageBubble: View, Equatable {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
+        }
+        #endif
+    }
+}
+
+// MARK: - 图片全屏查看支持
+
+private struct FullscreenImageItem: Identifiable {
+    let id = UUID()
+    let data: Data
+}
+
+private struct FullscreenImageSheet: View {
+    let data: Data
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        #if os(macOS)
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button("关闭") { dismiss() }
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .padding()
+            }
+            if let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding()
+            }
+        }
+        .frame(minWidth: 400, minHeight: 300)
+        #else
+        NavigationView {
+            Group {
+                if let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding()
+                }
+            }
+            .navigationTitle("图片查看")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("关闭") { dismiss() }
+                }
+            }
         }
         #endif
     }
