@@ -1807,6 +1807,23 @@ pub struct EvolutionSchedulerInfo {
     pub queued_count: u32,
 }
 
+/// Evolution 结构化交接信息
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvolutionHandoffInfo {
+    #[serde(default)]
+    pub completed: Vec<String>,
+    #[serde(default)]
+    pub risks: Vec<String>,
+    #[serde(default)]
+    pub next: Vec<String>,
+}
+
+impl EvolutionHandoffInfo {
+    pub fn is_empty(&self) -> bool {
+        self.completed.is_empty() && self.risks.is_empty() && self.next.is_empty()
+    }
+}
+
 /// Evolution 工作空间快照项
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionWorkspaceItem {
@@ -1825,6 +1842,8 @@ pub struct EvolutionWorkspaceItem {
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
     pub active_agents: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<EvolutionHandoffInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_reason_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1881,6 +1900,8 @@ pub struct EvolutionCycleHistoryItem {
     pub terminal_error_message: Option<String>,
     #[serde(default)]
     pub executions: Vec<EvolutionSessionExecutionEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<EvolutionHandoffInfo>,
     pub stages: Vec<EvolutionCycleStageHistoryEntry>,
 }
 

@@ -7,11 +7,11 @@ use uuid::Uuid;
 use crate::server::context::HandlerContext;
 use crate::server::handlers::ai::resolve_directory;
 use crate::server::protocol::{
-    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionSessionExecutionEntry,
-    EvolutionWorkspaceItem, ServerMessage,
+    EvolutionCycleHistoryItem, EvolutionCycleStageHistoryEntry, EvolutionHandoffInfo,
+    EvolutionSessionExecutionEntry, EvolutionWorkspaceItem, ServerMessage,
 };
 
-use super::stage::{active_agents, build_agents};
+use super::stage::{active_agents, agent_name, build_agents};
 use super::utils::{evolution_workspace_dir, read_json, workspace_key};
 use super::{
     EvolutionManager, SnapshotResult, StartWorkspaceReq, WorkspaceRunState,
@@ -50,6 +50,163 @@ fn resolve_cycle_history_title(
     cycle_file_title: Option<String>,
 ) -> Option<String> {
     direction_stage_title.or(cycle_file_title)
+}
+
+fn parse_cycle_handoff(cycle_json: &serde_json::Value) -> Option<EvolutionHandoffInfo> {
+    let handoff = cycle_json.get("handoff")?.as_object()?;
+    let parse_section = |key: &str| -> Vec<String> {
+        handoff
+            .get(key)
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(|item| item.trim().to_string())
+                    .filter(|item| !item.is_empty())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default()
+    };
+
+    let parsed = EvolutionHandoffInfo {
+        completed: parse_section("completed"),
+        risks: parse_section("risks"),
+        next: parse_section("next"),
+    };
+    (!parsed.is_empty()).then_some(parsed)
+}
+
+fn parse_cycle_session_executions(
+    cycle_json: &serde_json::Value,
+) -> Vec<EvolutionSessionExecutionEntry> {
+    cycle_json
+        .get("executions")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_object())
+        .filter_map(|item| {
+            let session_id = non_empty_string(item.get("session_id"))?;
+            let stage = non_empty_string(item.get("stage")).unwrap_or_else(|| "unknown".to_string());
+            let status = non_empty_string(item.get("status")).unwrap_or_else(|| "unknown".to_string());
+            if !is_terminal_execution_status(&status) {
+                return None;
+            }
+
+            Some(EvolutionSessionExecutionEntry {
+                stage,
+                agent: non_empty_string(item.get("agent")).unwrap_or_default(),
+                ai_tool: non_empty_string(item.get("ai_tool")).unwrap_or_default(),
+                session_id,
+                status,
+                started_at: non_empty_string(item.get("started_at")).unwrap_or_default(),
+                completed_at: non_empty_string(item.get("completed_at")),
+                duration_ms: item.get("duration_ms").and_then(|value| value.as_u64()),
+                tool_call_count: item
+                    .get("tool_call_count")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as u32)
+                    .unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+fn is_terminal_stage_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "done" | "failed" | "blocked" | "skipped" | "stopped" | "interrupted" | "completed"
+    )
+}
+
+fn parse_cycle_stage_history_entries(
+    cycle_json: &serde_json::Value,
+) -> Vec<EvolutionCycleStageHistoryEntry> {
+    let Some(stage_runtime) = cycle_json.get("stage_runtime").and_then(|value| value.as_object())
+    else {
+        return Vec::new();
+    };
+
+    let mut stages = Vec::new();
+    for stage in STAGES {
+        let Some(runtime) = stage_runtime.get(stage).and_then(|value| value.as_object()) else {
+            continue;
+        };
+        let status = non_empty_string(runtime.get("status")).unwrap_or_else(|| "unknown".to_string());
+        if !is_terminal_stage_status(&status) {
+            continue;
+        }
+        let ai_tool = non_empty_string(runtime.get("ai_tool")).unwrap_or_default();
+        let duration_ms = runtime
+            .get("timing")
+            .and_then(|value| value.as_object())
+            .and_then(|timing| timing.get("duration_ms"))
+            .and_then(|value| value.as_u64());
+        stages.push(EvolutionCycleStageHistoryEntry {
+            stage: (*stage).to_string(),
+            agent: agent_name(stage).to_string(),
+            ai_tool,
+            status,
+            duration_ms,
+        });
+    }
+    stages
+}
+
+fn extract_terminal_error_from_stage_runtime(cycle_json: &serde_json::Value) -> Option<String> {
+    let stage_runtime = cycle_json.get("stage_runtime")?.as_object()?;
+    for stage in STAGES {
+        let message = stage_runtime
+            .get(stage)
+            .and_then(|value| value.get("error"))
+            .and_then(|value| value.get("message"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if message.is_some() {
+            return message;
+        }
+    }
+    None
+}
+
+fn build_cycle_history_item(
+    cycle_id: String,
+    cycle_json: &serde_json::Value,
+) -> Option<EvolutionCycleHistoryItem> {
+    let status = cycle_json["status"].as_str().unwrap_or("unknown").to_string();
+    let global_loop_round = cycle_json["global_loop_round"].as_u64().unwrap_or(0) as u32;
+    let created_at = cycle_json["created_at"].as_str().unwrap_or("").to_string();
+    let updated_at = cycle_json["updated_at"].as_str().unwrap_or("").to_string();
+    let terminal_reason_code = cycle_json["terminal_reason_code"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let terminal_error_message = cycle_json["terminal_error_message"]
+        .as_str()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| extract_terminal_error_from_stage_runtime(cycle_json));
+    let executions = parse_cycle_session_executions(cycle_json);
+    let stages = parse_cycle_stage_history_entries(cycle_json);
+    if stages.is_empty() && executions.is_empty() {
+        return None;
+    }
+
+    Some(EvolutionCycleHistoryItem {
+        cycle_id,
+        title: extract_cycle_title_from_cycle_file(cycle_json),
+        status,
+        global_loop_round,
+        created_at,
+        updated_at,
+        terminal_reason_code,
+        terminal_error_message,
+        executions,
+        handoff: parse_cycle_handoff(cycle_json),
+        stages,
+    })
 }
 
 fn parse_stage_session_executions(
@@ -240,6 +397,10 @@ impl EvolutionManager {
                     status: "queued".to_string(),
                     cycle_id: cycle_id.clone(),
                     cycle_title: None,
+                    cycle_handoff: EvolutionHandoffInfo::default(),
+                    selected_direction_type: None,
+                    direction_candidate_scores: Vec::new(),
+                    direction_final_reason: None,
                     current_stage: "direction".to_string(),
                     global_loop_round: round,
                     loop_round_limit: req.loop_round_limit.max(1),
@@ -496,6 +657,7 @@ impl EvolutionManager {
                 agents,
                 executions: w.session_executions.clone(),
                 active_agents: active_agents(&w.stage_statuses),
+                handoff: (!w.cycle_handoff.is_empty()).then_some(w.cycle_handoff.clone()),
                 terminal_reason_code: w.terminal_reason_code.clone(),
                 terminal_error_message: w.terminal_error_message.clone(),
                 rate_limit_error_message: w.rate_limit_error_message.clone(),
@@ -569,71 +731,11 @@ impl EvolutionManager {
                 Err(_) => continue,
             };
 
-            let status = json["status"].as_str().unwrap_or("unknown").to_string();
-            let global_loop_round = json["global_loop_round"].as_u64().unwrap_or(0) as u32;
-            let created_at = json["created_at"].as_str().unwrap_or("").to_string();
-            let updated_at = json["updated_at"].as_str().unwrap_or("").to_string();
-            let cycle_file_title = extract_cycle_title_from_cycle_file(&json);
-            let mut direction_stage_title: Option<String> = None;
-            let terminal_reason_code = json["terminal_reason_code"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-            let mut fallback_terminal_error_message: Option<String> = None;
-            let terminal_error_message = json["terminal_error_message"]
-                .as_str()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
+            let Some(mut item) = build_cycle_history_item(cycle_id.clone(), &json) else {
+                continue;
+            };
 
-            // 读取各阶段文件
-            let mut stages: Vec<EvolutionCycleStageHistoryEntry> = Vec::new();
-            let mut executions: Vec<EvolutionSessionExecutionEntry> = Vec::new();
-            for stage_name in STAGES.iter() {
-                let stage_file = path.join(format!("stage.{}.jsonc", stage_name));
-                if !stage_file.exists() {
-                    continue;
-                }
-                let stage_json = match read_json(&stage_file) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if *stage_name == "direction" && direction_stage_title.is_none() {
-                    direction_stage_title = extract_cycle_title_from_direction_stage(&stage_json);
-                }
-
-                executions.extend(parse_stage_session_executions(stage_name, &stage_json));
-
-                let stage_status = stage_json["status"]
-                    .as_str()
-                    .unwrap_or("unknown")
-                    .to_string();
-                if fallback_terminal_error_message.is_none() {
-                    fallback_terminal_error_message = stage_json
-                        .get("error")
-                        .and_then(|v| v.get("message"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
-                }
-                // 只包含已完成的阶段
-                if stage_status != "done" {
-                    continue;
-                }
-
-                let agent = stage_json["agent"].as_str().unwrap_or("").to_string();
-                let ai_tool = stage_json["ai_tool"].as_str().unwrap_or("").to_string();
-                let duration_ms = stage_json["timing"]["duration_ms"].as_u64();
-
-                stages.push(EvolutionCycleStageHistoryEntry {
-                    stage: stage_name.to_string(),
-                    agent,
-                    ai_tool,
-                    status: stage_status,
-                    duration_ms,
-                });
-            }
-
-            executions.sort_by(|lhs, rhs| {
+            item.executions.sort_by(|lhs, rhs| {
                 let lhs_has_started = !lhs.started_at.is_empty();
                 let rhs_has_started = !rhs.started_at.is_empty();
                 match (lhs_has_started, rhs_has_started) {
@@ -651,24 +753,7 @@ impl EvolutionManager {
                 }
             });
 
-            // 只包含有已完成阶段或已结束会话的循环
-            if stages.is_empty() && executions.is_empty() {
-                continue;
-            }
-            let cycle_title = resolve_cycle_history_title(direction_stage_title, cycle_file_title);
-
-            cycles.push(EvolutionCycleHistoryItem {
-                cycle_id,
-                title: cycle_title,
-                status,
-                global_loop_round,
-                created_at,
-                updated_at,
-                terminal_reason_code,
-                terminal_error_message: terminal_error_message.or(fallback_terminal_error_message),
-                executions,
-                stages,
-            });
+            cycles.push(item);
         }
 
         // 按 updated_at 降序排列
@@ -684,8 +769,10 @@ impl EvolutionManager {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_cycle_title_from_cycle_file, extract_cycle_title_from_direction_stage,
-        initial_global_loop_round, parse_stage_session_executions, resolve_cycle_history_title,
+        build_cycle_history_item, extract_cycle_title_from_cycle_file,
+        extract_cycle_title_from_direction_stage, initial_global_loop_round,
+        parse_cycle_handoff, parse_cycle_session_executions, parse_cycle_stage_history_entries,
+        parse_stage_session_executions, resolve_cycle_history_title,
     };
 
     #[test]
@@ -811,5 +898,142 @@ mod tests {
     fn resolve_cycle_history_title_should_fallback_to_cycle_file_title() {
         let title = resolve_cycle_history_title(None, Some("cycle 文件标题".to_string()));
         assert_eq!(title.as_deref(), Some("cycle 文件标题"));
+    }
+
+    #[test]
+    fn parse_cycle_session_executions_should_ignore_non_terminal_entries() {
+        let cycle_json = serde_json::json!({
+            "executions": [
+                {
+                    "stage": "verify",
+                    "agent": "VerifyAgent",
+                    "ai_tool": "codex",
+                    "session_id": "sess-done",
+                    "status": "done",
+                    "started_at": "2026-03-01T00:00:00Z",
+                    "completed_at": "2026-03-01T00:00:05Z",
+                    "duration_ms": 5000,
+                    "tool_call_count": 2
+                },
+                {
+                    "stage": "plan",
+                    "session_id": "sess-running",
+                    "status": "running"
+                }
+            ]
+        });
+
+        let executions = parse_cycle_session_executions(&cycle_json);
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].session_id, "sess-done");
+    }
+
+    #[test]
+    fn parse_cycle_stage_history_entries_should_use_stage_runtime() {
+        let cycle_json = serde_json::json!({
+            "stage_runtime": {
+                "direction": {
+                    "status": "done",
+                    "ai_tool": "codex",
+                    "timing": {
+                        "duration_ms": 1200
+                    }
+                },
+                "plan": {
+                    "status": "running",
+                    "ai_tool": "codex",
+                    "timing": {
+                        "duration_ms": 800
+                    }
+                },
+                "verify": {
+                    "status": "failed",
+                    "ai_tool": "codex",
+                    "timing": {
+                        "duration_ms": 2400
+                    }
+                }
+            }
+        });
+
+        let stages = parse_cycle_stage_history_entries(&cycle_json);
+        assert_eq!(stages.len(), 2);
+        assert_eq!(stages[0].stage, "direction");
+        assert_eq!(stages[0].agent, "DirectionAgent");
+        assert_eq!(stages[1].stage, "verify");
+        assert_eq!(stages[1].status, "failed");
+    }
+
+    #[test]
+    fn parse_cycle_handoff_should_skip_empty_payload() {
+        let empty = serde_json::json!({
+            "handoff": {
+                "completed": [],
+                "risks": [],
+                "next": []
+            }
+        });
+        assert!(parse_cycle_handoff(&empty).is_none());
+
+        let filled = serde_json::json!({
+            "handoff": {
+                "completed": ["已完成"],
+                "risks": ["有风险"],
+                "next": ["继续验证"]
+            }
+        });
+        let handoff = parse_cycle_handoff(&filled).expect("handoff should exist");
+        assert_eq!(handoff.completed, vec!["已完成".to_string()]);
+    }
+
+    #[test]
+    fn build_cycle_history_item_should_restore_runtime_title_error_and_handoff() {
+        let cycle_json = serde_json::json!({
+            "title": "结构化历史标题",
+            "status": "failed_system",
+            "global_loop_round": 2,
+            "created_at": "2026-03-01T00:00:00Z",
+            "updated_at": "2026-03-01T00:10:00Z",
+            "stage_runtime": {
+                "verify": {
+                    "status": "failed",
+                    "ai_tool": "codex",
+                    "timing": {
+                        "duration_ms": 3210
+                    },
+                    "error": {
+                        "message": "verify.jsonc 缺少 adjudication.overall_result"
+                    }
+                }
+            },
+            "executions": [
+                {
+                    "stage": "verify",
+                    "agent": "VerifyAgent",
+                    "ai_tool": "codex",
+                    "session_id": "sess-1",
+                    "status": "failed",
+                    "started_at": "2026-03-01T00:00:00Z",
+                    "completed_at": "2026-03-01T00:00:04Z",
+                    "duration_ms": 4000
+                }
+            ],
+            "handoff": {
+                "completed": ["实现 A"],
+                "risks": ["风险 B"],
+                "next": ["下一步 C"]
+            }
+        });
+
+        let item =
+            build_cycle_history_item("cycle-1".to_string(), &cycle_json).expect("history item");
+        assert_eq!(item.title.as_deref(), Some("结构化历史标题"));
+        assert_eq!(
+            item.terminal_error_message.as_deref(),
+            Some("verify.jsonc 缺少 adjudication.overall_result")
+        );
+        assert_eq!(item.executions.len(), 1);
+        assert_eq!(item.stages.len(), 1);
+        assert_eq!(item.handoff.as_ref().map(|value| value.next.clone()), Some(vec!["下一步 C".to_string()]));
     }
 }

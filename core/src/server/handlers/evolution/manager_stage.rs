@@ -20,6 +20,7 @@ use crate::server::handlers::ai::{
 };
 use crate::server::protocol::{AIGitCommit, ServerMessage};
 
+use super::consts::{stage_artifact_file, MANAGED_BACKLOG_FILE};
 use super::profile::profile_for_stage;
 use super::utils::{cycle_dir_path, read_json, write_json, write_jsonc_text};
 use super::{EvolutionManager, MAX_STAGE_RUNTIME_SECS, STAGES};
@@ -30,8 +31,6 @@ const STAGE_STREAM_IDLE_TIMEOUT_SECS: u64 = 600;
 const STAGE_STREAM_IDLE_RECOVERY_MAX_ATTEMPTS: u32 = 2;
 const STAGE_STREAM_IDLE_RECOVERY_COOLDOWN_MS: u64 = 800;
 const STAGE_STREAM_IDLE_RECOVERY_MESSAGE: &str = "继续";
-const MANAGED_FAILURE_BACKLOG_FILE: &str = "managed.failure_backlog.jsonc";
-const MANAGED_BACKLOG_COVERAGE_FILE: &str = "managed.backlog_coverage.jsonc";
 const MAX_AI_SESSION_OP_TEXT_CHUNK_BYTES: usize = 120_000;
 
 const VALID_DIRECTION_TYPES: &[&str] = &[
@@ -252,17 +251,18 @@ struct ValidationReminderSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ManagedFailureBacklogFile {
+struct ManagedBacklogFile {
     #[serde(rename = "$schema_version", default = "default_schema_version")]
     schema_version: String,
     cycle_id: String,
     verify_iteration: u32,
-    items: Vec<ManagedFailureBacklogItem>,
+    items: Vec<ManagedBacklogItem>,
+    summary: ManagedBacklogSummary,
     updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ManagedFailureBacklogItem {
+struct ManagedBacklogItem {
     id: String,
     source_criteria_id: String,
     source_check_id: String,
@@ -272,38 +272,17 @@ struct ManagedFailureBacklogItem {
     requirement_ref: String,
     #[serde(default)]
     description: String,
-    created_at: String,
-    updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ManagedBacklogCoverageFile {
-    #[serde(rename = "$schema_version", default = "default_schema_version")]
-    schema_version: String,
-    cycle_id: String,
-    verify_iteration: u32,
-    items: Vec<ManagedBacklogCoverageItem>,
-    summary: ManagedBacklogCoverageSummary,
-    updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ManagedBacklogCoverageItem {
-    backlog_id: String,
-    source_criteria_id: String,
-    source_check_id: String,
-    work_item_id: String,
-    implementation_agent: String,
     status: String,
     #[serde(default)]
     evidence: serde_json::Value,
     #[serde(default)]
     notes: String,
+    created_at: String,
     updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ManagedBacklogCoverageSummary {
+struct ManagedBacklogSummary {
     total: u64,
     done: u64,
     blocked: u64,
@@ -325,6 +304,39 @@ struct BacklogResolutionUpdate {
 
 fn default_schema_version() -> String {
     "1.0".to_string()
+}
+
+fn parse_handoff_info(
+    value: &serde_json::Value,
+) -> Result<crate::server::protocol::EvolutionHandoffInfo, String> {
+    let Some(handoff) = value.get("handoff").and_then(|v| v.as_object()) else {
+        return Ok(crate::server::protocol::EvolutionHandoffInfo::default());
+    };
+    let parse_section = |key: &str| -> Result<Vec<String>, String> {
+        handoff
+            .get(key)
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| format!("handoff.{} 缺少数组", key))?
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                item.as_str()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| format!("handoff.{}[{}] 必须是非空字符串", key, idx))
+            })
+            .collect::<Result<Vec<String>, String>>()
+    };
+
+    Ok(crate::server::protocol::EvolutionHandoffInfo {
+        completed: parse_section("completed")?,
+        risks: parse_section("risks")?,
+        next: parse_section("next")?,
+    })
+}
+
+fn validate_handoff_info(label: &str, value: &serde_json::Value) -> Result<(), String> {
+    parse_handoff_info(value).map(|_| ()).map_err(|err| format!("{}.{}", label, err))
 }
 
 fn sanitize_ai_config_options(
@@ -380,7 +392,7 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
     let checks = value
         .pointer("/verification_plan/checks")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| "plan.execution.jsonc 缺少 verification_plan.checks".to_string())?;
+        .ok_or_else(|| "plan.jsonc 缺少 verification_plan.checks".to_string())?;
     let mut check_ids = HashSet::new();
     for (idx, check) in checks.iter().enumerate() {
         let check_id = id_from_value(check, &["id"])
@@ -399,7 +411,7 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
     let work_items = value
         .pointer("/work_items")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| "plan.execution.jsonc 缺少 work_items".to_string())?;
+        .ok_or_else(|| "plan.jsonc 缺少 work_items".to_string())?;
     if work_items.is_empty() {
         return Err("work_items 不能为空".to_string());
     }
@@ -464,7 +476,7 @@ fn parse_plan_routing_tables(value: &serde_json::Value) -> Result<PlanRoutingTab
         .pointer("/verification_plan/acceptance_mapping")
         .and_then(|v| v.as_array())
         .ok_or_else(|| {
-            "plan.execution.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
+            "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
         })?;
 
     let mut criteria_to_checks: HashMap<String, Vec<String>> = HashMap::new();
@@ -788,7 +800,7 @@ fn collect_commits_between(
     Ok(commits)
 }
 
-/// 从 verify.result.jsonc 的 full_next_iteration_requirements 中提取需求项列表。
+/// 从 verify.jsonc 的 full_next_iteration_requirements 中提取需求项列表。
 /// 兼容三种格式：
 /// 1. 直接数组 `[...]`
 /// 2. 对象 `{"items": [...]}`
@@ -968,12 +980,8 @@ fn backlog_contract_version_from_cycle(cycle_dir: &Path) -> Result<u32, String> 
     Ok(version)
 }
 
-fn managed_failure_backlog_path(cycle_dir: &Path) -> PathBuf {
-    cycle_dir.join(MANAGED_FAILURE_BACKLOG_FILE)
-}
-
-fn managed_backlog_coverage_path(cycle_dir: &Path) -> PathBuf {
-    cycle_dir.join(MANAGED_BACKLOG_COVERAGE_FILE)
+fn managed_backlog_path(cycle_dir: &Path) -> PathBuf {
+    cycle_dir.join(MANAGED_BACKLOG_FILE)
 }
 
 fn normalize_backlog_status(status: &str) -> Option<&'static str> {
@@ -985,7 +993,7 @@ fn normalize_backlog_status(status: &str) -> Option<&'static str> {
     }
 }
 
-fn coverage_summary(items: &[ManagedBacklogCoverageItem]) -> ManagedBacklogCoverageSummary {
+fn coverage_summary(items: &[ManagedBacklogItem]) -> ManagedBacklogSummary {
     let total = items.len() as u64;
     let done = items
         .iter()
@@ -996,7 +1004,7 @@ fn coverage_summary(items: &[ManagedBacklogCoverageItem]) -> ManagedBacklogCover
         .filter(|item| item.status.eq_ignore_ascii_case("blocked"))
         .count() as u64;
     let not_done = total.saturating_sub(done).saturating_sub(blocked);
-    ManagedBacklogCoverageSummary {
+    ManagedBacklogSummary {
         total,
         done,
         blocked,
@@ -1075,20 +1083,21 @@ impl EvolutionManager {
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
-        let value = read_json_file(cycle_dir, "plan.execution.jsonc")?;
+        let value = read_json_file(cycle_dir, "plan.jsonc")?;
         parse_plan_routing_tables(&value)?;
 
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("plan.execution.jsonc", &value, &ctx.cycle_id)?;
-            ensure_artifact_freshness("plan.execution.jsonc", &value, ctx.stage_started_at)?;
+            ensure_cycle_id_matches("plan.jsonc", &value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("plan.jsonc", &value, ctx.stage_started_at)?;
         }
+        validate_handoff_info("plan.jsonc", &value)?;
 
         let selected_direction = value
             .get("selected_direction_type")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| "plan.execution.jsonc 缺少 selected_direction_type".to_string())?;
+            .ok_or_else(|| "plan.jsonc 缺少 selected_direction_type".to_string())?;
         if !VALID_DIRECTION_TYPES.contains(&selected_direction.as_str()) {
             return Err(format!(
                 "selected_direction_type 非法: {}",
@@ -1096,17 +1105,17 @@ impl EvolutionManager {
             ));
         }
 
-        let cycle_value = read_json_file(cycle_dir, "cycle.jsonc")?;
-        let cycle_direction = cycle_value
-            .pointer("/direction/selected_type")
+        let direction_value = read_json_file(cycle_dir, "direction.jsonc")?;
+        let direction_selected = direction_value
+            .get("selected_direction_type")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| "cycle.jsonc 缺少 direction.selected_type".to_string())?;
-        if cycle_direction != selected_direction {
+            .ok_or_else(|| "direction.jsonc 缺少 selected_direction_type".to_string())?;
+        if direction_selected != selected_direction {
             return Err(format!(
-                "selected_direction_type 与 cycle.direction.selected_type 不一致: {} != {}",
-                selected_direction, cycle_direction
+                "selected_direction_type 与 direction.selected_direction_type 不一致: {} != {}",
+                selected_direction, direction_selected
             ));
         }
 
@@ -1114,7 +1123,7 @@ impl EvolutionManager {
             .pointer("/verification_plan/acceptance_mapping")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
-                "plan.execution.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
+                "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
             })?
             .iter()
             .enumerate()
@@ -1127,17 +1136,17 @@ impl EvolutionManager {
             return Err("verification_plan.acceptance_mapping 不能为空".to_string());
         }
 
-        let cycle_criteria = cycle_value
-            .pointer("/llm_defined_acceptance/criteria")
+        let direction_criteria = direction_value
+            .get("acceptance_criteria")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "cycle.jsonc 缺少 llm_defined_acceptance.criteria".to_string())?;
-        let cycle_criteria_ids: HashSet<String> = cycle_criteria
+            .ok_or_else(|| "direction.jsonc 缺少 acceptance_criteria".to_string())?;
+        let direction_criteria_ids: HashSet<String> = direction_criteria
             .iter()
             .enumerate()
             .map(|(idx, item)| {
                 let criteria_id = id_from_value(item, &["criteria_id"]).ok_or_else(|| {
                     format!(
-                        "cycle.llm_defined_acceptance.criteria[{}] 缺少 criteria_id",
+                        "direction.acceptance_criteria[{}] 缺少 criteria_id",
                         idx
                     )
                 })?;
@@ -1148,20 +1157,20 @@ impl EvolutionManager {
                     .unwrap_or_default();
                 if description.is_empty() {
                     return Err(format!(
-                        "cycle.llm_defined_acceptance.criteria[{}].description 不能为空",
+                        "direction.acceptance_criteria[{}].description 不能为空",
                         idx
                     ));
                 }
                 Ok(criteria_id)
             })
             .collect::<Result<HashSet<String>, String>>()?;
-        if cycle_criteria_ids.is_empty() {
-            return Err("cycle.llm_defined_acceptance.criteria 不能为空".to_string());
+        if direction_criteria_ids.is_empty() {
+            return Err("direction.acceptance_criteria 不能为空".to_string());
         }
-        if plan_criteria != cycle_criteria_ids {
+        if plan_criteria != direction_criteria_ids {
             return Err(format!(
-                "plan.acceptance_mapping 与 cycle.llm_defined_acceptance.criteria 不一致: plan={:?}, cycle={:?}",
-                plan_criteria, cycle_criteria_ids
+                "plan.acceptance_mapping 与 direction.acceptance_criteria 不一致: plan={:?}, direction={:?}",
+                plan_criteria, direction_criteria_ids
             ));
         }
 
@@ -1170,9 +1179,9 @@ impl EvolutionManager {
 
     fn implement_result_file_for_lane(lane: ImplementLane) -> &'static str {
         match lane {
-            ImplementLane::General => "implement_general.result.jsonc",
-            ImplementLane::Visual => "implement_visual.result.jsonc",
-            ImplementLane::Advanced => "implement_advanced.result.jsonc",
+            ImplementLane::General => "implement_general.jsonc",
+            ImplementLane::Visual => "implement_visual.jsonc",
+            ImplementLane::Advanced => "implement_advanced.jsonc",
         }
     }
 
@@ -1210,7 +1219,7 @@ impl EvolutionManager {
         let work_items = plan
             .pointer("/work_items")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "plan.execution.jsonc 缺少 work_items".to_string())?;
+            .ok_or_else(|| "plan.jsonc 缺少 work_items".to_string())?;
         let mut mapping: HashMap<String, Vec<(String, PlanImplementationAgent)>> = HashMap::new();
         for (idx, item) in work_items.iter().enumerate() {
             let obj = item
@@ -1249,50 +1258,32 @@ impl EvolutionManager {
         Ok(mapping)
     }
 
-    fn read_managed_failure_backlog(cycle_dir: &Path) -> Result<ManagedFailureBacklogFile, String> {
-        let value = read_json(&managed_failure_backlog_path(cycle_dir))
-            .map_err(|e| format!("读取 {} 失败: {}", MANAGED_FAILURE_BACKLOG_FILE, e))?;
-        serde_json::from_value::<ManagedFailureBacklogFile>(value)
-            .map_err(|e| format!("解析 {} 失败: {}", MANAGED_FAILURE_BACKLOG_FILE, e))
+    fn read_managed_backlog(cycle_dir: &Path) -> Result<ManagedBacklogFile, String> {
+        let value = read_json(&managed_backlog_path(cycle_dir))
+            .map_err(|e| format!("读取 {} 失败: {}", MANAGED_BACKLOG_FILE, e))?;
+        serde_json::from_value::<ManagedBacklogFile>(value)
+            .map_err(|e| format!("解析 {} 失败: {}", MANAGED_BACKLOG_FILE, e))
     }
 
-    fn write_managed_failure_backlog(
+    fn write_managed_backlog(
         cycle_dir: &Path,
-        payload: &ManagedFailureBacklogFile,
+        payload: &ManagedBacklogFile,
     ) -> Result<(), String> {
         let value = serde_json::to_value(payload)
-            .map_err(|e| format!("序列化 {} 失败: {}", MANAGED_FAILURE_BACKLOG_FILE, e))?;
-        write_json(&managed_failure_backlog_path(cycle_dir), &value)
-    }
-
-    fn read_managed_backlog_coverage(
-        cycle_dir: &Path,
-    ) -> Result<ManagedBacklogCoverageFile, String> {
-        let value = read_json(&managed_backlog_coverage_path(cycle_dir))
-            .map_err(|e| format!("读取 {} 失败: {}", MANAGED_BACKLOG_COVERAGE_FILE, e))?;
-        serde_json::from_value::<ManagedBacklogCoverageFile>(value)
-            .map_err(|e| format!("解析 {} 失败: {}", MANAGED_BACKLOG_COVERAGE_FILE, e))
-    }
-
-    fn write_managed_backlog_coverage(
-        cycle_dir: &Path,
-        payload: &ManagedBacklogCoverageFile,
-    ) -> Result<(), String> {
-        let value = serde_json::to_value(payload)
-            .map_err(|e| format!("序列化 {} 失败: {}", MANAGED_BACKLOG_COVERAGE_FILE, e))?;
-        write_json(&managed_backlog_coverage_path(cycle_dir), &value)
+            .map_err(|e| format!("序列化 {} 失败: {}", MANAGED_BACKLOG_FILE, e))?;
+        write_json(&managed_backlog_path(cycle_dir), &value)
     }
 
     fn generate_managed_backlog_from_verify(
         cycle_dir: &Path,
         verify_iteration: u32,
     ) -> Result<(), String> {
-        let plan = read_json_file(cycle_dir, "plan.execution.jsonc")?;
+        let plan = read_json_file(cycle_dir, "plan.jsonc")?;
         let tables = parse_plan_routing_tables(&plan)?;
         let check_to_work_items = Self::parse_check_to_work_items(&plan)?;
-        let verify_result = read_json_file(cycle_dir, "verify.result.jsonc")?;
+        let verify_result = read_json_file(cycle_dir, "verify.jsonc")?;
         let requirements = extract_verify_requirements(&verify_result).ok_or_else(|| {
-            "verify.result.jsonc 缺少 adjudication.full_next_iteration_requirements（重实现轮必须提供）"
+            "verify.jsonc 缺少 adjudication.full_next_iteration_requirements（重实现轮必须提供）"
                 .to_string()
         })?;
         let cycle_id = read_json_file(cycle_dir, "cycle.jsonc")?
@@ -1301,7 +1292,7 @@ impl EvolutionManager {
             .unwrap_or_default()
             .to_string();
 
-        let previous_backlog_items = Self::read_managed_failure_backlog(cycle_dir)
+        let previous_backlog_items = Self::read_managed_backlog(cycle_dir)
             .map(|file| file.items)
             .unwrap_or_default();
         let mut previous_by_id: HashMap<String, usize> = HashMap::new();
@@ -1319,7 +1310,7 @@ impl EvolutionManager {
         }
 
         let mut seen_selectors: HashSet<(String, String, String, String)> = HashSet::new();
-        let mut backlog_items: Vec<ManagedFailureBacklogItem> = Vec::new();
+        let mut backlog_items: Vec<ManagedBacklogItem> = Vec::new();
 
         for (idx, requirement) in requirements.iter().enumerate() {
             let requirement_ref = id_from_value(
@@ -1488,7 +1479,7 @@ impl EvolutionManager {
             }
 
             let now = Utc::now().to_rfc3339();
-            backlog_items.push(ManagedFailureBacklogItem {
+            backlog_items.push(ManagedBacklogItem {
                 id: Uuid::now_v7().to_string(),
                 source_criteria_id,
                 source_check_id,
@@ -1500,44 +1491,23 @@ impl EvolutionManager {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
+                status: "not_done".to_string(),
+                evidence: serde_json::Value::Null,
+                notes: String::new(),
                 created_at: now.clone(),
                 updated_at: now,
             });
         }
 
-        let coverage_items: Vec<ManagedBacklogCoverageItem> = backlog_items
-            .iter()
-            .map(|item| ManagedBacklogCoverageItem {
-                backlog_id: item.id.clone(),
-                source_criteria_id: item.source_criteria_id.clone(),
-                source_check_id: item.source_check_id.clone(),
-                work_item_id: item.work_item_id.clone(),
-                implementation_agent: item.implementation_agent.clone(),
-                status: "not_done".to_string(),
-                evidence: serde_json::Value::Null,
-                notes: String::new(),
-                updated_at: Utc::now().to_rfc3339(),
-            })
-            .collect();
-        let summary = coverage_summary(&coverage_items);
+        let summary = coverage_summary(&backlog_items);
         let now = Utc::now().to_rfc3339();
-        Self::write_managed_failure_backlog(
+        Self::write_managed_backlog(
             cycle_dir,
-            &ManagedFailureBacklogFile {
-                schema_version: default_schema_version(),
-                cycle_id: cycle_id.clone(),
-                verify_iteration,
-                items: backlog_items,
-                updated_at: now.clone(),
-            },
-        )?;
-        Self::write_managed_backlog_coverage(
-            cycle_dir,
-            &ManagedBacklogCoverageFile {
+            &ManagedBacklogFile {
                 schema_version: default_schema_version(),
                 cycle_id,
                 verify_iteration,
-                items: coverage_items,
+                items: backlog_items,
                 summary,
                 updated_at: now,
             },
@@ -1557,8 +1527,7 @@ impl EvolutionManager {
         };
         let lane_name = lane.as_str();
 
-        let mut managed_backlog = Self::read_managed_failure_backlog(cycle_dir)?;
-        let mut managed_coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+        let mut managed_backlog = Self::read_managed_backlog(cycle_dir)?;
         let mut lane_result = read_json_file(cycle_dir, file_name)?;
         let updates = lane_result
             .pointer("/backlog_resolution_updates")
@@ -1650,41 +1619,26 @@ impl EvolutionManager {
                     matched_indexes.len()
                 ));
             }
-            let backlog_id = managed_backlog.items[matched_indexes[0]].id.clone();
-            let coverage = managed_coverage
+            let backlog_item = managed_backlog
                 .items
-                .iter_mut()
-                .find(|coverage| coverage.backlog_id == backlog_id)
-                .ok_or_else(|| {
-                    format!(
-                        "managed.backlog_coverage 缺少 backlog_id={}（stage={}）",
-                        backlog_id, stage
-                    )
-                })?;
-            coverage.status = normalized_status.to_string();
-            coverage.evidence = parsed.evidence;
-            coverage.notes = parsed.notes;
-            coverage.updated_at = Utc::now().to_rfc3339();
+                .get_mut(matched_indexes[0])
+                .ok_or_else(|| format!("managed.backlog.jsonc selector 索引越界（stage={}）", stage))?;
+            backlog_item.status = normalized_status.to_string();
+            backlog_item.evidence = parsed.evidence;
+            backlog_item.notes = parsed.notes;
+            backlog_item.updated_at = Utc::now().to_rfc3339();
         }
 
-        managed_coverage.summary = coverage_summary(&managed_coverage.items);
-        managed_coverage.updated_at = Utc::now().to_rfc3339();
-        Self::write_managed_backlog_coverage(cycle_dir, &managed_coverage)?;
+        managed_backlog.summary = coverage_summary(&managed_backlog.items);
+        managed_backlog.updated_at = Utc::now().to_rfc3339();
 
         let lane_backlog = managed_backlog
             .items
             .iter()
             .filter(|item| item.implementation_agent == lane_name)
             .cloned()
-            .collect::<Vec<ManagedFailureBacklogItem>>();
-        let lane_ids: HashSet<String> = lane_backlog.iter().map(|item| item.id.clone()).collect();
-        let lane_coverage = managed_coverage
-            .items
-            .iter()
-            .filter(|item| lane_ids.contains(&item.backlog_id))
-            .cloned()
-            .collect::<Vec<ManagedBacklogCoverageItem>>();
-        let lane_summary = coverage_summary(&lane_coverage);
+            .collect::<Vec<ManagedBacklogItem>>();
+        let lane_summary = coverage_summary(&lane_backlog);
 
         let lane_backlog_json = lane_backlog
             .iter()
@@ -1700,14 +1654,14 @@ impl EvolutionManager {
                 })
             })
             .collect::<Vec<serde_json::Value>>();
-        let lane_coverage_json = lane_coverage
+        let lane_coverage_json = lane_backlog
             .iter()
             .map(|item| {
                 serde_json::json!({
-                    "id": item.backlog_id,
-                    "item_id": item.backlog_id,
-                    "failure_backlog_id": item.backlog_id,
-                    "backlog_id": item.backlog_id,
+                    "id": item.id,
+                    "item_id": item.id,
+                    "failure_backlog_id": item.id,
+                    "backlog_id": item.id,
                     "source_criteria_id": item.source_criteria_id,
                     "source_check_id": item.source_check_id,
                     "work_item_id": item.work_item_id,
@@ -1744,13 +1698,12 @@ impl EvolutionManager {
             serde_json::Value::String(Utc::now().to_rfc3339()),
         );
         write_json(&cycle_dir.join(file_name), &lane_result)?;
-        managed_backlog.updated_at = Utc::now().to_rfc3339();
-        Self::write_managed_failure_backlog(cycle_dir, &managed_backlog)?;
+        Self::write_managed_backlog(cycle_dir, &managed_backlog)?;
         Ok(())
     }
 
     fn match_managed_backlog_indexes(
-        backlog_items: &[ManagedFailureBacklogItem],
+        backlog_items: &[ManagedBacklogItem],
         parsed: &BacklogResolutionUpdate,
     ) -> (Vec<usize>, &'static str) {
         let by_work_item_id = backlog_items
@@ -1806,8 +1759,7 @@ impl EvolutionManager {
         backlog_contract_version: u32,
     ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
         if backlog_contract_version >= 2 {
-            let backlog = Self::read_managed_failure_backlog(cycle_dir)?;
-            let coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+            let backlog = Self::read_managed_backlog(cycle_dir)?;
             let backlog_values = backlog
                 .items
                 .iter()
@@ -1821,13 +1773,13 @@ impl EvolutionManager {
                     })
                 })
                 .collect::<Vec<serde_json::Value>>();
-            let coverage_values = coverage
+            let coverage_values = backlog
                 .items
                 .iter()
                 .map(|item| {
                     serde_json::json!({
-                        "id": item.backlog_id,
-                        "item_id": item.backlog_id,
+                        "id": item.id,
+                        "item_id": item.id,
                         "status": item.status
                     })
                 })
@@ -1934,6 +1886,7 @@ impl EvolutionManager {
         if value.get("summary").and_then(|v| v.as_str()).is_none() {
             return Err(format!("{} 缺少 summary 字段", file_name));
         }
+        validate_handoff_info(file_name, &value)?;
 
         if verify_iteration > 0 && backlog_contract_version >= 2 {
             let updates = value
@@ -1971,69 +1924,41 @@ impl EvolutionManager {
                 }
             }
 
-            let backlog = Self::read_managed_failure_backlog(cycle_dir)?;
-            let coverage = Self::read_managed_backlog_coverage(cycle_dir)?;
+            let backlog = Self::read_managed_backlog(cycle_dir)?;
             if let Some(ctx) = validation_ctx {
                 if backlog.cycle_id != ctx.cycle_id {
                     return Err(format!(
                         "{}.cycle_id 不匹配: {} != {}",
-                        MANAGED_FAILURE_BACKLOG_FILE, backlog.cycle_id, ctx.cycle_id
-                    ));
-                }
-                if coverage.cycle_id != ctx.cycle_id {
-                    return Err(format!(
-                        "{}.cycle_id 不匹配: {} != {}",
-                        MANAGED_BACKLOG_COVERAGE_FILE, coverage.cycle_id, ctx.cycle_id
+                        MANAGED_BACKLOG_FILE, backlog.cycle_id, ctx.cycle_id
                     ));
                 }
             }
             if backlog.verify_iteration != verify_iteration {
                 return Err(format!(
                     "{}.verify_iteration 不匹配: {} != {}",
-                    MANAGED_FAILURE_BACKLOG_FILE, backlog.verify_iteration, verify_iteration
-                ));
-            }
-            if coverage.verify_iteration != verify_iteration {
-                return Err(format!(
-                    "{}.verify_iteration 不匹配: {} != {}",
-                    MANAGED_BACKLOG_COVERAGE_FILE, coverage.verify_iteration, verify_iteration
+                    MANAGED_BACKLOG_FILE, backlog.verify_iteration, verify_iteration
                 ));
             }
 
-            let mut backlog_ids = HashSet::new();
             for (idx, item) in backlog.items.iter().enumerate() {
                 if item.id.trim().is_empty() {
                     return Err(format!(
-                        "managed.failure_backlog.items[{}].id 不能为空",
+                        "managed.backlog.jsonc.items[{}].id 不能为空",
                         idx
                     ));
                 }
                 if !is_valid_implementation_agent(&item.implementation_agent) {
                     return Err(format!(
-                        "managed.failure_backlog.items[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
+                        "managed.backlog.jsonc.items[{}].implementation_agent 必须是 implement_general|implement_visual|implement_advanced|unknown",
                         idx
                     ));
                 }
-                backlog_ids.insert(item.id.clone());
-            }
-            let mut coverage_ids = HashSet::new();
-            for (idx, item) in coverage.items.iter().enumerate() {
-                if item.backlog_id.trim().is_empty() {
+                if normalize_backlog_status(&item.status).is_none() {
                     return Err(format!(
-                        "managed.backlog_coverage.items[{}].backlog_id 不能为空",
+                        "managed.backlog.jsonc.items[{}].status 必须是 done|blocked|not_done",
                         idx
                     ));
                 }
-                let Some(_) = normalize_backlog_status(&item.status) else {
-                    return Err(format!(
-                        "managed.backlog_coverage.items[{}].status 必须是 done|blocked|not_done",
-                        idx
-                    ));
-                };
-                coverage_ids.insert(item.backlog_id.clone());
-            }
-            if backlog_ids != coverage_ids {
-                return Err("backlog_coverage 未完整覆盖 failure_backlog".to_string());
             }
             return Ok(());
         }
@@ -2085,31 +2010,32 @@ impl EvolutionManager {
         backlog_contract_version: u32,
         validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
-        let verify_value = read_json_file(cycle_dir, "verify.result.jsonc")?;
+        let verify_value = read_json_file(cycle_dir, "verify.jsonc")?;
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("verify.result.jsonc", &verify_value, &ctx.cycle_id)?;
-            ensure_artifact_freshness("verify.result.jsonc", &verify_value, ctx.stage_started_at)?;
+            ensure_cycle_id_matches("verify.jsonc", &verify_value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("verify.jsonc", &verify_value, ctx.stage_started_at)?;
         }
+        validate_handoff_info("verify.jsonc", &verify_value)?;
         let verify_file_iteration = verify_value
             .get("verify_iteration")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| "verify.result.jsonc 缺少 verify_iteration".to_string())?
+            .ok_or_else(|| "verify.jsonc 缺少 verify_iteration".to_string())?
             as u32;
         if verify_file_iteration != verify_iteration {
             return Err(format!(
-                "verify.result.jsonc.verify_iteration 不匹配: {} != {}",
+                "verify.jsonc.verify_iteration 不匹配: {} != {}",
                 verify_file_iteration, verify_iteration
             ));
         }
         let acceptance_items = verify_value
             .pointer("/acceptance_evaluation")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "verify.result.jsonc 缺少 acceptance_evaluation".to_string())?;
-        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.execution.jsonc")?
+            .ok_or_else(|| "verify.jsonc 缺少 acceptance_evaluation".to_string())?;
+        let expected_criteria: HashSet<String> = read_json_file(cycle_dir, "plan.jsonc")?
             .pointer("/verification_plan/acceptance_mapping")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
-                "plan.execution.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
+                "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
             })?
             .iter()
             .enumerate()
@@ -2149,10 +2075,10 @@ impl EvolutionManager {
             .pointer("/verification_overall/result")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "verify.result.jsonc 缺少 verification_overall.result".to_string())?;
+            .ok_or_else(|| "verify.jsonc 缺少 verification_overall.result".to_string())?;
         if !matches!(verification_overall_result.as_str(), "pass" | "fail") {
             return Err(format!(
-                "verify.result.jsonc.verification_overall.result 非法: {}",
+                "verify.jsonc.verification_overall.result 非法: {}",
                 verification_overall_result
             ));
         }
@@ -2166,15 +2092,15 @@ impl EvolutionManager {
         let verify_iteration_limit = verify_value
             .get("verify_iteration_limit")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| "verify.result.jsonc 缺少 verify_iteration_limit".to_string())?
+            .ok_or_else(|| "verify.jsonc 缺少 verify_iteration_limit".to_string())?
             as u32;
         if verify_iteration_limit == 0 {
-            return Err("verify.result.jsonc.verify_iteration_limit 必须大于 0".to_string());
+            return Err("verify.jsonc.verify_iteration_limit 必须大于 0".to_string());
         }
         let criteria_judgement = verify_value
             .pointer("/adjudication/criteria_judgement")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "verify.result.jsonc 缺少 adjudication.criteria_judgement".to_string())?;
+            .ok_or_else(|| "verify.jsonc 缺少 adjudication.criteria_judgement".to_string())?;
         let mut judgement_criteria = HashSet::new();
         for (idx, item) in criteria_judgement.iter().enumerate() {
             let criteria_id = id_from_value(item, &["criteria_id"])
@@ -2206,17 +2132,17 @@ impl EvolutionManager {
             .pointer("/adjudication/overall_result/result")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "verify.result.jsonc 缺少 adjudication.overall_result.result".to_string())?;
+            .ok_or_else(|| "verify.jsonc 缺少 adjudication.overall_result.result".to_string())?;
         let adjudication_passed = adjudication_result == "pass";
         let adjudication_failed = adjudication_result == "fail";
         if !adjudication_passed && !adjudication_failed {
-            return Err("verify.result.jsonc.adjudication.overall_result.result 必须是 pass 或 fail".to_string());
+            return Err("verify.jsonc.adjudication.overall_result.result 必须是 pass 或 fail".to_string());
         }
         let next_action_type = verify_value
             .pointer("/adjudication/next_action/type")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "verify.result.jsonc 缺少 adjudication.next_action.type".to_string())?;
+            .ok_or_else(|| "verify.jsonc 缺少 adjudication.next_action.type".to_string())?;
         let next_action_target = verify_value.pointer("/adjudication/next_action/target");
         if adjudication_passed {
             let target = next_action_target
@@ -2253,12 +2179,12 @@ impl EvolutionManager {
 
         let requirements = extract_verify_requirements(&verify_value).unwrap_or_default();
         if backlog_contract_version >= 2 && adjudication_failed && requirements.is_empty() {
-            return Err("verify.result.jsonc 缺少 adjudication.full_next_iteration_requirements".to_string());
+            return Err("verify.jsonc 缺少 adjudication.full_next_iteration_requirements".to_string());
         }
         let should_validate_v2_selector =
             backlog_contract_version >= 2 && (verify_iteration > 0 || adjudication_failed);
         if should_validate_v2_selector {
-            let plan_value = read_json_file(cycle_dir, "plan.execution.jsonc")?;
+            let plan_value = read_json_file(cycle_dir, "plan.jsonc")?;
             let tables = parse_plan_routing_tables(&plan_value)?;
             let check_to_work_items = Self::parse_check_to_work_items(&plan_value)?;
             for (idx, requirement) in requirements.iter().enumerate() {
@@ -2346,14 +2272,14 @@ impl EvolutionManager {
                 .pointer("/carryover_verification/items")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
-                    "verify.result.jsonc 缺少 carryover_verification.items（重实现轮必须提供）"
+                    "verify.jsonc 缺少 carryover_verification.items（重实现轮必须提供）"
                         .to_string()
                 })?;
             let carry_summary = verify_value
                 .pointer("/carryover_verification/summary")
                 .and_then(|v| v.as_object())
                 .ok_or_else(|| {
-                    "verify.result.jsonc 缺少 carryover_verification.summary（重实现轮必须提供）"
+                    "verify.jsonc 缺少 carryover_verification.summary（重实现轮必须提供）"
                         .to_string()
                 })?;
             for key in ["total", "covered", "missing", "blocked"] {
@@ -2364,7 +2290,7 @@ impl EvolutionManager {
                     .unwrap_or(false)
                 {
                     return Err(format!(
-                        "verify.result.jsonc.carryover_verification.summary.{} 必须是数字",
+                        "verify.jsonc.carryover_verification.summary.{} 必须是数字",
                         key
                     ));
                 }
@@ -2442,21 +2368,21 @@ impl EvolutionManager {
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
-        let stage_value = read_json_file(cycle_dir, "stage.direction.jsonc")?;
+        let stage_value = read_json_file(cycle_dir, "direction.jsonc")?;
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("stage.direction.jsonc", &stage_value, &ctx.cycle_id)?;
-            ensure_artifact_freshness("stage.direction.jsonc", &stage_value, ctx.stage_started_at)?;
+            ensure_cycle_id_matches("direction.jsonc", &stage_value, &ctx.cycle_id)?;
+            ensure_artifact_freshness("direction.jsonc", &stage_value, ctx.stage_started_at)?;
         }
         let cycle_title = extract_cycle_title_from_direction_stage(&stage_value)
-            .ok_or_else(|| "stage.direction.jsonc 缺少 cycle_title".to_string())?;
+            .ok_or_else(|| "direction.jsonc 缺少 cycle_title".to_string())?;
         if cycle_title.trim().is_empty() {
-            return Err("stage.direction.jsonc.cycle_title 不能为空".to_string());
+            return Err("direction.jsonc.cycle_title 不能为空".to_string());
         }
         let capability = stage_value
             .pointer("/decision/context/capability_assessment")
             .and_then(|v| v.as_object())
             .ok_or_else(|| {
-                "stage.direction.jsonc 缺少 decision.context.capability_assessment".to_string()
+                "direction.jsonc 缺少 decision.context.capability_assessment".to_string()
             })?;
         for key in [
             "ui_capability",
@@ -2467,26 +2393,26 @@ impl EvolutionManager {
         ] {
             let value = capability.get(key).ok_or_else(|| {
                 format!(
-                    "stage.direction.jsonc.decision.context.capability_assessment.{} 缺少",
+                    "direction.jsonc.decision.context.capability_assessment.{} 缺少",
                     key
                 )
             })?;
             let text = value.as_str().ok_or_else(|| {
                 if key == "rationale" {
                     format!(
-                        "stage.direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串",
+                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串",
                         key
                     )
                 } else {
                     format!(
-                        "stage.direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
+                        "direction.jsonc.decision.context.capability_assessment.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
                         key
                     )
                 }
             })?;
             if text.trim().is_empty() {
                 return Err(format!(
-                    "stage.direction.jsonc.decision.context.capability_assessment.{} 不能为空",
+                    "direction.jsonc.decision.context.capability_assessment.{} 不能为空",
                     key
                 ));
             }
@@ -2501,51 +2427,39 @@ impl EvolutionManager {
             .unwrap_or_default();
         if next_type != "goto_stage" || next_target != "plan" {
             return Err(
-                "stage.direction.jsonc.next_action 必须是 {type:goto_stage,target:plan}".to_string(),
+                "direction.jsonc.next_action 必须是 {type:goto_stage,target:plan}".to_string(),
             );
         }
+        validate_handoff_info("direction.jsonc", &stage_value)?;
 
-        let lifecycle_scan = read_json_file(cycle_dir, "direction.lifecycle_scan.jsonc")?;
-        if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches(
-                "direction.lifecycle_scan.jsonc",
-                &lifecycle_scan,
-                &ctx.cycle_id,
-            )?;
-            ensure_artifact_freshness(
-                "direction.lifecycle_scan.jsonc",
-                &lifecycle_scan,
-                ctx.stage_started_at,
-            )?;
-        }
         for key in ["project_type", "ui_capability", "updated_at"] {
-            let value = lifecycle_scan
+            let value = stage_value
                 .get(key)
-                .ok_or_else(|| format!("direction.lifecycle_scan.jsonc.{} 缺少", key))?;
+                .ok_or_else(|| format!("direction.jsonc.{} 缺少", key))?;
             let text = value.as_str().ok_or_else(|| {
                 if key == "ui_capability" {
                     format!(
-                        "direction.lifecycle_scan.jsonc.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
+                        "direction.jsonc.{} 必须是非空字符串（建议值：none|partial|full，禁止布尔值）",
                         key
                     )
                 } else {
-                    format!("direction.lifecycle_scan.jsonc.{} 必须是非空字符串", key)
+                    format!("direction.jsonc.{} 必须是非空字符串", key)
                 }
             })?;
             if text.trim().is_empty() {
-                return Err(format!("direction.lifecycle_scan.jsonc.{} 不能为空", key));
+                return Err(format!("direction.jsonc.{} 不能为空", key));
             }
         }
-        let domains = lifecycle_scan
+        let domains = stage_value
             .get("domains")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "direction.lifecycle_scan.jsonc 缺少 domains".to_string())?;
+            .ok_or_else(|| "direction.jsonc 缺少 domains".to_string())?;
         if domains.is_empty() {
-            return Err("direction.lifecycle_scan.jsonc.domains 不能为空".to_string());
+            return Err("direction.jsonc.domains 不能为空".to_string());
         }
         for (idx, domain) in domains.iter().enumerate() {
             let obj = domain.as_object().ok_or_else(|| {
-                format!("direction.lifecycle_scan.jsonc.domains[{}] 必须是对象", idx)
+                format!("direction.jsonc.domains[{}] 必须是对象", idx)
             })?;
             for key in ["domain", "status"] {
                 if obj
@@ -2555,7 +2469,7 @@ impl EvolutionManager {
                     .unwrap_or(true)
                 {
                     return Err(format!(
-                        "direction.lifecycle_scan.jsonc.domains[{}].{} 不能为空",
+                        "direction.jsonc.domains[{}].{} 不能为空",
                         idx, key
                     ));
                 }
@@ -2566,13 +2480,13 @@ impl EvolutionManager {
                 .is_none()
             {
                 return Err(format!(
-                    "direction.lifecycle_scan.jsonc.domains[{}].evidence_paths 缺少数组",
+                    "direction.jsonc.domains[{}].evidence_paths 缺少数组",
                     idx
                 ));
             }
             if obj.get("findings").and_then(|v| v.as_array()).is_none() {
                 return Err(format!(
-                    "direction.lifecycle_scan.jsonc.domains[{}].findings 缺少数组",
+                    "direction.jsonc.domains[{}].findings 缺少数组",
                     idx
                 ));
             }
@@ -2581,7 +2495,7 @@ impl EvolutionManager {
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
                     format!(
-                        "direction.lifecycle_scan.jsonc.domains[{}].opportunities 缺少数组",
+                        "direction.jsonc.domains[{}].opportunities 缺少数组",
                         idx
                     )
                 })?;
@@ -2592,41 +2506,37 @@ impl EvolutionManager {
                     .map(|v| v.trim().to_ascii_lowercase())
                     .ok_or_else(|| {
                         format!(
-                            "direction.lifecycle_scan.jsonc.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
+                            "direction.jsonc.domains[{}].opportunities[{}] 缺少 mapped_direction_type",
                             idx, op_idx
                         )
                     })?;
                 if !VALID_DIRECTION_TYPES.contains(&mapped_direction.as_str()) {
                     return Err(format!(
-                        "direction.lifecycle_scan.jsonc.domains[{}].opportunities[{}].mapped_direction_type 非法: {}",
+                        "direction.jsonc.domains[{}].opportunities[{}].mapped_direction_type 非法: {}",
                         idx, op_idx, mapped_direction
                     ));
                 }
             }
         }
 
-        let cycle_value = read_json_file(cycle_dir, "cycle.jsonc")?;
-        if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("cycle.jsonc", &cycle_value, &ctx.cycle_id)?;
-        }
-        let selected_type = cycle_value
-            .pointer("/direction/selected_type")
+        let selected_type = stage_value
+            .get("selected_direction_type")
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_ascii_lowercase())
-            .ok_or_else(|| "cycle.jsonc.direction.selected_type 缺失".to_string())?;
+            .ok_or_else(|| "direction.jsonc.selected_direction_type 缺失".to_string())?;
         if !VALID_DIRECTION_TYPES.contains(&selected_type.as_str()) {
             return Err(format!(
-                "cycle.jsonc.direction.selected_type 非法: {}",
+                "direction.jsonc.selected_direction_type 非法: {}",
                 selected_type
             ));
         }
-        let candidate_scores = cycle_value
-            .pointer("/direction/candidate_scores")
+        let candidate_scores = stage_value
+            .get("candidate_scores")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "cycle.jsonc.direction.candidate_scores 缺失".to_string())?;
+            .ok_or_else(|| "direction.jsonc.candidate_scores 缺失".to_string())?;
         if candidate_scores.len() < 3 || candidate_scores.len() > 5 {
             return Err(format!(
-                "cycle.jsonc.direction.candidate_scores 数量必须在 3..=5，当前 {}",
+                "direction.jsonc.candidate_scores 数量必须在 3..=5，当前 {}",
                 candidate_scores.len()
             ));
         }
@@ -2639,13 +2549,13 @@ impl EvolutionManager {
                 .map(|v| v.trim().to_ascii_lowercase())
                 .ok_or_else(|| {
                     format!(
-                        "cycle.jsonc.direction.candidate_scores[{}] 缺少 direction_type",
+                        "direction.jsonc.candidate_scores[{}] 缺少 direction_type",
                         idx
                     )
                 })?;
             if !VALID_DIRECTION_TYPES.contains(&direction_type.as_str()) {
                 return Err(format!(
-                    "cycle.jsonc.direction.candidate_scores[{}].direction_type 非法: {}",
+                    "direction.jsonc.candidate_scores[{}].direction_type 非法: {}",
                     idx, direction_type
                 ));
             }
@@ -2666,25 +2576,25 @@ impl EvolutionManager {
             }
             previous_score = Some(score);
         }
-        let final_reason = cycle_value
-            .pointer("/direction/final_reason")
+        let final_reason = stage_value
+            .get("final_reason")
             .and_then(|v| v.as_str())
             .map(|v| v.trim())
             .unwrap_or_default();
         if final_reason.is_empty() {
-            return Err("cycle.jsonc.direction.final_reason 不能为空".to_string());
+            return Err("direction.jsonc.final_reason 不能为空".to_string());
         }
-        let criteria = cycle_value
-            .pointer("/llm_defined_acceptance/criteria")
+        let criteria = stage_value
+            .get("acceptance_criteria")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "cycle.jsonc.llm_defined_acceptance.criteria 缺失".to_string())?;
+            .ok_or_else(|| "direction.jsonc.acceptance_criteria 缺失".to_string())?;
         if criteria.is_empty() {
-            return Err("cycle.jsonc.llm_defined_acceptance.criteria 不能为空".to_string());
+            return Err("direction.jsonc.acceptance_criteria 不能为空".to_string());
         }
         for (idx, item) in criteria.iter().enumerate() {
             let _criteria_id = id_from_value(item, &["criteria_id"]).ok_or_else(|| {
                 format!(
-                    "cycle.jsonc.llm_defined_acceptance.criteria[{}] 缺少 criteria_id",
+                    "direction.jsonc.acceptance_criteria[{}] 缺少 criteria_id",
                     idx
                 )
             })?;
@@ -2695,7 +2605,7 @@ impl EvolutionManager {
                 .unwrap_or_default();
             if description.is_empty() {
                 return Err(format!(
-                    "cycle.jsonc.llm_defined_acceptance.criteria[{}].description 不能为空",
+                    "direction.jsonc.acceptance_criteria[{}].description 不能为空",
                     idx
                 ));
             }
@@ -2707,11 +2617,11 @@ impl EvolutionManager {
         cycle_dir: &Path,
         validation_ctx: Option<&StageValidationContext>,
     ) -> Result<(), String> {
-        let stage_auto_commit = read_json_file(cycle_dir, "stage.auto_commit.jsonc")?;
+        let stage_auto_commit = read_json_file(cycle_dir, "auto_commit.jsonc")?;
         if let Some(ctx) = validation_ctx {
-            ensure_cycle_id_matches("stage.auto_commit.jsonc", &stage_auto_commit, &ctx.cycle_id)?;
+            ensure_cycle_id_matches("auto_commit.jsonc", &stage_auto_commit, &ctx.cycle_id)?;
             ensure_artifact_freshness(
-                "stage.auto_commit.jsonc",
+                "auto_commit.jsonc",
                 &stage_auto_commit,
                 ctx.stage_started_at,
             )?;
@@ -2726,10 +2636,11 @@ impl EvolutionManager {
             .unwrap_or_default();
         if next_type != "goto_stage" || next_target != "direction" {
             return Err(
-                "stage.auto_commit.jsonc.next_action 必须是 {type:goto_stage,target:direction}"
+                "auto_commit.jsonc.next_action 必须是 {type:goto_stage,target:direction}"
                     .to_string(),
             );
         }
+        validate_handoff_info("auto_commit.jsonc", &stage_auto_commit)?;
 
         if let Some(ctx) = validation_ctx {
             let workspace_root = Path::new(ctx.workspace_root.as_str());
@@ -2806,7 +2717,7 @@ impl EvolutionManager {
             .pointer("/verification_plan/acceptance_mapping")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
-                "plan.execution.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
+                "plan.jsonc 缺少 verification_plan.acceptance_mapping".to_string()
             })?;
 
         let mut out = Vec::new();
@@ -2836,33 +2747,6 @@ impl EvolutionManager {
         Ok(out)
     }
 
-    async fn sync_acceptance_criteria_from_plan(
-        &self,
-        key: &str,
-        cycle_id: &str,
-    ) -> Result<(), String> {
-        let workspace_root = {
-            let state = self.state.lock().await;
-            let Some(entry) = state.workspaces.get(key) else {
-                return Err("workspace state missing".to_string());
-            };
-            entry.workspace_root.clone()
-        };
-        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-        let parsed = read_json(&cycle_dir.join("plan.execution.jsonc"))
-            .map_err(|e| format!("读取 plan.execution.jsonc 失败: {}", e))?;
-        let criteria = Self::extract_acceptance_mapping_criteria(&parsed)?;
-        if criteria.is_empty() {
-            return Err("acceptance_mapping 为空".to_string());
-        }
-        let mut state = self.state.lock().await;
-        let Some(entry) = state.workspaces.get_mut(key) else {
-            return Err("workspace state missing".to_string());
-        };
-        entry.llm_defined_acceptance_criteria = criteria;
-        Ok(())
-    }
-
     async fn ensure_acceptance_consistency(&self, key: &str, cycle_id: &str) -> Result<(), String> {
         let workspace_root = {
             let state = self.state.lock().await;
@@ -2875,8 +2759,8 @@ impl EvolutionManager {
             entry.workspace_root.clone()
         };
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-        let parsed = read_json(&cycle_dir.join("plan.execution.jsonc"))
-            .map_err(|e| format!("读取 plan.execution.jsonc 失败: {}", e))?;
+        let parsed = read_json(&cycle_dir.join("plan.jsonc"))
+            .map_err(|e| format!("读取 plan.jsonc 失败: {}", e))?;
         let criteria_from_plan = Self::extract_acceptance_mapping_criteria(&parsed)?;
         let expected_ids: std::collections::HashSet<String> = criteria_from_plan
             .iter()
@@ -2910,7 +2794,7 @@ impl EvolutionManager {
         Ok(())
     }
 
-    async fn sync_cycle_title_from_direction_stage(
+    async fn sync_direction_state_from_artifact(
         &self,
         key: &str,
         cycle_id: &str,
@@ -2923,8 +2807,28 @@ impl EvolutionManager {
             entry.workspace_root.clone()
         };
         let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
-        let direction_stage = read_json_file(&cycle_dir, "stage.direction.jsonc")?;
+        let direction_stage = read_json_file(&cycle_dir, "direction.jsonc")?;
         let cycle_title = extract_cycle_title_from_direction_stage(&direction_stage);
+        let selected_direction_type = direction_stage
+            .get("selected_direction_type")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let candidate_scores = direction_stage
+            .get("candidate_scores")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let final_reason = direction_stage
+            .get("final_reason")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let acceptance_criteria = direction_stage
+            .get("acceptance_criteria")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
 
         let mut state = self.state.lock().await;
         let Some(entry) = state.workspaces.get_mut(key) else {
@@ -2934,6 +2838,41 @@ impl EvolutionManager {
             return Ok(());
         }
         entry.cycle_title = cycle_title;
+        entry.selected_direction_type = selected_direction_type;
+        entry.direction_candidate_scores = candidate_scores;
+        entry.direction_final_reason = final_reason;
+        entry.llm_defined_acceptance_criteria = acceptance_criteria;
+        Ok(())
+    }
+
+    async fn sync_handoff_from_stage_artifact(
+        &self,
+        key: &str,
+        cycle_id: &str,
+        stage: &str,
+    ) -> Result<(), String> {
+        let workspace_root = {
+            let state = self.state.lock().await;
+            let Some(entry) = state.workspaces.get(key) else {
+                return Err("workspace state missing".to_string());
+            };
+            entry.workspace_root.clone()
+        };
+        let cycle_dir = cycle_dir_path(&workspace_root, cycle_id)?;
+        let Some(file_name) = stage_artifact_file(stage) else {
+            return Ok(());
+        };
+        let value = read_json_file(&cycle_dir, file_name)?;
+        let handoff = parse_handoff_info(&value)?;
+
+        let mut state = self.state.lock().await;
+        let Some(entry) = state.workspaces.get_mut(key) else {
+            return Err("workspace state missing".to_string());
+        };
+        if entry.cycle_id != cycle_id {
+            return Ok(());
+        }
+        entry.cycle_handoff = handoff;
         Ok(())
     }
 
@@ -2941,7 +2880,7 @@ impl EvolutionManager {
         cycle_dir: &Path,
         tables: &PlanRoutingTables,
     ) -> Result<Option<HashSet<PlanImplementationAgent>>, String> {
-        let verify = read_json_file(cycle_dir, "verify.result.jsonc")?;
+        let verify = read_json_file(cycle_dir, "verify.jsonc")?;
 
         let mut failed_criteria_ids: Vec<String> = Vec::new();
         if let Some(items) = verify
@@ -3065,7 +3004,7 @@ impl EvolutionManager {
             return Ok(vec![ImplementLane::Advanced]);
         }
 
-        let plan = read_json_file(cycle_dir, "plan.execution.jsonc")?;
+        let plan = read_json_file(cycle_dir, "plan.jsonc")?;
         let tables = parse_plan_routing_tables(&plan)?;
 
         if verify_iteration == 0 {
@@ -3116,12 +3055,12 @@ impl EvolutionManager {
 
     fn stage_owned_artifact_paths(stage: &str, cycle_dir: &Path) -> Vec<PathBuf> {
         match stage {
-            "direction" => vec![cycle_dir.join("direction.lifecycle_scan.jsonc")],
-            "plan" => vec![cycle_dir.join("plan.execution.jsonc")],
-            "implement_general" => vec![cycle_dir.join("implement_general.result.jsonc")],
-            "implement_visual" => vec![cycle_dir.join("implement_visual.result.jsonc")],
-            "implement_advanced" => vec![cycle_dir.join("implement_advanced.result.jsonc")],
-            "verify" => vec![cycle_dir.join("verify.result.jsonc")],
+            "direction" => vec![cycle_dir.join("direction.jsonc")],
+            "plan" => vec![cycle_dir.join("plan.jsonc")],
+            "implement_general" => vec![cycle_dir.join("implement_general.jsonc")],
+            "implement_visual" => vec![cycle_dir.join("implement_visual.jsonc")],
+            "implement_advanced" => vec![cycle_dir.join("implement_advanced.jsonc")],
+            "verify" => vec![cycle_dir.join("verify.jsonc")],
             _ => Vec::new(),
         }
     }
@@ -3136,16 +3075,6 @@ impl EvolutionManager {
             }
         }
         Ok(())
-    }
-
-    fn ensure_handoff_template(cycle_dir: &Path) -> Result<(), String> {
-        let handoff = cycle_dir.join("handoff.md");
-        if handoff.exists() {
-            return Ok(());
-        }
-        let content = "# 阶段交接\n\n## 已完成事项\n- \n\n## 风险与阻塞\n- \n\n## 下一步\n- \n";
-        std::fs::write(&handoff, content)
-            .map_err(|e| format!("写入 handoff.md 模板失败: {}", e))
     }
 
     fn ensure_jsonc_template(path: &Path, content: &str) -> Result<(), String> {
@@ -3172,7 +3101,6 @@ impl EvolutionManager {
         verify_iteration_limit: u32,
         backlog_contract_version: u32,
     ) -> Result<(), String> {
-        Self::ensure_handoff_template(cycle_dir)?;
         let cycle_id = read_json_file(cycle_dir, "cycle.jsonc")
             .ok()
             .and_then(|v| v.get("cycle_id").and_then(|x| x.as_str()).map(|s| s.to_string()))
@@ -3181,67 +3109,45 @@ impl EvolutionManager {
         match stage {
             "direction" => {
                 Self::ensure_jsonc_template(
-                    &cycle_dir.join("stage.direction.jsonc"),
+                    &cycle_dir.join("direction.jsonc"),
                     &format!(
-                        "{{\n  // 仅修改可变字段，不可删除固定键\n  \"$schema_version\": \"1.0\",\n  \"stage\": \"direction\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"plan\"}},\n  \"outputs\": [\"stage.direction.jsonc\", \"direction.lifecycle_scan.jsonc\", \"handoff.md\"]\n}}\n",
+                        "{{\n  // Direction 阶段模板：保留结构，仅填写可变字段\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"direction\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"cycle_title\": \"\",\n  \"decision\": {{\n    \"result\": \"n/a\",\n    \"reason\": \"\",\n    \"context\": {{\n      \"capability_assessment\": {{\n        \"ui_capability\": \"none\",\n        \"test_capability\": \"none\",\n        \"build_capability\": \"none\",\n        \"runtime_capability\": \"none\",\n        \"rationale\": \"\"\n      }}\n    }}\n  }},\n  \"project_type\": \"\",\n  \"ui_capability\": \"none\",\n  \"domains\": [],\n  \"selected_direction_type\": \"\",\n  \"candidate_scores\": [],\n  \"final_reason\": \"\",\n  \"acceptance_criteria\": [],\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"plan\"}},\n  \"updated_at\": \"\"\n}}\n",
                         cycle_id
                     ),
-                )?;
-                Self::ensure_jsonc_template(
-                    &cycle_dir.join("direction.lifecycle_scan.jsonc"),
-                    "{\n  // 生命周期扫描模板：字段约束见注释\n  \"$schema_version\": \"1.0\",\n  \"cycle_id\": \"\",\n  \"project_type\": \"\",\n  \"ui_capability\": \"none\",\n  \"domains\": []\n}\n",
                 )?;
             }
             "plan" => {
                 Self::ensure_jsonc_template(
-                    &cycle_dir.join("stage.plan.jsonc"),
+                    &cycle_dir.join("plan.jsonc"),
                     &format!(
-                        "{{\n  \"$schema_version\": \"1.0\",\n  \"stage\": \"plan\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"implement_general\"}},\n  \"outputs\": [\"plan.execution.jsonc\", \"handoff.md\"]\n}}\n",
+                        "{{\n  // Plan 阶段模板：拆解 work_items 与验证计划\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"plan\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"summary\": \"\",\n  \"selected_direction_type\": \"\",\n  \"work_items\": [],\n  \"verification_plan\": {{\"checks\": [], \"acceptance_mapping\": []}},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"implement_general\"}},\n  \"updated_at\": \"\"\n}}\n",
                         cycle_id
                     ),
-                )?;
-                Self::ensure_jsonc_template(
-                    &cycle_dir.join("plan.execution.jsonc"),
-                    "{\n  // 规划模板：按注释填写，禁止删除固定字段\n  \"$schema_version\": \"1.0\",\n  \"cycle_id\": \"\",\n  \"selected_direction_type\": \"\",\n  \"work_items\": [],\n  \"verification_plan\": {\"checks\": [], \"acceptance_mapping\": []}\n}\n",
                 )?;
             }
             "implement_general" | "implement_visual" | "implement_advanced" => {
                 Self::ensure_jsonc_template(
-                    &cycle_dir.join(format!("stage.{}.jsonc", stage)),
+                    &cycle_dir.join(format!("{}.jsonc", stage)),
                     &format!(
-                        "{{\n  \"$schema_version\": \"1.0\",\n  \"stage\": \"{}\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"verify\"}},\n  \"outputs\": [\"{}.result.jsonc\", \"handoff.md\"]\n}}\n",
-                        stage, cycle_id, stage
-                    ),
-                )?;
-                Self::ensure_jsonc_template(
-                    &cycle_dir.join(format!("{}.result.jsonc", stage)),
-                    &format!(
-                        "{{\n  // implement 结果模板：仅填写可变字段\n  \"$schema_version\": \"1.0\",\n  \"cycle_id\": \"{}\",\n  \"verify_iteration\": {},\n  \"backlog_contract_version\": {},\n  \"status\": \"running\",\n  \"quick_checks\": [],\n  \"backlog_resolution_updates\": [],\n  \"failure_backlog\": [],\n  \"backlog_coverage\": [],\n  \"backlog_coverage_summary\": {{\"total\": 0, \"done\": 0, \"blocked\": 0, \"not_done\": 0}},\n  \"updated_at\": \"\"\n}}\n",
-                        cycle_id, verify_iteration, backlog_contract_version
+                        "{{\n  // Implement 阶段模板：合并阶段状态、执行结果与 backlog 回填\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"{}\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"summary\": \"\",\n  \"work_item_results\": [],\n  \"changed_files\": [],\n  \"commands_executed\": [],\n  \"quick_checks\": [],\n  \"verify_iteration\": {},\n  \"backlog_contract_version\": {},\n  \"backlog_resolution_updates\": [],\n  \"failure_backlog\": [],\n  \"backlog_coverage\": [],\n  \"backlog_coverage_summary\": {{\"total\": 0, \"done\": 0, \"blocked\": 0, \"not_done\": 0}},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"verify\"}},\n  \"updated_at\": \"\"\n}}\n",
+                        stage, cycle_id, verify_iteration, backlog_contract_version
                     ),
                 )?;
             }
             "verify" => {
                 Self::ensure_jsonc_template(
-                    &cycle_dir.join("stage.verify.jsonc"),
+                    &cycle_dir.join("verify.jsonc"),
                     &format!(
-                        "{{\n  \"$schema_version\": \"1.0\",\n  \"stage\": \"verify\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"auto_commit\"}},\n  \"outputs\": [\"verify.result.jsonc\", \"handoff.md\"]\n}}\n",
-                        cycle_id
-                    ),
-                )?;
-                Self::ensure_jsonc_template(
-                    &cycle_dir.join("verify.result.jsonc"),
-                    &format!(
-                        "{{\n  // verify + adjudication 合并模板：规则全部以注释为准\n  \"$schema_version\": \"1.0\",\n  \"cycle_id\": \"{}\",\n  \"verify_iteration\": {},\n  \"verify_iteration_limit\": {},\n  \"summary\": \"\",\n  \"check_results\": [],\n  \"acceptance_evaluation\": [],\n  \"carryover_verification\": {{\"items\": [], \"summary\": {{\"total\": 0, \"covered\": 0, \"missing\": 0, \"blocked\": 0}}}},\n  \"adjudication\": {{\n    \"criteria_judgement\": [],\n    \"overall_result\": {{\"result\": \"fail\", \"reason\": \"\"}},\n    \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"implement_general\"}},\n    \"full_next_iteration_requirements\": []\n  }},\n  \"updated_at\": \"\"\n}}\n",
+                        "{{\n  // Verify 阶段模板：验证与裁决统一写入本文件\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"verify\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"verify_iteration\": {},\n  \"verify_iteration_limit\": {},\n  \"summary\": \"\",\n  \"check_results\": [],\n  \"acceptance_evaluation\": [],\n  \"verification_overall\": {{\"result\": \"fail\", \"reason\": \"\"}},\n  \"carryover_verification\": {{\"items\": [], \"summary\": {{\"total\": 0, \"covered\": 0, \"missing\": 0, \"blocked\": 0}}}},\n  \"adjudication\": {{\n    \"criteria_judgement\": [],\n    \"overall_result\": {{\"result\": \"fail\", \"reason\": \"\"}},\n    \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"implement_general\"}},\n    \"full_next_iteration_requirements\": []\n  }},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"auto_commit\"}},\n  \"updated_at\": \"\"\n}}\n",
                         cycle_id, verify_iteration, verify_iteration_limit
                     ),
                 )?;
             }
             "auto_commit" => {
                 Self::ensure_jsonc_template(
-                    &cycle_dir.join("stage.auto_commit.jsonc"),
+                    &cycle_dir.join("auto_commit.jsonc"),
                     &format!(
-                        "{{\n  \"$schema_version\": \"1.0\",\n  \"stage\": \"auto_commit\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"direction\"}},\n  \"outputs\": [\"stage.auto_commit.jsonc\", \"handoff.md\"]\n}}\n",
+                        "{{\n  // Auto commit 阶段模板\n  \"$schema_version\": \"2.0\",\n  \"stage\": \"auto_commit\",\n  \"cycle_id\": \"{}\",\n  \"status\": \"running\",\n  \"decision\": {{\"result\": \"n/a\", \"reason\": \"\"}},\n  \"handoff\": {{\"completed\": [], \"risks\": [], \"next\": []}},\n  \"next_action\": {{\"type\": \"goto_stage\", \"target\": \"direction\"}},\n  \"updated_at\": \"\"\n}}\n",
                         cycle_id
                     ),
                 )?;
@@ -3251,12 +3157,8 @@ impl EvolutionManager {
 
         if verify_iteration > 0 && backlog_contract_version >= 2 {
             Self::ensure_jsonc_template(
-                &cycle_dir.join(MANAGED_FAILURE_BACKLOG_FILE),
-                "{\n  // 托管失败项模板：由系统维护主键，代理仅可更新允许字段\n  \"$schema_version\": \"1.0\",\n  \"cycle_id\": \"\",\n  \"verify_iteration\": 0,\n  \"items\": []\n}\n",
-            )?;
-            Self::ensure_jsonc_template(
-                &cycle_dir.join(MANAGED_BACKLOG_COVERAGE_FILE),
-                "{\n  // 托管覆盖模板：仅更新 status 与注释允许字段\n  \"$schema_version\": \"1.0\",\n  \"cycle_id\": \"\",\n  \"verify_iteration\": 0,\n  \"items\": [],\n  \"summary\": {\"total\": 0, \"done\": 0, \"blocked\": 0, \"not_done\": 0}\n}\n",
+                &cycle_dir.join(MANAGED_BACKLOG_FILE),
+                "{\n  // 托管 backlog 模板：系统维护 selector 与统计，代理只回填允许字段\n  \"$schema_version\": \"2.0\",\n  \"cycle_id\": \"\",\n  \"verify_iteration\": 0,\n  \"items\": [],\n  \"summary\": {\"total\": 0, \"done\": 0, \"blocked\": 0, \"not_done\": 0},\n  \"updated_at\": \"\"\n}\n",
             )?;
         }
 
@@ -3274,11 +3176,30 @@ impl EvolutionManager {
             return Ok(());
         };
         let payload = serde_json::json!({
-            "$schema_version": "1.0",
+            "$schema_version": "2.0",
             "stage": stage,
+            "cycle_id": read_json_file(cycle_dir, "cycle.jsonc")
+                .ok()
+                .and_then(|v| v.get("cycle_id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .unwrap_or_default(),
             "status": status,
             "verify_iteration": verify_iteration,
             "backlog_contract_version": backlog_contract_version,
+            "summary": "",
+            "work_item_results": [],
+            "changed_files": [],
+            "commands_executed": [],
+            "quick_checks": [],
+            "handoff": {
+                "completed": [],
+                "risks": [],
+                "next": []
+            },
+            "next_action": {
+                "type": "goto_stage",
+                "target": "verify"
+            },
+            "updated_at": Utc::now().to_rfc3339(),
             "backlog_resolution_updates": [],
             "failure_backlog": [],
             "backlog_coverage": [],
@@ -3633,33 +3554,22 @@ impl EvolutionManager {
     fn validation_target_files_for_stage(stage: &str) -> String {
         let normalized_stage = stage.trim().to_ascii_lowercase();
         match normalized_stage.as_str() {
-            "direction" => "stage.direction.jsonc / direction.lifecycle_scan.jsonc / cycle.jsonc"
-                .to_string(),
-            "plan" => "plan.execution.jsonc / cycle.jsonc".to_string(),
-            "implement_general" => {
-                "implement_general.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
-                    .to_string()
-            }
-            "implement_visual" => {
-                "implement_visual.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
-                    .to_string()
-            }
+            "direction" => "direction.jsonc / cycle.jsonc".to_string(),
+            "plan" => "plan.jsonc / direction.jsonc".to_string(),
+            "implement_general" => "implement_general.jsonc / managed.backlog.jsonc".to_string(),
+            "implement_visual" => "implement_visual.jsonc / managed.backlog.jsonc".to_string(),
             "implement_advanced" => {
-                "implement_advanced.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
-                    .to_string()
+                "implement_advanced.jsonc / managed.backlog.jsonc".to_string()
             }
-            "verify" => {
-                "verify.result.jsonc / plan.execution.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
-                    .to_string()
-            }
-            "auto_commit" => "stage.auto_commit.jsonc / git 工作区状态".to_string(),
+            "verify" => "verify.jsonc / plan.jsonc / managed.backlog.jsonc".to_string(),
+            "auto_commit" => "auto_commit.jsonc / git 工作区状态".to_string(),
             _ => {
                 let stage_name = if normalized_stage.is_empty() {
                     "unknown".to_string()
                 } else {
                     normalized_stage
                 };
-                format!("stage.{}.jsonc / 对应 *.result.jsonc 产物", stage_name)
+                format!("{}.jsonc / 对应阶段产物", stage_name)
             }
         }
     }
@@ -3716,14 +3626,14 @@ impl EvolutionManager {
         if let Some(lane) = lane_name {
             if normalized_error_message.contains("evo_backlog_mapping_missing") {
                 return format!(
-                    "无法将 backlog_resolution_updates 的 selector 映射到 managed.failure_backlog.jsonc。请复制该文件中 implementation_agent={} 的原始 selector 组合后再回填。",
+                    "无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent={} 的原始 selector 组合后再回填。",
                     lane
                 );
             }
 
             if normalized_error_message.contains("evo_backlog_mapping_ambiguous") {
                 return format!(
-                    "selector 映射出现歧义，请在 backlog_resolution_updates 中使用与 managed.failure_backlog.jsonc 一一对应且唯一的 selector（implementation_agent={}）。",
+                    "selector 映射出现歧义，请在 backlog_resolution_updates 中使用与 managed.backlog.jsonc 一一对应且唯一的 selector（implementation_agent={}）。",
                     lane
                 );
             }
@@ -3887,27 +3797,33 @@ impl EvolutionManager {
         session_id: &str,
         validation_err: &str,
     ) -> Result<(), String> {
-        let stage_file = cycle_dir.join(format!("stage.{}.jsonc", stage));
-        let mut value = if stage_file.exists() {
-            read_json(&stage_file).map_err(|e| format!("读取 {} 失败: {}", stage_file.display(), e))?
+        let cycle_file = cycle_dir.join("cycle.jsonc");
+        let mut value = if cycle_file.exists() {
+            read_json(&cycle_file).map_err(|e| format!("读取 {} 失败: {}", cycle_file.display(), e))?
         } else {
             serde_json::json!({})
         };
         let obj = value
             .as_object_mut()
-            .ok_or_else(|| format!("{} 顶层必须是对象", stage_file.display()))?;
-        let system_metadata = obj
-            .entry("system_metadata".to_string())
+            .ok_or_else(|| format!("{} 顶层必须是对象", cycle_file.display()))?;
+        let stage_runtime = obj
+            .entry("stage_runtime".to_string())
             .or_insert_with(|| serde_json::json!({}));
-        let system_obj = system_metadata
+        let runtime_obj = stage_runtime
             .as_object_mut()
-            .ok_or_else(|| format!("{}.system_metadata 必须是对象", stage_file.display()))?;
-        let attempts = system_obj
+            .ok_or_else(|| format!("{}.stage_runtime 必须是对象", cycle_file.display()))?;
+        let stage_entry = runtime_obj
+            .entry(stage.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        let stage_obj = stage_entry
+            .as_object_mut()
+            .ok_or_else(|| format!("{}.stage_runtime.{} 必须是对象", cycle_file.display(), stage))?;
+        let attempts = stage_obj
             .entry("validation_attempts".to_string())
             .or_insert_with(|| serde_json::json!([]));
         let attempts_array = attempts
             .as_array_mut()
-            .ok_or_else(|| format!("{}.validation_attempts 必须是数组", stage_file.display()))?;
+            .ok_or_else(|| format!("{}.validation_attempts 必须是数组", cycle_file.display()))?;
         let (error_code, message) = Self::parse_validation_error_code_and_message(validation_err);
         attempts_array.push(serde_json::json!({
             "attempt": attempt,
@@ -3916,7 +3832,7 @@ impl EvolutionManager {
             "ts": Utc::now().to_rfc3339(),
             "session_id": session_id,
         }));
-        write_json(&stage_file, &value)
+        write_json(&cycle_file, &value)
     }
 
     async fn consume_stage_stream(
@@ -4289,28 +4205,17 @@ impl EvolutionManager {
 
         if let Some(workspace_root) = maybe_workspace_root {
             if let Ok(cycle_dir) = cycle_dir_path(&workspace_root, cycle_id) {
-                let mut verify_outcome_from_file: Option<bool> = None;
-                if let Ok(json) = read_json_file(&cycle_dir, "verify.result.jsonc") {
+                if let Ok(json) = read_json_file(&cycle_dir, "verify.jsonc") {
                     if let Some(parsed) = parse_adjudication_result_from_json(&json) {
-                        verify_outcome_from_file = Some(parsed);
-                    }
-                }
-
-                if verify_outcome_from_file.is_none() {
-                    if let Ok(json) = read_json_file(&cycle_dir, "stage.verify.jsonc") {
-                        if let Some(parsed) = parse_adjudication_result_from_json(&json) {
-                            verify_outcome_from_file = Some(parsed);
-                        }
-                    }
-                }
-
-                if let Some(parsed) = verify_outcome_from_file {
                     verify_pass = parsed;
                 } else {
                     return Err(
-                        "verify structured result missing: require verify.result.jsonc or stage.verify.jsonc with pass/fail"
+                            "verify structured result missing: require verify.jsonc with pass/fail"
                             .to_string(),
                     );
+                }
+                } else {
+                    return Err("verify structured result missing: require verify.jsonc".to_string());
                 }
             }
         } else {
@@ -4372,13 +4277,18 @@ impl EvolutionManager {
                 ArtifactValidationError::new("artifact_contract_violation", e).to_stage_error()
             })?;
             if stage == "direction" {
-                self.sync_cycle_title_from_direction_stage(key, cycle_id)
+                self.sync_direction_state_from_artifact(key, cycle_id)
                     .await
                     .map_err(|e| {
-                        ArtifactValidationError::new("direction_title_sync_failed", e)
+                        ArtifactValidationError::new("direction_state_sync_failed", e)
                             .to_stage_error()
                     })?;
             }
+            self.sync_handoff_from_stage_artifact(key, cycle_id, stage)
+                .await
+                .map_err(|e| {
+                    ArtifactValidationError::new("handoff_sync_failed", e).to_stage_error()
+                })?;
         }
         Ok(())
     }
@@ -5082,23 +4992,6 @@ impl EvolutionManager {
                 key, stage, verify_pass
             );
         }
-        if stage == "plan" {
-            let Some(cycle_id) = cycle_for_validation.clone() else {
-                warn!(
-                    "evolution after_stage_success plan validation skipped: missing cycle_id: key={}, stage={}",
-                    key, stage
-                );
-                return false;
-            };
-            if let Err(err) = self
-                .sync_acceptance_criteria_from_plan(key, &cycle_id)
-                .await
-            {
-                self.mark_failed_with_code(key, "evo_acceptance_source_missing", &err, ctx)
-                    .await;
-                return false;
-            }
-        }
         if stage == "verify" {
             let Some(cycle_id) = cycle_for_validation.clone() else {
                 warn!(
@@ -5432,6 +5325,10 @@ impl EvolutionManager {
             entry.verify_iteration = 0;
             entry.cycle_id = Utc::now().format("%Y-%m-%dT%H-%M-%S-%3fZ").to_string();
             entry.cycle_title = None;
+            entry.cycle_handoff = crate::server::protocol::EvolutionHandoffInfo::default();
+            entry.selected_direction_type = None;
+            entry.direction_candidate_scores.clear();
+            entry.direction_final_reason = None;
             entry.created_at = Utc::now().to_rfc3339();
             entry.current_stage = "direction".to_string();
             entry.status = "queued".to_string();
@@ -5694,9 +5591,17 @@ mod tests {
         super::write_json(path, &value).expect("write json failed");
     }
 
+    fn empty_handoff_json() -> serde_json::Value {
+        serde_json::json!({
+            "completed": [],
+            "risks": [],
+            "next": []
+        })
+    }
+
     fn base_plan_json(work_items: Vec<serde_json::Value>) -> serde_json::Value {
         serde_json::json!({
-            "$schema_version": "1.0",
+            "$schema_version": "2.0",
             "cycle_id": "c-1",
             "selected_direction_type": "architecture",
             "goal": "demo",
@@ -5712,6 +5617,7 @@ mod tests {
                     {"criteria_id": "ac-2", "description": "验收标准 2", "check_ids": ["v-2"]}
                 ]
             },
+            "handoff": empty_handoff_json(),
             "updated_at": "2026-03-02T00:00:00Z"
         })
     }
@@ -5734,7 +5640,7 @@ mod tests {
             .filter(|item| item.get("status").and_then(|v| v.as_str()) == Some("not_done"))
             .count() as u64;
         serde_json::json!({
-            "$schema_version": "1.0",
+            "$schema_version": "2.0",
             "cycle_id": "c-1",
             "verify_iteration": 1,
             "status": "done",
@@ -5743,6 +5649,7 @@ mod tests {
             "changed_files": [],
             "commands_executed": [],
             "quick_checks": [],
+            "backlog_resolution_updates": [],
             "failure_backlog": backlog,
             "backlog_coverage": coverage,
             "backlog_coverage_summary": {
@@ -5751,6 +5658,7 @@ mod tests {
                 "blocked": blocked,
                 "not_done": not_done
             },
+            "handoff": empty_handoff_json(),
             "updated_at": "2026-03-02T00:00:00Z"
         })
     }
@@ -5769,9 +5677,9 @@ mod tests {
 
     fn write_empty_implement_result_triplet(dir: &Path) {
         for file in [
-            "implement_general.result.jsonc",
-            "implement_visual.result.jsonc",
-            "implement_advanced.result.jsonc",
+            "implement_general.jsonc",
+            "implement_visual.jsonc",
+            "implement_advanced.jsonc",
         ] {
             write_json(
                 &dir.join(file),
@@ -5787,33 +5695,71 @@ mod tests {
         backlog: Vec<serde_json::Value>,
         coverage: Vec<serde_json::Value>,
     ) {
-        write_json(
-            &dir.join("managed.failure_backlog.jsonc"),
-            serde_json::json!({
-                "$schema_version": "1.0",
-                "cycle_id": cycle_id,
-                "verify_iteration": verify_iteration,
-                "items": backlog,
-                "updated_at": "2026-03-02T00:00:00Z"
-            }),
-        );
-        let total = coverage.len() as u64;
-        let done = coverage
+        let coverage_by_id: std::collections::HashMap<String, &serde_json::Value> = coverage
+            .iter()
+            .filter_map(|item| {
+                let key = item
+                    .get("id")
+                    .or_else(|| item.get("item_id"))
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())?;
+                Some((key, item))
+            })
+            .collect();
+        let items = backlog
+            .into_iter()
+            .map(|item| {
+                let mut obj = item.as_object().cloned().unwrap_or_default();
+                let item_id = obj
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| format!("backlog-{}", obj.len()));
+                let coverage_item = coverage_by_id.get(&item_id);
+                obj.insert("id".to_string(), serde_json::json!(item_id));
+                obj.entry("status".to_string())
+                    .or_insert_with(|| {
+                        serde_json::json!(
+                            coverage_item
+                                .and_then(|value| value.get("status"))
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("not_done")
+                        )
+                    });
+                obj.entry("evidence".to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+                obj.entry("notes".to_string())
+                    .or_insert_with(|| serde_json::json!(""));
+                obj.entry("requirement_ref".to_string())
+                    .or_insert_with(|| serde_json::json!(""));
+                obj.entry("description".to_string())
+                    .or_insert_with(|| serde_json::json!(""));
+                obj.entry("created_at".to_string())
+                    .or_insert_with(|| serde_json::json!("2026-03-02T00:00:00Z"));
+                obj.entry("updated_at".to_string())
+                    .or_insert_with(|| serde_json::json!("2026-03-02T00:00:00Z"));
+                serde_json::Value::Object(obj)
+            })
+            .collect::<Vec<serde_json::Value>>();
+        let total = items.len() as u64;
+        let done = items
             .iter()
             .filter(|item| item.get("status").and_then(|v| v.as_str()) == Some("done"))
             .count() as u64;
-        let blocked = coverage
+        let blocked = items
             .iter()
             .filter(|item| item.get("status").and_then(|v| v.as_str()) == Some("blocked"))
             .count() as u64;
         let not_done = total.saturating_sub(done).saturating_sub(blocked);
         write_json(
-            &dir.join("managed.backlog_coverage.jsonc"),
+            &dir.join("managed.backlog.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
                 "cycle_id": cycle_id,
                 "verify_iteration": verify_iteration,
-                "items": coverage,
+                "items": items,
                 "summary": {
                     "total": total,
                     "done": done,
@@ -5827,10 +5773,11 @@ mod tests {
 
     fn write_valid_direction_artifacts(dir: &Path) {
         write_json(
-            &dir.join("stage.direction.jsonc"),
+            &dir.join("direction.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
                 "cycle_id": "c-1",
+                "status": "done",
                 "cycle_title": "标题",
                 "decision": {
                     "context": {
@@ -5843,15 +5790,6 @@ mod tests {
                         }
                     }
                 },
-                "next_action": {"type": "goto_stage", "target": "plan"},
-                "updated_at": "2026-03-02T00:00:00Z"
-            }),
-        );
-        write_json(
-            &dir.join("direction.lifecycle_scan.jsonc"),
-            serde_json::json!({
-                "$schema_version": "1.0",
-                "cycle_id": "c-1",
                 "project_type": "macos",
                 "ui_capability": "full",
                 "domains": [{
@@ -5863,28 +5801,31 @@ mod tests {
                         "mapped_direction_type": "architecture"
                     }]
                 }],
+                "selected_direction_type": "architecture",
+                "candidate_scores": [
+                    {"direction_type": "architecture", "score": 0.9},
+                    {"direction_type": "performance", "score": 0.7},
+                    {"direction_type": "docs", "score": 0.5}
+                ],
+                "final_reason": "reason",
+                "acceptance_criteria": [
+                    {"criteria_id": "ac-1", "description": "d1"},
+                    {"criteria_id": "ac-2", "description": "d2"}
+                ],
+                "handoff": empty_handoff_json(),
+                "next_action": {"type": "goto_stage", "target": "plan"},
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
         write_json(
             &dir.join("cycle.jsonc"),
             serde_json::json!({
-                "$schema_version": "1.0",
+                "$schema_version": "2.0",
                 "cycle_id": "c-1",
-                "direction": {
-                    "selected_type": "architecture",
-                    "candidate_scores": [
-                        {"direction_type": "architecture", "score": 0.9},
-                        {"direction_type": "performance", "score": 0.7},
-                        {"direction_type": "docs", "score": 0.5}
-                    ],
-                    "final_reason": "reason"
-                },
-                "llm_defined_acceptance": {
-                    "criteria": [
-                        {"criteria_id": "ac-1", "description": "d1"}
-                    ]
-                }
+                "title": "标题",
+                "status": "running",
+                "stage_runtime": {},
+                "executions": []
             }),
         );
     }
@@ -5959,7 +5900,7 @@ mod tests {
         ));
         assert!(EvolutionManager::should_retry_validation_with_reminder(
             "implement_general",
-            "artifact_contract_violation: implement_general.result.jsonc 缺少 quick_checks"
+            "artifact_contract_violation: implement_general.jsonc 缺少 quick_checks"
         ));
         assert!(!EvolutionManager::should_retry_validation_with_reminder(
             "custom_stage",
@@ -5970,10 +5911,10 @@ mod tests {
     #[test]
     fn parse_validation_error_code_and_message_should_parse_standard_stage_error() {
         let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
-            "evo_stage_output_invalid:artifact_contract_violation: verify.result.jsonc 缺少 adjudication.overall_result",
+            "evo_stage_output_invalid:artifact_contract_violation: verify.jsonc 缺少 adjudication.overall_result",
         );
         assert_eq!(code, "artifact_contract_violation");
-        assert_eq!(message, "verify.result.jsonc 缺少 adjudication.overall_result");
+        assert_eq!(message, "verify.jsonc 缺少 adjudication.overall_result");
     }
 
     #[test]
@@ -5988,10 +5929,10 @@ mod tests {
     #[test]
     fn parse_validation_error_code_and_message_should_fallback_when_prefix_missing() {
         let (code, message) = EvolutionManager::parse_validation_error_code_and_message(
-            "verify.result.jsonc 缺少 adjudication.overall_result",
+            "verify.jsonc 缺少 adjudication.overall_result",
         );
         assert_eq!(code, "artifact_contract_violation");
-        assert_eq!(message, "verify.result.jsonc 缺少 adjudication.overall_result");
+        assert_eq!(message, "verify.jsonc 缺少 adjudication.overall_result");
     }
 
     #[test]
@@ -6007,49 +5948,49 @@ mod tests {
     fn validation_target_files_for_stage_should_match_all_supported_and_unknown() {
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("direction"),
-            "stage.direction.jsonc / direction.lifecycle_scan.jsonc / cycle.jsonc"
+            "direction.jsonc / cycle.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("plan"),
-            "plan.execution.jsonc / cycle.jsonc"
+            "plan.jsonc / direction.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_general"),
-            "implement_general.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
+            "implement_general.jsonc / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_visual"),
-            "implement_visual.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
+            "implement_visual.jsonc / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("implement_advanced"),
-            "implement_advanced.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
+            "implement_advanced.jsonc / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("verify"),
-            "verify.result.jsonc / plan.execution.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc"
+            "verify.jsonc / plan.jsonc / managed.backlog.jsonc"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("auto_commit"),
-            "stage.auto_commit.jsonc / git 工作区状态"
+            "auto_commit.jsonc / git 工作区状态"
         );
         assert_eq!(
             EvolutionManager::validation_target_files_for_stage("custom_stage"),
-            "stage.custom_stage.jsonc / 对应 *.result.jsonc 产物"
+            "custom_stage.jsonc / 对应阶段产物"
         );
     }
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_missing_field() {
         let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: plan.execution.jsonc 缺少 selected_direction_type";
+            "evo_stage_output_invalid:artifact_contract_violation: plan.jsonc 缺少 selected_direction_type";
         let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
-            "plan.execution.jsonc 缺少 selected_direction_type",
+            "plan.jsonc 缺少 selected_direction_type",
             "补齐缺失字段，保持字段名与层级路径和阶段产物契约一致。",
-            "plan.execution.jsonc / cycle.jsonc",
+            "plan.jsonc / direction.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6058,14 +5999,14 @@ mod tests {
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_non_empty_constraint() {
         let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: stage.direction.jsonc.cycle_title 不能为空";
+            "evo_stage_output_invalid:artifact_contract_violation: direction.jsonc.cycle_title 不能为空";
         let msg = EvolutionManager::build_validation_reminder_message("direction", raw_error);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
-            "stage.direction.jsonc.cycle_title 不能为空",
+            "direction.jsonc.cycle_title 不能为空",
             "将必填字段填为非空值（字符串非空、数组至少 1 项、对象含必需键）。",
-            "stage.direction.jsonc / direction.lifecycle_scan.jsonc / cycle.jsonc",
+            "direction.jsonc / cycle.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6075,14 +6016,14 @@ mod tests {
     fn build_validation_reminder_message_should_match_snapshot_for_direction_ui_capability_constraint(
     ) {
         let raw_error =
-            "evo_stage_output_invalid:artifact_contract_violation: direction.lifecycle_scan.jsonc.ui_capability 不能为空";
+            "evo_stage_output_invalid:artifact_contract_violation: direction.jsonc.ui_capability 不能为空";
         let msg = EvolutionManager::build_validation_reminder_message("direction", raw_error);
         let expected = expected_validation_reminder(
             "direction",
             "artifact_contract_violation",
-            "direction.lifecycle_scan.jsonc.ui_capability 不能为空",
+            "direction.jsonc.ui_capability 不能为空",
             "ui_capability 必须填写为非空字符串（建议值：none|partial|full），禁止使用 true/false。",
-            "stage.direction.jsonc / direction.lifecycle_scan.jsonc / cycle.jsonc",
+            "direction.jsonc / cycle.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6090,14 +6031,14 @@ mod tests {
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_number_type_constraint() {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify.result.jsonc.carryover_verification.summary.total 必须是数字";
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: verify.jsonc.carryover_verification.summary.total 必须是数字";
         let msg = EvolutionManager::build_validation_reminder_message("verify", raw_error);
         let expected = expected_validation_reminder(
             "verify",
             "artifact_contract_violation",
-            "verify.result.jsonc.carryover_verification.summary.total 必须是数字",
+            "verify.jsonc.carryover_verification.summary.total 必须是数字",
             "将该字段改为数字类型（JSON number），不要使用字符串或对象。",
-            "verify.result.jsonc / plan.execution.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc",
+            "verify.jsonc / plan.jsonc / managed.backlog.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6105,15 +6046,15 @@ mod tests {
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_implement_quick_checks_array() {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: implement_advanced.result.jsonc.quick_checks 必须是数组";
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: implement_advanced.jsonc.quick_checks 必须是数组";
         let msg =
             EvolutionManager::build_validation_reminder_message("implement_advanced", raw_error);
         let expected = expected_validation_reminder(
             "implement_advanced",
             "artifact_contract_violation",
-            "implement_advanced.result.jsonc.quick_checks 必须是数组",
+            "implement_advanced.jsonc.quick_checks 必须是数组",
             "quick_checks 必须是数组（[]），即使没有检查项也必须输出 []；不要写成对象。",
-            "implement_advanced.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc",
+            "implement_advanced.jsonc / managed.backlog.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6129,8 +6070,8 @@ mod tests {
             "implement_advanced",
             "managed_backlog_sync_failed",
             "evo_backlog_mapping_missing: selector=(ac-1, chk-1, wi-1, implement_advanced), candidates=0",
-            "无法将 backlog_resolution_updates 的 selector 映射到 managed.failure_backlog.jsonc。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。",
-            "implement_advanced.result.jsonc / managed.failure_backlog.jsonc / managed.backlog_coverage.jsonc",
+            "无法将 backlog_resolution_updates 的 selector 映射到 managed.backlog.jsonc。请复制该文件中 implementation_agent=implement_advanced 的原始 selector 组合后再回填。",
+            "implement_advanced.jsonc / managed.backlog.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6138,14 +6079,14 @@ mod tests {
 
     #[test]
     fn build_validation_reminder_message_should_match_snapshot_for_cross_file_inconsistency() {
-        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: selected_direction_type 与 cycle.direction.selected_type 不一致: ui != feature";
+        let raw_error = "evo_stage_output_invalid:artifact_contract_violation: selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature";
         let msg = EvolutionManager::build_validation_reminder_message("plan", raw_error);
         let expected = expected_validation_reminder(
             "plan",
             "artifact_contract_violation",
-            "selected_direction_type 与 cycle.direction.selected_type 不一致: ui != feature",
+            "selected_direction_type 与 direction.selected_direction_type 不一致: ui != feature",
             "修正关联字段，使跨文件/跨字段引用保持一一对应且数值一致。",
-            "plan.execution.jsonc / cycle.jsonc",
+            "plan.jsonc / direction.jsonc",
             raw_error,
         );
         assert_eq!(msg, expected);
@@ -6320,13 +6261,13 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_valid_direction_artifacts(dir.path());
 
-        let mut stage_direction = super::read_json_file(dir.path(), "stage.direction.jsonc")
-            .expect("stage.direction.jsonc should be readable");
+        let mut stage_direction = super::read_json_file(dir.path(), "direction.jsonc")
+            .expect("direction.jsonc should be readable");
         stage_direction
             .as_object_mut()
-            .expect("stage.direction.jsonc should be object")
+            .expect("direction.jsonc should be object")
             .remove("cycle_title");
-        write_json(&dir.path().join("stage.direction.jsonc"), stage_direction);
+        write_json(&dir.path().join("direction.jsonc"), stage_direction);
 
         let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
             .expect_err("missing cycle_title should fail");
@@ -6338,14 +6279,14 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 0, 1)
             .expect_err("first round missing implement result should fail");
-        assert!(err.contains("implement_general.result.jsonc"));
+        assert!(err.contains("implement_general.jsonc"));
     }
 
     #[test]
     fn validate_stage_artifacts_should_reject_first_round_verify_missing_acceptance_evaluation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -6361,7 +6302,7 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6382,7 +6323,7 @@ mod tests {
     fn validate_stage_artifacts_should_reject_first_round_verify_missing_criteria_coverage() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -6398,7 +6339,7 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6463,13 +6404,13 @@ mod tests {
             })],
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_with_updates(Vec::new()),
         );
 
         let err = EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
             .expect_err("managed backlog verify_iteration mismatch should fail");
-        assert!(err.contains("managed.failure_backlog.jsonc.verify_iteration"));
+        assert!(err.contains("managed.backlog.jsonc.verify_iteration"));
     }
 
     #[test]
@@ -6477,7 +6418,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
 
-        let mut result = super::read_json_file(dir.path(), "implement_general.result.jsonc")
+        let mut result = super::read_json_file(dir.path(), "implement_general.jsonc")
             .expect("implement result should be readable");
         result
             .as_object_mut()
@@ -6486,7 +6427,7 @@ mod tests {
                 "updated_at".to_string(),
                 serde_json::json!("2026-03-01T00:00:00Z"),
             );
-        write_json(&dir.path().join("implement_general.result.jsonc"), result);
+        write_json(&dir.path().join("implement_general.jsonc"), result);
 
         let started_at = chrono::DateTime::parse_from_rfc3339("2026-03-02T12:00:00Z")
             .expect("parse started_at should succeed")
@@ -6522,7 +6463,7 @@ mod tests {
             .expect("write dirty file should succeed");
 
         write_json(
-            &dir.path().join("stage.auto_commit.jsonc"),
+            &dir.path().join("auto_commit.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6558,7 +6499,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6589,7 +6530,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6620,7 +6561,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![
                     serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"}),
@@ -6639,7 +6580,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -6655,7 +6596,7 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![
                     serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"}),
@@ -6668,7 +6609,7 @@ mod tests {
             ),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6707,7 +6648,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -6723,14 +6664,14 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6759,7 +6700,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -6775,14 +6716,14 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
             ),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6811,14 +6752,14 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "not_done"})],
             ),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -6834,7 +6775,7 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6853,7 +6794,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let mut verify = super::read_json_file(dir.path(), "verify.result.jsonc")
+        let mut verify = super::read_json_file(dir.path(), "verify.jsonc")
             .expect("verify result should be readable");
         verify
             .as_object_mut()
@@ -6876,7 +6817,7 @@ mod tests {
                     ]
                 }),
             );
-        write_json(&dir.path().join("verify.result.jsonc"), verify);
+        write_json(&dir.path().join("verify.jsonc"), verify);
         let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
             .expect_err("verify requirements missing should fail");
         assert!(err.contains("未覆盖 verify 未通过项"));
@@ -6886,7 +6827,7 @@ mod tests {
     fn validate_stage_artifacts_should_reject_verify_v2_missing_selector_fields() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -6917,7 +6858,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -6937,7 +6878,7 @@ mod tests {
             }),
         );
         write_managed_backlog_files(dir.path(), "c-1", 1, Vec::new(), Vec::new());
-        let mut verify = super::read_json_file(dir.path(), "verify.result.jsonc")
+        let mut verify = super::read_json_file(dir.path(), "verify.jsonc")
             .expect("verify result should be readable");
         verify
             .as_object_mut()
@@ -6960,7 +6901,7 @@ mod tests {
                     ]
                 }),
             );
-        write_json(&dir.path().join("verify.result.jsonc"), verify);
+        write_json(&dir.path().join("verify.jsonc"), verify);
         let err = EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 2)
             .expect_err("v2 verify 缺少 selector 字段应失败");
         assert!(err.contains("source_check_id"));
@@ -6970,7 +6911,7 @@ mod tests {
     fn validate_stage_artifacts_should_accept_verify_v2_complete_selector_fields() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7001,7 +6942,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -7021,7 +6962,7 @@ mod tests {
             }),
         );
         write_managed_backlog_files(dir.path(), "c-1", 1, Vec::new(), Vec::new());
-        let mut verify = super::read_json_file(dir.path(), "verify.result.jsonc")
+        let mut verify = super::read_json_file(dir.path(), "verify.jsonc")
             .expect("verify result should be readable");
         verify
             .as_object_mut()
@@ -7051,7 +6992,7 @@ mod tests {
                     ]
                 }),
             );
-        write_json(&dir.path().join("verify.result.jsonc"), verify);
+        write_json(&dir.path().join("verify.jsonc"), verify);
         EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 2)
             .expect("v2 verify 完整 selector 应通过");
     }
@@ -7061,7 +7002,7 @@ mod tests {
     ) {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7092,7 +7033,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -7133,7 +7074,7 @@ mod tests {
     ) {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7164,7 +7105,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -7209,14 +7150,14 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "implement_general"})],
                 vec![serde_json::json!({"id": "f-1", "status": "not_done"})],
             ),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -7232,7 +7173,7 @@ mod tests {
             })]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "$schema_version": "1.0",
                 "cycle_id": "c-1",
@@ -7251,7 +7192,7 @@ mod tests {
                 "updated_at": "2026-03-02T00:00:00Z"
             }),
         );
-        let mut verify = super::read_json_file(dir.path(), "verify.result.jsonc")
+        let mut verify = super::read_json_file(dir.path(), "verify.jsonc")
             .expect("verify result should be readable");
         verify
             .as_object_mut()
@@ -7277,7 +7218,7 @@ mod tests {
                     ]
                 }),
             );
-        write_json(&dir.path().join("verify.result.jsonc"), verify);
+        write_json(&dir.path().join("verify.jsonc"), verify);
 
         EvolutionManager::validate_stage_artifacts("verify", dir.path(), 1, 1)
             .expect("verify requirement 同时包含 id 和 criteria_id 应视为覆盖 verify 未通过项");
@@ -7287,7 +7228,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_missing_implementation_agent() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -7310,7 +7251,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_invalid_agent() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -7334,7 +7275,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_missing_linked_check_ids() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -7357,7 +7298,7 @@ mod tests {
     fn validate_plan_artifact_should_reject_unknown_linked_check_id() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![serde_json::json!({
                 "id": "w-1",
                 "title": "x",
@@ -7381,7 +7322,7 @@ mod tests {
     fn resolve_implement_lanes_should_use_general_only_on_first_iteration() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7420,7 +7361,7 @@ mod tests {
     fn resolve_implement_lanes_should_use_visual_only_on_first_iteration() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7459,7 +7400,7 @@ mod tests {
     fn resolve_implement_lanes_should_use_general_then_visual_on_first_iteration() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7498,7 +7439,7 @@ mod tests {
     fn resolve_implement_lanes_should_keep_general_and_advanced_on_first_iteration() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7537,7 +7478,7 @@ mod tests {
     fn resolve_implement_lanes_should_map_only_general_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7568,7 +7509,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
@@ -7582,7 +7523,7 @@ mod tests {
     fn resolve_implement_lanes_should_map_only_visual_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7613,7 +7554,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-2", "status": "insufficient_evidence"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
@@ -7627,7 +7568,7 @@ mod tests {
     fn resolve_implement_lanes_should_map_general_then_visual_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7658,7 +7599,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
@@ -7672,7 +7613,7 @@ mod tests {
     fn resolve_implement_lanes_should_map_general_then_advanced_on_reimplementation() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7703,7 +7644,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-1", "status": "fail"}],
                 "carryover_verification": {"items": [{"id": "ac-2", "status": "missing"}], "summary": {"total": 1, "covered": 0, "missing": 1, "blocked": 0}}
@@ -7717,7 +7658,7 @@ mod tests {
     fn resolve_implement_lanes_should_fallback_to_general_when_mapping_unknown() {
         let dir = tempdir().expect("tempdir should succeed");
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -7748,7 +7689,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "acceptance_evaluation": [{"criteria_id": "ac-404", "status": "fail"}],
                 "carryover_verification": {"items": [], "summary": {"total": 0, "covered": 0, "missing": 0, "blocked": 0}}
@@ -7777,7 +7718,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should succeed");
         write_empty_implement_result_triplet(dir.path());
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_json(
                 vec![serde_json::json!({"id": "f-1", "implementation_agent": "advanced"})],
                 vec![serde_json::json!({"id": "f-1", "status": "done"})],
@@ -7819,7 +7760,7 @@ mod tests {
             })],
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_with_updates(Vec::new()),
         );
         EvolutionManager::validate_stage_artifacts("implement_general", dir.path(), 1, 2)
@@ -7857,7 +7798,7 @@ mod tests {
             })],
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "ac-404",
                     "source_check_id": "v-404",
@@ -7933,7 +7874,7 @@ mod tests {
             ],
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
@@ -7983,7 +7924,7 @@ mod tests {
             })],
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "ac-1",
                     "source_check_id": "v-1",
@@ -7996,7 +7937,7 @@ mod tests {
         );
         EvolutionManager::sync_managed_backlog_for_implement_stage(dir.path(), "implement_general")
             .expect("sync should succeed");
-        let result = super::read_json_file(dir.path(), "implement_general.result.jsonc")
+        let result = super::read_json_file(dir.path(), "implement_general.jsonc")
             .expect("implement result should be readable");
         assert_eq!(
             result["backlog_coverage_summary"]["total"],
@@ -8041,7 +7982,7 @@ mod tests {
             })],
         );
         write_json(
-            &dir.path().join("implement_general.result.jsonc"),
+            &dir.path().join("implement_general.jsonc"),
             base_implement_result_with_updates(vec![serde_json::json!({
                     "source_criteria_id": "AC-005",
                     "source_check_id": "check_unit_integration_tests",
@@ -8056,11 +7997,11 @@ mod tests {
         EvolutionManager::sync_managed_backlog_for_implement_stage(dir.path(), "implement_general")
             .expect("should fallback by requirement_ref");
 
-        let coverage = super::read_json_file(dir.path(), "managed.backlog_coverage.jsonc")
+        let coverage = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("coverage should be readable");
         assert_eq!(coverage["items"][0]["status"], serde_json::json!("done"));
 
-        let result = super::read_json_file(dir.path(), "implement_general.result.jsonc")
+        let result = super::read_json_file(dir.path(), "implement_general.jsonc")
             .expect("result should be readable");
         assert_eq!(
             result["failure_backlog"][0]["work_item_id"],
@@ -8082,7 +8023,7 @@ mod tests {
             }),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -8113,7 +8054,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "adjudication": {
                     "full_next_iteration_requirements": [{
@@ -8127,9 +8068,9 @@ mod tests {
         );
         EvolutionManager::generate_managed_backlog_from_verify(dir.path(), 1)
             .expect("managed backlog generation should succeed");
-        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.jsonc")
+        let backlog = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("managed backlog should exist");
-        let coverage = super::read_json_file(dir.path(), "managed.backlog_coverage.jsonc")
+        let coverage = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("managed coverage should exist");
         assert_eq!(
             backlog["items"]
@@ -8154,7 +8095,7 @@ mod tests {
             }),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -8186,7 +8127,7 @@ mod tests {
         );
         // verify.adjudication 使用 {"items": [...]} 对象格式（而非直接数组）
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "adjudication": {
                     "full_next_iteration_requirements": {
@@ -8202,7 +8143,7 @@ mod tests {
         );
         EvolutionManager::generate_managed_backlog_from_verify(dir.path(), 1)
             .expect("managed backlog generation should succeed with items object format");
-        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.jsonc")
+        let backlog = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("managed backlog should exist");
         assert_eq!(
             backlog["items"]
@@ -8221,7 +8162,7 @@ mod tests {
             serde_json::json!({ "cycle_id": "c-3" }),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -8253,7 +8194,7 @@ mod tests {
         );
         // verify.adjudication 使用 {"acceptance_failures": [...], "carryover_failures": [...]} 格式
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "adjudication": {
                     "full_next_iteration_requirements": {
@@ -8279,7 +8220,7 @@ mod tests {
         );
         EvolutionManager::generate_managed_backlog_from_verify(dir.path(), 1)
             .expect("managed backlog generation should succeed with acceptance_failures format");
-        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.jsonc")
+        let backlog = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("managed backlog should exist");
         // check_ids 有 2 个元素，应展开为 2 条 backlog 项
         assert_eq!(
@@ -8289,7 +8230,7 @@ mod tests {
                 .unwrap_or(0),
             2
         );
-        let coverage = super::read_json_file(dir.path(), "managed.backlog_coverage.jsonc")
+        let coverage = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("managed coverage should exist");
         assert_eq!(
             coverage["items"]
@@ -8308,7 +8249,7 @@ mod tests {
             serde_json::json!({ "cycle_id": "c-4" }),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -8366,7 +8307,7 @@ mod tests {
             })],
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "adjudication": {
                     "full_next_iteration_requirements": [{
@@ -8379,7 +8320,7 @@ mod tests {
         );
         EvolutionManager::generate_managed_backlog_from_verify(dir.path(), 2)
             .expect("应可从上一轮 backlog 回填 selector");
-        let backlog = super::read_json_file(dir.path(), "managed.failure_backlog.jsonc")
+        let backlog = super::read_json_file(dir.path(), "managed.backlog.jsonc")
             .expect("managed backlog should exist");
         let item = &backlog["items"][0];
         assert_eq!(item["source_criteria_id"], serde_json::json!("ac-1"));
@@ -8399,7 +8340,7 @@ mod tests {
             serde_json::json!({ "cycle_id": "c-5" }),
         );
         write_json(
-            &dir.path().join("plan.execution.jsonc"),
+            &dir.path().join("plan.jsonc"),
             base_plan_json(vec![
                 serde_json::json!({
                     "id": "w-1",
@@ -8430,7 +8371,7 @@ mod tests {
             ]),
         );
         write_json(
-            &dir.path().join("verify.result.jsonc"),
+            &dir.path().join("verify.jsonc"),
             serde_json::json!({
                 "adjudication": {
                     "full_next_iteration_requirements": [{

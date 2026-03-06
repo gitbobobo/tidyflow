@@ -10,14 +10,11 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 阶段任务：
 1. 评估项目能力与证据，形成 `decision.context.capability_assessment`（`ui/test/build/runtime` 与 `rationale` 必须可解释、非空）。
 2. 产出至少 3 个候选进化方向并选择最终方向，保证候选评分可比较、可追踪。
-3. 同步本轮可验证验收标准（`criteria_id + 可验证描述`），供后续 `plan/verify` 使用。
+3. 同步本轮可验证验收标准（`criteria_id + 可验证描述`），写入 `direction.jsonc.acceptance_criteria`，供后续 `plan/verify` 使用。
 4. 维护阶段流转：本阶段结束后应进入 `plan`。
 
 必须更新：
-- `stage.direction.jsonc`
-- `direction.lifecycle_scan.jsonc`
-- `cycle.jsonc`
-- `handoff.md`
+- `direction.jsonc`
 "####;
 
 pub const STAGE_PLAN_PROMPT: &str = r####"
@@ -36,9 +33,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 7. 维护阶段流转：本阶段结束后应进入 `implement_general`。
 
 必须更新：
-- `plan.execution.jsonc`
-- `stage.plan.jsonc`
-- `handoff.md`
+- `plan.jsonc`
 "####;
 
 pub const STAGE_IMPLEMENT_GENERAL_PROMPT: &str = r####"
@@ -58,9 +53,7 @@ pub const STAGE_IMPLEMENT_GENERAL_PROMPT: &str = r####"
 6. 维护阶段流转：本阶段结束后进入 `implement_visual`（若系统判定该 lane 可跳过，以系统调度为准）。
 
 必须更新：
-- `implement_general.result.jsonc`
-- `stage.implement_general.jsonc`
-- `handoff.md`
+- `implement_general.jsonc`
 "####;
 
 pub const STAGE_IMPLEMENT_VISUAL_PROMPT: &str = r####"
@@ -78,9 +71,7 @@ pub const STAGE_IMPLEMENT_VISUAL_PROMPT: &str = r####"
 5. 维护阶段流转：本阶段结束后进入 `verify`。
 
 必须更新：
-- `implement_visual.result.jsonc`
-- `stage.implement_visual.jsonc`
-- `handoff.md`
+- `implement_visual.jsonc`
 "####;
 
 pub const STAGE_IMPLEMENT_ADVANCED_PROMPT: &str = r####"
@@ -98,9 +89,7 @@ pub const STAGE_IMPLEMENT_ADVANCED_PROMPT: &str = r####"
 5. 维护阶段流转：本阶段结束后进入 `verify`。
 
 必须更新：
-- `implement_advanced.result.jsonc`
-- `stage.implement_advanced.jsonc`
-- `handoff.md`
+- `implement_advanced.jsonc`
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
@@ -109,7 +98,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 硬性约束：
 1. 全程自主执行，禁止提问。
 2. 禁止修改业务实现代码；只允许更新验证/裁决相关产物字段。
-4. 所有验证与裁决结果统一写入 `verify.result.jsonc`。
+4. 所有验证与裁决结果统一写入 `verify.jsonc`。
 
 阶段任务：
 1. 执行并记录验证：`check_results`、`acceptance_evaluation`、`verification_overall`。
@@ -124,9 +113,7 @@ pub const STAGE_VERIFY_PROMPT: &str = r####"
 7. 当 `VERIFY_ITERATION>0` 时，必须完成 `carryover_verification` 覆盖核对与汇总。
 
 必须更新：
-- `verify.result.jsonc`
-- `stage.verify.jsonc`
-- `handoff.md`
+- `verify.jsonc`
 "####;
 
 pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
@@ -144,6 +131,5 @@ pub const STAGE_AUTO_COMMIT_PROMPT: &str = r####"
 5. 维护阶段流转：`next_action` 回到 `direction`。
 
 必须更新：
-- `stage.auto_commit.jsonc`
-- `handoff.md`
+- `auto_commit.jsonc`
 "####;
