@@ -77,7 +77,7 @@ final class TidyFlowE2ETests: XCTestCase {
         }
 
         let scenario = "AC-CONN-FORM-READY"
-        let subsystem = "ios-ui"
+        let subsystem = mobileSubsystem()
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -170,7 +170,7 @@ final class TidyFlowE2ETests: XCTestCase {
         XCTAssertTrue(errorLabel.label.contains("配对码必须是 6 位数字"), "错误提示文本不符合预期: \(errorLabel.label)")
 
         let scenario = "AC-PAIRCODE-VALIDATION"
-        let subsystem = "ios-ui"
+        let subsystem = mobileSubsystem()
         try recorder.recordScreenshot(
             scenario: scenario,
             subsystem: subsystem,
@@ -265,6 +265,10 @@ final class TidyFlowE2ETests: XCTestCase {
         if recorder.deviceType != "mac" {
             throw XCTSkip("\(recorder.deviceType) 设备不执行 mac 工具栏 AC")
         }
+    }
+
+    private func mobileSubsystem() -> String {
+        "\(recorder.deviceType)-ui"
     }
 
     private func waitUntilEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
