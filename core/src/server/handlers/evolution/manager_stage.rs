@@ -1373,7 +1373,7 @@ fn direction_stage_template(cycle_id: &str) -> String {
     "type": "goto_stage",
     "target": "plan"
   },
-  // 更新时间，必须是 RFC3339 字符串
+  // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
 "#,
@@ -1449,7 +1449,7 @@ fn plan_stage_template(cycle_id: &str) -> String {
     "type": "goto_stage",
     "target": "implement_general"
   },
-  // 更新时间，必须是 RFC3339 字符串
+  // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
 "#,
@@ -1537,7 +1537,7 @@ fn implement_stage_template(
     "type": "goto_stage",
     "target": "verify"
   },
-  // 更新时间，必须是 RFC3339 字符串
+  // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
 "#,
@@ -1656,7 +1656,7 @@ fn verify_stage_template(
     "type": "goto_stage",
     "target": "auto_commit"
   },
-  // 更新时间，必须是 RFC3339 字符串
+  // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
 "#,
@@ -1699,7 +1699,7 @@ fn auto_commit_stage_template(cycle_id: &str) -> String {
     "type": "goto_stage",
     "target": "direction"
   },
-  // 更新时间，必须是 RFC3339 字符串
+  // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
 "#,
@@ -1740,7 +1740,7 @@ fn managed_backlog_template(cycle_id: &str, verify_iteration: u32) -> String {
     "blocked": 0,
     "not_done": 0
   },
-  // 更新时间，必须是 RFC3339 字符串
+  // 更新时间，由系统自动注入，代理无需填写
   "updated_at": ""
 }
 "#,
@@ -10005,5 +10005,163 @@ mod tests {
         let started_at = Some(Utc::now() - chrono::Duration::seconds(5));
         let result = super::ensure_artifact_freshness("test.jsonc", &value, started_at);
         assert!(result.is_ok(), "新鲜的 updated_at 应通过校验: {:?}", result);
+    }
+
+    // WI-004 (CHK-002): 验证系统对全部 7 类阶段产物均能自动注入/覆盖 updated_at
+    #[test]
+    fn validate_stage_artifacts_should_auto_inject_updated_at_for_all_stage_files() {
+        use super::super::utils::inject_stage_artifact_updated_at;
+
+        let stage_files = [
+            "direction.jsonc",
+            "plan.jsonc",
+            "implement_general.jsonc",
+            "implement_visual.jsonc",
+            "implement_advanced.jsonc",
+            "verify.jsonc",
+            "auto_commit.jsonc",
+        ];
+
+        let dir = tempdir().expect("tempdir should be created");
+
+        for file_name in &stage_files {
+            let path = dir.path().join(file_name);
+            // 写入旧时间戳（2020 年），期望被系统覆盖为当前时间
+            std::fs::write(
+                &path,
+                r#"{"cycle_id":"c-1","stage":"test","updated_at":"2020-01-01T00:00:00Z"}"#,
+            )
+            .unwrap_or_else(|_| panic!("写入 {} 失败", file_name));
+
+            inject_stage_artifact_updated_at(&path)
+                .unwrap_or_else(|e| panic!("{} 注入失败: {}", file_name, e));
+
+            let content =
+                std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("读取 {} 失败", file_name));
+            let value: serde_json::Value = serde_json::from_str(&content)
+                .unwrap_or_else(|_| panic!("解析 {} 失败", file_name));
+            let updated_at = value["updated_at"].as_str().unwrap_or("");
+
+            assert!(!updated_at.is_empty(), "updated_at 不能为空: {}", file_name);
+            let parsed = chrono::DateTime::parse_from_rfc3339(updated_at)
+                .unwrap_or_else(|_| panic!("{} 的 updated_at 必须是有效 RFC3339: {}", file_name, updated_at));
+            let old_ts = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap();
+            assert!(
+                parsed > old_ts,
+                "注入的 updated_at 必须晚于旧时间戳 2020-01-01: {}",
+                file_name
+            );
+        }
+    }
+
+    // WI-004 (CHK-003): 验证非法 JSON 或缺失必填字段时系统返回结构化报错
+    #[test]
+    fn validate_stage_artifacts_should_reject_invalid_json_or_missing_required_fields() {
+        // Part 1: 非法 JSON（trailing comma）应被 read_json 拒绝
+        {
+            let dir = tempdir().expect("tempdir should be created");
+            let path = dir.path().join("plan.jsonc");
+            std::fs::write(
+                &path,
+                r#"{"cycle_id": "c-1", "status": "done",}"#,
+            )
+            .expect("写入非法 JSON 文件");
+
+            let result = super::super::utils::read_json(&path);
+            assert!(result.is_err(), "trailing comma 的非法 JSON 应被拒绝");
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("解析"),
+                "错误应来自 JSON 解析阶段: {}",
+                err
+            );
+        }
+
+        // Part 2: implement_general.jsonc 缺少 quick_checks 数组字段应被 schema 校验拒绝
+        {
+            let dir = tempdir().expect("tempdir should be created");
+            write_json(
+                &dir.path().join("implement_general.jsonc"),
+                serde_json::json!({
+                    "$schema_version": "2.0",
+                    "stage": "implement_general",
+                    "cycle_id": "c-1",
+                    "verify_iteration": 0,
+                    "status": "done",
+                    "summary": "ok",
+                    "work_item_results": [],
+                    "changed_files": [],
+                    "commands_executed": [],
+                    // quick_checks 故意缺失，期望 schema 校验报错
+                    "handoff": empty_handoff_json(),
+                    "updated_at": "2026-03-02T00:00:00Z"
+                }),
+            );
+
+            let err = EvolutionManager::validate_stage_artifacts(
+                "implement_general",
+                dir.path(),
+                0,
+                1,
+            )
+            .expect_err("缺少 quick_checks 应被 schema 校验拒绝");
+            assert!(
+                err.contains("quick_checks"),
+                "错误信息应提及缺失字段 quick_checks: {}",
+                err
+            );
+        }
+
+        // Part 3: direction.jsonc 缺少 cycle_title 必填字段应被 schema 校验拒绝
+        {
+            let dir = tempdir().expect("tempdir should be created");
+            write_json(
+                &dir.path().join("direction.jsonc"),
+                serde_json::json!({
+                    "$schema_version": "2.0",
+                    "stage": "direction",
+                    "cycle_id": "c-1",
+                    "status": "done",
+                    // cycle_title 故意缺失
+                    "decision": {
+                        "result": "n/a",
+                        "reason": "",
+                        "context": {
+                            "capability_assessment": {
+                                "ui_capability": "full",
+                                "test_capability": "full",
+                                "build_capability": "full",
+                                "runtime_capability": "full",
+                                "rationale": "ok"
+                            }
+                        }
+                    },
+                    "project_type": "macos",
+                    "ui_capability": "full",
+                    "domains": [],
+                    "selected_direction_type": "test",
+                    "candidate_scores": [
+                        {"direction_type": "test", "score": 0.9},
+                        {"direction_type": "foo", "score": 0.7},
+                        {"direction_type": "bar", "score": 0.5}
+                    ],
+                    "final_reason": "reason",
+                    "acceptance_criteria": [
+                        {"criteria_id": "ac-1", "description": "d1"}
+                    ],
+                    "handoff": empty_handoff_json(),
+                    "next_action": {"type": "goto_stage", "target": "plan"},
+                    "updated_at": "2026-03-02T00:00:00Z"
+                }),
+            );
+
+            let err = EvolutionManager::validate_stage_artifacts("direction", dir.path(), 0, 1)
+                .expect_err("缺少 cycle_title 应被 schema 校验拒绝");
+            assert!(
+                err.contains("cycle_title"),
+                "错误信息应提及缺失字段 cycle_title: {}",
+                err
+            );
+        }
     }
 }
