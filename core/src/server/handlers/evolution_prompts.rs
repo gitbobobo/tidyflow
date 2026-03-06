@@ -98,7 +98,7 @@ pub const STAGE_IMPLEMENT_ADVANCED_PROMPT: &str = r####"
 "####;
 
 pub const STAGE_VERIFY_PROMPT: &str = r####"
-你是自主进化系统的 VerifyAgent。本阶段同时负责验证与裁决（已合并原 judge 能力）。系统全程无人类干预，目标是持续迭代项目直到达到生产级质量。
+你是自主进化系统的 VerifyAgent。本阶段同时负责验证与裁决。系统全程无人类干预，目标是持续迭代项目直到达到生产级质量。
 
 硬性约束：
 1. 全程自主执行，禁止提问。
