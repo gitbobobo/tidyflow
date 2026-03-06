@@ -35,6 +35,10 @@ struct ChatInputView: View {
     // 自动补全
     var autocomplete: AutocompleteState?
     var onSelectAutocomplete: ((AutocompleteItem) -> Void)?
+    /// 代码补全触发回调（prefix, suffix, filePath）
+    var onTriggerCodeCompletion: ((String, String?, String?) -> Void)?
+    /// 接受代码补全建议的回调
+    var onAcceptCodeCompletion: (() -> Void)?
     /// iOS 输入辅助：命令列表
     var slashCommands: [AISlashCommandInfo] = []
     /// iOS 输入辅助：引用列表（文件路径）
@@ -574,8 +578,19 @@ struct ChatInputView: View {
                 },
                 onArrowUp: { autocomplete?.isVisible == true ? { autocomplete?.moveUp(); return true }() : false },
                 onArrowDown: { autocomplete?.isVisible == true ? { autocomplete?.moveDown(); return true }() : false },
-                onEscape: { autocomplete?.isVisible == true ? { autocomplete?.reset(); return true }() : false },
+                onEscape: {
+                    if let ac = autocomplete, ac.isVisible {
+                        ac.reset()
+                        return true
+                    }
+                    return false
+                },
                 onTab: {
+                    // Tab 接受代码补全建议
+                    if let ac = autocomplete, ac.mode == .codeCompletion, ac.completionSuggestion != nil {
+                        onAcceptCodeCompletion?()
+                        return true
+                    }
                     guard let ac = autocomplete, ac.isVisible, let item = ac.selectedItem else { return false }
                     onSelectAutocomplete?(item)
                     return true

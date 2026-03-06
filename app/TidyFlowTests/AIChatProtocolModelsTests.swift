@@ -988,4 +988,109 @@ final class AIChatProtocolModelsTests: XCTestCase {
         let pending = WorkspaceTodoStore.items(for: workspaceKey, in: storage).filter { $0.status == .pending }
         XCTAssertEqual(pending.map(\.title), ["C", "B"])
     }
+
+    // MARK: - AI 代码补全协议测试（WI-001 / WI-005）
+
+    func testAICodeCompletionChunkParsesValidPayload() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "kimi",
+            "chunk": [
+                "request_id": "req-abc",
+                "delta": "\n    println!(\"hello\");",
+                "is_final": false
+            ]
+        ]
+        let result = AICodeCompletionChunk.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.requestId, "req-abc")
+        XCTAssertEqual(result?.delta, "\n    println!(\"hello\");")
+        XCTAssertEqual(result?.isFinal, false)
+        XCTAssertEqual(result?.projectName, "tidyflow")
+        XCTAssertEqual(result?.aiTool, "kimi")
+    }
+
+    func testAICodeCompletionChunkDefaultsIsFinalToFalse() {
+        let json: [String: Any] = [
+            "project_name": "p",
+            "workspace_name": "w",
+            "ai_tool": "copilot",
+            "chunk": [
+                "request_id": "r1",
+                "delta": "let x = 1"
+                // is_final 未提供，应默认为 false
+            ]
+        ]
+        let result = AICodeCompletionChunk.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.isFinal, false)
+    }
+
+    func testAICodeCompletionChunkRejectsInvalidPayload() {
+        // 缺少 chunk 字段
+        let json: [String: Any] = [
+            "project_name": "p",
+            "workspace_name": "w",
+            "ai_tool": "copilot"
+        ]
+        XCTAssertNil(AICodeCompletionChunk.from(json: json))
+    }
+
+    func testAICodeCompletionDoneParsesValidPayload() {
+        let json: [String: Any] = [
+            "project_name": "tidyflow",
+            "workspace_name": "default",
+            "ai_tool": "kimi",
+            "result": [
+                "request_id": "req-xyz",
+                "completion_text": "    return 42;\n",
+                "stop_reason": "done"
+            ]
+        ]
+        let result = AICodeCompletionDone.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.requestId, "req-xyz")
+        XCTAssertEqual(result?.completionText, "    return 42;\n")
+        XCTAssertEqual(result?.stopReason, "done")
+        XCTAssertNil(result?.error)
+    }
+
+    func testAICodeCompletionDoneParsesErrorPayload() {
+        let json: [String: Any] = [
+            "project_name": "p",
+            "workspace_name": "w",
+            "ai_tool": "copilot",
+            "result": [
+                "request_id": "req-err",
+                "completion_text": "",
+                "stop_reason": "error",
+                "error": "AI backend unavailable"
+            ]
+        ]
+        let result = AICodeCompletionDone.from(json: json)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.stopReason, "error")
+        XCTAssertEqual(result?.error, "AI backend unavailable")
+    }
+
+    func testAICodeCompletionLanguageFromExtension() {
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "swift"), .swift)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "rs"), .rust)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "js"), .javascript)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "ts"), .typescript)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "tsx"), .typescript)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "py"), .python)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "go"), .go)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: "rb"), .other)
+        XCTAssertEqual(AICodeCompletionLanguage.from(fileExtension: ""), .other)
+    }
+
+    func testAICodeCompletionLanguageFromFilePath() {
+        XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "app/TidyFlow/Views/AI/ChatInputView.swift"), .swift)
+        XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "core/src/ai/completion_agent.rs"), .rust)
+        XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "web/index.ts"), .typescript)
+        XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "scripts/build.py"), .python)
+        XCTAssertEqual(AICodeCompletionLanguage.from(filePath: "cmd/main.go"), .go)
+    }
 }

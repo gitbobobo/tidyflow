@@ -647,6 +647,22 @@ pub enum ClientMessage {
         file_paths: Vec<String>,
     },
 
+    // vNext: AI 代码补全
+    #[serde(rename = "ai_code_completion")]
+    AICodeCompletion {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        request: ai::CodeCompletionRequest,
+    },
+    #[serde(rename = "ai_code_completion_abort")]
+    AICodeCompletionAbort {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        request_id: String,
+    },
+
     // vNext: Evolution 自主进化
     #[serde(rename = "evo_start_workspace")]
     EvoStartWorkspace {
@@ -1466,6 +1482,22 @@ pub enum ServerMessage {
         review_text: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+
+    // vNext: AI 代码补全推送
+    #[serde(rename = "ai_code_completion_chunk")]
+    AICodeCompletionChunk {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        chunk: ai::CodeCompletionChunk,
+    },
+    #[serde(rename = "ai_code_completion_done")]
+    AICodeCompletionDone {
+        project_name: String,
+        workspace_name: String,
+        ai_tool: String,
+        result: ai::CodeCompletionResponse,
     },
 
     // vNext: Evolution 自主进化

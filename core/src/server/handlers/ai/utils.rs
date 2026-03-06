@@ -1838,3 +1838,19 @@ async fn transcode_with_sips(data: &[u8], source_mime: &str) -> Result<Vec<u8>, 
 async fn transcode_with_sips(_data: &[u8], _source_mime: &str) -> Result<Vec<u8>, String> {
     Err("当前平台未启用 sips 图片转码".to_string())
 }
+
+// ============================================================================
+// 代码语言检测工具函数（WI-005）
+// ============================================================================
+
+/// 从文件路径推断编程语言（基于扩展名）
+#[allow(dead_code)]
+pub(crate) fn detect_language_from_path(
+    path: &str,
+) -> crate::server::protocol::ai::CodeCompletionLanguage {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    crate::server::protocol::ai::CodeCompletionLanguage::from_extension(ext)
+}

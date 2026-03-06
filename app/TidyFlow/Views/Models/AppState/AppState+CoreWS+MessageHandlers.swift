@@ -189,6 +189,8 @@ final class AppStateAIMessageHandlerAdapter: AIMessageHandler {
     func handleAISessionSubscribeAck() { appState?.handleAISessionSubscribeAck() }
     func handleAISessionRenameResult(_ ev: AISessionRenameResult) { appState?.handleAISessionRenameResult(ev) }
     func handleAICodeReviewResult(_ ev: AICodeReviewResult) { appState?.handleAICodeReviewResult(ev) }
+    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) { appState?.handleAICodeCompletionChunk(ev) }
+    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) { appState?.handleAICodeCompletionDone(ev) }
 }
 
 final class AppStateEvolutionMessageHandlerAdapter: EvolutionMessageHandler {

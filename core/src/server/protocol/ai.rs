@@ -329,6 +329,112 @@ fn default_question_custom() -> bool {
     true
 }
 
+// ============================================================================
+// AI 代码补全协议（Code Completion）
+// ============================================================================
+
+/// 代码补全支持的编程语言
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CodeCompletionLanguage {
+    Swift,
+    Rust,
+    JavaScript,
+    TypeScript,
+    Python,
+    Go,
+    /// 其余语言或未知语言
+    #[serde(other)]
+    Other,
+}
+
+impl CodeCompletionLanguage {
+    /// 从文件扩展名推断语言
+    pub fn from_extension(ext: &str) -> Self {
+        match ext.to_lowercase().as_str() {
+            "swift" => Self::Swift,
+            "rs" => Self::Rust,
+            "js" | "jsx" | "mjs" | "cjs" => Self::JavaScript,
+            "ts" | "tsx" | "mts" | "cts" => Self::TypeScript,
+            "py" | "pyw" => Self::Python,
+            "go" => Self::Go,
+            _ => Self::Other,
+        }
+    }
+
+    /// 返回语言的显示名称
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Swift => "Swift",
+            Self::Rust => "Rust",
+            Self::JavaScript => "JavaScript",
+            Self::TypeScript => "TypeScript",
+            Self::Python => "Python",
+            Self::Go => "Go",
+            Self::Other => "Unknown",
+        }
+    }
+}
+
+/// 代码补全请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeCompletionRequest {
+    /// 客户端生成的请求 ID（用于取消和关联响应）
+    pub request_id: String,
+    /// 代码语言
+    pub language: CodeCompletionLanguage,
+    /// 当前文件的完整内容（可选，用于上下文）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>,
+    /// 光标前的文本内容（上文）
+    pub prefix: String,
+    /// 光标后的文本内容（下文）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
+    /// 文件路径（可选，提供语言上下文）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    /// 光标行号（0-indexed）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_line: Option<u32>,
+    /// 光标列号（0-indexed）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_column: Option<u32>,
+    /// 触发方式："auto"（输入停顿）| "manual"（快捷键）
+    #[serde(default = "default_trigger_kind")]
+    pub trigger_kind: String,
+}
+
+fn default_trigger_kind() -> String {
+    "auto".to_string()
+}
+
+/// 流式补全分片（服务端推送）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeCompletionChunk {
+    /// 对应请求 ID
+    pub request_id: String,
+    /// 本次分片内容（增量）
+    pub delta: String,
+    /// 是否为最终分片
+    #[serde(default)]
+    pub is_final: bool,
+}
+
+/// 补全完成响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeCompletionResponse {
+    /// 对应请求 ID
+    pub request_id: String,
+    /// 最终完整建议文本
+    pub completion_text: String,
+    /// 停止原因："done" | "cancelled" | "error"
+    pub stop_reason: String,
+    /// 错误信息（仅 stop_reason="error" 时有值）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +453,50 @@ mod tests {
         assert_eq!(parsed.project_name, "p");
         assert_eq!(parsed.workspace_name, "w");
         assert_eq!(parsed.id, "s1");
+    }
+
+    #[test]
+    fn test_code_completion_language_from_extension() {
+        assert_eq!(CodeCompletionLanguage::from_extension("swift"), CodeCompletionLanguage::Swift);
+        assert_eq!(CodeCompletionLanguage::from_extension("rs"), CodeCompletionLanguage::Rust);
+        assert_eq!(CodeCompletionLanguage::from_extension("js"), CodeCompletionLanguage::JavaScript);
+        assert_eq!(CodeCompletionLanguage::from_extension("ts"), CodeCompletionLanguage::TypeScript);
+        assert_eq!(CodeCompletionLanguage::from_extension("tsx"), CodeCompletionLanguage::TypeScript);
+        assert_eq!(CodeCompletionLanguage::from_extension("py"), CodeCompletionLanguage::Python);
+        assert_eq!(CodeCompletionLanguage::from_extension("go"), CodeCompletionLanguage::Go);
+        assert_eq!(CodeCompletionLanguage::from_extension("rb"), CodeCompletionLanguage::Other);
+    }
+
+    #[test]
+    fn test_code_completion_request_roundtrip() {
+        let req = CodeCompletionRequest {
+            request_id: "req-1".to_string(),
+            language: CodeCompletionLanguage::Rust,
+            file_content: None,
+            prefix: "fn main() {".to_string(),
+            suffix: Some("}".to_string()),
+            file_path: Some("src/main.rs".to_string()),
+            cursor_line: Some(0),
+            cursor_column: Some(11),
+            trigger_kind: "manual".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: CodeCompletionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.request_id, "req-1");
+        assert_eq!(parsed.language, CodeCompletionLanguage::Rust);
+        assert_eq!(parsed.prefix, "fn main() {");
+    }
+
+    #[test]
+    fn test_code_completion_chunk_roundtrip() {
+        let chunk = CodeCompletionChunk {
+            request_id: "req-1".to_string(),
+            delta: "\n    println!(\"Hello, world!\");".to_string(),
+            is_final: false,
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        let parsed: CodeCompletionChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.request_id, "req-1");
+        assert!(!parsed.is_final);
     }
 }

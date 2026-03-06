@@ -1636,4 +1636,56 @@ extension WSClient {
             fallbackAction: "evidence_item_chunk"
         )
     }
+
+    // MARK: - AI 代码补全
+
+    /// 发送 AI 代码补全请求（流式）
+    func requestAICodeCompletion(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        requestId: String,
+        language: String,
+        prefix: String,
+        suffix: String? = nil,
+        filePath: String? = nil,
+        cursorLine: Int? = nil,
+        cursorColumn: Int? = nil,
+        triggerKind: String = "auto"
+    ) {
+        var request: [String: Any] = [
+            "request_id": requestId,
+            "language": language,
+            "prefix": prefix,
+            "trigger_kind": triggerKind
+        ]
+        if let suffix { request["suffix"] = suffix }
+        if let filePath { request["file_path"] = filePath }
+        if let cursorLine { request["cursor_line"] = cursorLine }
+        if let cursorColumn { request["cursor_column"] = cursorColumn }
+
+        send([
+            "type": "ai_code_completion",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
+            "request": request
+        ])
+    }
+
+    /// 取消正在进行的 AI 代码补全请求
+    func requestAICodeCompletionAbort(
+        projectName: String,
+        workspaceName: String,
+        aiTool: AIChatTool,
+        requestId: String
+    ) {
+        send([
+            "type": "ai_code_completion_abort",
+            "project_name": projectName,
+            "workspace_name": workspaceName,
+            "ai_tool": aiTool.rawValue,
+            "request_id": requestId
+        ])
+    }
 }

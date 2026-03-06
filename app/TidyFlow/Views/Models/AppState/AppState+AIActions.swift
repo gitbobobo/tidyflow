@@ -190,4 +190,17 @@ extension AppState {
     func handleAICodeReviewResult(_ ev: AICodeReviewResult) {
         latestAICodeReviewResult = ev
     }
+
+    // MARK: - AI 代码补全结果处理
+
+    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) {
+        let existing = codeCompletionChunks[ev.requestId] ?? ""
+        codeCompletionChunks[ev.requestId] = existing + ev.delta
+    }
+
+    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) {
+        latestCodeCompletionResult = ev
+        // 流结束后清理分片缓存
+        codeCompletionChunks.removeValue(forKey: ev.requestId)
+    }
 }

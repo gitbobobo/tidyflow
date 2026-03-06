@@ -1852,3 +1852,93 @@ struct AICodeReviewResult: Equatable {
                                   error: json["error"] as? String)
     }
 }
+
+// MARK: - AI 代码补全协议模型
+
+/// 编程语言枚举（与 Rust Core 对齐）
+enum AICodeCompletionLanguage: String {
+    case swift
+    case rust
+    case javascript
+    case typescript
+    case python
+    case go
+    case other
+
+    /// 从文件扩展名推断语言
+    static func from(fileExtension ext: String) -> AICodeCompletionLanguage {
+        switch ext.lowercased() {
+        case "swift": return .swift
+        case "rs": return .rust
+        case "js", "jsx", "mjs", "cjs": return .javascript
+        case "ts", "tsx", "mts", "cts": return .typescript
+        case "py", "pyw": return .python
+        case "go": return .go
+        default: return .other
+        }
+    }
+
+    /// 从文件路径推断语言
+    static func from(filePath: String) -> AICodeCompletionLanguage {
+        let ext = (filePath as NSString).pathExtension
+        return from(fileExtension: ext)
+    }
+}
+
+/// 补全流式分片（服务端推送）
+struct AICodeCompletionChunk {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: String
+    let requestId: String
+    let delta: String
+    let isFinal: Bool
+
+    static func from(json: [String: Any]) -> AICodeCompletionChunk? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = json["ai_tool"] as? String,
+              let chunk = json["chunk"] as? [String: Any],
+              let requestId = chunk["request_id"] as? String,
+              let delta = chunk["delta"] as? String else { return nil }
+        let isFinal = chunk["is_final"] as? Bool ?? false
+        return AICodeCompletionChunk(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            requestId: requestId,
+            delta: delta,
+            isFinal: isFinal
+        )
+    }
+}
+
+/// 补全完成事件（流结束）
+struct AICodeCompletionDone {
+    let projectName: String
+    let workspaceName: String
+    let aiTool: String
+    let requestId: String
+    let completionText: String
+    let stopReason: String
+    let error: String?
+
+    static func from(json: [String: Any]) -> AICodeCompletionDone? {
+        guard let projectName = json["project_name"] as? String,
+              let workspaceName = json["workspace_name"] as? String,
+              let aiTool = json["ai_tool"] as? String,
+              let result = json["result"] as? [String: Any],
+              let requestId = result["request_id"] as? String,
+              let completionText = result["completion_text"] as? String,
+              let stopReason = result["stop_reason"] as? String else { return nil }
+        return AICodeCompletionDone(
+            projectName: projectName,
+            workspaceName: workspaceName,
+            aiTool: aiTool,
+            requestId: requestId,
+            completionText: completionText,
+            stopReason: stopReason,
+            error: result["error"] as? String
+        )
+    }
+}

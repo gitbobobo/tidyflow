@@ -296,9 +296,11 @@ struct AITabView: View {
                 .overlay(alignment: .bottomLeading) {
                     // 自动补全弹出层：底边对齐消息区域底部（即输入区域顶部）
                     if autocomplete.isVisible {
-                        AutocompletePopupView(autocomplete: autocomplete) { item in
-                            handleAutocompleteSelect(item)
-                        }
+                        AutocompletePopupView(
+                            autocomplete: autocomplete,
+                            onSelect: { item in handleAutocompleteSelect(item) },
+                            onAcceptCompletion: { handleAcceptCodeCompletion() }
+                        )
                         .frame(width: 320)
                         .fixedSize(horizontal: false, vertical: true)
                         .offset(x: 12, y: -6)
@@ -841,8 +843,18 @@ struct AITabView: View {
             }
             autocomplete.reset()
 
+        case .codeCompletion:
+            // 代码补全通过 handleAcceptCodeCompletion 处理
+            handleAcceptCodeCompletion()
+
         case .none:
             break
+        }
+    }
+
+    private func handleAcceptCodeCompletion() {
+        if let text = autocomplete.acceptCompletion() {
+            inputText += text
         }
     }
 

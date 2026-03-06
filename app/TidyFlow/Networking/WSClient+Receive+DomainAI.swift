@@ -190,6 +190,24 @@ extension WSClient {
                 }
             }
             return true
+        case "ai_code_completion_chunk":
+            if let ev = AICodeCompletionChunk.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAICodeCompletionChunk(ev)
+                } else {
+                    onAICodeCompletionChunk?(ev)
+                }
+            }
+            return true
+        case "ai_code_completion_done":
+            if let ev = AICodeCompletionDone.from(json: json) {
+                if let handler = aiMessageHandler {
+                    handler.handleAICodeCompletionDone(ev)
+                } else {
+                    onAICodeCompletionDone?(ev)
+                }
+            }
+            return true
         default:
             return false
         }

@@ -160,6 +160,8 @@ protocol AIMessageHandler: AnyObject {
     func handleAISessionRenameResult(_ ev: AISessionRenameResult)
     func handleAISessionSearchResult(_ ev: AISessionSearchResult)
     func handleAICodeReviewResult(_ ev: AICodeReviewResult)
+    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk)
+    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone)
 }
 
 extension AIMessageHandler {
@@ -184,6 +186,8 @@ extension AIMessageHandler {
     func handleAISessionRenameResult(_ ev: AISessionRenameResult) {}
     func handleAISessionSearchResult(_ ev: AISessionSearchResult) {}
     func handleAICodeReviewResult(_ ev: AICodeReviewResult) {}
+    func handleAICodeCompletionChunk(_ ev: AICodeCompletionChunk) {}
+    func handleAICodeCompletionDone(_ ev: AICodeCompletionDone) {}
 }
 
 protocol EvolutionMessageHandler: AnyObject {

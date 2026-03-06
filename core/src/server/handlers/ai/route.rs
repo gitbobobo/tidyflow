@@ -83,6 +83,7 @@ pub(crate) async fn handle_session_routes(
         session::handle_ai_session_rename(client_msg, socket, app_state, ai_state),
         session::query_ai_session_search(client_msg, socket, app_state, ai_state),
         session::handle_ai_code_review(client_msg, socket, app_state, ai_state),
+        session::handle_ai_code_completion(client_msg, socket, app_state, ai_state),
     );
 
     Ok(false)

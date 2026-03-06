@@ -1,7 +1,10 @@
 use crate::ai::session_status::{AiSessionStatus, AiSessionStatusMeta};
 use axum::extract::ws::WebSocket;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
+use crate::ai::CompletionAgent;
 use crate::server::context::SharedAppState;
 use crate::server::protocol::{ClientMessage, ServerMessage};
 use crate::server::ws::send_message;
@@ -1055,6 +1058,113 @@ pub(super) async fn handle_ai_code_review(
         },
     )
     .await?;
+
+    Ok(true)
+}
+
+/// 处理 AI 代码补全请求（流式推送分片到客户端）
+pub(super) async fn handle_ai_code_completion(
+    msg: &ClientMessage,
+    socket: &mut WebSocket,
+    app_state: &SharedAppState,
+    ai_state: &SharedAIState,
+) -> Result<bool, String> {
+    let ClientMessage::AICodeCompletion {
+        project_name,
+        workspace_name,
+        ai_tool,
+        request,
+    } = msg
+    else {
+        return Ok(false);
+    };
+    let ai_tool = normalize_ai_tool(ai_tool)?;
+    let directory = resolve_directory(app_state, project_name, workspace_name).await?;
+    let agent = ensure_agent(ai_state, &ai_tool).await?;
+    ensure_maintenance(ai_state).await;
+    touch_directory_last_used(ai_state, &ai_tool, &directory).await;
+
+    // 创建或复用一个独立的补全会话
+    let session = match agent
+        .create_session(&directory, "AI代码补全")
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            send_message(
+                socket,
+                &ServerMessage::AICodeCompletionDone {
+                    project_name: project_name.clone(),
+                    workspace_name: workspace_name.clone(),
+                    ai_tool: ai_tool.clone(),
+                    result: crate::server::protocol::ai::CodeCompletionResponse {
+                        request_id: request.request_id.clone(),
+                        completion_text: String::new(),
+                        stop_reason: "error".to_string(),
+                        error: Some(format!("创建补全会话失败: {}", e)),
+                    },
+                },
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+
+    // 使用 CompletionAgent 流式执行补全
+    let completion_agent = CompletionAgent::new(Arc::clone(&agent));
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(32);
+
+    let req_clone = request.clone();
+    let directory_clone = directory.clone();
+    let session_id = session.id.clone();
+    tokio::spawn(async move {
+        completion_agent
+            .complete(&directory_clone, &session_id, &req_clone, chunk_tx)
+            .await
+    });
+
+    // 将分片推送到 WebSocket
+    while let Some(chunk_result) = chunk_rx.recv().await {
+        match chunk_result {
+            Ok(chunk) => {
+                if let Err(e) = send_message(
+                    socket,
+                    &ServerMessage::AICodeCompletionChunk {
+                        project_name: project_name.clone(),
+                        workspace_name: workspace_name.clone(),
+                        ai_tool: ai_tool.clone(),
+                        chunk,
+                    },
+                )
+                .await
+                {
+                    warn!(
+                        "handle_ai_code_completion: failed to send chunk, request_id={}: {}",
+                        request.request_id, e
+                    );
+                    return Ok(true);
+                }
+            }
+            Err(err_msg) => {
+                send_message(
+                    socket,
+                    &ServerMessage::AICodeCompletionDone {
+                        project_name: project_name.clone(),
+                        workspace_name: workspace_name.clone(),
+                        ai_tool: ai_tool.clone(),
+                        result: crate::server::protocol::ai::CodeCompletionResponse {
+                            request_id: request.request_id.clone(),
+                            completion_text: String::new(),
+                            stop_reason: "error".to_string(),
+                            error: Some(err_msg),
+                        },
+                    },
+                )
+                .await?;
+                return Ok(true);
+            }
+        }
+    }
 
     Ok(true)
 }

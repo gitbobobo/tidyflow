@@ -19,6 +19,7 @@ enum AutocompleteMode {
     case none
     case fileRef      // @ 触发的文件引用
     case slashCommand // / 触发的斜杠命令
+    case codeCompletion // AI 代码补全（输入停顿或快捷键触发）
 }
 
 // MARK: - 自动补全条目
@@ -36,6 +37,17 @@ struct AutocompleteItem: Identifiable {
     var inputHint: String? = nil
 }
 
+// MARK: - 代码补全建议
+
+struct CodeCompletionSuggestion {
+    /// 补全建议文本（当前已接收内容，流式更新）
+    var text: String
+    /// 是否已完成（流结束）
+    var isComplete: Bool
+    /// 请求 ID
+    var requestId: String
+}
+
 // MARK: - 自动补全状态
 
 class AutocompleteState: ObservableObject {
@@ -44,10 +56,16 @@ class AutocompleteState: ObservableObject {
     @Published var items: [AutocompleteItem] = []
     @Published var selectedIndex: Int = 0
 
+    /// 代码补全建议（仅 mode == .codeCompletion 时有效）
+    @Published var completionSuggestion: CodeCompletionSuggestion? = nil
+
     /// 当前触发 token 的替换范围（UTF16，左闭右开）
     var replaceRange: NSRange?
 
-    var isVisible: Bool { mode != .none && !items.isEmpty }
+    /// 当前正在进行的补全请求 ID（用于取消去抖）
+    var pendingCompletionRequestId: String? = nil
+
+    var isVisible: Bool { mode != .none && (!items.isEmpty || completionSuggestion != nil) }
 
     func moveUp() {
         guard !items.isEmpty else { return }
@@ -65,11 +83,51 @@ class AutocompleteState: ObservableObject {
         items = []
         selectedIndex = 0
         replaceRange = nil
+        completionSuggestion = nil
+        pendingCompletionRequestId = nil
     }
 
     var selectedItem: AutocompleteItem? {
         guard !items.isEmpty, selectedIndex >= 0, selectedIndex < items.count else { return nil }
         return items[selectedIndex]
+    }
+
+    // MARK: - 代码补全状态管理
+
+    /// 开始一次新的代码补全流
+    func beginCodeCompletion(requestId: String) {
+        mode = .codeCompletion
+        completionSuggestion = CodeCompletionSuggestion(
+            text: "",
+            isComplete: false,
+            requestId: requestId
+        )
+        pendingCompletionRequestId = requestId
+        items = []
+        selectedIndex = 0
+    }
+
+    /// 追加补全分片（流式更新）
+    func appendCompletionChunk(_ delta: String, requestId: String) {
+        guard completionSuggestion?.requestId == requestId else { return }
+        completionSuggestion?.text += delta
+    }
+
+    /// 完成补全流
+    func finalizeCodeCompletion(requestId: String, fullText: String) {
+        guard completionSuggestion?.requestId == requestId else { return }
+        completionSuggestion?.text = fullText
+        completionSuggestion?.isComplete = true
+        if pendingCompletionRequestId == requestId {
+            pendingCompletionRequestId = nil
+        }
+    }
+
+    /// 接受当前补全建议，返回建议文本
+    func acceptCompletion() -> String? {
+        let text = completionSuggestion?.text
+        reset()
+        return text
     }
 }
 

@@ -459,6 +459,10 @@ class AppState: ObservableObject {
     @Published var subAgentViewerStore: AIChatStore = AIChatStore()
     /// 最近一次 AI 代码审查结果（用于 Git 面板触发后跳转）
     @Published var latestAICodeReviewResult: AICodeReviewResult?
+    /// 当前 AI 代码补全分片流（requestId -> 累计文本）
+    @Published var codeCompletionChunks: [String: String] = [:]
+    /// 最近完成的 AI 代码补全结果
+    @Published var latestCodeCompletionResult: AICodeCompletionDone?
 
     private var aiChatStoresByTool: [AIChatTool: AIChatStore] = [:]
     private var aiSessionsByTool: [AIChatTool: [AISessionInfo]] = [:]
