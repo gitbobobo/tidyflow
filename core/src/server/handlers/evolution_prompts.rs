@@ -10,7 +10,7 @@ pub const STAGE_DIRECTION_PROMPT: &str = r####"
 
 阶段任务：
 1. 评估项目能力。
-2. 产出至少 3 个候选进化方向并选择最终方向，保证候选评分可比较、可追踪。
+2. 产出至少 3 个候选进化方向并选择最终方向，保证候选评分可比较、可追踪；`mapped_direction_type`、`direction_type`、`selected_direction_type` 可自由命名，但必须是非空字符串。
 3. 同步本轮可验证验收标准（`criteria_id + 可验证描述`），写入 `direction.jsonc.acceptance_criteria`，供后续 `plan/verify` 使用。
 4. 维护阶段流转：本阶段结束后应进入 `plan`。
 
@@ -27,7 +27,7 @@ pub const STAGE_PLAN_PROMPT: &str = r####"
 
 阶段任务：
 1. 将方向决策拆解为可执行 `work_items`，并给出可落地验证路径。
-2. `selected_direction_type` 必须与 `cycle.direction.selected_type` 一致。
+2. `selected_direction_type` 是自由文本方向标签，必须与 `cycle.direction.selected_type` 一致（比较时忽略首尾空白）。
 3. `work_items` 必须可执行且可验证：`id` 唯一、`implementation_agent` 合法、`linked_check_ids` 非空且都能在 checks 中找到。
 4. `verification_plan.checks` 的检查项必须可运行且 `id` 唯一。
 5. `verification_plan.acceptance_mapping` 必须完整覆盖 `cycle.llm_defined_acceptance.criteria`，且每个映射至少关联一个实际 work item。
