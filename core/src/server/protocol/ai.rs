@@ -409,6 +409,113 @@ fn default_trigger_kind() -> String {
     "auto".to_string()
 }
 
+// ============================================================================
+// 平铺 AI 会话消息缓存（Flattened AI Session Cache）
+// ============================================================================
+
+/// 平铺消息语义类型，覆盖五类 AI 聊天消息
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlattenedAiMessageKind {
+    /// 用户输入消息
+    User,
+    /// 助手文本/推理回复
+    Assistant,
+    /// 工具调用请求（tool call）
+    ToolCall,
+    /// 工具调用结果（tool result）
+    ToolResult,
+    /// 系统提示消息
+    System,
+}
+
+/// 平铺 AI 消息结构，单层，不嵌套，覆盖五类消息语义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlattenedAiMessage {
+    /// 消息/part 唯一 ID
+    pub id: String,
+    /// 所属会话 ID（稳定索引键）
+    pub session_id: String,
+    /// 消息语义类型
+    pub kind: FlattenedAiMessageKind,
+    /// 文本内容（user/assistant/system 时有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// 工具名称（tool_call/tool_result 时有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// 工具调用 ID（tool_call/tool_result 关联键）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// 创建时间戳（毫秒）
+    pub created_at: i64,
+}
+
+/// AI 会话平铺消息缓存，按 session_id 索引，revision 单调递增可重复消费
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AiSessionFlatCache {
+    /// 会话 ID（稳定索引键）
+    pub session_id: String,
+    /// 缓存修订号，每次追加消息时单调递增
+    pub revision: u64,
+    /// 平铺后的消息列表
+    pub messages: Vec<FlattenedAiMessage>,
+}
+
+impl AiSessionFlatCache {
+    pub fn new(session_id: String) -> Self {
+        Self {
+            session_id,
+            revision: 0,
+            messages: Vec::new(),
+        }
+    }
+
+    /// 追加一条平铺消息，revision 单调递增
+    pub fn append(&mut self, message: FlattenedAiMessage) {
+        self.revision += 1;
+        self.messages.push(message);
+    }
+
+    /// 从 MessageInfo 列表构建平铺缓存（将嵌套 message/part 展开为单层）
+    pub fn from_message_infos(session_id: String, messages: &[MessageInfo]) -> Self {
+        let mut cache = Self::new(session_id.clone());
+        for msg in messages {
+            let base_kind = match msg.role.as_str() {
+                "user" => FlattenedAiMessageKind::User,
+                "system" => FlattenedAiMessageKind::System,
+                _ => FlattenedAiMessageKind::Assistant,
+            };
+            let created_at = msg.created_at.unwrap_or(0);
+            for part in &msg.parts {
+                let (kind, tool_name, tool_call_id) = match part.part_type.as_str() {
+                    "tool" => (
+                        FlattenedAiMessageKind::ToolCall,
+                        part.tool_name.clone(),
+                        part.tool_call_id.clone(),
+                    ),
+                    _ => (base_kind.clone(), None, None),
+                };
+                cache.append(FlattenedAiMessage {
+                    id: part.id.clone(),
+                    session_id: session_id.clone(),
+                    kind,
+                    content: part.text.clone(),
+                    tool_name,
+                    tool_call_id,
+                    created_at,
+                });
+            }
+        }
+        cache
+    }
+
+    /// 按修订号判断是否可接受（单调检查，拒绝回滚）
+    pub fn can_apply_revision(&self, incoming_revision: u64) -> bool {
+        incoming_revision >= self.revision
+    }
+}
+
 /// 流式补全分片（服务端推送）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeCompletionChunk {
@@ -498,5 +605,212 @@ mod tests {
         let parsed: CodeCompletionChunk = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.request_id, "req-1");
         assert!(!parsed.is_final);
+    }
+
+    // ========================================================================
+    // 平铺 AI 会话消息缓存回归测试（flattened_ai_session）
+    // ========================================================================
+
+    #[test]
+    fn flattened_ai_session_new_cache_starts_with_zero_revision() {
+        let cache = AiSessionFlatCache::new("session-1".to_string());
+        assert_eq!(cache.session_id, "session-1");
+        assert_eq!(cache.revision, 0);
+        assert!(cache.messages.is_empty());
+    }
+
+    #[test]
+    fn flattened_ai_session_append_increments_revision_monotonically() {
+        let mut cache = AiSessionFlatCache::new("s1".to_string());
+        cache.append(FlattenedAiMessage {
+            id: "m1".to_string(),
+            session_id: "s1".to_string(),
+            kind: FlattenedAiMessageKind::User,
+            content: Some("hello".to_string()),
+            tool_name: None,
+            tool_call_id: None,
+            created_at: 1000,
+        });
+        assert_eq!(cache.revision, 1);
+        cache.append(FlattenedAiMessage {
+            id: "m2".to_string(),
+            session_id: "s1".to_string(),
+            kind: FlattenedAiMessageKind::Assistant,
+            content: Some("hi there".to_string()),
+            tool_name: None,
+            tool_call_id: None,
+            created_at: 2000,
+        });
+        assert_eq!(cache.revision, 2);
+        assert_eq!(cache.messages.len(), 2);
+    }
+
+    #[test]
+    fn flattened_ai_session_from_message_infos_covers_five_kinds() {
+        let messages = vec![
+            MessageInfo {
+                id: "msg-user".to_string(),
+                role: "user".to_string(),
+                created_at: Some(1000),
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: vec![PartInfo {
+                    id: "p-user".to_string(),
+                    part_type: "text".to_string(),
+                    text: Some("what does this do?".to_string()),
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_kind: None,
+                    tool_title: None,
+                    tool_raw_input: None,
+                    tool_raw_output: None,
+                    tool_locations: None,
+                    tool_state: None,
+                    tool_part_metadata: None,
+                    mime: None,
+                    filename: None,
+                    url: None,
+                    synthetic: None,
+                    ignored: None,
+                    source: None,
+                }],
+            },
+            MessageInfo {
+                id: "msg-assistant".to_string(),
+                role: "assistant".to_string(),
+                created_at: Some(2000),
+                agent: None,
+                model_provider_id: None,
+                model_id: None,
+                parts: vec![
+                    PartInfo {
+                        id: "p-tool-call".to_string(),
+                        part_type: "tool".to_string(),
+                        text: None,
+                        tool_name: Some("bash".to_string()),
+                        tool_call_id: Some("call-1".to_string()),
+                        tool_kind: None,
+                        tool_title: None,
+                        tool_raw_input: None,
+                        tool_raw_output: None,
+                        tool_locations: None,
+                        tool_state: None,
+                        tool_part_metadata: None,
+                        mime: None,
+                        filename: None,
+                        url: None,
+                        synthetic: None,
+                        ignored: None,
+                        source: None,
+                    },
+                    PartInfo {
+                        id: "p-assistant-text".to_string(),
+                        part_type: "text".to_string(),
+                        text: Some("done".to_string()),
+                        tool_name: None,
+                        tool_call_id: None,
+                        tool_kind: None,
+                        tool_title: None,
+                        tool_raw_input: None,
+                        tool_raw_output: None,
+                        tool_locations: None,
+                        tool_state: None,
+                        tool_part_metadata: None,
+                        mime: None,
+                        filename: None,
+                        url: None,
+                        synthetic: None,
+                        ignored: None,
+                        source: None,
+                    },
+                ],
+            },
+        ];
+
+        let cache = AiSessionFlatCache::from_message_infos("s1".to_string(), &messages);
+        assert_eq!(cache.session_id, "s1");
+        // user text part + tool part + assistant text part = 3 flat messages
+        assert_eq!(cache.messages.len(), 3);
+        assert_eq!(cache.messages[0].kind, FlattenedAiMessageKind::User);
+        assert_eq!(cache.messages[0].content.as_deref(), Some("what does this do?"));
+        assert_eq!(cache.messages[1].kind, FlattenedAiMessageKind::ToolCall);
+        assert_eq!(cache.messages[1].tool_name.as_deref(), Some("bash"));
+        assert_eq!(cache.messages[1].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(cache.messages[2].kind, FlattenedAiMessageKind::Assistant);
+        assert_eq!(cache.messages[2].content.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn flattened_ai_session_revision_rejects_rollback() {
+        let mut cache = AiSessionFlatCache::new("s1".to_string());
+        cache.append(FlattenedAiMessage {
+            id: "m1".to_string(),
+            session_id: "s1".to_string(),
+            kind: FlattenedAiMessageKind::User,
+            content: Some("q".to_string()),
+            tool_name: None,
+            tool_call_id: None,
+            created_at: 0,
+        });
+        // revision is now 1
+        assert!(cache.can_apply_revision(1));
+        assert!(cache.can_apply_revision(2));
+        assert!(!cache.can_apply_revision(0)); // 旧 revision 应被拒绝
+    }
+
+    #[test]
+    fn flattened_ai_session_roundtrip_serialization() {
+        let mut cache = AiSessionFlatCache::new("s42".to_string());
+        cache.append(FlattenedAiMessage {
+            id: "flat-1".to_string(),
+            session_id: "s42".to_string(),
+            kind: FlattenedAiMessageKind::System,
+            content: Some("you are a helpful assistant".to_string()),
+            tool_name: None,
+            tool_call_id: None,
+            created_at: 999,
+        });
+        let json = serde_json::to_string(&cache).unwrap();
+        let parsed: AiSessionFlatCache = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.session_id, "s42");
+        assert_eq!(parsed.revision, 1);
+        assert_eq!(parsed.messages[0].kind, FlattenedAiMessageKind::System);
+        assert_eq!(parsed.messages[0].content.as_deref(), Some("you are a helpful assistant"));
+    }
+
+    #[test]
+    fn flattened_ai_session_system_role_maps_to_system_kind() {
+        let messages = vec![MessageInfo {
+            id: "sys-msg".to_string(),
+            role: "system".to_string(),
+            created_at: Some(0),
+            agent: None,
+            model_provider_id: None,
+            model_id: None,
+            parts: vec![PartInfo {
+                id: "sys-part".to_string(),
+                part_type: "text".to_string(),
+                text: Some("you are a coder".to_string()),
+                tool_name: None,
+                tool_call_id: None,
+                tool_kind: None,
+                tool_title: None,
+                tool_raw_input: None,
+                tool_raw_output: None,
+                tool_locations: None,
+                tool_state: None,
+                tool_part_metadata: None,
+                mime: None,
+                filename: None,
+                url: None,
+                synthetic: None,
+                ignored: None,
+                source: None,
+            }],
+        }];
+        let cache = AiSessionFlatCache::from_message_infos("s1".to_string(), &messages);
+        assert_eq!(cache.messages.len(), 1);
+        assert_eq!(cache.messages[0].kind, FlattenedAiMessageKind::System);
     }
 }

@@ -1942,3 +1942,74 @@ struct AICodeCompletionDone {
         )
     }
 }
+
+// MARK: - 平铺 AI 会话消息（Flattened AI Session Cache）
+
+/// 平铺消息语义类型，对应 Rust 侧 FlattenedAiMessageKind
+enum AIFlattenedMessageKind: String {
+    case user
+    case assistant
+    case toolCall = "tool_call"
+    case toolResult = "tool_result"
+    case system
+    case unknown
+
+    static func from(raw: String?) -> AIFlattenedMessageKind {
+        guard let raw else { return .unknown }
+        return AIFlattenedMessageKind(rawValue: raw) ?? .unknown
+    }
+}
+
+/// 平铺 AI 消息结构，单层不嵌套，对应 Rust 侧 FlattenedAiMessage
+struct AIFlattenedMessage {
+    /// 消息/part 唯一 ID
+    let id: String
+    /// 所属会话 ID（稳定索引键）
+    let sessionId: String
+    /// 消息语义类型
+    let kind: AIFlattenedMessageKind
+    /// 文本内容（user/assistant/system 时有效）
+    let content: String?
+    /// 工具名称（tool_call/tool_result 时有效）
+    let toolName: String?
+    /// 工具调用 ID（tool_call/tool_result 关联键）
+    let toolCallId: String?
+    /// 创建时间戳（毫秒）
+    let createdAt: Int64
+
+    static func from(json: [String: Any]) -> AIFlattenedMessage? {
+        guard let id = json["id"] as? String,
+              let sessionId = json["session_id"] as? String else { return nil }
+        return AIFlattenedMessage(
+            id: id,
+            sessionId: sessionId,
+            kind: AIFlattenedMessageKind.from(raw: json["kind"] as? String),
+            content: json["content"] as? String,
+            toolName: json["tool_name"] as? String,
+            toolCallId: json["tool_call_id"] as? String,
+            createdAt: parseInt64(json["created_at"])
+        )
+    }
+}
+
+/// AI 会话平铺消息缓存，按 session_id 索引，revision 单调递增，对应 Rust 侧 AiSessionFlatCache
+struct AISessionFlatCache {
+    /// 会话 ID（稳定索引键）
+    let sessionId: String
+    /// 缓存修订号，每次追加消息时单调递增
+    let revision: UInt64
+    /// 平铺后的消息列表
+    let messages: [AIFlattenedMessage]
+
+    static func from(json: [String: Any]) -> AISessionFlatCache? {
+        guard let sessionId = json["session_id"] as? String else { return nil }
+        let revision = (json["revision"] as? UInt64) ?? UInt64(json["revision"] as? Int ?? 0)
+        let messages = (json["messages"] as? [[String: Any]] ?? [])
+            .compactMap { AIFlattenedMessage.from(json: $0) }
+        return AISessionFlatCache(
+            sessionId: sessionId,
+            revision: revision,
+            messages: messages
+        )
+    }
+}
