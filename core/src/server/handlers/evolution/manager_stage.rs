@@ -7041,7 +7041,9 @@ mod tests {
 
         let plan = plan_stage_template("c-42");
         assert!(plan.contains("// 工作项列表，不能为空"));
-        assert!(plan.contains("// 必须与 direction.jsonc.selected_direction_type 一致；方向标签可自由命名"));
+        assert!(plan.contains(
+            "// 必须与 direction.jsonc.selected_direction_type 一致；方向标签可自由命名"
+        ));
         assert!(plan.contains("//   \"implementation_agent\": \"implement_general\""));
         assert!(plan.contains("//   \"check_ids\": [\"CHK-001\"]"));
 
@@ -7203,12 +7205,10 @@ mod tests {
             "implementation_agent": "implement_general",
             "linked_check_ids": ["v-1", "v-2"]
         })]);
-        plan.as_object_mut()
-            .expect("plan should be object")
-            .insert(
-                "selected_direction_type".to_string(),
-                serde_json::json!("  播放体验 升级  "),
-            );
+        plan.as_object_mut().expect("plan should be object").insert(
+            "selected_direction_type".to_string(),
+            serde_json::json!("  播放体验 升级  "),
+        );
         write_json(&dir.path().join("plan.jsonc"), plan);
 
         EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)
@@ -7232,12 +7232,10 @@ mod tests {
             "implementation_agent": "implement_general",
             "linked_check_ids": ["v-1", "v-2"]
         })]);
-        plan.as_object_mut()
-            .expect("plan should be object")
-            .insert(
-                "selected_direction_type".to_string(),
-                serde_json::json!("界面补强"),
-            );
+        plan.as_object_mut().expect("plan should be object").insert(
+            "selected_direction_type".to_string(),
+            serde_json::json!("界面补强"),
+        );
         write_json(&dir.path().join("plan.jsonc"), plan);
 
         let err = EvolutionManager::validate_stage_artifacts("plan", dir.path(), 0, 1)

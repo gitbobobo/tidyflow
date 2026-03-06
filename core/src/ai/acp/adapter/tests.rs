@@ -1444,3 +1444,96 @@ async fn apply_current_mode_to_caches_should_update_directory_and_session() {
         .expect("session metadata should exist");
     assert_eq!(session_meta.current_mode_id.as_deref(), Some("code"));
 }
+
+// Kimi 适配器专项测试：tool_id 与 message_id_prefix 标识符
+#[test]
+fn kimi_backend_profile_should_expose_tool_id_and_message_prefix() {
+    let kimi = AcpBackendProfile::kimi();
+    assert_eq!(kimi.tool_id, "kimi");
+    assert_eq!(kimi.message_id_prefix, "kimi");
+
+    let copilot = AcpBackendProfile::copilot();
+    assert_eq!(copilot.tool_id, "copilot");
+    assert_eq!(copilot.message_id_prefix, "copilot");
+
+    // 两种后端 provider_id 必须不同，保证路由隔离
+    assert_ne!(kimi.tool_id, copilot.tool_id);
+}
+
+// Kimi 适配器专项测试：自动启用 runtime yolo 行为
+#[test]
+fn kimi_adapter_should_auto_enable_runtime_yolo() {
+    let manager = Arc::new(CodexAppServerManager::new(std::env::temp_dir()));
+    let kimi_agent = AcpAgent::new_kimi(manager.clone());
+    assert!(
+        kimi_agent.should_auto_enable_runtime_yolo(),
+        "Kimi 适配器应自动启用 runtime yolo"
+    );
+
+    let copilot_agent = AcpAgent::new_copilot(manager);
+    assert!(
+        !copilot_agent.should_auto_enable_runtime_yolo(),
+        "Copilot 适配器不应自动启用 runtime yolo"
+    );
+}
+
+// Kimi 适配器专项测试：session not found 错误检测
+#[test]
+fn kimi_is_session_not_found_should_detect_error_patterns() {
+    assert!(AcpAgent::is_session_not_found("session not found"));
+    assert!(AcpAgent::is_session_not_found("Session Not Found"));
+    assert!(AcpAgent::is_session_not_found(
+        "error: session id 123 not found"
+    ));
+    assert!(!AcpAgent::is_session_not_found("connection refused"));
+    assert!(!AcpAgent::is_session_not_found("session already loaded"));
+}
+
+// Kimi 适配器专项测试：session already loaded 错误检测
+#[test]
+fn kimi_is_session_already_loaded_should_detect_error_patterns() {
+    assert!(AcpAgent::is_session_already_loaded(
+        "session already loaded"
+    ));
+    assert!(AcpAgent::is_session_already_loaded(
+        "Session Already Loaded"
+    ));
+    assert!(!AcpAgent::is_session_already_loaded("session not found"));
+    assert!(!AcpAgent::is_session_already_loaded("timeout"));
+}
+
+// 跨适配器契约测试：Kimi 与 Copilot 的 selection_hint 输出结构兼容
+#[test]
+fn kimi_and_copilot_selection_hint_should_produce_compatible_structure() {
+    let metadata_with_model = crate::ai::acp_client::AcpSessionMetadata {
+        current_model_id: Some("kimi-k2".to_string()),
+        ..Default::default()
+    };
+
+    let kimi_hint = AcpAgent::selection_hint_from_metadata(&metadata_with_model, "kimi");
+    let copilot_hint = AcpAgent::selection_hint_from_metadata(&metadata_with_model, "copilot");
+
+    // 两端的 hint 结构必须一致
+    let kimi_hint = kimi_hint.expect("Kimi hint should be Some when model is set");
+    let copilot_hint = copilot_hint.expect("Copilot hint should be Some when model is set");
+
+    assert_eq!(kimi_hint.model_id.as_deref(), Some("kimi-k2"));
+    assert_eq!(copilot_hint.model_id.as_deref(), Some("kimi-k2"));
+    assert_eq!(kimi_hint.model_provider_id.as_deref(), Some("kimi"));
+    assert_eq!(copilot_hint.model_provider_id.as_deref(), Some("copilot"));
+
+    // 无 model 时两者均返回 None
+    let empty_meta = crate::ai::acp_client::AcpSessionMetadata::default();
+    assert!(AcpAgent::selection_hint_from_metadata(&empty_meta, "kimi").is_none());
+    assert!(AcpAgent::selection_hint_from_metadata(&empty_meta, "copilot").is_none());
+}
+
+// 跨适配器契约测试：normalize_mode_name 对 Kimi 模式名不出现空名
+#[test]
+fn kimi_normalize_mode_name_should_not_produce_empty_for_standard_modes() {
+    assert!(!AcpAgent::normalize_mode_name("agent").is_empty());
+    assert!(!AcpAgent::normalize_mode_name("plan").is_empty());
+    assert!(!AcpAgent::normalize_mode_name("code").is_empty());
+    // 空字符串作为退化输入，结果应为空
+    assert!(AcpAgent::normalize_mode_name("").is_empty());
+}

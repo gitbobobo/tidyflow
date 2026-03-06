@@ -400,12 +400,14 @@ mod tests {
 
     #[test]
     fn test_git_error_display() {
+        assert_eq!(format!("{}", GitError::NotAGitRepo), "Not a git repository");
         assert_eq!(
-            format!("{}", GitError::NotAGitRepo),
-            "Not a git repository"
+            format!("{}", GitError::PathEscape),
+            "Path escapes workspace root"
         );
-        assert_eq!(format!("{}", GitError::PathEscape), "Path escapes workspace root");
-        assert!(format!("{}", GitError::CommandFailed("test error".to_string())).contains("test error"));
+        assert!(
+            format!("{}", GitError::CommandFailed("test error".to_string())).contains("test error")
+        );
     }
 
     #[test]
@@ -462,8 +464,12 @@ mod tests {
         let result = GitBranchesResult {
             current: "main".to_string(),
             branches: vec![
-                GitBranchInfo { name: "develop".to_string() },
-                GitBranchInfo { name: "main".to_string() },
+                GitBranchInfo {
+                    name: "develop".to_string(),
+                },
+                GitBranchInfo {
+                    name: "main".to_string(),
+                },
             ],
         };
         assert_eq!(result.current, "main");
